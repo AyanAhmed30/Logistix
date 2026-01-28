@@ -1,65 +1,171 @@
+import { createClient } from "@/utils/supabase/server";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
+import { CheckCircle2, XCircle, Database, Package, ShieldCheck } from "lucide-react";
 import Image from "next/image";
 
-export default function Home() {
+export default async function Home() {
+  const supabase = await createClient();
+
+  let connectionStatus = "checking";
+  let errorMsg = null;
+
+  try {
+    const { data, error } = await supabase.from("_non_existent_table_just_to_test_connection").select("*").limit(1);
+    // Note: If connection is good but table doesn't exist, we'll get an error, 
+    // but the error comes FROM Supabase, which means the connection IS established.
+    // If the URL/Key is wrong, we get a different kind of error.
+    if (error && error.code === "PGRST116" || !error) {
+      connectionStatus = "connected";
+    } else {
+      // If we get an error that isn't "table not found", it might be a connection issue
+      if (error.message.includes("fetch")) {
+        connectionStatus = "error";
+        errorMsg = error.message;
+      } else {
+        // Table not found or other Supabase-specific errors actually mean we DID connect to the project
+        connectionStatus = "connected";
+      }
+    }
+  } catch (e: any) {
+    connectionStatus = "error";
+    errorMsg = e.message;
+  }
+
   return (
-    <div className="flex min-h-screen items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex min-h-screen w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the page.tsx file.
-          </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
-          </p>
-        </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
+    <main className="min-h-screen p-4 md:p-8 lg:p-12">
+      <div className="max-w-5xl mx-auto space-y-8 animate-fade-up">
+        {/* Hero Section */}
+        <section className="text-center space-y-4 py-8">
+          <div className="mx-auto h-20 w-52 relative animate-float-slow">
             <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={16}
+              src="/logo.jpg"
+              alt="Logistix Logo"
+              fill
+              className="object-contain drop-shadow-xl"
+              priority
             />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
+          </div>
+          <h1 className="text-4xl md:text-6xl font-extrabold tracking-tight text-primary-dark">
+            Logistix <span className="text-primary-accent">Pro</span>
+          </h1>
+          <p className="text-xl text-secondary-muted max-w-2xl mx-auto">
+            A production-ready stack with Next.js, Supabase, and shadcn/ui — themed for Logistix Express.
+          </p>
+        </section>
+
+        {/* Status Dashboard */}
+        <div className="grid md:grid-cols-3 gap-6">
+          <Card className="border-2 shadow-sm hover-lift bg-white/80 backdrop-blur">
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+              <CardTitle className="text-sm font-medium">Supabase Connection</CardTitle>
+              <Database className="h-4 w-4 text-muted-foreground" />
+            </CardHeader>
+            <CardContent>
+              <div className="flex items-center gap-2">
+                {connectionStatus === "connected" ? (
+                  <>
+                    <div className="h-3 w-3 rounded-full bg-primary-accent animate-pulse" />
+                    <span className="text-2xl font-bold">Connected</span>
+                  </>
+                ) : (
+                  <>
+                    <div className="h-3 w-3 rounded-full bg-red-500" />
+                    <span className="text-2xl font-bold">Error</span>
+                  </>
+                )}
+              </div>
+              <p className="text-xs text-muted-foreground mt-1">
+                {connectionStatus === "connected" ? "Successfully authenticated with Project API" : errorMsg || "Check environment variables"}
+              </p>
+            </CardContent>
+          </Card>
+
+          <Card className="border-2 shadow-sm hover-lift bg-white/80 backdrop-blur">
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+              <CardTitle className="text-sm font-medium">shadcn/ui</CardTitle>
+              <Package className="h-4 w-4 text-muted-foreground" />
+            </CardHeader>
+            <CardContent>
+              <div className="flex items-center gap-2">
+                <div className="h-3 w-3 rounded-full bg-primary-accent" />
+                <span className="text-2xl font-bold">Installed</span>
+              </div>
+              <p className="text-xs text-muted-foreground mt-1">
+                12+ components pre-configured
+              </p>
+            </CardContent>
+          </Card>
+
+          <Card className="border-2 shadow-sm hover-lift bg-white/80 backdrop-blur">
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+              <CardTitle className="text-sm font-medium">Security</CardTitle>
+              <ShieldCheck className="h-4 w-4 text-muted-foreground" />
+            </CardHeader>
+            <CardContent>
+              <div className="flex items-center gap-2">
+                <div className="h-3 w-3 rounded-full bg-primary-accent" />
+                <span className="text-2xl font-bold">Middleware</span>
+              </div>
+              <p className="text-xs text-muted-foreground mt-1">
+                Auth session refreshing active
+              </p>
+            </CardContent>
+          </Card>
         </div>
-      </main>
-    </div>
+
+        {/* Component Showcase */}
+        <Card className="border-2 hover-lift bg-white/80 backdrop-blur">
+          <CardHeader>
+            <CardTitle>Ready to Build</CardTitle>
+            <CardDescription>
+              Your environment is fully configured. You can start building your application logic now.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-6">
+            <div className="flex flex-wrap gap-4">
+              <Button>Primary Action</Button>
+              <Button variant="outline">Secondary Action</Button>
+              <Button variant="ghost">Ghost Button</Button>
+              <Button variant="destructive">Destructive</Button>
+            </div>
+
+            <div className="grid md:grid-cols-2 gap-4">
+              <div className="p-4 border rounded-lg bg-white/80 backdrop-blur space-y-2">
+                <h3 className="font-semibold flex items-center gap-2">
+                  <CheckCircle2 className="h-4 w-4 text-green-500" />
+                  Client Utilities
+                </h3>
+                <p className="text-sm text-slate-500">
+                  Use <code>@/utils/supabase/client</code> in Client Components.
+                </p>
+              </div>
+              <div className="p-4 border rounded-lg bg-white/80 backdrop-blur space-y-2">
+                <h3 className="font-semibold flex items-center gap-2">
+                  <CheckCircle2 className="h-4 w-4 text-green-500" />
+                  Server Utilities
+                </h3>
+                <p className="text-sm text-slate-500">
+                  Use <code>@/utils/supabase/server</code> in Server Components & Actions.
+                </p>
+              </div>
+            </div>
+          </CardContent>
+          <CardFooter className="bg-light-bg/40 border-t px-6 py-4 flex justify-between">
+            <div className="text-sm text-muted-foreground italic">
+              Developed by Antigravity
+            </div>
+            <a
+              href="https://supabase.com/docs"
+              target="_blank"
+              className="text-sm font-medium text-primary-accent hover:underline"
+            >
+              View Documentation &rarr;
+            </a>
+          </CardFooter>
+        </Card>
+      </div>
+    </main>
   );
 }

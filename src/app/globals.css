@@ -1,26 +1,207 @@
 @import "tailwindcss";
 
+@plugin "tailwindcss-animate";
+
+@custom-variant dark (&:is(.dark *));
+
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  /* User Provided Palette */
+  --primary-dark: #AAC6CF;
+  --primary-accent: #218C94;
+  --secondary-muted: #AAC6CF;
+  --light-bg: #AAC6CF;
+  --white: #FFFFFF;
+
+  /* Shadcn Variable Mapping */
+  --background: oklch(0.99 0.01 220);
+  /* Light blue tinted background inspired by --light-bg */
+  --foreground: oklch(0.2 0.05 230);
+
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.2 0.05 230);
+
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.2 0.05 230);
+
+  /* Resetting for strict palette usage */
+  --p-dark: #073D51;
+  --p-accent: #218C94;
+  --s-muted: #577B86;
+  --l-bg: #AAC6CF;
+
+  --primary: oklch(0.32 0.05 235);
+  /* #073D51 approx */
+  --primary-foreground: oklch(0.985 0 0);
+
+  --secondary: oklch(0.98 0.01 220);
+  /* Light version of palette */
+  --secondary-foreground: oklch(0.25 0.06 235);
+
+  --muted: oklch(0.98 0.01 220);
+  --muted-foreground: oklch(0.55 0.03 230);
+  /* #577B86 approx */
+
+  --accent: oklch(0.7 0.1 205);
+  /* #218C94 approx */
+  --accent-foreground: oklch(0.985 0 0);
+
+  --destructive: oklch(0.5 0.2 25);
+  --destructive-foreground: oklch(0.985 0 0);
+
+  --border: oklch(0.92 0.01 220);
+  --input: oklch(0.92 0.01 220);
+  --ring: oklch(0.7 0.1 205);
+
+  --radius: 0.75rem;
+}
+
+.dark {
+  --background: oklch(0.2 0.04 235);
+  --foreground: oklch(0.94 0.04 235);
+
+  --card: oklch(0.22 0.04 235);
+  --card-foreground: oklch(0.94 0.04 235);
+
+  --primary: oklch(0.7 0.1 205);
+  --primary-foreground: oklch(0.2 0.04 235);
 }
 
 @theme inline {
+  --color-primary-dark: var(--p-dark);
+  --color-primary-accent: var(--p-accent);
+  --color-secondary-muted: var(--s-muted);
+  --color-light-bg: var(--l-bg);
+
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+
+  --radius-lg: var(--radius);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-sm: calc(var(--radius) - 4px);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+@layer base {
+  * {
+    @apply border-border outline-ring/50 text-primary-dark;
+  }
+
+  html {
+    scroll-behavior: smooth;
+  }
+
+  body {
+    @apply bg-background text-foreground antialiased;
+    min-height: 100vh;
+    background-color: var(--white);
+  }
+
+  h1,
+  h2,
+  h3,
+  h4,
+  h5,
+  h6 {
+    @apply text-primary-dark font-bold;
+  }
+
+  a,
+  button,
+  input,
+  textarea,
+  select {
+    @apply transition-colors duration-200;
+  }
+
+  ::selection {
+    background: color-mix(in oklab, var(--p-accent) 25%, white 75%);
   }
 }
 
-body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+.app-shell {
+  position: relative;
+  min-height: 100vh;
+  background: var(--white);
+}
+
+.app-shell::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  background-image: url("/logo.jpg");
+  background-size: 240px auto;
+  background-repeat: repeat;
+  opacity: 0.025;
+  pointer-events: none;
+  z-index: 0;
+  filter: grayscale(1);
+}
+
+.app-shell::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.85), transparent 55%, rgba(255, 255, 255, 0.6));
+  pointer-events: none;
+  z-index: 1;
+}
+
+.app-shell > * {
+  position: relative;
+  z-index: 2;
+}
+
+
+@keyframes fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes float-slow {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-6px);
+  }
+}
+
+@layer utilities {
+  .animate-fade-up {
+    animation: fade-up 0.6s ease-out both;
+  }
+
+  .animate-float-slow {
+    animation: float-slow 5s ease-in-out infinite;
+  }
+
+  .hover-lift {
+    transition: transform 200ms ease, box-shadow 200ms ease;
+  }
+
+  .hover-lift:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 12px 24px rgba(7, 61, 81, 0.08);
+  }
 }

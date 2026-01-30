@@ -24,7 +24,8 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { PlusCircle, UsersRound, X } from "lucide-react";
+import { PlusCircle, UsersRound, X, Truck } from "lucide-react";
+import { OrderTrackingPanel } from "@/components/admin/OrderTrackingPanel";
 
 type AppUser = {
   id: string;
@@ -47,7 +48,7 @@ export function AdminUserManager({
   onSidebarClose,
 }: Props) {
   const router = useRouter();
-  const [activeTab, setActiveTab] = useState<"none" | "create" | "profiles">("none");
+  const [activeTab, setActiveTab] = useState<"none" | "create" | "profiles" | "tracking">("none");
   const [createOpen, setCreateOpen] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
   const [editUser, setEditUser] = useState<AppUser | null>(null);
@@ -151,7 +152,7 @@ export function AdminUserManager({
     setEditOpen(true);
   }
 
-  function handleTabSelect(tab: "create" | "profiles") {
+  function handleTabSelect(tab: "create" | "profiles" | "tracking") {
     setActiveTab(tab);
     onSidebarClose();
   }
@@ -199,6 +200,14 @@ export function AdminUserManager({
             <UsersRound className="h-4 w-4" />
             User Profiles
           </Button>
+          <Button
+            variant={activeTab === "tracking" ? "default" : "outline"}
+            className="justify-start gap-2"
+            onClick={() => handleTabSelect("tracking")}
+          >
+            <Truck className="h-4 w-4" />
+            Order Tracking
+          </Button>
         </div>
        
       </aside>
@@ -224,7 +233,9 @@ export function AdminUserManager({
           </CardContent>
         </Card>
 
-        {activeTab === "profiles" ? (
+        {activeTab === "tracking" ? (
+          <OrderTrackingPanel />
+        ) : activeTab === "profiles" ? (
           <Card className="bg-white border shadow-sm">
             <CardHeader className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
               <div>

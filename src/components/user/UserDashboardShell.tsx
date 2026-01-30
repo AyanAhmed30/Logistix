@@ -6,6 +6,8 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Menu, PackagePlus, History, MapPin, LogOut, Bell, X } from "lucide-react";
 import Image from "next/image";
+import { BookOrderModal } from "@/components/user/BookOrderModal";
+import { OrderHistoryPanel } from "@/components/user/OrderHistoryPanel";
 
 type Props = {
   username: string;
@@ -22,10 +24,15 @@ const tabs: { key: TabKey; label: string; icon: React.ReactNode }[] = [
 export function UserDashboardShell({ username }: Props) {
   const [activeTab, setActiveTab] = useState<TabKey>("book");
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+  const [isOrderModalOpen, setIsOrderModalOpen] = useState(false);
+  const [historyRefreshKey, setHistoryRefreshKey] = useState(0);
 
   function selectTab(tab: TabKey) {
     setActiveTab(tab);
     setIsSidebarOpen(false);
+    if (tab === "book") {
+      setIsOrderModalOpen(true);
+    }
   }
 
   const activeLabel = tabs.find((tab) => tab.key === activeTab)?.label ?? "Dashboard";
@@ -120,20 +127,44 @@ export function UserDashboardShell({ username }: Props) {
       )}
 
       <main className="pt-20 md:pl-72 px-6 md:px-10 pb-10 space-y-6">
-        <Card className="bg-white border shadow-sm">
-          <CardHeader>
-            <CardTitle>{activeLabel}</CardTitle>
-            <CardDescription>
-              This section is a placeholder. Content will be added soon.
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="text-secondary-muted text-sm">
-              You are viewing the {activeLabel} page.
-            </div>
-          </CardContent>
-        </Card>
+        {activeTab === "book" ? (
+          <Card className="bg-white border shadow-sm">
+            <CardHeader>
+              <CardTitle>Book a New Order</CardTitle>
+              <CardDescription>
+                Open the modal to create one order with multiple cartons.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <Button onClick={() => setIsOrderModalOpen(true)}>
+                Book a New Order
+              </Button>
+            </CardContent>
+          </Card>
+        ) : activeTab === "history" ? (
+          <OrderHistoryPanel refreshKey={historyRefreshKey} />
+        ) : (
+          <Card className="bg-white border shadow-sm">
+            <CardHeader>
+              <CardTitle>{activeLabel}</CardTitle>
+              <CardDescription>
+                This section is a placeholder. Content will be added soon.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="text-secondary-muted text-sm">
+                You are viewing the {activeLabel} page.
+              </div>
+            </CardContent>
+          </Card>
+        )}
       </main>
+
+      <BookOrderModal
+        open={isOrderModalOpen}
+        onOpenChange={setIsOrderModalOpen}
+        onOrderSaved={() => setHistoryRefreshKey((prev) => prev + 1)}
+      />
     </div>
   );
 }

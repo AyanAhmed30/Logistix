@@ -208,7 +208,7 @@ export function OrderTrackingPanel() {
                         </div>
                       </div>
                       <div className="rounded-lg bg-white p-3 text-center shadow-sm">
-                        <div className="text-xs text-secondary-muted">Total Weight</div>
+                        <div className="text-xs text-secondary-muted">Total Weight (kg)</div>
                         <div className="text-lg font-semibold text-primary-dark">
                           {totals.totalWeight.toFixed(2)}
                         </div>

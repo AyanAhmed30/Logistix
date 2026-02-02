@@ -24,7 +24,7 @@ type Props = {
 export function AdminDashboardShell({ users, dbError }: Props) {
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<
-    "none" | "create" | "profiles" | "tracking" | "notifications"
+    "none" | "create" | "profiles" | "tracking" | "notifications" | "management"
   >("none");
   const [unreadCount, setUnreadCount] = useState(0);
 

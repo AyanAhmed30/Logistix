@@ -24,9 +24,10 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { PlusCircle, UsersRound, X, Truck, Bell } from "lucide-react";
+import { PlusCircle, UsersRound, X, Truck, Bell, Package } from "lucide-react";
 import { OrderTrackingPanel } from "@/components/admin/OrderTrackingPanel";
 import { AdminNotificationsPanel } from "@/components/admin/AdminNotificationsPanel";
+import { OrderManagementPanel } from "@/components/admin/OrderManagementPanel";
 
 type AppUser = {
   id: string;
@@ -40,8 +41,8 @@ type Props = {
   userCount: number;
   isSidebarOpen: boolean;
   onSidebarClose: () => void;
-  activeTab: "none" | "create" | "profiles" | "tracking" | "notifications";
-  onTabChange: (tab: "none" | "create" | "profiles" | "tracking" | "notifications") => void;
+  activeTab: "none" | "create" | "profiles" | "tracking" | "notifications" | "management";
+  onTabChange: (tab: "none" | "create" | "profiles" | "tracking" | "notifications" | "management") => void;
 };
 
 export function AdminUserManager({
@@ -156,7 +157,7 @@ export function AdminUserManager({
     setEditOpen(true);
   }
 
-  function handleTabSelect(tab: "create" | "profiles" | "tracking" | "notifications") {
+  function handleTabSelect(tab: "create" | "profiles" | "tracking" | "notifications" | "management") {
     onTabChange(tab);
     onSidebarClose();
   }
@@ -220,6 +221,14 @@ export function AdminUserManager({
             <Bell className="h-4 w-4" />
             Notifications
           </Button>
+          <Button
+            variant={activeTab === "management" ? "default" : "outline"}
+            className="justify-start gap-2"
+            onClick={() => handleTabSelect("management")}
+          >
+            <Package className="h-4 w-4" />
+            Order Management
+          </Button>
         </div>
        
       </aside>
@@ -249,6 +258,8 @@ export function AdminUserManager({
           <AdminNotificationsPanel />
         ) : activeTab === "tracking" ? (
           <OrderTrackingPanel />
+        ) : activeTab === "management" ? (
+          <OrderManagementPanel />
         ) : activeTab === "profiles" ? (
           <Card className="bg-white border shadow-sm">
             <CardHeader className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">

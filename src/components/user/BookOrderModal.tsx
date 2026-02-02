@@ -59,19 +59,23 @@ export function BookOrderModal({ open, onOpenChange, onOrderSaved }: Props) {
     if (!open) {
       return;
     }
-    setShippingMark("");
-    setOrders([
-      {
-        itemDescription: "",
-        destinationCountry: "Pakistan",
-        weight: "",
-        length: "",
-        width: "",
-        height: "",
-        dimensionUnit: "cm",
-        totalCartons: 1,
-      },
-    ]);
+    // Reset form when modal opens
+    const resetForm = () => {
+      setShippingMark("");
+      setOrders([
+        {
+          itemDescription: "",
+          destinationCountry: "Pakistan",
+          weight: "",
+          length: "",
+          width: "",
+          height: "",
+          dimensionUnit: "cm",
+          totalCartons: 1,
+        },
+      ]);
+    };
+    resetForm();
     if (!logoDataUrl) {
       fetch("/logo.jpg")
         .then((res) => res.blob())

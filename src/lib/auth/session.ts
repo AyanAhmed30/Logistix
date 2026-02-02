@@ -5,7 +5,13 @@ import { SignJWT, jwtVerify } from 'jose';
 
 const SECRET_KEY = Buffer.from(process.env.SUPABASE_SERVICE_ROLE_KEY || 'default_secret_key_for_development', 'utf-8');
 
-export async function encrypt(payload: any) {
+type SessionPayload = {
+    username: string;
+    role: 'admin' | 'user';
+    expires?: Date;
+};
+
+export async function encrypt(payload: SessionPayload): Promise<string> {
     return await new SignJWT(payload)
         .setProtectedHeader({ alg: 'HS256' })
         .setIssuedAt()
@@ -13,11 +19,11 @@ export async function encrypt(payload: any) {
         .sign(SECRET_KEY);
 }
 
-export async function decrypt(input: string): Promise<any> {
+export async function decrypt(input: string): Promise<SessionPayload> {
     const { payload } = await jwtVerify(input, SECRET_KEY, {
         algorithms: ['HS256'],
     });
-    return payload;
+    return payload as SessionPayload;
 }
 
 export async function getSession() {

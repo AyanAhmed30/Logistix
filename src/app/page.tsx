@@ -28,9 +28,9 @@ export default async function Home() {
         connectionStatus = "connected";
       }
     }
-  } catch (e: any) {
+  } catch (e: unknown) {
     connectionStatus = "error";
-    errorMsg = e.message;
+    errorMsg = e instanceof Error ? e.message : "Unknown error";
   }
 
   return (

@@ -19,21 +19,24 @@ export function AdminNotificationsPanel() {
 
   useEffect(() => {
     let isMounted = true;
-    setIsLoading(true);
-    getAdminNotifications()
-      .then((result) => {
-        if (!isMounted) return;
-        if ("error" in result) {
-          setError(result.error ?? "Unable to load notifications");
-          setNotifications([]);
-        } else {
-          setError(null);
-          setNotifications(result.notifications as Notification[]);
-        }
-      })
-      .finally(() => {
-        if (isMounted) setIsLoading(false);
-      });
+    
+    const fetchNotifications = async () => {
+      setIsLoading(true);
+      const result = await getAdminNotifications();
+      
+      if (!isMounted) return;
+      
+      if ("error" in result) {
+        setError(result.error ?? "Unable to load notifications");
+        setNotifications([]);
+      } else {
+        setError(null);
+        setNotifications(result.notifications as Notification[]);
+      }
+      setIsLoading(false);
+    };
+
+    fetchNotifications();
 
     return () => {
       isMounted = false;

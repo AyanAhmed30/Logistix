@@ -37,7 +37,9 @@ export async function createAdminClient() {
                 getAll() {
                     return []
                 },
-                setAll(cookiesToSet) { },
+                setAll() {
+                    // No-op: Admin client doesn't need cookie management
+                },
             },
         }
     )

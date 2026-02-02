@@ -33,21 +33,24 @@ export function OrderManagementPanel() {
 
   useEffect(() => {
     let isMounted = true;
-    setIsLoading(true);
-    getAllOrdersForAdmin()
-      .then((result) => {
-        if (!isMounted) return;
-        if ("error" in result) {
-          setError(result.error ?? "Unable to load orders");
-          setOrders([]);
-        } else {
-          setError(null);
-          setOrders(result.orders as Order[]);
-        }
-      })
-      .finally(() => {
-        if (isMounted) setIsLoading(false);
-      });
+    
+    const fetchOrders = async () => {
+      setIsLoading(true);
+      const result = await getAllOrdersForAdmin();
+      
+      if (!isMounted) return;
+      
+      if ("error" in result) {
+        setError(result.error ?? "Unable to load orders");
+        setOrders([]);
+      } else {
+        setError(null);
+        setOrders(result.orders as Order[]);
+      }
+      setIsLoading(false);
+    };
+
+    fetchOrders();
 
     return () => {
       isMounted = false;

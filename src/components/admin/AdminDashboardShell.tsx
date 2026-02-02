@@ -68,7 +68,7 @@ export function AdminDashboardShell({ users, dbError }: Props) {
     <div className="min-h-screen bg-white">
       {dbError && (
         <div className="bg-red-600 text-white p-2 text-center text-sm font-medium animate-pulse z-50 fixed top-16 inset-x-0">
-          Database Error: {dbError} (Ensure 'app_users' exists in Supabase)
+          Database Error: {dbError} (Ensure &apos;app_users&apos; exists in Supabase)
         </div>
       )}
 

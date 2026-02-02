@@ -93,45 +93,53 @@ export async function createOrderWithCartons(order: OrderInput, cartons: CartonI
 }
 
 export async function getOrderHistory() {
-  const session = await getSession();
-  if (!session || session.role !== "user") {
-    return { error: "Unauthorized" };
+  try {
+    const session = await getSession();
+    if (!session || session.role !== "user") {
+      return { error: "Unauthorized" };
+    }
+
+    const supabase = await createAdminClient();
+    const { data, error } = await supabase
+      .from("orders")
+      .select(
+        "id, shipping_mark, destination_country, total_cartons, item_description, created_at, cartons:cartons(id, carton_serial_number, weight, length, width, height, carton_index, created_at)"
+      )
+      .eq("username", session.username)
+      .order("created_at", { ascending: false })
+      .order("carton_index", { ascending: true, referencedTable: "cartons" });
+
+    if (error) {
+      return { error: error.message };
+    }
+
+    return { orders: data ?? [] };
+  } catch {
+    return { error: "Unable to load orders" };
   }
-
-  const supabase = await createAdminClient();
-  const { data, error } = await supabase
-    .from("orders")
-    .select(
-      "id, shipping_mark, destination_country, total_cartons, item_description, created_at, cartons:cartons(id, carton_serial_number, weight, length, width, height, carton_index, created_at)"
-    )
-    .eq("username", session.username)
-    .order("created_at", { ascending: false })
-    .order("carton_index", { ascending: true, referencedTable: "cartons" });
-
-  if (error) {
-    return { error: error.message };
-  }
-
-  return { orders: data ?? [] };
 }
 
 export async function getAllOrdersForAdmin() {
-  const session = await getSession();
-  if (!session || session.role !== "admin") {
-    return { error: "Unauthorized" };
+  try {
+    const session = await getSession();
+    if (!session || session.role !== "admin") {
+      return { error: "Unauthorized" };
+    }
+
+    const supabase = await createAdminClient();
+    const { data, error } = await supabase
+      .from("orders")
+      .select(
+        "id, username, shipping_mark, destination_country, total_cartons, item_description, created_at, cartons:cartons(weight, length, width, height, carton_index)"
+      )
+      .order("created_at", { ascending: false });
+
+    if (error) {
+      return { error: error.message };
+    }
+
+    return { orders: data ?? [] };
+  } catch {
+    return { error: "Unable to load orders" };
   }
-
-  const supabase = await createAdminClient();
-  const { data, error } = await supabase
-    .from("orders")
-    .select(
-      "id, username, shipping_mark, destination_country, total_cartons, item_description, created_at, cartons:cartons(weight, length, width, height, carton_index)"
-    )
-    .order("created_at", { ascending: false });
-
-  if (error) {
-    return { error: error.message };
-  }
-
-  return { orders: data ?? [] };
 }

@@ -37,17 +37,19 @@ function toNumber(value: string) {
 
 export function BookOrderModal({ open, onOpenChange, onOrderSaved }: Props) {
   const [shippingMark, setShippingMark] = useState("");
-  const [order, setOrder] = useState<OrderDraft>({
-    itemDescription: "",
-    destinationCountry: "Pakistan",
-    weight: "",
-    length: "",
-    width: "",
-    height: "",
-    totalCartons: 1,
-  });
+  const [orders, setOrders] = useState<OrderDraft[]>([
+    {
+      itemDescription: "",
+      destinationCountry: "Pakistan",
+      weight: "",
+      length: "",
+      width: "",
+      height: "",
+      totalCartons: 1,
+    },
+  ]);
   const [isPending, startTransition] = useTransition();
-  const [isSaving, setIsSaving] = useState(false);
+  const [savingOrderIndex, setSavingOrderIndex] = useState<number | null>(null);
   const [logoDataUrl, setLogoDataUrl] = useState<string | null>(null);
   const [logoSize, setLogoSize] = useState<{ width: number; height: number } | null>(null);
 
@@ -56,15 +58,17 @@ export function BookOrderModal({ open, onOpenChange, onOrderSaved }: Props) {
       return;
     }
     setShippingMark("");
-    setOrder({
-      itemDescription: "",
-      destinationCountry: "Pakistan",
-      weight: "",
-      length: "",
-      width: "",
-      height: "",
-      totalCartons: 1,
-    });
+    setOrders([
+      {
+        itemDescription: "",
+        destinationCountry: "Pakistan",
+        weight: "",
+        length: "",
+        width: "",
+        height: "",
+        totalCartons: 1,
+      },
+    ]);
     if (!logoDataUrl) {
       fetch("/logo.jpg")
         .then((res) => res.blob())
@@ -89,43 +93,47 @@ export function BookOrderModal({ open, onOpenChange, onOrderSaved }: Props) {
   }, [open, logoDataUrl]);
 
   function addSubOrder() {
-    setOrder({
-      itemDescription: "",
-      destinationCountry: "Pakistan",
-      weight: "",
-      length: "",
-      width: "",
-      height: "",
-      totalCartons: 1,
-    });
+    setOrders((prev) => [
+      ...prev,
+      {
+        itemDescription: "",
+        destinationCountry: "Pakistan",
+        weight: "",
+        length: "",
+        width: "",
+        height: "",
+        totalCartons: 1,
+      },
+    ]);
   }
 
-  function updateOrder(updates: Partial<OrderDraft>) {
-    setOrder((prev) => ({ ...prev, ...updates }));
+  function updateOrder(index: number, updates: Partial<OrderDraft>) {
+    setOrders((prev) =>
+      prev.map((order, i) => (i === index ? { ...order, ...updates } : order))
+    );
   }
 
-  function handleTotalCartonsChange(value: string) {
+  function handleTotalCartonsChange(index: number, value: string) {
     const nextTotal = Number(value);
     if (!Number.isFinite(nextTotal) || nextTotal < 1) {
       return;
     }
-    updateOrder({ totalCartons: nextTotal });
+    updateOrder(index, { totalCartons: nextTotal });
   }
 
-  function handleWeightAuto() {
-    if (order.weight.trim()) return;
+  function handleWeightAuto(index: number) {
+    const order = orders[index];
+    if (!order || order.weight.trim()) return;
     const lengthValue = toNumber(order.length);
     const widthValue = toNumber(order.width);
     const heightValue = toNumber(order.height);
     if (lengthValue && widthValue && heightValue) {
       const volumetricWeight = (lengthValue * widthValue * heightValue) / 5000;
-      updateOrder({ weight: volumetricWeight.toFixed(2) });
+      updateOrder(index, { weight: volumetricWeight.toFixed(2) });
     }
   }
 
-  const totalCartons = order.totalCartons;
-
-  async function buildCartons() {
+  async function buildCartons(totalCartons: number) {
     const serials: string[] = [];
     for (let i = 0; i < totalCartons; i += 1) {
       const result = await getNextCartonSerial();
@@ -140,7 +148,9 @@ export function BookOrderModal({ open, onOpenChange, onOrderSaved }: Props) {
     return serials;
   }
 
-  async function handleSaveOrder() {
+  async function handleSaveOrder(orderIndex: number) {
+    const order = orders[orderIndex];
+    if (!order) return null;
     if (!shippingMark.trim()) {
       toast.error("Shipping mark is required", {
         className: "bg-red-600 text-white border-red-600",
@@ -148,7 +158,7 @@ export function BookOrderModal({ open, onOpenChange, onOrderSaved }: Props) {
       return null;
     }
 
-    if (!totalCartons || totalCartons < 1) {
+    if (!order.totalCartons || order.totalCartons < 1) {
       toast.error("Total cartons must be at least 1", {
         className: "bg-red-600 text-white border-red-600",
       });
@@ -162,17 +172,17 @@ export function BookOrderModal({ open, onOpenChange, onOrderSaved }: Props) {
       return null;
     }
 
-    setIsSaving(true);
-    const serials = await buildCartons();
+    setSavingOrderIndex(orderIndex);
+    const serials = await buildCartons(order.totalCartons);
     if (!serials) {
-      setIsSaving(false);
+      setSavingOrderIndex(null);
       return null;
     }
 
     const orderPayload = {
       shipping_mark: shippingMark.trim(),
       destination_country: order.destinationCountry,
-      total_cartons: totalCartons,
+      total_cartons: order.totalCartons,
       item_description: order.itemDescription.trim(),
     };
 
@@ -191,7 +201,7 @@ export function BookOrderModal({ open, onOpenChange, onOrderSaved }: Props) {
     });
 
     const result = await createOrderWithCartons(orderPayload, cartonPayload);
-    setIsSaving(false);
+    setSavingOrderIndex(null);
     if ("error" in result) {
       toast.error(result.error, {
         className: "bg-red-600 text-white border-red-600",
@@ -215,8 +225,10 @@ export function BookOrderModal({ open, onOpenChange, onOrderSaved }: Props) {
     return printable;
   }
 
-  async function handleGeneratePrint() {
-    const cartonsToPrint = await handleSaveOrder();
+  async function handleGeneratePrint(orderIndex: number) {
+    const order = orders[orderIndex];
+    if (!order) return;
+    const cartonsToPrint = await handleSaveOrder(orderIndex);
     if (!cartonsToPrint) return;
     const pdf = new jsPDF({ unit: "mm", format: [101, 152] });
     for (let i = 0; i < cartonsToPrint.length; i += 1) {
@@ -329,93 +341,106 @@ export function BookOrderModal({ open, onOpenChange, onOrderSaved }: Props) {
           </div>
 
           <div className="space-y-4">
-            <Card className="border p-4 space-y-3">
-              <div className="flex items-center justify-between">
-                <div className="text-xs text-secondary-muted">
-                  Carton Serial Number: Auto-generated
+            {orders.map((order, index) => (
+              <Card key={`order-${index}`} className="border p-4 space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="text-xs text-secondary-muted">
+                    Carton Serial Number: Auto-generated
+                  </div>
                 </div>
-              </div>
-              <div className="grid gap-3 md:grid-cols-2">
-                <div className="space-y-1 md:col-span-2">
-                  <Label>Item Description</Label>
-                  <Input
-                    value={order.itemDescription}
-                    onChange={(event) => updateOrder({ itemDescription: event.target.value })}
-                    placeholder="Describe the shipment"
-                  />
+                <div className="grid gap-3 md:grid-cols-2">
+                  <div className="space-y-1 md:col-span-2">
+                    <Label>Item Description</Label>
+                    <Input
+                      value={order.itemDescription}
+                      onChange={(event) => updateOrder(index, { itemDescription: event.target.value })}
+                      placeholder="Describe the shipment"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <Label>Destination Country</Label>
+                    <select
+                      className="h-10 w-full rounded-md border border-input bg-white px-3 text-sm"
+                      value={order.destinationCountry}
+                      onChange={(event) => updateOrder(index, { destinationCountry: event.target.value })}
+                    >
+                      {DESTINATION_OPTIONS.map((option) => (
+                        <option key={option.value} value={option.value}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="space-y-1">
+                    <Label>Total Cartons</Label>
+                    <Input
+                      type="number"
+                      min={1}
+                      value={order.totalCartons}
+                      onChange={(event) => handleTotalCartonsChange(index, event.target.value)}
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <Label>Weight</Label>
+                    <Input
+                      value={order.weight}
+                      onChange={(event) => updateOrder(index, { weight: event.target.value })}
+                      placeholder="kg"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <Label>Length</Label>
+                    <Input
+                      value={order.length}
+                      onChange={(event) => updateOrder(index, { length: event.target.value })}
+                      onBlur={() => handleWeightAuto(index)}
+                      placeholder="cm"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <Label>Width</Label>
+                    <Input
+                      value={order.width}
+                      onChange={(event) => updateOrder(index, { width: event.target.value })}
+                      onBlur={() => handleWeightAuto(index)}
+                      placeholder="cm"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <Label>Height</Label>
+                    <Input
+                      value={order.height}
+                      onChange={(event) => updateOrder(index, { height: event.target.value })}
+                      onBlur={() => handleWeightAuto(index)}
+                      placeholder="cm"
+                    />
+                  </div>
                 </div>
-                <div className="space-y-1">
-                  <Label>Destination Country</Label>
-                  <select
-                    className="h-10 w-full rounded-md border border-input bg-white px-3 text-sm"
-                    value={order.destinationCountry}
-                    onChange={(event) => updateOrder({ destinationCountry: event.target.value })}
+                <div className="flex flex-wrap gap-2 justify-end pt-2">
+                  <Button
+                    variant="outline"
+                    onClick={() => handleSaveOrder(index)}
+                    type="button"
+                    disabled={isPending || savingOrderIndex === index}
                   >
-                    {DESTINATION_OPTIONS.map((option) => (
-                      <option key={option.value} value={option.value}>
-                        {option.label}
-                      </option>
-                    ))}
-                  </select>
+                    {isPending || savingOrderIndex === index ? "Saving..." : "Save Order"}
+                  </Button>
+                  <Button
+                    type="button"
+                    onClick={() => handleGeneratePrint(index)}
+                    disabled={isPending || savingOrderIndex === index}
+                  >
+                    Generate Print
+                  </Button>
                 </div>
-                <div className="space-y-1">
-                  <Label>Total Cartons</Label>
-                  <Input
-                    type="number"
-                    min={1}
-                    value={order.totalCartons}
-                    onChange={(event) => handleTotalCartonsChange(event.target.value)}
-                  />
-                </div>
-                <div className="space-y-1">
-                  <Label>Weight</Label>
-                  <Input
-                    value={order.weight}
-                    onChange={(event) => updateOrder({ weight: event.target.value })}
-                    placeholder="kg"
-                  />
-                </div>
-                <div className="space-y-1">
-                  <Label>Length</Label>
-                  <Input
-                    value={order.length}
-                    onChange={(event) => updateOrder({ length: event.target.value })}
-                    onBlur={handleWeightAuto}
-                    placeholder="cm"
-                  />
-                </div>
-                <div className="space-y-1">
-                  <Label>Width</Label>
-                  <Input
-                    value={order.width}
-                    onChange={(event) => updateOrder({ width: event.target.value })}
-                    onBlur={handleWeightAuto}
-                    placeholder="cm"
-                  />
-                </div>
-                <div className="space-y-1">
-                  <Label>Height</Label>
-                  <Input
-                    value={order.height}
-                    onChange={(event) => updateOrder({ height: event.target.value })}
-                    onBlur={handleWeightAuto}
-                    placeholder="cm"
-                  />
-                </div>
-              </div>
-            </Card>
+              </Card>
+            ))}
           </div>
         </div>
 
         <DialogFooter className="gap-2">
           <Button variant="outline" onClick={() => onOpenChange(false)}>
             Close
-          </Button>
-          <Button variant="outline" onClick={handleSaveOrder} disabled={isPending || isSaving}>
-            {isPending || isSaving ? "Saving..." : "Save Order"}
-          </Button>
-          <Button onClick={handleGeneratePrint} disabled={isPending || isSaving}>
-            Generate Print
           </Button>
         </DialogFooter>
       </DialogContent>

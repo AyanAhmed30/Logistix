@@ -27,6 +27,7 @@ type OrderDraft = {
   length: string;
   width: string;
   height: string;
+  dimensionUnit: "cm" | "m" | "mm";
   totalCartons: number;
 };
 
@@ -45,6 +46,7 @@ export function BookOrderModal({ open, onOpenChange, onOrderSaved }: Props) {
       length: "",
       width: "",
       height: "",
+      dimensionUnit: "cm",
       totalCartons: 1,
     },
   ]);
@@ -66,6 +68,7 @@ export function BookOrderModal({ open, onOpenChange, onOrderSaved }: Props) {
         length: "",
         width: "",
         height: "",
+        dimensionUnit: "cm",
         totalCartons: 1,
       },
     ]);
@@ -102,6 +105,7 @@ export function BookOrderModal({ open, onOpenChange, onOrderSaved }: Props) {
         length: "",
         width: "",
         height: "",
+        dimensionUnit: "cm",
         totalCartons: 1,
       },
     ]);
@@ -128,9 +132,35 @@ export function BookOrderModal({ open, onOpenChange, onOrderSaved }: Props) {
     const widthValue = toNumber(order.width);
     const heightValue = toNumber(order.height);
     if (lengthValue && widthValue && heightValue) {
-      const volumetricWeight = (lengthValue * widthValue * heightValue) / 5000;
+      const volumeCm3 = toCm3(lengthValue, widthValue, heightValue, order.dimensionUnit);
+      const volumetricWeight = volumeCm3 / 5000;
       updateOrder(index, { weight: volumetricWeight.toFixed(2) });
     }
+  }
+
+  function toCm3(
+    length: number,
+    width: number,
+    height: number,
+    unit: OrderDraft["dimensionUnit"]
+  ) {
+    if (unit === "m") {
+      return length * width * height * 1_000_000;
+    }
+    if (unit === "mm") {
+      return (length * width * height) / 1_000;
+    }
+    return length * width * height;
+  }
+
+  function calcCbm(order: OrderDraft) {
+    const lengthValue = toNumber(order.length);
+    const widthValue = toNumber(order.width);
+    const heightValue = toNumber(order.height);
+    if (!lengthValue || !widthValue || !heightValue || !order.totalCartons) return null;
+    const volumeCm3 = toCm3(lengthValue, widthValue, heightValue, order.dimensionUnit);
+    const cbm = (volumeCm3 / 1_000_000) * order.totalCartons;
+    return cbm;
   }
 
   async function buildCartons(totalCartons: number) {
@@ -196,6 +226,7 @@ export function BookOrderModal({ open, onOpenChange, onOrderSaved }: Props) {
         length: toNumber(order.length),
         width: toNumber(order.width),
         height: toNumber(order.height),
+        dimension_unit: order.dimensionUnit,
         carton_index: serialIndex,
       };
     });
@@ -270,7 +301,7 @@ export function BookOrderModal({ open, onOpenChange, onOrderSaved }: Props) {
 
       pdf.rect(boxLeft, startY + rowHeight * 3, boxWidth / 2, rowHeight);
       pdf.rect(boxLeft + boxWidth / 2, startY + rowHeight * 3, boxWidth / 2, rowHeight);
-      pdf.text("Weight:", boxLeft + 2, startY + rowHeight * 3 + 6);
+      pdf.text("TotalWeight:", boxLeft + 2, startY + rowHeight * 3 + 6);
       pdf.text(carton.weight || "-", boxLeft + 2, startY + rowHeight * 3 + 11);
       pdf.text("Dimensions:", boxLeft + boxWidth / 2 + 2, startY + rowHeight * 3 + 6);
       pdf.text(
@@ -381,50 +412,55 @@ export function BookOrderModal({ open, onOpenChange, onOrderSaved }: Props) {
                     />
                   </div>
                   <div className="space-y-1">
-                    <Label>Weight</Label>
+                    <Label>Total Weight</Label>
                     <Input
                       value={order.weight}
                       onChange={(event) => updateOrder(index, { weight: event.target.value })}
                       placeholder="kg"
                     />
                   </div>
-                  <div className="space-y-1">
-                    <Label>Length</Label>
-                    <Input
-                      value={order.length}
-                      onChange={(event) => updateOrder(index, { length: event.target.value })}
-                      onBlur={() => handleWeightAuto(index)}
-                      placeholder="cm"
-                    />
+                  <div className="space-y-2 md:col-span-2">
+                    <Label>Dimensions</Label>
+                    <div className="grid gap-2 md:grid-cols-[140px_1fr_1fr_1fr]">
+                      <select
+                        className="h-10 w-full rounded-md border border-input bg-white px-3 text-sm"
+                        value={order.dimensionUnit}
+                        onChange={(event) =>
+                          updateOrder(index, {
+                            dimensionUnit: event.target.value as OrderDraft["dimensionUnit"],
+                          })
+                        }
+                      >
+                        <option value="cm">cm</option>
+                        <option value="m">m</option>
+                        <option value="mm">mm</option>
+                      </select>
+                      <Input
+                        value={order.length}
+                        onChange={(event) => updateOrder(index, { length: event.target.value })}
+                        onBlur={() => handleWeightAuto(index)}
+                        placeholder={`Length (${order.dimensionUnit})`}
+                      />
+                      <Input
+                        value={order.width}
+                        onChange={(event) => updateOrder(index, { width: event.target.value })}
+                        onBlur={() => handleWeightAuto(index)}
+                        placeholder={`Width (${order.dimensionUnit})`}
+                      />
+                      <Input
+                        value={order.height}
+                        onChange={(event) => updateOrder(index, { height: event.target.value })}
+                        onBlur={() => handleWeightAuto(index)}
+                        placeholder={`Height (${order.dimensionUnit})`}
+                      />
+                    </div>
                   </div>
-                  <div className="space-y-1">
-                    <Label>Width</Label>
-                    <Input
-                      value={order.width}
-                      onChange={(event) => updateOrder(index, { width: event.target.value })}
-                      onBlur={() => handleWeightAuto(index)}
-                      placeholder="cm"
-                    />
-                  </div>
-                  <div className="space-y-1">
-                    <Label>Height</Label>
-                    <Input
-                      value={order.height}
-                      onChange={(event) => updateOrder(index, { height: event.target.value })}
-                      onBlur={() => handleWeightAuto(index)}
-                      placeholder="cm"
-                    />
+                  <div className="md:col-span-2 text-xs text-secondary-muted">
+                    CBM: {calcCbm(order)?.toFixed(3) ?? "-"}
                   </div>
                 </div>
                 <div className="flex flex-wrap gap-2 justify-end pt-2">
-                  <Button
-                    variant="outline"
-                    onClick={() => handleSaveOrder(index)}
-                    type="button"
-                    disabled={isPending || savingOrderIndex === index}
-                  >
-                    {isPending || savingOrderIndex === index ? "Saving..." : "Save Order"}
-                  </Button>
+                  
                   <Button
                     type="button"
                     onClick={() => handleGeneratePrint(index)}

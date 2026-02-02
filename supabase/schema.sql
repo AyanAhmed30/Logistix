@@ -17,6 +17,7 @@ create table if not exists cartons (
   length numeric,
   width numeric,
   height numeric,
+  dimension_unit text,
   carton_index integer not null,
   item_description text,
   destination_country text,

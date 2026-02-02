@@ -1,12 +1,13 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { logout } from "@/app/actions/auth";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { LogOut, Menu, Bell } from "lucide-react";
 import Image from "next/image";
 import { AdminUserManager } from "@/components/admin/AdminUserManager";
+import { getAdminNotifications } from "@/app/actions/orders";
 
 type AppUser = {
   id: string;
@@ -22,6 +23,46 @@ type Props = {
 
 export function AdminDashboardShell({ users, dbError }: Props) {
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+  const [activeTab, setActiveTab] = useState<
+    "none" | "create" | "profiles" | "tracking" | "notifications"
+  >("none");
+  const [unreadCount, setUnreadCount] = useState(0);
+
+  useEffect(() => {
+    let isMounted = true;
+    const lastSeenRaw = localStorage.getItem("admin_notifications_seen_at");
+    const lastSeen = lastSeenRaw ? new Date(lastSeenRaw).getTime() : 0;
+
+    getAdminNotifications().then((result) => {
+      if (!isMounted) return;
+      if ("notifications" in result && Array.isArray(result.notifications)) {
+        const unread = result.notifications.filter((item) => {
+          const createdAt = new Date(item.created_at).getTime();
+          return createdAt > lastSeen;
+        }).length;
+        setUnreadCount(unread);
+      }
+    });
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (activeTab !== "notifications") return;
+    getAdminNotifications().then((result) => {
+      if ("notifications" in result && Array.isArray(result.notifications) && result.notifications.length > 0) {
+        localStorage.setItem(
+          "admin_notifications_seen_at",
+          result.notifications[0].created_at
+        );
+      } else {
+        localStorage.setItem("admin_notifications_seen_at", new Date().toISOString());
+      }
+      setUnreadCount(0);
+    });
+  }, [activeTab]);
 
   return (
     <div className="min-h-screen bg-white">
@@ -50,9 +91,18 @@ export function AdminDashboardShell({ users, dbError }: Props) {
           </div>
 
           <div className="flex items-center gap-4 md:gap-6">
-            <button className="text-secondary-muted hover:text-primary-dark transition-colors relative">
+            <button
+              className="text-secondary-muted hover:text-primary-dark transition-colors relative"
+              onClick={() => setActiveTab("notifications")}
+              aria-label="Notifications"
+            >
               <Bell className="h-5 w-5" />
               <span className="absolute -top-1 -right-1 bg-primary-accent h-3 w-3 rounded-full border-2 border-white" />
+              {unreadCount > 0 && (
+                <span className="absolute -top-2 -right-2 min-w-[18px] rounded-full bg-red-600 px-1 py-0.5 text-[10px] font-bold text-white text-center">
+                  {unreadCount > 99 ? "99+" : unreadCount}
+                </span>
+              )}
             </button>
             <form action={logout}>
               <Button
@@ -72,6 +122,8 @@ export function AdminDashboardShell({ users, dbError }: Props) {
         userCount={users.length}
         isSidebarOpen={isSidebarOpen}
         onSidebarClose={() => setIsSidebarOpen(false)}
+        activeTab={activeTab}
+        onTabChange={setActiveTab}
       />
     </div>
   );

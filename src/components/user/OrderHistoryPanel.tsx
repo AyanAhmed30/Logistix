@@ -13,6 +13,7 @@ type Carton = {
   length: number | null;
   width: number | null;
   height: number | null;
+  dimension_unit: "cm" | "m" | "mm" | null;
   carton_index: number;
   created_at: string;
 };
@@ -170,29 +171,27 @@ export function OrderHistoryPanel({ refreshKey }: Props) {
                   </div>
                 </div>
                 <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Serial</TableHead>
-                      <TableHead>Weight</TableHead>
-                      <TableHead>Dimensions</TableHead>
-                      <TableHead>Carton</TableHead>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Serial</TableHead>
+                    <TableHead>Weight</TableHead>
+                    <TableHead>Dimensions</TableHead>
+                    <TableHead>CBM</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {groupCartons(order.cartons ?? []).map((group) => (
+                    <TableRow key={group.key}>
+                      <TableCell>{group.serialRange}</TableCell>
+                      <TableCell>{group.weight ?? "-"}</TableCell>
+                      <TableCell>
+                        {group.length ?? "-"} x {group.width ?? "-"} x {group.height ?? "-"}{" "}
+                        {group.unit ?? "cm"}
+                      </TableCell>
+                      <TableCell>{group.cbm}</TableCell>
                     </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {order.cartons?.map((carton) => (
-                      <TableRow key={carton.id}>
-                        <TableCell>{carton.carton_serial_number}</TableCell>
-                        <TableCell>{carton.weight ?? "-"}</TableCell>
-                        <TableCell>
-                          {carton.length ?? "-"} x {carton.width ?? "-"} x{" "}
-                          {carton.height ?? "-"}
-                        </TableCell>
-                        <TableCell>
-                          {order.total_cartons}-{carton.carton_index}
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
+                  ))}
+                </TableBody>
                 </Table>
               </div>
             ))}
@@ -201,4 +200,68 @@ export function OrderHistoryPanel({ refreshKey }: Props) {
       ))}
     </div>
   );
+}
+
+function groupCartons(cartons: Carton[]) {
+  const groups: Record<string, Carton[]> = {};
+  cartons.forEach((carton) => {
+    const key = [
+      carton.weight ?? "",
+      carton.length ?? "",
+      carton.width ?? "",
+      carton.height ?? "",
+      carton.dimension_unit ?? "cm",
+    ].join("|");
+    groups[key] = groups[key] ?? [];
+    groups[key].push(carton);
+  });
+
+  return Object.entries(groups).map(([key, group]) => {
+    const sorted = [...group].sort((a, b) =>
+      a.carton_serial_number.localeCompare(b.carton_serial_number)
+    );
+    const first = sorted[0];
+    const last = sorted[sorted.length - 1];
+    const serialRange =
+      first.carton_serial_number === last.carton_serial_number
+        ? first.carton_serial_number
+        : `${first.carton_serial_number}-${last.carton_serial_number}`;
+
+    const unit = first.dimension_unit ?? "cm";
+    const cbmValue = calcCbm(
+      first.length,
+      first.width,
+      first.height,
+      unit,
+      sorted.length
+    );
+
+    return {
+      key,
+      serialRange,
+      weight: first.weight,
+      length: first.length,
+      width: first.width,
+      height: first.height,
+      unit,
+      cbm: cbmValue !== null ? cbmValue.toFixed(3) : "-",
+    };
+  });
+}
+
+function calcCbm(
+  length: number | null,
+  width: number | null,
+  height: number | null,
+  unit: "cm" | "m" | "mm",
+  count: number
+) {
+  if (!length || !width || !height || !count) return null;
+  if (unit === "m") {
+    return length * width * height * count;
+  }
+  if (unit === "mm") {
+    return (length * width * height * count) / 1_000_000_000;
+  }
+  return (length * width * height * count) / 1_000_000;
 }

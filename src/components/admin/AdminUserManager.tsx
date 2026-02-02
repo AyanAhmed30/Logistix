@@ -24,8 +24,9 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { PlusCircle, UsersRound, X, Truck } from "lucide-react";
+import { PlusCircle, UsersRound, X, Truck, Bell } from "lucide-react";
 import { OrderTrackingPanel } from "@/components/admin/OrderTrackingPanel";
+import { AdminNotificationsPanel } from "@/components/admin/AdminNotificationsPanel";
 
 type AppUser = {
   id: string;
@@ -39,6 +40,8 @@ type Props = {
   userCount: number;
   isSidebarOpen: boolean;
   onSidebarClose: () => void;
+  activeTab: "none" | "create" | "profiles" | "tracking" | "notifications";
+  onTabChange: (tab: "none" | "create" | "profiles" | "tracking" | "notifications") => void;
 };
 
 export function AdminUserManager({
@@ -46,9 +49,10 @@ export function AdminUserManager({
   userCount,
   isSidebarOpen,
   onSidebarClose,
+  activeTab,
+  onTabChange,
 }: Props) {
   const router = useRouter();
-  const [activeTab, setActiveTab] = useState<"none" | "create" | "profiles" | "tracking">("none");
   const [createOpen, setCreateOpen] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
   const [editUser, setEditUser] = useState<AppUser | null>(null);
@@ -152,8 +156,8 @@ export function AdminUserManager({
     setEditOpen(true);
   }
 
-  function handleTabSelect(tab: "create" | "profiles" | "tracking") {
-    setActiveTab(tab);
+  function handleTabSelect(tab: "create" | "profiles" | "tracking" | "notifications") {
+    onTabChange(tab);
     onSidebarClose();
   }
 
@@ -208,6 +212,14 @@ export function AdminUserManager({
             <Truck className="h-4 w-4" />
             Order Tracking
           </Button>
+          <Button
+            variant={activeTab === "notifications" ? "default" : "outline"}
+            className="justify-start gap-2"
+            onClick={() => handleTabSelect("notifications")}
+          >
+            <Bell className="h-4 w-4" />
+            Notifications
+          </Button>
         </div>
        
       </aside>
@@ -233,7 +245,9 @@ export function AdminUserManager({
           </CardContent>
         </Card>
 
-        {activeTab === "tracking" ? (
+        {activeTab === "notifications" ? (
+          <AdminNotificationsPanel />
+        ) : activeTab === "tracking" ? (
           <OrderTrackingPanel />
         ) : activeTab === "profiles" ? (
           <Card className="bg-white border shadow-sm">

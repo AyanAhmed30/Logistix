@@ -9,6 +9,7 @@ type CartonInput = {
   length: number | null;
   width: number | null;
   height: number | null;
+  dimension_unit: "cm" | "m" | "mm";
   carton_index: number;
 };
 
@@ -103,7 +104,7 @@ export async function getOrderHistory() {
     const { data, error } = await supabase
       .from("orders")
       .select(
-        "id, shipping_mark, destination_country, total_cartons, item_description, created_at, cartons:cartons(id, carton_serial_number, weight, length, width, height, carton_index, created_at)"
+      "id, shipping_mark, destination_country, total_cartons, item_description, created_at, cartons:cartons(id, carton_serial_number, weight, length, width, height, dimension_unit, carton_index, created_at)"
       )
       .eq("username", session.username)
       .order("created_at", { ascending: false })
@@ -141,5 +142,29 @@ export async function getAllOrdersForAdmin() {
     return { orders: data ?? [] };
   } catch {
     return { error: "Unable to load orders" };
+  }
+}
+
+export async function getAdminNotifications() {
+  try {
+    const session = await getSession();
+    if (!session || session.role !== "admin") {
+      return { error: "Unauthorized" };
+    }
+
+    const supabase = await createAdminClient();
+    const { data, error } = await supabase
+      .from("orders")
+      .select("id, username, shipping_mark, total_cartons, created_at")
+      .order("created_at", { ascending: false })
+      .limit(20);
+
+    if (error) {
+      return { error: error.message };
+    }
+
+    return { notifications: data ?? [] };
+  } catch {
+    return { error: "Unable to load notifications" };
   }
 }

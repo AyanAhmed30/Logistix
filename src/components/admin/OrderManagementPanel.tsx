@@ -179,8 +179,8 @@ export function OrderManagementPanel() {
               <TableHead>Order Description</TableHead>
               <TableHead>Order Count</TableHead>
               <TableHead>Total Cartons</TableHead>
-              <TableHead>Total Weight (kg)</TableHead>
-              <TableHead>Total CBM (m³)</TableHead>
+              <TableHead>Total Weight </TableHead>
+              <TableHead>Total CBM </TableHead>
               <TableHead>Date & Time</TableHead>
             </TableRow>
           </TableHeader>

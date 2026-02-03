@@ -2,9 +2,21 @@
 
 import React, { useEffect, useState } from "react";
 import { getAllOrdersForAdmin } from "@/app/actions/orders";
+import { getAllConsoles, assignOrdersToConsole } from "@/app/actions/consoles";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Button } from "@/components/ui/button";
+import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Checkbox } from "@/components/ui/checkbox";
 import { ChevronDown, ChevronRight } from "lucide-react";
+import { toast } from "sonner";
 
 type Carton = {
   weight: number | null;
@@ -25,37 +37,70 @@ type Order = {
   cartons: Carton[];
 };
 
+type Console = {
+  id: string;
+  console_number: string;
+  container_number: string;
+  date: string;
+  bl_number: string;
+  carrier: string;
+  so: string;
+  total_cartons: number;
+  total_cbm: number;
+  max_cbm: number;
+  created_at: string;
+  updated_at: string;
+};
+
 export function OrderManagementPanel() {
   const [orders, setOrders] = useState<Order[]>([]);
+  const [consoles, setConsoles] = useState<Console[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set());
+  const [selectedConsole, setSelectedConsole] = useState<string>("");
+  const [selectedOrderIds, setSelectedOrderIds] = useState<Set<string>>(new Set());
+  const [isAssigning, setIsAssigning] = useState(false);
 
   useEffect(() => {
     let isMounted = true;
     
-    const fetchOrders = async () => {
+    const fetchData = async () => {
       setIsLoading(true);
-      const result = await getAllOrdersForAdmin();
+      
+      const [ordersResult, consolesResult] = await Promise.all([
+        getAllOrdersForAdmin(),
+        getAllConsoles(),
+      ]);
       
       if (!isMounted) return;
       
-      if ("error" in result) {
-        setError(result.error ?? "Unable to load orders");
+      if ("error" in ordersResult) {
+        setError(ordersResult.error ?? "Unable to load orders");
         setOrders([]);
       } else {
         setError(null);
-        setOrders(result.orders as Order[]);
+        setOrders(ordersResult.orders as Order[]);
       }
+      
+      if ("consoles" in consolesResult) {
+        setConsoles(consolesResult.consoles as Console[]);
+      }
+      
       setIsLoading(false);
     };
 
-    fetchOrders();
+    fetchData();
 
     return () => {
       isMounted = false;
     };
   }, []);
+
+  // Reset selection when console changes
+  useEffect(() => {
+    setSelectedOrderIds(new Set());
+  }, [selectedConsole]);
 
   if (isLoading) {
     return (
@@ -163,16 +208,145 @@ export function OrderManagementPanel() {
     });
   };
 
+  const toggleOrderSelection = (orderId: string) => {
+    setSelectedOrderIds((prev) => {
+      const newSet = new Set(prev);
+      if (newSet.has(orderId)) {
+        newSet.delete(orderId);
+      } else {
+        newSet.add(orderId);
+      }
+      return newSet;
+    });
+  };
+
+  const handleAssignOrders = async () => {
+    if (!selectedConsole) {
+      toast.error("Please select a console");
+      return;
+    }
+
+    if (selectedOrderIds.size === 0) {
+      toast.error("Please select at least one order");
+      return;
+    }
+
+    setIsAssigning(true);
+
+    // Calculate total CBM of selected orders
+    const selectedOrders = orders.filter((order) => selectedOrderIds.has(order.id));
+    let totalCbm = 0;
+
+    for (const order of selectedOrders) {
+      const totals = calcOrderTotals(order);
+      totalCbm += totals.totalCbm;
+    }
+
+    // Get console to check max CBM
+    const console = consoles.find((c) => c.id === selectedConsole);
+    if (console && totalCbm > console.max_cbm) {
+      toast.error(
+        `Total CBM (${totalCbm.toFixed(3)}) exceeds maximum capacity (${console.max_cbm})`
+      );
+      setIsAssigning(false);
+      return;
+    }
+
+    const result = await assignOrdersToConsole(selectedConsole, Array.from(selectedOrderIds));
+
+    setIsAssigning(false);
+
+    if ("error" in result) {
+      toast.error(result.error ?? "Failed to assign orders");
+      return;
+    }
+
+    toast.success(`Successfully assigned ${selectedOrderIds.size} order(s) to console`);
+    setSelectedOrderIds(new Set());
+    setSelectedConsole("");
+    
+    // Refresh orders to get updated console assignments
+    const refreshResult = await getAllOrdersForAdmin();
+    if ("orders" in refreshResult) {
+      setOrders(refreshResult.orders as Order[]);
+    }
+  };
+
+  // Calculate total CBM of selected orders for validation display
+  const selectedOrders = orders.filter((order) => selectedOrderIds.has(order.id));
+  const selectedTotalCbm = selectedOrders.reduce((sum, order) => {
+    const totals = calcOrderTotals(order);
+    return sum + totals.totalCbm;
+  }, 0);
+  const selectedConsoleObj = consoles.find((c) => c.id === selectedConsole);
+
   return (
     <Card className="bg-white border shadow-sm">
-      <CardHeader>
-        <CardTitle>Order Management</CardTitle>
-        <CardDescription>Manage and view all orders in the system. Click to expand and see individual sub-orders.</CardDescription>
+      <CardHeader className="pb-4">
+        <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+          <div className="flex-1">
+            <CardTitle>Order Management</CardTitle>
+            <CardDescription>
+              Manage and view all orders in the system. Click to expand and see individual
+              sub-orders.
+            </CardDescription>
+          </div>
+          <div className="flex flex-col gap-3 min-w-[280px] relative z-10">
+            <div className="flex flex-col gap-2">
+              <Label htmlFor="console-select" className="text-sm font-medium text-primary-dark">
+                Console
+              </Label>
+              <Select value={selectedConsole} onValueChange={setSelectedConsole}>
+                <SelectTrigger 
+                  id="console-select" 
+                  className="w-full bg-white"
+                >
+                  <SelectValue placeholder="Select Console" />
+                </SelectTrigger>
+                <SelectContent className="z-[100]">
+                  {consoles.length === 0 ? (
+                    <div className="px-2 py-1.5 text-sm text-secondary-muted">
+                      No consoles available
+                    </div>
+                  ) : (
+                    consoles.map((console) => (
+                      <SelectItem key={console.id} value={console.id}>
+                        {console.console_number}
+                      </SelectItem>
+                    ))
+                  )}
+                </SelectContent>
+              </Select>
+            </div>
+            {selectedConsole && selectedOrderIds.size > 0 && (
+              <div className="flex flex-col gap-2 p-3 bg-slate-50 rounded-md border border-slate-200">
+                <div className="text-xs text-secondary-muted space-y-1">
+                  <div>
+                    <span className="font-medium">Selected:</span> {selectedOrderIds.size} order(s)
+                  </div>
+                  <div>
+                    <span className="font-medium">CBM:</span> {selectedTotalCbm.toFixed(3)}
+                    {selectedConsoleObj && ` / ${selectedConsoleObj.max_cbm}`}
+                  </div>
+                </div>
+                <Button 
+                  onClick={handleAssignOrders} 
+                  disabled={isAssigning} 
+                  size="sm"
+                  className="w-full"
+                >
+                  {isAssigning ? "Assigning..." : "Done"}
+                </Button>
+              </div>
+            )}
+          </div>
+        </div>
       </CardHeader>
-      <CardContent>
+      <CardContent className="relative z-0">
         <Table>
           <TableHeader>
             <TableRow>
+              {selectedConsole && <TableHead className="w-12"></TableHead>}
               <TableHead className="w-10"></TableHead>
               <TableHead>Shipping Mark</TableHead>
               <TableHead>UUID</TableHead>
@@ -193,9 +367,35 @@ export function OrderManagementPanel() {
                 <React.Fragment key={`${row.shippingMark}-${index}`}>
                   <TableRow
                     className={hasSubOrders ? "cursor-pointer hover:bg-slate-50" : ""}
-                    onClick={hasSubOrders ? () => toggleRow(row.shippingMark) : undefined}
+                    onClick={
+                      hasSubOrders && !selectedConsole
+                        ? () => toggleRow(row.shippingMark)
+                        : undefined
+                    }
                   >
-                    <TableCell>
+                    {selectedConsole && (
+                      <TableCell onClick={(e) => e.stopPropagation()}>
+                        <Checkbox
+                          checked={row.subOrders.every((order) =>
+                            selectedOrderIds.has(order.id)
+                          )}
+                          onCheckedChange={(checked) => {
+                            row.subOrders.forEach((order) => {
+                              if (checked) {
+                                setSelectedOrderIds((prev) => new Set(prev).add(order.id));
+                              } else {
+                                setSelectedOrderIds((prev) => {
+                                  const newSet = new Set(prev);
+                                  newSet.delete(order.id);
+                                  return newSet;
+                                });
+                              }
+                            });
+                          }}
+                        />
+                      </TableCell>
+                    )}
+                    <TableCell onClick={hasSubOrders && !selectedConsole ? () => toggleRow(row.shippingMark) : undefined}>
                       {hasSubOrders ? (
                         isExpanded ? (
                           <ChevronDown className="h-4 w-4 text-primary-dark" />
@@ -217,7 +417,10 @@ export function OrderManagementPanel() {
                   </TableRow>
                   {isExpanded && hasSubOrders && (
                     <TableRow key={`${row.shippingMark}-expanded-${index}`}>
-                      <TableCell colSpan={9} className="bg-slate-50 p-0">
+                      <TableCell
+                        colSpan={selectedConsole ? 10 : 9}
+                        className="bg-slate-50 p-0"
+                      >
                         <div className="p-4">
                           <div className="mb-3 text-sm font-semibold text-primary-dark">
                             Sub-Orders ({row.orderCount})
@@ -225,6 +428,7 @@ export function OrderManagementPanel() {
                           <Table>
                             <TableHeader>
                               <TableRow>
+                                {selectedConsole && <TableHead className="w-12"></TableHead>}
                                 <TableHead>#</TableHead>
                                 <TableHead>Item Description</TableHead>
                                 <TableHead>Cartons</TableHead>
@@ -236,8 +440,22 @@ export function OrderManagementPanel() {
                             <TableBody>
                               {row.subOrders.map((subOrder, subIndex) => {
                                 const subTotals = calcOrderTotals(subOrder);
+                                const isSelected = selectedOrderIds.has(subOrder.id);
                                 return (
-                                  <TableRow key={`${subOrder.id}-${subIndex}`}>
+                                  <TableRow
+                                    key={`${subOrder.id}-${subIndex}`}
+                                    className={isSelected ? "bg-blue-50" : ""}
+                                  >
+                                    {selectedConsole && (
+                                      <TableCell>
+                                        <Checkbox
+                                          checked={isSelected}
+                                          onCheckedChange={() =>
+                                            toggleOrderSelection(subOrder.id)
+                                          }
+                                        />
+                                      </TableCell>
+                                    )}
                                     <TableCell className="font-medium">{subIndex + 1}</TableCell>
                                     <TableCell>{subOrder.item_description || "-"}</TableCell>
                                     <TableCell>{subOrder.total_cartons}</TableCell>

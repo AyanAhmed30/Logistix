@@ -128,7 +128,20 @@ export async function getAllOrdersForAdmin() {
     }
 
     const supabase = await createAdminClient();
-    const { data, error } = await supabase
+    
+    // Get all order IDs that are already assigned to consoles
+    const { data: assignedOrders, error: assignedError } = await supabase
+      .from("console_orders")
+      .select("order_id");
+
+    if (assignedError) {
+      return { error: assignedError.message };
+    }
+
+    const assignedOrderIds = new Set(assignedOrders?.map((co) => co.order_id) || []);
+
+    // Get all orders
+    const { data: allOrders, error } = await supabase
       .from("orders")
       .select(
         "id, username, shipping_mark, destination_country, total_cartons, item_description, created_at, cartons:cartons(weight, length, width, height, carton_index)"
@@ -139,7 +152,12 @@ export async function getAllOrdersForAdmin() {
       return { error: error.message };
     }
 
-    return { orders: data ?? [] };
+    // Filter out orders that are already assigned to consoles
+    const unassignedOrders = (allOrders || []).filter(
+      (order) => !assignedOrderIds.has(order.id)
+    );
+
+    return { orders: unassignedOrders };
   } catch {
     return { error: "Unable to load orders" };
   }

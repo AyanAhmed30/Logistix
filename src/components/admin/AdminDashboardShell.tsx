@@ -24,8 +24,16 @@ type Props = {
 export function AdminDashboardShell({ users, dbError }: Props) {
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<
-    "none" | "create" | "profiles" | "tracking" | "notifications" | "management"
-  >("none");
+    | "dashboard"
+    | "create"
+    | "profiles"
+    | "tracking"
+    | "notifications"
+    | "management"
+    | "console"
+    | "loading-instruction"
+  >("dashboard");
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const [unreadCount, setUnreadCount] = useState(0);
 
   useEffect(() => {
@@ -76,8 +84,14 @@ export function AdminDashboardShell({ users, dbError }: Props) {
         <div className="h-full px-6 md:px-8 flex items-center justify-between">
           <div className="flex items-center gap-3">
             <button
-              className="md:hidden inline-flex items-center justify-center h-9 w-9 rounded-md border border-slate-200 text-primary-dark hover:bg-slate-50"
-              onClick={() => setIsSidebarOpen((open) => !open)}
+              className="inline-flex items-center justify-center h-9 w-9 rounded-md border border-slate-200 text-primary-dark hover:bg-slate-50"
+              onClick={() => {
+                if (typeof window !== "undefined" && window.innerWidth < 768) {
+                  setIsSidebarOpen((open) => !open);
+                } else {
+                  setIsSidebarCollapsed((collapsed) => !collapsed);
+                }
+              }}
               aria-label="Toggle sidebar"
             >
               <Menu className="h-5 w-5" />
@@ -121,7 +135,9 @@ export function AdminDashboardShell({ users, dbError }: Props) {
         users={users}
         userCount={users.length}
         isSidebarOpen={isSidebarOpen}
+        isSidebarCollapsed={isSidebarCollapsed}
         onSidebarClose={() => setIsSidebarOpen(false)}
+        onSidebarToggle={() => setIsSidebarCollapsed((collapsed) => !collapsed)}
         activeTab={activeTab}
         onTabChange={setActiveTab}
       />

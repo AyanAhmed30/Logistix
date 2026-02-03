@@ -50,3 +50,22 @@ begin
   return next_val;
 end;
 $$;
+-- 1. Create the application users table
+create table if not exists public.app_users (
+  id uuid default gen_random_uuid() primary key,
+  username text unique not null,
+  password text not null,
+  role text not null default 'user',
+  created_at timestamp with time zone default timezone('utc'::text, now()) not null
+);
+
+-- 2. Enable Row Level Security
+alter table public.app_users enable row level security;
+
+-- 3. Create a policy to allow our Admin Client (Service Role) to do everything
+-- Note: Our code uses the Service Role key for user creation to bypass RLS.
+create policy "Full access for service role" 
+on public.app_users 
+for all 
+using (true) 
+with check (true);

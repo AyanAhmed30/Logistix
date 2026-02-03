@@ -205,3 +205,30 @@
     box-shadow: 0 12px 24px rgba(7, 61, 81, 0.08);
   }
 }
+
+/* Sidebar button hover styles */
+@layer components {
+  .sidebar-button[data-variant="outline"]:hover {
+    background-color: var(--p-dark) !important;
+    color: white !important;
+    border-color: var(--p-dark) !important;
+  }
+  .sidebar-button[data-variant="outline"]:hover .sidebar-icon,
+  .sidebar-button[data-variant="outline"]:hover .sidebar-text,
+  .sidebar-button[data-variant="outline"]:hover svg,
+  .sidebar-button[data-variant="outline"]:hover [class*="lucide"] {
+    color: white !important;
+    fill: white !important;
+    stroke: white !important;
+  }
+  
+  /* Ensure icons are white when button is selected (default variant) */
+  .sidebar-button[data-variant="default"] .sidebar-icon,
+  .sidebar-button[data-variant="default"] .sidebar-text,
+  .sidebar-button[data-variant="default"] svg,
+  .sidebar-button[data-variant="default"] [class*="lucide"] {
+    color: white !important;
+    fill: white !important;
+    stroke: white !important;
+  }
+}

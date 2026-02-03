@@ -24,10 +24,13 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { PlusCircle, UsersRound, X, Truck, Bell, Package } from "lucide-react";
+import { PlusCircle, UsersRound, X, Truck, Bell, Package, Container, FileText, TrendingUp } from "lucide-react";
 import { OrderTrackingPanel } from "@/components/admin/OrderTrackingPanel";
 import { AdminNotificationsPanel } from "@/components/admin/AdminNotificationsPanel";
 import { OrderManagementPanel } from "@/components/admin/OrderManagementPanel";
+import { ConsolePanel } from "@/components/admin/ConsolePanel";
+import { LoadingInstructionPanel } from "@/components/admin/LoadingInstructionPanel";
+import { AdminDashboardOverview } from "@/components/admin/AdminDashboardOverview";
 
 type AppUser = {
   id: string;
@@ -40,16 +43,38 @@ type Props = {
   users: AppUser[];
   userCount: number;
   isSidebarOpen: boolean;
+  isSidebarCollapsed: boolean;
   onSidebarClose: () => void;
-  activeTab: "none" | "create" | "profiles" | "tracking" | "notifications" | "management";
-  onTabChange: (tab: "none" | "create" | "profiles" | "tracking" | "notifications" | "management") => void;
+  onSidebarToggle: () => void;
+  activeTab:
+    | "dashboard"
+    | "create"
+    | "profiles"
+    | "tracking"
+    | "notifications"
+    | "management"
+    | "console"
+    | "loading-instruction";
+  onTabChange: (
+    tab:
+      | "dashboard"
+      | "create"
+      | "profiles"
+      | "tracking"
+      | "notifications"
+      | "management"
+      | "console"
+      | "loading-instruction"
+  ) => void;
 };
 
 export function AdminUserManager({
   users,
   userCount,
   isSidebarOpen,
+  isSidebarCollapsed,
   onSidebarClose,
+  onSidebarToggle,
   activeTab,
   onTabChange,
 }: Props) {
@@ -157,16 +182,29 @@ export function AdminUserManager({
     setEditOpen(true);
   }
 
-  function handleTabSelect(tab: "create" | "profiles" | "tracking" | "notifications" | "management") {
+  function handleTabSelect(
+    tab:
+      | "dashboard"
+      | "create"
+      | "profiles"
+      | "tracking"
+      | "notifications"
+      | "management"
+      | "console"
+      | "loading-instruction"
+  ) {
     onTabChange(tab);
     onSidebarClose();
   }
 
+  const sidebarWidth = isSidebarCollapsed ? "md:w-20" : "md:w-72";
+  const mainContentMargin = isSidebarCollapsed ? "md:pl-20" : "md:pl-72";
+
   return (
-    <div className="pt-20 md:pl-72">
+    <div className={`pt-20 ${mainContentMargin}`}>
       <aside
-        className={`fixed inset-y-0 left-0 z-50 w-72 bg-white border-r shadow-lg p-5 space-y-4 transform transition-transform duration-200 md:translate-x-0 md:top-16 md:h-[calc(100vh-4rem)] md:shadow-none ${
-          isSidebarOpen ? "translate-x-0" : "-translate-x-full"
+        className={`fixed inset-y-0 left-0 z-50 ${sidebarWidth} bg-white border-r shadow-lg p-5 space-y-4 transform transition-all duration-200 md:translate-x-0 md:top-16 md:h-[calc(100vh-4rem)] md:shadow-none overflow-hidden ${
+          isSidebarOpen ? "translate-x-0" : "-translate-x-full md:translate-x-0"
         }`}
       >
         <div className="flex items-center justify-between md:hidden">
@@ -181,53 +219,85 @@ export function AdminUserManager({
             <X className="h-4 w-4" />
           </button>
         </div>
-        <div className="space-y-1">
+        <div className={`space-y-1 ${isSidebarCollapsed ? "hidden md:block" : ""}`}>
           <h2 className="text-lg font-black text-primary-dark">Admin Tools</h2>
           <p className="text-xs text-secondary-muted">Manage access and profiles</p>
         </div>
-        <div className="grid gap-2">
+        <div className="grid gap-2 sidebar-buttons">
+          <Button
+            variant={activeTab === "dashboard" ? "default" : "outline"}
+            className="justify-start gap-2 sidebar-button"
+            onClick={() => handleTabSelect("dashboard")}
+            title="Dashboard"
+          >
+            <TrendingUp className="h-4 w-4 shrink-0 sidebar-icon" />
+            {!isSidebarCollapsed && <span className="sidebar-text">Dashboard</span>}
+          </Button>
           <Button
             variant={activeTab === "create" ? "default" : "outline"}
-            className="justify-start gap-2"
+            className="justify-start gap-2 sidebar-button"
             onClick={() => {
               setCreateOpen(true);
               handleTabSelect("create");
             }}
+            title="Create New User"
           >
-            <PlusCircle className="h-4 w-4" />
-            Create New User
+            <PlusCircle className="h-4 w-4 shrink-0 sidebar-icon" />
+            {!isSidebarCollapsed && <span className="sidebar-text">Create New User</span>}
           </Button>
           <Button
             variant={activeTab === "profiles" ? "default" : "outline"}
-            className="justify-start gap-2"
+            className="justify-start gap-2 sidebar-button"
             onClick={() => handleTabSelect("profiles")}
+            title="User Profiles"
           >
-            <UsersRound className="h-4 w-4" />
-            User Profiles
+            <UsersRound className="h-4 w-4 shrink-0 sidebar-icon" />
+            {!isSidebarCollapsed && <span className="sidebar-text">User Profiles</span>}
           </Button>
           <Button
             variant={activeTab === "tracking" ? "default" : "outline"}
-            className="justify-start gap-2"
+            className="justify-start gap-2 sidebar-button"
             onClick={() => handleTabSelect("tracking")}
+            title="Order Tracking"
           >
-            <Truck className="h-4 w-4" />
-            Order Tracking
+            <Truck className="h-4 w-4 shrink-0 sidebar-icon" />
+            {!isSidebarCollapsed && <span className="sidebar-text">Order Tracking</span>}
           </Button>
           <Button
             variant={activeTab === "notifications" ? "default" : "outline"}
-            className="justify-start gap-2"
+            className="justify-start gap-2 sidebar-button"
             onClick={() => handleTabSelect("notifications")}
+            title="Notifications"
           >
-            <Bell className="h-4 w-4" />
-            Notifications
+            <Bell className="h-4 w-4 shrink-0 sidebar-icon" />
+            {!isSidebarCollapsed && <span className="sidebar-text">Notifications</span>}
           </Button>
           <Button
             variant={activeTab === "management" ? "default" : "outline"}
-            className="justify-start gap-2"
+            className="justify-start gap-2 sidebar-button"
             onClick={() => handleTabSelect("management")}
+            title="Order Management"
           >
-            <Package className="h-4 w-4" />
-            Order Management
+            <Package className="h-4 w-4 shrink-0 sidebar-icon" />
+            {!isSidebarCollapsed && <span className="sidebar-text">Order Management</span>}
+          </Button>
+          <Button
+            variant={activeTab === "console" ? "default" : "outline"}
+            className="justify-start gap-2 sidebar-button"
+            onClick={() => handleTabSelect("console")}
+            title="Console"
+          >
+            <Container className="h-4 w-4 shrink-0 sidebar-icon" />
+            {!isSidebarCollapsed && <span className="sidebar-text">Console</span>}
+          </Button>
+          <Button
+            variant={activeTab === "loading-instruction" ? "default" : "outline"}
+            className="justify-start gap-2 sidebar-button"
+            onClick={() => handleTabSelect("loading-instruction")}
+            title="Loading Instruction"
+          >
+            <FileText className="h-4 w-4 shrink-0 sidebar-icon" />
+            {!isSidebarCollapsed && <span className="sidebar-text">Loading Instruction</span>}
           </Button>
         </div>
        
@@ -241,26 +311,32 @@ export function AdminUserManager({
         />
       )}
 
-      <section className="space-y-6 px-6 pb-10 md:px-10">
-        <Card className="bg-white border shadow-sm">
-          <CardHeader>
-            <CardTitle>Admin Profile</CardTitle>
-            <CardDescription>Total users in the system</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="text-4xl font-black text-primary-dark">
-              {userCount.toString().padStart(2, "0")}
-            </div>
-          </CardContent>
-        </Card>
-
-        {activeTab === "notifications" ? (
+      <section className="px-6 pb-10 md:px-10">
+        {activeTab === "dashboard" ? (
+          <AdminDashboardOverview />
+        ) : activeTab === "notifications" ? (
           <AdminNotificationsPanel />
         ) : activeTab === "tracking" ? (
           <OrderTrackingPanel />
         ) : activeTab === "management" ? (
           <OrderManagementPanel />
+        ) : activeTab === "console" ? (
+          <ConsolePanel />
+        ) : activeTab === "loading-instruction" ? (
+          <LoadingInstructionPanel />
         ) : activeTab === "profiles" ? (
+          <div className="space-y-6">
+            <Card className="bg-white border shadow-sm">
+              <CardHeader>
+                <CardTitle>Admin Profile</CardTitle>
+                <CardDescription>Total users in the system</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="text-4xl font-black text-primary-dark">
+                  {userCount.toString().padStart(2, "0")}
+                </div>
+              </CardContent>
+            </Card>
           <Card className="bg-white border shadow-sm">
             <CardHeader className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
               <div>
@@ -318,6 +394,7 @@ export function AdminUserManager({
               )}
             </CardContent>
           </Card>
+          </div>
         ) : null}
       </section>
 

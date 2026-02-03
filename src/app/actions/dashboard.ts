@@ -82,13 +82,17 @@ export async function getDashboardStats() {
     // Get console statistics
     const { data: consoles, error: consolesError } = await supabase
       .from('consoles')
-      .select('id, total_cartons, total_cbm, max_cbm');
+      .select('id, total_cartons, total_cbm, max_cbm, status');
 
     if (consolesError) {
       return { error: consolesError.message };
     }
 
     const totalConsoles = consoles?.length || 0;
+    
+    // Count consoles by status
+    const activeConsoles = consoles?.filter((c: any) => !c.status || c.status === 'active').length || 0;
+    const readyForLoadingConsoles = consoles?.filter((c: any) => c.status === 'ready_for_loading').length || 0;
 
     return {
       stats: {
@@ -98,6 +102,8 @@ export async function getDashboardStats() {
         unassignedOrdersCount,
         totalCbm,
         totalConsoles,
+        activeConsoles,
+        readyForLoadingConsoles,
         totalCartons,
         cartonsInConsoles,
         remainingCartons,

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { createConsole, getAllConsoles, getConsoleWithOrders } from "@/app/actions/consoles";
+import { createConsole, getAllConsoles, getConsoleWithOrders, markConsoleReadyForLoading } from "@/app/actions/consoles";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -16,7 +16,7 @@ import {
 } from "@/components/ui/dialog";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { toast } from "sonner";
-import { ChevronDown, ChevronRight, Plus } from "lucide-react";
+import { ChevronDown, ChevronRight, Plus, Truck } from "lucide-react";
 
 type Carton = {
   weight: number | null;
@@ -48,6 +48,7 @@ type Console = {
   total_cartons: number;
   total_cbm: number;
   max_cbm: number;
+  status?: string;
   created_at: string;
   updated_at: string;
 };
@@ -59,6 +60,8 @@ export function ConsolePanel() {
   const [createOpen, setCreateOpen] = useState(false);
   const [expandedConsoles, setExpandedConsoles] = useState<Set<string>>(new Set());
   const [consoleOrders, setConsoleOrders] = useState<Record<string, Order[]>>({});
+  const [readyForLoadingOpen, setReadyForLoadingOpen] = useState(false);
+  const [selectedConsoleForLoading, setSelectedConsoleForLoading] = useState<Console | null>(null);
 
   // Form state
   const [formData, setFormData] = useState({
@@ -191,6 +194,27 @@ export function ConsolePanel() {
     }
   };
 
+  const handleMarkReadyForLoading = async () => {
+    if (!selectedConsoleForLoading) return;
+
+    const result = await markConsoleReadyForLoading(selectedConsoleForLoading.id);
+
+    if ("error" in result) {
+      toast.error(result.error ?? "Failed to mark console as ready for loading");
+      return;
+    }
+
+    toast.success("Console moved to Loading Instruction");
+    setReadyForLoadingOpen(false);
+    setSelectedConsoleForLoading(null);
+
+    // Refresh console list to remove the moved console
+    const refreshResult = await getAllConsoles();
+    if ("consoles" in refreshResult) {
+      setConsoles(refreshResult.consoles as Console[]);
+    }
+  };
+
   const getConsoleStatus = (console: Console): "Empty" | "Partially Filled" | "Full" => {
     if (console.total_cbm === 0) return "Empty";
     if (console.total_cbm >= console.max_cbm) return "Full";
@@ -238,12 +262,12 @@ export function ConsolePanel() {
     <div className="space-y-6">
       <Card className="bg-white border shadow-sm">
         <CardHeader>
-          <div className="flex items-center justify-between">
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
             <div>
               <CardTitle>Console Management</CardTitle>
-              <CardDescription>Create and manage consoles for order assignment</CardDescription>
+              <CardDescription className="text-sm">Create and manage consoles for order assignment</CardDescription>
             </div>
-            <Button onClick={() => setCreateOpen(true)}>
+            <Button onClick={() => setCreateOpen(true)} className="create-console-btn bg-primary-dark hover:bg-primary-accent text-white w-full sm:w-auto">
               <Plus className="h-4 w-4 mr-2" />
               Create Console
             </Button>
@@ -269,11 +293,11 @@ export function ConsolePanel() {
                 return (
                   <Card key={console.id} className="border">
                     <CardHeader className="pb-3">
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-3">
+                      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                        <div className="flex items-center gap-3 flex-1 min-w-0">
                           <button
                             onClick={() => toggleConsole(console.id)}
-                            className="text-primary-dark hover:text-primary-accent"
+                            className="text-primary-dark hover:text-primary-accent flex-shrink-0"
                           >
                             {isExpanded ? (
                               <ChevronDown className="h-5 w-5" />
@@ -281,24 +305,26 @@ export function ConsolePanel() {
                               <ChevronRight className="h-5 w-5" />
                             )}
                           </button>
-                          <div>
-                            <CardTitle className="text-lg">
+                          <div className="min-w-0 flex-1">
+                            <CardTitle className="text-base sm:text-lg truncate">
                               Console #{console.console_number}
                             </CardTitle>
-                            <CardDescription className="text-xs">
-                              Container: {console.container_number} | BL: {console.bl_number}
+                            <CardDescription className="text-xs break-words">
+                              <span className="block sm:inline">Container: {console.container_number}</span>
+                              <span className="hidden sm:inline"> | </span>
+                              <span className="block sm:inline">BL: {console.bl_number}</span>
                             </CardDescription>
                           </div>
                         </div>
                         <span
-                          className={`px-3 py-1 rounded-full text-xs font-semibold ${statusColors[status]}`}
+                          className={`px-3 py-1 rounded-full text-xs font-semibold ${statusColors[status]} self-start sm:self-auto whitespace-nowrap`}
                         >
                           {status}
                         </span>
                       </div>
                     </CardHeader>
                     <CardContent>
-                      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4 text-sm">
                         <div>
                           <span className="text-secondary-muted">Date:</span>
                           <div className="font-medium">
@@ -307,22 +333,36 @@ export function ConsolePanel() {
                         </div>
                         <div>
                           <span className="text-secondary-muted">Carrier:</span>
-                          <div className="font-medium">{console.carrier}</div>
+                          <div className="font-medium break-words">{console.carrier}</div>
                         </div>
                         <div>
                           <span className="text-secondary-muted">SO:</span>
-                          <div className="font-medium">{console.so}</div>
+                          <div className="font-medium break-words">{console.so}</div>
                         </div>
                         <div>
                           <span className="text-secondary-muted">Total Cartons:</span>
                           <div className="font-medium">{console.total_cartons}</div>
                         </div>
-                        <div>
+                        <div className="sm:col-span-2 md:col-span-1">
                           <span className="text-secondary-muted">Total CBM:</span>
-                          <div className="font-medium">
-                            {console.total_cbm.toFixed(3)} / {console.max_cbm} (Accumulated / Max Capacity)
+                          <div className="font-medium break-words">
+                            <span className="block sm:inline">{console.total_cbm.toFixed(3)} / {console.max_cbm}</span>
+                            <span className="text-xs text-secondary-muted block sm:inline sm:ml-1">(Accumulated / Max)</span>
                           </div>
                         </div>
+                      </div>
+
+                      <div className="mt-4 pt-4 border-t">
+                        <Button
+                          onClick={() => {
+                            setSelectedConsoleForLoading(console);
+                            setReadyForLoadingOpen(true);
+                          }}
+                          className="ready-for-loading-btn w-full md:w-auto bg-primary-dark hover:bg-primary-accent text-white"
+                        >
+                          <Truck className="h-4 w-4 mr-2" />
+                          Ready for Loading
+                        </Button>
                       </div>
 
                       {isExpanded && orders.length > 0 && (
@@ -330,7 +370,9 @@ export function ConsolePanel() {
                           <h4 className="font-semibold mb-4 text-primary-dark">
                             Assigned Orders ({orders.length})
                           </h4>
-                          <Table>
+                          <div className="overflow-x-auto -mx-4 sm:mx-0">
+                            <div className="inline-block min-w-full align-middle px-4 sm:px-0">
+                              <Table>
                             <TableHeader>
                               <TableRow>
                                 <TableHead>Shipping Mark</TableHead>
@@ -351,7 +393,7 @@ export function ConsolePanel() {
                                     <TableCell className="font-medium">
                                       {order.shipping_mark}
                                     </TableCell>
-                                    <TableCell className="font-mono text-xs">{order.id}</TableCell>
+                                    <TableCell className="font-mono text-xs break-all">{order.id}</TableCell>
                                     <TableCell>{order.username}</TableCell>
                                     <TableCell>{order.item_description || "-"}</TableCell>
                                     <TableCell>{order.total_cartons}</TableCell>
@@ -365,6 +407,8 @@ export function ConsolePanel() {
                               })}
                             </TableBody>
                           </Table>
+                            </div>
+                          </div>
                         </div>
                       )}
 
@@ -391,7 +435,7 @@ export function ConsolePanel() {
             </DialogDescription>
           </DialogHeader>
           <div className="grid gap-4 py-4">
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div className="space-y-2">
                 <Label htmlFor="console_number">Console Number *</Label>
                 <Input
@@ -424,7 +468,7 @@ export function ConsolePanel() {
                 onChange={(e) => setFormData({ ...formData, date: e.target.value })}
               />
             </div>
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div className="space-y-2">
                 <Label htmlFor="bl_number">BL Number *</Label>
                 <Input
@@ -453,7 +497,7 @@ export function ConsolePanel() {
                 placeholder="SO-001"
               />
             </div>
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div className="space-y-2">
                 <Label htmlFor="total_cartons">
                   Total Number of Cartons
@@ -465,7 +509,7 @@ export function ConsolePanel() {
                   min="0"
                   value=""
                   disabled
-                  placeholder="Will be populated automatically after assigning orders from Order Management page"
+                  placeholder="Auto-calculated after order assignment"
                   className="bg-slate-50 cursor-not-allowed"
                 />
                 <p className="text-xs text-secondary-muted mt-1">
@@ -490,11 +534,37 @@ export function ConsolePanel() {
               </div>
             </div>
           </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setCreateOpen(false)}>
+          <DialogFooter className="flex-col sm:flex-row gap-2 sm:gap-0">
+            <Button variant="outline" onClick={() => setCreateOpen(false)} className="w-full sm:w-auto">
               Cancel
             </Button>
-            <Button onClick={handleCreateConsole}>Create Console</Button>
+            <Button onClick={handleCreateConsole} className="create-console-btn bg-primary-dark hover:bg-primary-accent text-white w-full sm:w-auto">Create Console</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Ready for Loading Modal */}
+      <Dialog open={readyForLoadingOpen} onOpenChange={setReadyForLoadingOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Ready for Loading</DialogTitle>
+            <DialogDescription>
+              {selectedConsoleForLoading && (
+                <>
+                  Out of total {selectedConsoleForLoading.max_cbm} CBM, this console contains{" "}
+                  {selectedConsoleForLoading.total_cbm.toFixed(3)} CBM.
+                  <br />
+                  <br />
+                  Do you want to move this console to Loading?
+                </>
+              )}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="flex-col sm:flex-row gap-2 sm:gap-0">
+            <Button variant="outline" onClick={() => setReadyForLoadingOpen(false)} className="w-full sm:w-auto">
+              Cancel
+            </Button>
+            <Button onClick={handleMarkReadyForLoading} className="w-full sm:w-auto">Done</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

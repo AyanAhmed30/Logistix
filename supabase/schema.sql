@@ -69,3 +69,39 @@ on public.app_users
 for all 
 using (true) 
 with check (true);
+
+-- Consoles table
+create table if not exists consoles (
+  id uuid primary key default gen_random_uuid(),
+  console_number text not null unique,
+  container_number text not null,
+  date date not null,
+  bl_number text not null,
+  carrier text not null,
+  so text not null,
+  total_cartons integer not null default 0,
+  total_cbm numeric(10, 3) not null default 0,
+  max_cbm numeric(10, 3) not null default 68,
+  status text not null default 'active',
+  created_at timestamptz default now(),
+  updated_at timestamptz default now()
+);
+
+-- Console orders junction table
+create table if not exists console_orders (
+  console_id uuid references consoles(id) on delete cascade,
+  order_id uuid references orders(id) on delete cascade,
+  primary key (console_id, order_id),
+  assigned_at timestamptz default now()
+);
+
+-- Migration: Add status column to existing consoles table if it doesn't exist
+do $$
+begin
+  if not exists (
+    select 1 from information_schema.columns 
+    where table_name = 'consoles' and column_name = 'status'
+  ) then
+    alter table consoles add column status text not null default 'active';
+  end if;
+end $$;

@@ -62,6 +62,7 @@ export async function createConsole(console: ConsoleInput) {
       so: console.so.trim(),
       total_cartons: console.total_cartons || 0,
       total_cbm: console.total_cbm || 0,
+      status: "active",
     })
     .select()
     .single();
@@ -84,6 +85,7 @@ export async function getAllConsoles() {
 
   const supabase = await createAdminClient();
 
+  // Get all consoles without status filter (works whether column exists or not)
   const { data, error } = await supabase
     .from("consoles")
     .select("*")
@@ -93,7 +95,64 @@ export async function getAllConsoles() {
     return { error: error.message || "Failed to fetch consoles" };
   }
 
-  return { consoles: data || [] };
+  // Filter by status in JavaScript (handles case where status column doesn't exist)
+  const filtered = (data || []).filter((console: any) => 
+    !console.status || console.status === "active"
+  );
+
+  return { consoles: filtered };
+}
+
+export async function getReadyForLoadingConsoles() {
+  const session = await getSession();
+  if (!session || session.role !== "admin") {
+    return { error: "Unauthorized" };
+  }
+
+  const supabase = await createAdminClient();
+
+  // Get all consoles without status filter (works whether column exists or not)
+  const { data, error } = await supabase
+    .from("consoles")
+    .select("*")
+    .order("created_at", { ascending: false });
+
+  if (error) {
+    return { error: error.message || "Failed to fetch consoles" };
+  }
+
+  // Filter by status in JavaScript (handles case where status column doesn't exist)
+  const filtered = (data || []).filter((console: any) => 
+    console.status === "ready_for_loading"
+  );
+
+  return { consoles: filtered };
+}
+
+export async function markConsoleReadyForLoading(consoleId: string) {
+  const session = await getSession();
+  if (!session || session.role !== "admin") {
+    return { error: "Unauthorized" };
+  }
+
+  if (!consoleId) {
+    return { error: "Console ID is required" };
+  }
+
+  const supabase = await createAdminClient();
+
+  const { data, error } = await supabase
+    .from("consoles")
+    .update({ status: "ready_for_loading", updated_at: new Date().toISOString() })
+    .eq("id", consoleId)
+    .select()
+    .single();
+
+  if (error) {
+    return { error: error.message || "Failed to mark console as ready for loading" };
+  }
+
+  return { console: data };
 }
 
 export async function getConsoleWithOrders(consoleId: string) {

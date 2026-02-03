@@ -231,4 +231,24 @@
     fill: white !important;
     stroke: white !important;
   }
+
+  /* Ensure icons in Ready for Loading button are white */
+  .ready-for-loading-btn svg,
+  .ready-for-loading-btn [class*="lucide"],
+  .ready-for-loading-btn:hover svg,
+  .ready-for-loading-btn:hover [class*="lucide"] {
+    color: white !important;
+    fill: white !important;
+    stroke: white !important;
+  }
+
+  /* Ensure icons in Create Console button are white */
+  .create-console-btn svg,
+  .create-console-btn [class*="lucide"],
+  .create-console-btn:hover svg,
+  .create-console-btn:hover [class*="lucide"] {
+    color: white !important;
+    fill: white !important;
+    stroke: white !important;
+  }
 }

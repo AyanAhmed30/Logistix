@@ -13,6 +13,7 @@ import {
   Boxes,
   CheckCircle2,
   XCircle,
+  FileText,
 } from "lucide-react";
 
 type DashboardStats = {
@@ -22,6 +23,8 @@ type DashboardStats = {
   unassignedOrdersCount: number;
   totalCbm: number;
   totalConsoles: number;
+  activeConsoles: number;
+  readyForLoadingConsoles: number;
   totalCartons: number;
   cartonsInConsoles: number;
   remainingCartons: number;
@@ -184,7 +187,7 @@ export function AdminDashboardOverview() {
       </div>
 
       {/* Top Statistics Cards */}
-      <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-4">
+      <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
         {/* Total Active Users */}
         <Card className="bg-white border shadow-sm hover:shadow-md transition-shadow">
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
@@ -229,7 +232,19 @@ export function AdminDashboardOverview() {
           </CardHeader>
           <CardContent>
             <div className="text-3xl font-bold text-primary-dark">{stats.totalConsoles}</div>
-            <p className="text-xs text-secondary-muted mt-1">Active consoles</p>
+            <p className="text-xs text-secondary-muted mt-1">All consoles</p>
+          </CardContent>
+        </Card>
+
+        {/* Ready for Loading */}
+        <Card className="bg-white border shadow-sm hover:shadow-md transition-shadow">
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">Ready for Loading</CardTitle>
+            <FileText className="h-5 w-5 text-primary-dark" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-3xl font-bold text-primary-dark">{stats.readyForLoadingConsoles || 0}</div>
+            <p className="text-xs text-secondary-muted mt-1">Consoles ready</p>
           </CardContent>
         </Card>
       </div>
@@ -325,10 +340,46 @@ export function AdminDashboardOverview() {
                 </div>
                 <div>
                   <p className="text-sm font-medium">Total Consoles</p>
-                  <p className="text-xs text-secondary-muted">Active consoles</p>
+                  <p className="text-xs text-secondary-muted">All consoles</p>
                 </div>
               </div>
               <div className="text-2xl font-bold text-primary-dark">{stats.totalConsoles}</div>
+            </div>
+
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Container className="h-4 w-4 text-blue-600" />
+                  <span className="text-sm">Active Consoles</span>
+                </div>
+                <span className="text-lg font-semibold">{stats.activeConsoles || stats.totalConsoles}</span>
+              </div>
+              <div className="w-full bg-slate-200 rounded-full h-3 overflow-hidden">
+                <div
+                  className="bg-blue-500 h-full transition-all duration-500"
+                  style={{
+                    width: `${stats.totalConsoles > 0 ? ((stats.activeConsoles || stats.totalConsoles) / stats.totalConsoles) * 100 : 0}%`,
+                  }}
+                ></div>
+              </div>
+            </div>
+
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <FileText className="h-4 w-4 text-purple-600" />
+                  <span className="text-sm">Ready for Loading</span>
+                </div>
+                <span className="text-lg font-semibold">{stats.readyForLoadingConsoles || 0}</span>
+              </div>
+              <div className="w-full bg-slate-200 rounded-full h-3 overflow-hidden">
+                <div
+                  className="bg-purple-500 h-full transition-all duration-500"
+                  style={{
+                    width: `${stats.totalConsoles > 0 ? ((stats.readyForLoadingConsoles || 0) / stats.totalConsoles) * 100 : 0}%`,
+                  }}
+                ></div>
+              </div>
             </div>
 
             <div className="space-y-3">

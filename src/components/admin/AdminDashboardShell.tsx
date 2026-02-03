@@ -3,7 +3,6 @@
 import { useEffect, useState } from "react";
 import { logout } from "@/app/actions/auth";
 import { Button } from "@/components/ui/button";
-import { Card } from "@/components/ui/card";
 import { LogOut, Menu, Bell } from "lucide-react";
 import Image from "next/image";
 import { AdminUserManager } from "@/components/admin/AdminUserManager";
@@ -137,7 +136,6 @@ export function AdminDashboardShell({ users, dbError }: Props) {
         isSidebarOpen={isSidebarOpen}
         isSidebarCollapsed={isSidebarCollapsed}
         onSidebarClose={() => setIsSidebarOpen(false)}
-        onSidebarToggle={() => setIsSidebarCollapsed((collapsed) => !collapsed)}
         activeTab={activeTab}
         onTabChange={setActiveTab}
       />

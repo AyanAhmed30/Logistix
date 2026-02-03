@@ -60,7 +60,7 @@ export async function getDashboardStats() {
       totalCartons += orderCartons;
 
       // Calculate CBM for this order
-      const orderCbm = (order.cartons || []).reduce((sum: number, carton: any) => {
+      const orderCbm = (order.cartons || []).reduce((sum: number, carton: { length?: number | null; width?: number | null; height?: number | null }) => {
         const length = carton.length ?? 0;
         const width = carton.width ?? 0;
         const height = carton.height ?? 0;
@@ -104,7 +104,7 @@ export async function getDashboardStats() {
         cbmInConsoles,
       },
     };
-  } catch (error) {
+  } catch {
     return { error: 'Unable to load dashboard statistics' };
   }
 }

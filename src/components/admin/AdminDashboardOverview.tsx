@@ -106,10 +106,15 @@ export function AdminDashboardOverview() {
 
       if (!isMounted) return;
 
-      if ("stats" in statsResult) {
+      if ("error" in statsResult) {
+        // Handle error if needed
+      } else {
         setStats(statsResult.stats);
       }
-      if ("consoles" in consolesResult) {
+      
+      if ("error" in consolesResult) {
+        // Handle error if needed
+      } else {
         setConsoles(consolesResult.consoles as Console[]);
       }
       setIsLoading(false);

@@ -1,8 +1,7 @@
 import { createClient } from "@/utils/supabase/server";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
-import { CheckCircle2, XCircle, Database, Package, ShieldCheck } from "lucide-react";
+import { CheckCircle2, Database, Package, ShieldCheck } from "lucide-react";
 import Image from "next/image";
 
 export default async function Home() {
@@ -12,7 +11,7 @@ export default async function Home() {
   let errorMsg = null;
 
   try {
-    const { data, error } = await supabase.from("_non_existent_table_just_to_test_connection").select("*").limit(1);
+    const { error } = await supabase.from("_non_existent_table_just_to_test_connection").select("*").limit(1);
     // Note: If connection is good but table doesn't exist, we'll get an error, 
     // but the error comes FROM Supabase, which means the connection IS established.
     // If the URL/Key is wrong, we get a different kind of error.

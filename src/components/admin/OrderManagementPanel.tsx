@@ -99,7 +99,11 @@ export function OrderManagementPanel() {
 
   // Reset selection when console changes
   useEffect(() => {
-    setSelectedOrderIds(new Set());
+    // Use setTimeout to avoid synchronous setState in effect
+    const timer = setTimeout(() => {
+      setSelectedOrderIds(new Set());
+    }, 0);
+    return () => clearTimeout(timer);
   }, [selectedConsole]);
 
   if (isLoading) {

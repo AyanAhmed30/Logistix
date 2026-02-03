@@ -45,7 +45,6 @@ type Props = {
   isSidebarOpen: boolean;
   isSidebarCollapsed: boolean;
   onSidebarClose: () => void;
-  onSidebarToggle: () => void;
   activeTab:
     | "dashboard"
     | "create"
@@ -74,7 +73,6 @@ export function AdminUserManager({
   isSidebarOpen,
   isSidebarCollapsed,
   onSidebarClose,
-  onSidebarToggle,
   activeTab,
   onTabChange,
 }: Props) {

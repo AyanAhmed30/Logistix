@@ -50,7 +50,7 @@ export function BookOrderModal({ open, onOpenChange, onOrderSaved }: Props) {
       totalCartons: 1,
     },
   ]);
-  const [isPending, startTransition] = useTransition();
+  const [isPending] = useTransition();
   const [savingOrderIndex, setSavingOrderIndex] = useState<number | null>(null);
   const [logoDataUrl, setLogoDataUrl] = useState<string | null>(null);
   const [logoSize, setLogoSize] = useState<{ width: number; height: number } | null>(null);

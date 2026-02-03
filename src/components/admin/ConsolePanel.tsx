@@ -252,7 +252,7 @@ export function ConsolePanel() {
         <CardContent>
           {consoles.length === 0 ? (
             <div className="text-center py-8 text-secondary-muted">
-              No consoles created yet. Click "Create Console" to get started.
+              No consoles created yet. Click &quot;Create Console&quot; to get started.
             </div>
           ) : (
             <div className="space-y-4">

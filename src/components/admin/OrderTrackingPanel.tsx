@@ -3,7 +3,6 @@
 import { useEffect, useState } from "react";
 import { getAllOrdersForAdmin } from "@/app/actions/orders";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Input } from "@/components/ui/input";
 
 type Carton = {

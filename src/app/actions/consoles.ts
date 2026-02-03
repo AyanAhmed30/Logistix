@@ -96,7 +96,7 @@ export async function getAllConsoles() {
   }
 
   // Filter by status in JavaScript (handles case where status column doesn't exist)
-  const filtered = (data || []).filter((console: any) => 
+  const filtered = (data || []).filter((console: { status?: string }) => 
     !console.status || console.status === "active"
   );
 
@@ -122,7 +122,7 @@ export async function getReadyForLoadingConsoles() {
   }
 
   // Filter by status in JavaScript (handles case where status column doesn't exist)
-  const filtered = (data || []).filter((console: any) => 
+  const filtered = (data || []).filter((console: { status?: string }) => 
     console.status === "ready_for_loading"
   );
 

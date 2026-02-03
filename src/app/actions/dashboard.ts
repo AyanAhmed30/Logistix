@@ -91,8 +91,8 @@ export async function getDashboardStats() {
     const totalConsoles = consoles?.length || 0;
     
     // Count consoles by status
-    const activeConsoles = consoles?.filter((c: any) => !c.status || c.status === 'active').length || 0;
-    const readyForLoadingConsoles = consoles?.filter((c: any) => c.status === 'ready_for_loading').length || 0;
+    const activeConsoles = consoles?.filter((c: { status?: string }) => !c.status || c.status === 'active').length || 0;
+    const readyForLoadingConsoles = consoles?.filter((c: { status?: string }) => c.status === 'ready_for_loading').length || 0;
 
     return {
       stats: {

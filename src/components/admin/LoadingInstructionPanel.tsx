@@ -5,7 +5,6 @@ import { getReadyForLoadingConsoles, getConsoleWithOrders } from "@/app/actions/
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { ChevronDown, ChevronRight } from "lucide-react";
-import { Button } from "@/components/ui/button";
 
 type Carton = {
   weight: number | null;

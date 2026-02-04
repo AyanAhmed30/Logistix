@@ -24,13 +24,15 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { PlusCircle, UsersRound, X, Truck, Bell, Package, Container, FileText, TrendingUp } from "lucide-react";
+import { PlusCircle, UsersRound, X, Truck, Bell, Package, Container, FileText, TrendingUp, ShoppingCart, Settings } from "lucide-react";
 import { OrderTrackingPanel } from "@/components/admin/OrderTrackingPanel";
 import { AdminNotificationsPanel } from "@/components/admin/AdminNotificationsPanel";
 import { OrderManagementPanel } from "@/components/admin/OrderManagementPanel";
 import { ConsolePanel } from "@/components/admin/ConsolePanel";
 import { LoadingInstructionPanel } from "@/components/admin/LoadingInstructionPanel";
 import { AdminDashboardOverview } from "@/components/admin/AdminDashboardOverview";
+import { SalesPanel } from "@/components/admin/SalesPanel";
+import { OperationsPanel } from "@/components/admin/OperationsPanel";
 
 type AppUser = {
   id: string;
@@ -53,7 +55,9 @@ type Props = {
     | "notifications"
     | "management"
     | "console"
-    | "loading-instruction";
+    | "loading-instruction"
+    | "sales"
+    | "operations";
   onTabChange: (
     tab:
       | "dashboard"
@@ -64,6 +68,8 @@ type Props = {
       | "management"
       | "console"
       | "loading-instruction"
+      | "sales"
+      | "operations"
   ) => void;
 };
 
@@ -190,6 +196,8 @@ export function AdminUserManager({
       | "management"
       | "console"
       | "loading-instruction"
+      | "sales"
+      | "operations"
   ) {
     onTabChange(tab);
     onSidebarClose();
@@ -297,6 +305,24 @@ export function AdminUserManager({
             <FileText className="h-4 w-4 shrink-0 sidebar-icon" />
             {!isSidebarCollapsed && <span className="sidebar-text">Loading Instruction</span>}
           </Button>
+          <Button
+            variant={activeTab === "sales" ? "default" : "outline"}
+            className="justify-start gap-2 sidebar-button"
+            onClick={() => handleTabSelect("sales")}
+            title="Sales"
+          >
+            <ShoppingCart className="h-4 w-4 shrink-0 sidebar-icon" />
+            {!isSidebarCollapsed && <span className="sidebar-text">Sales</span>}
+          </Button>
+          <Button
+            variant={activeTab === "operations" ? "default" : "outline"}
+            className="justify-start gap-2 sidebar-button"
+            onClick={() => handleTabSelect("operations")}
+            title="Operations"
+          >
+            <Settings className="h-4 w-4 shrink-0 sidebar-icon" />
+            {!isSidebarCollapsed && <span className="sidebar-text">Operations</span>}
+          </Button>
         </div>
        
       </aside>
@@ -322,6 +348,10 @@ export function AdminUserManager({
           <ConsolePanel />
         ) : activeTab === "loading-instruction" ? (
           <LoadingInstructionPanel />
+        ) : activeTab === "sales" ? (
+          <SalesPanel />
+        ) : activeTab === "operations" ? (
+          <OperationsPanel />
         ) : activeTab === "profiles" ? (
           <div className="space-y-6">
             <Card className="bg-white border shadow-sm">

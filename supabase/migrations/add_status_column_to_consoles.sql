@@ -1,7 +1,10 @@
+-- =====================================================
 -- Migration: Add status column to consoles table
--- Run this SQL in your Supabase SQL Editor if you get "column consoles.status does not exist" error
+-- Purpose: Add status column to existing consoles table if it doesn't exist
+-- Related Table: consoles
+-- Related Functionality: Console Management, Loading Instructions
+-- =====================================================
 
--- Add status column if it doesn't exist
 do $$
 begin
   if not exists (

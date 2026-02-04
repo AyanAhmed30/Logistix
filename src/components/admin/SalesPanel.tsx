@@ -24,14 +24,37 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { PlusCircle, Users, Trash2, Edit, UserPlus } from "lucide-react";
+import { PlusCircle, Users, Trash2, Edit, UserPlus, UserCog } from "lucide-react";
+import { SalesAgentPanel } from "@/components/admin/SalesAgentPanel";
+import {
+  getAllCustomersWithAssignments,
+  getSerialRangesWithAssignments,
+} from "@/app/actions/sales_agents";
 
-type SalesSubTab = "create-user" | "customer-list" | "leads";
+type SalesSubTab = "sales-agent" | "create-user" | "customer-list" | "leads";
+
+type CustomerWithAssignment = {
+  id: string;
+  name: string;
+  company_name: string;
+  phone_number: string;
+  city: string;
+  address: string;
+  sales_agent_customers: Array<{
+    sales_agent_id: string;
+    sales_agents: {
+      id: string;
+      name: string;
+      email: string;
+    } | null;
+  }>;
+};
 
 export function SalesPanel() {
   const router = useRouter();
-  const [activeSubTab, setActiveSubTab] = useState<SalesSubTab>("create-user");
-  const [customers, setCustomers] = useState<Customer[]>([]);
+  const [activeSubTab, setActiveSubTab] = useState<SalesSubTab>("sales-agent");
+  const [customers, setCustomers] = useState<CustomerWithAssignment[]>([]);
+  const [serialRanges, setSerialRanges] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
@@ -49,19 +72,57 @@ export function SalesPanel() {
   async function fetchCustomers() {
     setIsLoading(true);
     try {
-      const result = await getAllCustomers();
-      if ("error" in result) {
-        toast.error(result.error || "Unable to load customers");
+      const [customersResult, rangesResult] = await Promise.all([
+        getAllCustomersWithAssignments(),
+        getSerialRangesWithAssignments(),
+      ]);
+
+      if ("error" in customersResult) {
+        toast.error(customersResult.error || "Unable to load customers");
         setCustomers([]);
       } else {
-        setCustomers(result.customers || []);
+        setCustomers((customersResult.customers || []) as CustomerWithAssignment[]);
+      }
+
+      if ("error" in rangesResult) {
+        // Don't show error if table doesn't exist yet
+        if (rangesResult.error && !rangesResult.error.includes("does not exist")) {
+          // Silent fail for serial ranges
+        }
+        setSerialRanges([]);
+      } else {
+        setSerialRanges(rangesResult.serialRanges || []);
       }
     } catch (err) {
       toast.error("An unexpected error occurred while loading customers");
       setCustomers([]);
+      setSerialRanges([]);
     } finally {
       setIsLoading(false);
     }
+  }
+
+  function getCustomerSerialRange(customerId: string): string | null {
+    // Find serial ranges assigned to the sales agent who has this customer
+    const customer = customers.find((c) => c.id === customerId);
+    if (!customer || !customer.sales_agent_customers?.[0]) {
+      return null;
+    }
+
+    const agentId = customer.sales_agent_customers[0].sales_agent_id;
+    const ranges = serialRanges.filter((r: any) => r.sales_agent_id === agentId);
+    
+    if (ranges.length === 0) {
+      return null;
+    }
+
+    // Return the first range (or combine if multiple)
+    if (ranges.length === 1) {
+      return `${ranges[0].serial_from}-${ranges[0].serial_to}`;
+    }
+    
+    // Multiple ranges - show all
+    return ranges.map((r: any) => `${r.serial_from}-${r.serial_to}`).join(", ");
   }
 
   function handleCreateSubmit(event: React.FormEvent<HTMLFormElement>) {
@@ -168,31 +229,46 @@ export function SalesPanel() {
   return (
     <div className="space-y-6">
       {/* Sub-tabs */}
-      <div className="flex gap-2 border-b">
+      <div className="flex gap-2 border-b overflow-x-auto">
+        <Button
+          variant={activeSubTab === "sales-agent" ? "default" : "ghost"}
+          onClick={() => setActiveSubTab("sales-agent")}
+          className="rounded-b-none shrink-0 sidebar-button"
+          data-variant={activeSubTab === "sales-agent" ? "default" : "outline"}
+        >
+          <UserCog className="h-4 w-4 mr-2 sidebar-icon" />
+          <span className="sidebar-text">Sales Agent</span>
+        </Button>
         <Button
           variant={activeSubTab === "create-user" ? "default" : "ghost"}
           onClick={() => setActiveSubTab("create-user")}
-          className="rounded-b-none"
+          className="rounded-b-none shrink-0 sidebar-button"
+          data-variant={activeSubTab === "create-user" ? "default" : "outline"}
         >
-          <UserPlus className="h-4 w-4 mr-2" />
-          Create User
+          <UserPlus className="h-4 w-4 mr-2 sidebar-icon" />
+          <span className="sidebar-text">Customer Creation</span>
         </Button>
         <Button
           variant={activeSubTab === "customer-list" ? "default" : "ghost"}
           onClick={() => setActiveSubTab("customer-list")}
-          className="rounded-b-none"
+          className="rounded-b-none shrink-0 sidebar-button"
+          data-variant={activeSubTab === "customer-list" ? "default" : "outline"}
         >
-          <Users className="h-4 w-4 mr-2" />
-          Customer List
+          <Users className="h-4 w-4 mr-2 sidebar-icon" />
+          <span className="sidebar-text">Customer List</span>
         </Button>
         <Button
           variant={activeSubTab === "leads" ? "default" : "ghost"}
           onClick={() => setActiveSubTab("leads")}
-          className="rounded-b-none"
+          className="rounded-b-none shrink-0 sidebar-button"
+          data-variant={activeSubTab === "leads" ? "default" : "outline"}
         >
-          Leads
+          <span className="sidebar-text">Leads</span>
         </Button>
       </div>
+
+      {/* Sales Agent Tab */}
+      {activeSubTab === "sales-agent" && <SalesAgentPanel />}
 
       {/* Create User Tab */}
       {activeSubTab === "create-user" && (
@@ -269,39 +345,61 @@ export function SalesPanel() {
                       <TableHead>Company</TableHead>
                       <TableHead>Phone</TableHead>
                       <TableHead>City</TableHead>
-                      <TableHead>Address</TableHead>
+                      <TableHead>Assigned Sales Agent</TableHead>
+                      <TableHead>Serial Number Range</TableHead>
                       <TableHead className="text-right">Actions</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {customers.map((customer) => (
-                      <TableRow key={customer.id}>
-                        <TableCell className="font-semibold">{customer.name}</TableCell>
-                        <TableCell>{customer.company_name}</TableCell>
-                        <TableCell>{customer.phone_number}</TableCell>
-                        <TableCell>{customer.city}</TableCell>
-                        <TableCell className="text-secondary-muted">{customer.address}</TableCell>
-                        <TableCell className="text-right space-x-2">
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            onClick={() => openEdit(customer)}
-                          >
-                            <Edit className="h-4 w-4 mr-1" />
-                            Edit
-                          </Button>
-                          <Button
-                            size="sm"
-                            variant="destructive"
-                            onClick={() => handleDelete(customer)}
-                            disabled={isPending}
-                          >
-                            <Trash2 className="h-4 w-4 mr-1" />
-                            Delete
-                          </Button>
-                        </TableCell>
-                      </TableRow>
-                    ))}
+                    {customers.map((customer) => {
+                      const assignment = customer.sales_agent_customers?.[0];
+                      const serialRange = getCustomerSerialRange(customer.id);
+                      
+                      return (
+                        <TableRow key={customer.id}>
+                          <TableCell className="font-semibold">{customer.name}</TableCell>
+                          <TableCell>{customer.company_name}</TableCell>
+                          <TableCell>{customer.phone_number}</TableCell>
+                          <TableCell>{customer.city}</TableCell>
+                          <TableCell>
+                            {assignment?.sales_agents ? (
+                              <div>
+                                <div className="font-medium">{assignment.sales_agents.name}</div>
+                                <div className="text-xs text-secondary-muted">{assignment.sales_agents.email}</div>
+                              </div>
+                            ) : (
+                              <span className="text-secondary-muted text-sm">Not assigned</span>
+                            )}
+                          </TableCell>
+                          <TableCell>
+                            {serialRange ? (
+                              <span className="font-mono text-sm">{serialRange}</span>
+                            ) : (
+                              <span className="text-secondary-muted text-sm">No range assigned</span>
+                            )}
+                          </TableCell>
+                          <TableCell className="text-right space-x-2">
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => openEdit(customer as any)}
+                            >
+                              <Edit className="h-4 w-4 mr-1" />
+                              Edit
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="destructive"
+                              onClick={() => handleDelete(customer as any)}
+                              disabled={isPending}
+                            >
+                              <Trash2 className="h-4 w-4 mr-1" />
+                              Delete
+                            </Button>
+                          </TableCell>
+                        </TableRow>
+                      );
+                    })}
                   </TableBody>
                 </Table>
               </div>

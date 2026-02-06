@@ -3,7 +3,7 @@
 import { useEffect, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
-import { createCustomer, getAllCustomers, updateCustomer, deleteCustomer, type Customer } from "@/app/actions/customers";
+import { createCustomer, updateCustomer, deleteCustomer, type Customer } from "@/app/actions/customers";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -54,7 +54,19 @@ export function SalesPanel() {
   const router = useRouter();
   const [activeSubTab, setActiveSubTab] = useState<SalesSubTab>("sales-agent");
   const [customers, setCustomers] = useState<CustomerWithAssignment[]>([]);
-  const [serialRanges, setSerialRanges] = useState<any[]>([]);
+type SerialRangeWithAgent = {
+  id: string;
+  serial_from: string;
+  serial_to: string;
+  sales_agent_id: string;
+  sales_agents: {
+    id: string;
+    name: string;
+    email: string;
+  } | null;
+};
+
+  const [serialRanges, setSerialRanges] = useState<SerialRangeWithAgent[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
@@ -91,9 +103,9 @@ export function SalesPanel() {
         }
         setSerialRanges([]);
       } else {
-        setSerialRanges(rangesResult.serialRanges || []);
+        setSerialRanges((rangesResult.serialRanges || []) as SerialRangeWithAgent[]);
       }
-    } catch (err) {
+    } catch {
       toast.error("An unexpected error occurred while loading customers");
       setCustomers([]);
       setSerialRanges([]);
@@ -110,7 +122,7 @@ export function SalesPanel() {
     }
 
     const agentId = customer.sales_agent_customers[0].sales_agent_id;
-    const ranges = serialRanges.filter((r: any) => r.sales_agent_id === agentId);
+    const ranges = serialRanges.filter((r) => r.sales_agent_id === agentId);
     
     if (ranges.length === 0) {
       return null;
@@ -122,7 +134,7 @@ export function SalesPanel() {
     }
     
     // Multiple ranges - show all
-    return ranges.map((r: any) => `${r.serial_from}-${r.serial_to}`).join(", ");
+    return ranges.map((r) => `${r.serial_from}-${r.serial_to}`).join(", ");
   }
 
   function handleCreateSubmit(event: React.FormEvent<HTMLFormElement>) {
@@ -194,8 +206,8 @@ export function SalesPanel() {
     });
   }
 
-  function handleDelete(customer: Customer) {
-    setDeleteCustomerTarget(customer);
+  function handleDelete(customer: Customer | CustomerWithAssignment) {
+    setDeleteCustomerTarget(customer as Customer);
     setDeleteOpen(true);
   }
 
@@ -221,8 +233,8 @@ export function SalesPanel() {
     });
   }
 
-  function openEdit(customer: Customer) {
-    setEditCustomer(customer);
+  function openEdit(customer: Customer | CustomerWithAssignment) {
+    setEditCustomer(customer as Customer);
     setEditOpen(true);
   }
 
@@ -382,7 +394,7 @@ export function SalesPanel() {
                             <Button
                               size="sm"
                               variant="outline"
-                              onClick={() => openEdit(customer as any)}
+                              onClick={() => openEdit(customer)}
                             >
                               <Edit className="h-4 w-4 mr-1" />
                               Edit
@@ -390,7 +402,7 @@ export function SalesPanel() {
                             <Button
                               size="sm"
                               variant="destructive"
-                              onClick={() => handleDelete(customer as any)}
+                              onClick={() => handleDelete(customer)}
                               disabled={isPending}
                             >
                               <Trash2 className="h-4 w-4 mr-1" />

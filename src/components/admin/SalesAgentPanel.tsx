@@ -41,7 +41,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { PlusCircle, Users, Trash2, Edit } from "lucide-react";
+import { PlusCircle, Trash2, Edit } from "lucide-react";
 
 type CustomerWithAssignment = {
   id: string;
@@ -65,7 +65,19 @@ export function SalesAgentPanel() {
   const [salesAgents, setSalesAgents] = useState<SalesAgent[]>([]);
   const [customers, setCustomers] = useState<CustomerWithAssignment[]>([]);
   const [serialNumbers, setSerialNumbers] = useState<string[]>([]);
-  const [serialRanges, setSerialRanges] = useState<any[]>([]);
+type SerialRangeWithAgent = {
+  id: string;
+  serial_from: string;
+  serial_to: string;
+  sales_agent_id: string;
+  sales_agents: {
+    id: string;
+    name: string;
+    email: string;
+  } | null;
+};
+
+  const [serialRanges, setSerialRanges] = useState<SerialRangeWithAgent[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
@@ -119,9 +131,9 @@ export function SalesAgentPanel() {
         }
         setSerialRanges([]);
       } else {
-        setSerialRanges(rangesResult.serialRanges || []);
+        setSerialRanges((rangesResult.serialRanges || []) as SerialRangeWithAgent[]);
       }
-    } catch (err) {
+    } catch {
       toast.error("An unexpected error occurred");
     } finally {
       setIsLoading(false);
@@ -157,7 +169,10 @@ export function SalesAgentPanel() {
       if (result && "error" in result) {
         if (result.details) {
           const detailsMsg = Array.isArray(result.details)
-            ? result.details.map((d: any) => d.agentName || d.range || d.customerId).join(", ")
+            ? result.details.map((d) => {
+                const detail = d as { agentName?: string; range?: string; customerId?: string };
+                return detail.agentName || detail.range || detail.customerId;
+              }).join(", ")
             : "";
           toast.error(`${result.error}${detailsMsg ? `: ${detailsMsg}` : ""}`, {
             className: "bg-red-600 text-white border-red-600",
@@ -270,7 +285,7 @@ export function SalesAgentPanel() {
 
   function isSerialRangeAssigned(serial: string): { assigned: boolean; agentName?: string } {
     const range = serialRanges.find(
-      (r: any) => r.serial_from <= serial && r.serial_to >= serial
+      (r) => r.serial_from <= serial && r.serial_to >= serial
     );
     if (range) {
       return { assigned: true, agentName: range.sales_agents?.name || "Unknown" };

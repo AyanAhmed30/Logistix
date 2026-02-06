@@ -21,6 +21,29 @@ export type SerialRange = {
   assigned_at: string;
 };
 
+type CustomerAssignment = {
+  customer_id: string;
+  sales_agent_id: string;
+  sales_agents: {
+    name: string;
+  } | null | Array<{
+    name: string;
+  }>;
+};
+
+type SerialRangeWithAgent = {
+  id: string;
+  serial_from: string;
+  serial_to: string;
+  sales_agents: {
+    name: string;
+    email: string;
+  } | null | Array<{
+    name: string;
+    email: string;
+  }>;
+};
+
 export async function createSalesAgent(formData: FormData) {
   try {
     const session = await getSession();
@@ -78,10 +101,13 @@ export async function createSalesAgent(formData: FormData) {
       if (existingAssignments && existingAssignments.length > 0) {
         // Rollback: delete the created sales agent
         await supabase.from('sales_agents').delete().eq('id', salesAgentId);
-        const assignedCustomers = existingAssignments.map((a: any) => ({
-          customerId: a.customer_id,
-          agentName: a.sales_agents?.name || 'Unknown'
-        }));
+        const assignedCustomers = (existingAssignments as CustomerAssignment[]).map((a) => {
+          const agent = Array.isArray(a.sales_agents) ? a.sales_agents[0] : a.sales_agents;
+          return {
+            customerId: a.customer_id,
+            agentName: agent?.name || 'Unknown'
+          };
+        });
         return { 
           error: `Some customers are already assigned to other agents`,
           details: assignedCustomers
@@ -131,18 +157,23 @@ export async function createSalesAgent(formData: FormData) {
         }
       } else {
         // Check for overlaps
-        const overlappingRanges = (allRanges || []).filter((r: any) => {
-          return r.serial_from <= serialTo && r.serial_to >= serialFrom;
+        const overlappingRanges = (allRanges || []).filter((r) => {
+          const range = r as SerialRangeWithAgent;
+          return range.serial_from <= serialTo && range.serial_to >= serialFrom;
         });
 
         if (overlappingRanges.length > 0) {
           // Rollback
           await supabase.from('sales_agent_customers').delete().eq('sales_agent_id', salesAgentId);
           await supabase.from('sales_agents').delete().eq('id', salesAgentId);
-          const overlaps = overlappingRanges.map((r: any) => ({
-            range: `${r.serial_from}-${r.serial_to}`,
-            agentName: r.sales_agents?.name || 'Unknown'
-          }));
+          const overlaps = overlappingRanges.map((r) => {
+            const range = r as SerialRangeWithAgent;
+            const agent = Array.isArray(range.sales_agents) ? range.sales_agents[0] : range.sales_agents;
+            return {
+              range: `${range.serial_from}-${range.serial_to}`,
+              agentName: agent?.name || 'Unknown'
+            };
+          });
           return { 
             error: `Serial range overlaps with existing assignments`,
             details: overlaps
@@ -320,10 +351,13 @@ export async function assignCustomersToSalesAgent(salesAgentId: string, customer
     }
 
     if (existingAssignments && existingAssignments.length > 0) {
-      const assignedCustomers = existingAssignments.map((a: any) => ({
-        customerId: a.customer_id,
-        agentName: a.sales_agents?.name || 'Unknown'
-      }));
+      const assignedCustomers = (existingAssignments as CustomerAssignment[]).map((a) => {
+        const agent = Array.isArray(a.sales_agents) ? a.sales_agents[0] : a.sales_agents;
+        return {
+          customerId: a.customer_id,
+          agentName: agent?.name || 'Unknown'
+        };
+      });
       return { 
         error: `Some customers are already assigned to other agents`,
         details: assignedCustomers
@@ -386,15 +420,20 @@ export async function assignSerialRangeToSalesAgent(
     }
 
     // Check for overlaps: ranges overlap if (from1 <= to2) AND (to1 >= from2)
-    const overlappingRanges = (allRanges || []).filter((r: any) => {
-      return r.serial_from <= serialTo && r.serial_to >= serialFrom;
+    const overlappingRanges = (allRanges || []).filter((r) => {
+      const range = r as SerialRangeWithAgent;
+      return range.serial_from <= serialTo && range.serial_to >= serialFrom;
     });
 
     if (overlappingRanges.length > 0) {
-      const overlaps = overlappingRanges.map((r: any) => ({
-        range: `${r.serial_from}-${r.serial_to}`,
-        agentName: r.sales_agents?.name || 'Unknown'
-      }));
+      const overlaps = overlappingRanges.map((r) => {
+        const range = r as SerialRangeWithAgent;
+        const agent = Array.isArray(range.sales_agents) ? range.sales_agents[0] : range.sales_agents;
+        return {
+          range: `${range.serial_from}-${range.serial_to}`,
+          agentName: agent?.name || 'Unknown'
+        };
+      });
       return { 
         error: `Serial range overlaps with existing assignments`,
         details: overlaps

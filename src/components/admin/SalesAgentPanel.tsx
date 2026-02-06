@@ -7,17 +7,15 @@ import {
   createSalesAgent,
   getAllSalesAgents,
   getAllCustomersWithAssignments,
-  getAllSerialNumbers,
-  getSerialRangesWithAssignments,
   updateSalesAgent,
   deleteSalesAgent,
   type SalesAgent,
 } from "@/app/actions/sales_agents";
+import { getAvailableCustomerSequences } from "@/app/actions/customers";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Checkbox } from "@/components/ui/checkbox";
 import {
   Dialog,
   DialogContent,
@@ -50,12 +48,15 @@ type CustomerWithAssignment = {
   phone_number: string;
   city: string;
   address: string;
+  customer_code: string | null;
+  sequential_number: number | null;
   sales_agent_customers: Array<{
     sales_agent_id: string;
     sales_agents: {
       id: string;
       name: string;
       email: string;
+      code: string | null;
     } | null;
   }>;
 };
@@ -64,29 +65,15 @@ export function SalesAgentPanel() {
   const router = useRouter();
   const [salesAgents, setSalesAgents] = useState<SalesAgent[]>([]);
   const [customers, setCustomers] = useState<CustomerWithAssignment[]>([]);
-  const [serialNumbers, setSerialNumbers] = useState<string[]>([]);
-type SerialRangeWithAgent = {
-  id: string;
-  serial_from: string;
-  serial_to: string;
-  sales_agent_id: string;
-  sales_agents: {
-    id: string;
-    name: string;
-    email: string;
-  } | null;
-};
-
-  const [serialRanges, setSerialRanges] = useState<SerialRangeWithAgent[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [editSalesAgent, setEditSalesAgent] = useState<SalesAgent | null>(null);
   const [deleteSalesAgentTarget, setDeleteSalesAgentTarget] = useState<SalesAgent | null>(null);
-  const [createSelectedCustomers, setCreateSelectedCustomers] = useState<Set<string>>(new Set());
-  const [createSerialFrom, setCreateSerialFrom] = useState<string>("");
-  const [createSerialTo, setCreateSerialTo] = useState<string>("");
+  const [createFromSeq, setCreateFromSeq] = useState<string>("");
+  const [createToSeq, setCreateToSeq] = useState<string>("");
+  const [availableSequences, setAvailableSequences] = useState<number[]>([]);
   const [isPending, startTransition] = useTransition();
 
   useEffect(() => {
@@ -96,11 +83,10 @@ type SerialRangeWithAgent = {
   async function fetchData() {
     setIsLoading(true);
     try {
-      const [agentsResult, customersResult, serialsResult, rangesResult] = await Promise.all([
+      const [agentsResult, customersResult, sequencesResult] = await Promise.all([
         getAllSalesAgents(),
         getAllCustomersWithAssignments(),
-        getAllSerialNumbers(),
-        getSerialRangesWithAssignments(),
+        getAvailableCustomerSequences(),
       ]);
 
       if ("error" in agentsResult) {
@@ -117,21 +103,12 @@ type SerialRangeWithAgent = {
         setCustomers((customersResult.customers || []) as CustomerWithAssignment[]);
       }
 
-      if ("error" in serialsResult) {
-        toast.error(serialsResult.error || "Unable to load serial numbers");
-        setSerialNumbers([]);
+      if ("error" in sequencesResult) {
+        setAvailableSequences([]);
       } else {
-        setSerialNumbers(serialsResult.serialNumbers || []);
-      }
-
-      if ("error" in rangesResult) {
-        // Don't show error if table doesn't exist yet
-        if (rangesResult.error && !rangesResult.error.includes("does not exist")) {
-          toast.error(rangesResult.error || "Unable to load serial ranges");
-        }
-        setSerialRanges([]);
-      } else {
-        setSerialRanges((rangesResult.serialRanges || []) as SerialRangeWithAgent[]);
+        // Remove duplicates and sort
+        const uniqueSequences = Array.from(new Set(sequencesResult.sequences || [])).sort((a, b) => a - b);
+        setAvailableSequences(uniqueSequences);
       }
     } catch {
       toast.error("An unexpected error occurred");
@@ -153,15 +130,10 @@ type SerialRangeWithAgent = {
       return;
     }
 
-    // Add selected customers to formData
-    createSelectedCustomers.forEach((customerId) => {
-      formData.append("customer_ids", customerId);
-    });
-
-    // Add serial range to formData
-    if (createSerialFrom && createSerialTo) {
-      formData.set("serial_from", createSerialFrom);
-      formData.set("serial_to", createSerialTo);
+    // Add sequence range if provided
+    if (createFromSeq && createToSeq) {
+      formData.set("from_seq", createFromSeq);
+      formData.set("to_seq", createToSeq);
     }
 
     startTransition(async () => {
@@ -170,8 +142,8 @@ type SerialRangeWithAgent = {
         if (result.details) {
           const detailsMsg = Array.isArray(result.details)
             ? result.details.map((d) => {
-                const detail = d as { agentName?: string; range?: string; customerId?: string };
-                return detail.agentName || detail.range || detail.customerId;
+                const detail = d as { agentName?: string; customerId?: string };
+                return detail.agentName || detail.customerId;
               }).join(", ")
             : "";
           toast.error(`${result.error}${detailsMsg ? `: ${detailsMsg}` : ""}`, {
@@ -189,9 +161,8 @@ type SerialRangeWithAgent = {
       });
       setCreateOpen(false);
       form.reset();
-      setCreateSelectedCustomers(new Set());
-      setCreateSerialFrom("");
-      setCreateSerialTo("");
+      setCreateFromSeq("");
+      setCreateToSeq("");
       router.refresh();
       fetchData();
     });
@@ -261,38 +232,9 @@ type SerialRangeWithAgent = {
     setEditOpen(true);
   }
 
-  function toggleCreateCustomer(customerId: string) {
-    const customer = customers.find((c) => c.id === customerId);
-    if (!customer) return;
-
-    // Check if already assigned to another agent
-    const assignment = customer.sales_agent_customers?.[0];
-    if (assignment) {
-      toast.error(`Customer is already assigned to ${assignment.sales_agents?.name || "another agent"}`);
-      return;
-    }
-
-    setCreateSelectedCustomers((prev) => {
-      const newSet = new Set(prev);
-      if (newSet.has(customerId)) {
-        newSet.delete(customerId);
-      } else {
-        newSet.add(customerId);
-      }
-      return newSet;
-    });
-  }
-
-  function isSerialRangeAssigned(serial: string): { assigned: boolean; agentName?: string } {
-    const range = serialRanges.find(
-      (r) => r.serial_from <= serial && r.serial_to >= serial
-    );
-    if (range) {
-      return { assigned: true, agentName: range.sales_agents?.name || "Unknown" };
-    }
-    return { assigned: false };
-  }
-
+  // Calculate available range info
+  const minSeq = availableSequences.length > 0 ? Math.min(...availableSequences) : null;
+  const maxSeq = availableSequences.length > 0 ? Math.max(...availableSequences) : null;
 
   return (
     <div className="space-y-6">
@@ -301,7 +243,7 @@ type SerialRangeWithAgent = {
           <div>
             <CardTitle>Sales Agents</CardTitle>
             <CardDescription>
-              Create and manage sales agents, assign customers and serial number ranges.
+              Create and manage sales agents. Assign customers during creation.
             </CardDescription>
           </div>
           <Button onClick={() => setCreateOpen(true)} className="create-console-btn">
@@ -323,6 +265,7 @@ type SerialRangeWithAgent = {
               <Table>
                 <TableHeader>
                   <TableRow>
+                    <TableHead>Code</TableHead>
                     <TableHead>Name</TableHead>
                     <TableHead>Email</TableHead>
                     <TableHead>Phone</TableHead>
@@ -332,6 +275,13 @@ type SerialRangeWithAgent = {
                 <TableBody>
                   {salesAgents.map((agent) => (
                     <TableRow key={agent.id}>
+                      <TableCell>
+                        {agent.code ? (
+                          <span className="font-mono font-semibold text-primary-accent">{agent.code}</span>
+                        ) : (
+                          <span className="text-secondary-muted text-sm">-</span>
+                        )}
+                      </TableCell>
                       <TableCell className="font-semibold">{agent.name}</TableCell>
                       <TableCell>{agent.email}</TableCell>
                       <TableCell>{agent.phone_number}</TableCell>
@@ -367,16 +317,15 @@ type SerialRangeWithAgent = {
       <Dialog open={createOpen} onOpenChange={(open) => {
         setCreateOpen(open);
         if (!open) {
-          setCreateSelectedCustomers(new Set());
-          setCreateSerialFrom("");
-          setCreateSerialTo("");
+          setCreateFromSeq("");
+          setCreateToSeq("");
         }
       }}>
-        <DialogContent className="sm:max-w-[700px] max-h-[90vh] overflow-y-auto">
+        <DialogContent className="sm:max-w-[600px] max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Create Sales Agent</DialogTitle>
             <DialogDescription>
-              Add a new sales agent with customer and serial number allocations.
+              Add a new sales agent. You can allocate a range of customer sequences during creation. Customer IDs will be generated automatically (e.g., 10101-10115).
             </DialogDescription>
           </DialogHeader>
           <form onSubmit={handleCreateSubmit} className="space-y-6">
@@ -397,157 +346,85 @@ type SerialRangeWithAgent = {
               </div>
             </div>
 
-            {/* Customer Allocation */}
+            {/* Customer Sequence Range Allocation */}
             <div className="space-y-4">
-              <h3 className="text-sm font-semibold">Customer Allocation</h3>
-              <div className="max-h-[200px] overflow-y-auto border rounded-md p-3 space-y-2">
-                {customers.length === 0 ? (
-                  <div className="py-4 text-center text-sm text-secondary-muted">
-                    No customers available.
-                  </div>
-                ) : (
-                  customers.map((customer) => {
-                    const assignment = customer.sales_agent_customers?.[0];
-                    const isSelected = createSelectedCustomers.has(customer.id);
-                    const isDisabled = !!assignment;
-
-                    return (
-                      <div
-                        key={customer.id}
-                        className={`flex items-center space-x-2 p-2 rounded border ${
-                          isDisabled ? "bg-gray-100 opacity-60" : ""
-                        }`}
+              <h3 className="text-sm font-semibold">Customer Sequence Range Allocation (Optional)</h3>
+              <p className="text-xs text-secondary-muted">
+                Select a range of customer sequences to allocate. Example: If you select 01-15, customer IDs will be 10101-10115.
+              </p>
+              {minSeq !== null && maxSeq !== null ? (
+                <>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label htmlFor="create-from-seq">From Sequence</Label>
+                      <Select
+                        value={createFromSeq}
+                        onValueChange={setCreateFromSeq}
                       >
-                        <Checkbox
-                          id={`create-customer-${customer.id}`}
-                          checked={isSelected}
-                          disabled={isDisabled}
-                          onCheckedChange={() => toggleCreateCustomer(customer.id)}
-                        />
-                        <Label
-                          htmlFor={`create-customer-${customer.id}`}
-                          className={`flex-1 cursor-pointer text-sm ${isDisabled ? "cursor-not-allowed" : ""}`}
-                        >
-                          <div className="font-medium">{customer.name}</div>
-                          <div className="text-xs text-secondary-muted">{customer.company_name}</div>
-                          {isDisabled && (
-                            <div className="text-xs text-red-600 mt-1">
-                              Already assigned to: {assignment.sales_agents?.name || "Unknown"}
-                            </div>
-                          )}
-                        </Label>
-                      </div>
-                    );
-                  })
-                )}
-              </div>
-            </div>
-
-            {/* Serial Number Allocation */}
-            <div className="space-y-4">
-              <h3 className="text-sm font-semibold">Serial Number Range Allocation</h3>
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <Label htmlFor="create-serial-from">Serial From</Label>
-                  <Select
-                    value={createSerialFrom}
-                    onValueChange={setCreateSerialFrom}
-                  >
-                    <SelectTrigger id="create-serial-from" className="w-full bg-white border border-gray-300 hover:border-gray-400 focus:border-primary-accent">
-                      <SelectValue placeholder="Select start" />
-                    </SelectTrigger>
-                    <SelectContent className="max-h-[200px] overflow-y-auto bg-white border border-gray-200 shadow-lg">
-                      {serialNumbers.length === 0 ? (
-                        <div className="px-3 py-2 text-sm text-secondary-muted bg-gray-50">
-                          No serial numbers available
-                        </div>
-                      ) : (
-                        serialNumbers.map((serial) => {
-                          const assigned = isSerialRangeAssigned(serial);
-                          return (
+                        <SelectTrigger id="create-from-seq" className="w-full">
+                          <SelectValue placeholder="Select start" />
+                        </SelectTrigger>
+                        <SelectContent className="max-h-[200px] overflow-y-auto bg-white border border-gray-200 shadow-lg">
+                          {availableSequences.map((seq, index) => (
                             <SelectItem
-                              key={serial}
-                              value={serial}
-                              disabled={assigned.assigned}
-                              className={`${
-                                assigned.assigned 
-                                  ? "opacity-60 cursor-not-allowed bg-gray-50 hover:bg-gray-50" 
-                                  : "hover:bg-blue-50 cursor-pointer bg-white"
-                              } py-2 px-3 border-b border-gray-100 last:border-b-0`}
+                              key={`from-seq-${seq}-${index}`}
+                              value={seq.toString()}
+                              className="hover:bg-blue-50 cursor-pointer bg-white py-2 px-3"
                             >
-                              <div className="flex items-center justify-between w-full">
-                                <span className="font-mono text-sm font-medium text-gray-900">{serial}</span>
-                                {assigned.assigned && (
-                                  <span className="ml-2 text-xs text-red-600 font-medium">
-                                    ({assigned.agentName})
-                                  </span>
-                                )}
-                              </div>
+                              <span className="font-mono text-sm font-medium">{seq.toString().padStart(2, '0')}</span>
                             </SelectItem>
-                          );
-                        })
-                      )}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="create-serial-to">Serial To</Label>
-                  <Select
-                    value={createSerialTo}
-                    onValueChange={setCreateSerialTo}
-                    disabled={!createSerialFrom}
-                  >
-                    <SelectTrigger 
-                      id="create-serial-to" 
-                      className={`w-full border ${
-                        !createSerialFrom 
-                          ? "bg-gray-50 border-gray-200 cursor-not-allowed" 
-                          : "bg-white border-gray-300 hover:border-gray-400 focus:border-primary-accent"
-                      }`}
-                    >
-                      <SelectValue placeholder={createSerialFrom ? "Select end" : "Select start first"} />
-                    </SelectTrigger>
-                    <SelectContent className="max-h-[200px] overflow-y-auto bg-white border border-gray-200 shadow-lg">
-                      {serialNumbers.length === 0 ? (
-                        <div className="px-3 py-2 text-sm text-secondary-muted bg-gray-50">
-                          No serial numbers available
-                        </div>
-                      ) : (
-                        serialNumbers
-                          .filter((s) => !createSerialFrom || s >= createSerialFrom)
-                          .map((serial) => {
-                            const assigned = isSerialRangeAssigned(serial);
-                            return (
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="create-to-seq">To Sequence</Label>
+                      <Select
+                        value={createToSeq}
+                        onValueChange={setCreateToSeq}
+                        disabled={!createFromSeq}
+                      >
+                        <SelectTrigger 
+                          id="create-to-seq" 
+                          className={`w-full ${
+                            !createFromSeq 
+                              ? "bg-gray-50 border-gray-200 cursor-not-allowed" 
+                              : "bg-white border-gray-300"
+                          }`}
+                        >
+                          <SelectValue placeholder={createFromSeq ? "Select end" : "Select start first"} />
+                        </SelectTrigger>
+                        <SelectContent className="max-h-[200px] overflow-y-auto bg-white border border-gray-200 shadow-lg">
+                          {availableSequences
+                            .filter((seq) => !createFromSeq || seq >= parseInt(createFromSeq, 10))
+                            .map((seq, index) => (
                               <SelectItem
-                                key={serial}
-                                value={serial}
-                                disabled={assigned.assigned}
-                                className={`${
-                                  assigned.assigned 
-                                    ? "opacity-60 cursor-not-allowed bg-gray-50 hover:bg-gray-50" 
-                                    : "hover:bg-blue-50 cursor-pointer bg-white"
-                                } py-2 px-3 border-b border-gray-100 last:border-b-0`}
+                                key={`to-seq-${seq}-${index}`}
+                                value={seq.toString()}
+                                className="hover:bg-blue-50 cursor-pointer bg-white py-2 px-3"
                               >
-                                <div className="flex items-center justify-between w-full">
-                                  <span className="font-mono text-sm font-medium text-gray-900">{serial}</span>
-                                  {assigned.assigned && (
-                                    <span className="ml-2 text-xs text-red-600 font-medium">
-                                      ({assigned.agentName})
-                                    </span>
-                                  )}
-                                </div>
+                                <span className="font-mono text-sm font-medium">{seq.toString().padStart(2, '0')}</span>
                               </SelectItem>
-                            );
-                          })
-                      )}
-                    </SelectContent>
-                  </Select>
-                </div>
-              </div>
-              {createSerialFrom && createSerialTo && (
-                <div className="p-3 bg-blue-50 rounded-md border border-blue-200 shadow-sm">
-                  <div className="text-sm font-semibold text-blue-900">
-                    Selected Range: <span className="font-mono text-blue-700">{createSerialFrom}</span> - <span className="font-mono text-blue-700">{createSerialTo}</span>
+                            ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </div>
+                  {createFromSeq && createToSeq && (
+                    <div className="p-3 bg-blue-50 rounded-md border border-blue-200">
+                      <div className="text-sm font-semibold text-blue-900">
+                        Selected Range: {createFromSeq.padStart(2, '0')} - {createToSeq.padStart(2, '0')}
+                      </div>
+                      <div className="text-xs text-blue-700 mt-1">
+                        Customer IDs will be generated as: 101{createFromSeq.padStart(2, '0')} - 101{createToSeq.padStart(2, '0')}
+                      </div>
+                    </div>
+                  )}
+                </>
+              ) : (
+                <div className="p-3 bg-gray-50 rounded-md border border-gray-200">
+                  <div className="text-sm text-gray-600">
+                    No unassigned customers available. Create customers first.
                   </div>
                 </div>
               )}
@@ -559,9 +436,8 @@ type SerialRangeWithAgent = {
                 type="button"
                 onClick={() => {
                   setCreateOpen(false);
-                  setCreateSelectedCustomers(new Set());
-                  setCreateSerialFrom("");
-                  setCreateSerialTo("");
+                  setCreateFromSeq("");
+                  setCreateToSeq("");
                 }}
               >
                 Cancel
@@ -644,7 +520,6 @@ type SerialRangeWithAgent = {
           </DialogFooter>
         </DialogContent>
       </Dialog>
-
     </div>
   );
 }

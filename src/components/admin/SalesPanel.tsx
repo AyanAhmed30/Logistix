@@ -3,7 +3,7 @@
 import { useEffect, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
-import { createCustomer, updateCustomer, deleteCustomer, type Customer } from "@/app/actions/customers";
+import { createCustomer, updateCustomer, deleteCustomer, getAllCustomers, type Customer } from "@/app/actions/customers";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -26,10 +26,7 @@ import {
 } from "@/components/ui/table";
 import { PlusCircle, Users, Trash2, Edit, UserPlus, UserCog } from "lucide-react";
 import { SalesAgentPanel } from "@/components/admin/SalesAgentPanel";
-import {
-  getAllCustomersWithAssignments,
-  getSerialRangesWithAssignments,
-} from "@/app/actions/sales_agents";
+import { getAllCustomersWithAssignments } from "@/app/actions/sales_agents";
 
 type SalesSubTab = "sales-agent" | "create-user" | "customer-list" | "leads";
 
@@ -40,12 +37,15 @@ type CustomerWithAssignment = {
   phone_number: string;
   city: string;
   address: string;
+  customer_code: string | null;
+  sequential_number: number | null;
   sales_agent_customers: Array<{
     sales_agent_id: string;
     sales_agents: {
       id: string;
       name: string;
       email: string;
+      code: string | null;
     } | null;
   }>;
 };
@@ -54,19 +54,7 @@ export function SalesPanel() {
   const router = useRouter();
   const [activeSubTab, setActiveSubTab] = useState<SalesSubTab>("sales-agent");
   const [customers, setCustomers] = useState<CustomerWithAssignment[]>([]);
-type SerialRangeWithAgent = {
-  id: string;
-  serial_from: string;
-  serial_to: string;
-  sales_agent_id: string;
-  sales_agents: {
-    id: string;
-    name: string;
-    email: string;
-  } | null;
-};
-
-  const [serialRanges, setSerialRanges] = useState<SerialRangeWithAgent[]>([]);
+  const [allCustomers, setAllCustomers] = useState<Customer[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
@@ -76,7 +64,7 @@ type SerialRangeWithAgent = {
   const [isPending, startTransition] = useTransition();
 
   useEffect(() => {
-    if (activeSubTab === "customer-list") {
+    if (activeSubTab === "customer-list" || activeSubTab === "create-user") {
       fetchCustomers();
     }
   }, [activeSubTab]);
@@ -84,9 +72,9 @@ type SerialRangeWithAgent = {
   async function fetchCustomers() {
     setIsLoading(true);
     try {
-      const [customersResult, rangesResult] = await Promise.all([
+      const [customersResult, allCustomersResult] = await Promise.all([
         getAllCustomersWithAssignments(),
-        getSerialRangesWithAssignments(),
+        getAllCustomers(),
       ]);
 
       if ("error" in customersResult) {
@@ -96,45 +84,18 @@ type SerialRangeWithAgent = {
         setCustomers((customersResult.customers || []) as CustomerWithAssignment[]);
       }
 
-      if ("error" in rangesResult) {
-        // Don't show error if table doesn't exist yet
-        if (rangesResult.error && !rangesResult.error.includes("does not exist")) {
-          // Silent fail for serial ranges
-        }
-        setSerialRanges([]);
+      if ("error" in allCustomersResult) {
+        setAllCustomers([]);
       } else {
-        setSerialRanges((rangesResult.serialRanges || []) as SerialRangeWithAgent[]);
+        setAllCustomers(allCustomersResult.customers || []);
       }
     } catch {
       toast.error("An unexpected error occurred while loading customers");
       setCustomers([]);
-      setSerialRanges([]);
+      setAllCustomers([]);
     } finally {
       setIsLoading(false);
     }
-  }
-
-  function getCustomerSerialRange(customerId: string): string | null {
-    // Find serial ranges assigned to the sales agent who has this customer
-    const customer = customers.find((c) => c.id === customerId);
-    if (!customer || !customer.sales_agent_customers?.[0]) {
-      return null;
-    }
-
-    const agentId = customer.sales_agent_customers[0].sales_agent_id;
-    const ranges = serialRanges.filter((r) => r.sales_agent_id === agentId);
-    
-    if (ranges.length === 0) {
-      return null;
-    }
-
-    // Return the first range (or combine if multiple)
-    if (ranges.length === 1) {
-      return `${ranges[0].serial_from}-${ranges[0].serial_to}`;
-    }
-    
-    // Multiple ranges - show all
-    return ranges.map((r) => `${r.serial_from}-${r.serial_to}`).join(", ");
   }
 
   function handleCreateSubmit(event: React.FormEvent<HTMLFormElement>) {
@@ -166,9 +127,7 @@ type SerialRangeWithAgent = {
       setCreateOpen(false);
       form.reset();
       router.refresh();
-      if (activeSubTab === "customer-list") {
-        fetchCustomers();
-      }
+      fetchCustomers();
     });
   }
 
@@ -238,6 +197,61 @@ type SerialRangeWithAgent = {
     setEditOpen(true);
   }
 
+  // Group customers by sales agent and show ranges
+  function getCustomerRangesByAgent() {
+    const agentMap = new Map<string, {
+      agent: { id: string; name: string; email: string; code: string | null };
+      customers: CustomerWithAssignment[];
+      range: string;
+    }>();
+
+    customers.forEach((customer) => {
+      const assignment = customer.sales_agent_customers?.[0];
+      if (assignment?.sales_agents) {
+        const agentId = assignment.sales_agent_id;
+        const agent = assignment.sales_agents;
+        
+        if (!agentMap.has(agentId)) {
+          agentMap.set(agentId, {
+            agent: {
+              id: agent.id,
+              name: agent.name,
+              email: agent.email,
+              code: agent.code
+            },
+            customers: [],
+            range: ''
+          });
+        }
+        
+        const entry = agentMap.get(agentId)!;
+        entry.customers.push(customer);
+      }
+    });
+
+    // Calculate ranges for each agent
+    agentMap.forEach((entry) => {
+      const sortedCustomers = entry.customers.sort((a, b) => {
+        const seqA = a.sequential_number || 0;
+        const seqB = b.sequential_number || 0;
+        return seqA - seqB;
+      });
+
+      if (sortedCustomers.length > 0) {
+        const firstSeq = sortedCustomers[0].sequential_number;
+        const lastSeq = sortedCustomers[sortedCustomers.length - 1].sequential_number;
+        
+        if (firstSeq && lastSeq && entry.agent.code) {
+          const firstCode = `${entry.agent.code}${firstSeq.toString().padStart(2, '0')}`;
+          const lastCode = `${entry.agent.code}${lastSeq.toString().padStart(2, '0')}`;
+          entry.range = `${firstCode}-${lastCode}`;
+        }
+      }
+    });
+
+    return Array.from(agentMap.values());
+  }
+
   return (
     <div className="space-y-6">
       {/* Sub-tabs */}
@@ -284,44 +298,118 @@ type SerialRangeWithAgent = {
 
       {/* Create User Tab */}
       {activeSubTab === "create-user" && (
-        <Card className="bg-white border shadow-sm">
-          <CardHeader>
-            <CardTitle>Create Customer</CardTitle>
+        <div className="space-y-6">
+          <Card className="bg-white border shadow-sm">
+            <CardHeader>
+              <CardTitle>Create Customer</CardTitle>
             <CardDescription>
-              Add a new customer to the system. Fill in all required fields.
+              Add new customers to the system. Fill in all required fields. Each customer will be created with the next sequential number (01, 02, 03...).
             </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <form onSubmit={handleCreateSubmit} className="space-y-4">
-              <div className="grid gap-4 md:grid-cols-2">
-                <div className="space-y-2">
-                  <Label htmlFor="name">Name *</Label>
-                  <Input id="name" name="name" placeholder="John Doe" required />
+            </CardHeader>
+            <CardContent>
+              <form onSubmit={handleCreateSubmit} className="space-y-4">
+                <div className="grid gap-4 md:grid-cols-2">
+                  <div className="space-y-2">
+                    <Label htmlFor="name">Name *</Label>
+                    <Input id="name" name="name" placeholder="John Doe" required />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="company_name">Company Name *</Label>
+                    <Input id="company_name" name="company_name" placeholder="ABC Corporation" required />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="phone_number">Phone Number *</Label>
+                    <Input id="phone_number" name="phone_number" placeholder="+1 234 567 8900" required />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="city">City *</Label>
+                    <Input id="city" name="city" placeholder="New York" required />
+                  </div>
                 </div>
                 <div className="space-y-2">
-                  <Label htmlFor="company_name">Company Name *</Label>
-                  <Input id="company_name" name="company_name" placeholder="ABC Corporation" required />
+                  <Label htmlFor="address">Address *</Label>
+                  <Input id="address" name="address" placeholder="123 Main Street" required />
                 </div>
-                <div className="space-y-2">
-                  <Label htmlFor="phone_number">Phone Number *</Label>
-                  <Input id="phone_number" name="phone_number" placeholder="+1 234 567 8900" required />
+                <Button type="submit" disabled={isPending} className="create-console-btn">
+                  <PlusCircle className="h-4 w-4 mr-2" />
+                  {isPending ? "Creating..." : "Create Customer"}
+                </Button>
+              </form>
+            </CardContent>
+          </Card>
+
+          {/* Customer List in Create User Tab */}
+          <Card className="bg-white border shadow-sm">
+            <CardHeader>
+              <CardTitle>Customer List</CardTitle>
+              <CardDescription>
+                View, edit, and delete customer records.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              {isLoading ? (
+                <div className="py-16 text-center text-secondary-muted">
+                  Loading customers...
                 </div>
-                <div className="space-y-2">
-                  <Label htmlFor="city">City *</Label>
-                  <Input id="city" name="city" placeholder="New York" required />
+              ) : allCustomers.length === 0 ? (
+                <div className="py-16 text-center text-secondary-muted">
+                  No customers found. Create your first customer to get started.
                 </div>
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="address">Address *</Label>
-                <Input id="address" name="address" placeholder="123 Main Street" required />
-              </div>
-              <Button type="submit" disabled={isPending} className="create-console-btn">
-                <PlusCircle className="h-4 w-4 mr-2" />
-                {isPending ? "Creating..." : "Create Customer"}
-              </Button>
-            </form>
-          </CardContent>
-        </Card>
+              ) : (
+                <div className="overflow-x-auto">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Serial Number</TableHead>
+                        <TableHead>Name</TableHead>
+                        <TableHead>Company</TableHead>
+                        <TableHead>Phone</TableHead>
+                        <TableHead>City</TableHead>
+                        <TableHead className="text-right">Actions</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {allCustomers.map((customer) => (
+                        <TableRow key={customer.id}>
+                          <TableCell>
+                            {customer.sequential_number ? (
+                              <span className="font-mono font-semibold">{customer.sequential_number.toString().padStart(2, '0')}</span>
+                            ) : (
+                              <span className="text-secondary-muted text-sm">-</span>
+                            )}
+                          </TableCell>
+                          <TableCell className="font-semibold">{customer.name}</TableCell>
+                          <TableCell>{customer.company_name}</TableCell>
+                          <TableCell>{customer.phone_number}</TableCell>
+                          <TableCell>{customer.city}</TableCell>
+                          <TableCell className="text-right space-x-2">
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => openEdit(customer)}
+                            >
+                              <Edit className="h-4 w-4 mr-1" />
+                              Edit
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="destructive"
+                              onClick={() => handleDelete(customer)}
+                              disabled={isPending}
+                            >
+                              <Trash2 className="h-4 w-4 mr-1" />
+                              Delete
+                            </Button>
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </div>
       )}
 
       {/* Customer List Tab */}
@@ -331,7 +419,7 @@ type SerialRangeWithAgent = {
             <div>
               <CardTitle>Customer List</CardTitle>
               <CardDescription>
-                View, edit, and delete customer records.
+                View all customers with their assigned sales agents and customer codes.
               </CardDescription>
             </div>
             <Button onClick={() => setCreateOpen(true)} className="create-console-btn">
@@ -353,65 +441,50 @@ type SerialRangeWithAgent = {
                 <Table>
                   <TableHeader>
                     <TableRow>
-                      <TableHead>Name</TableHead>
-                      <TableHead>Company</TableHead>
-                      <TableHead>Phone</TableHead>
-                      <TableHead>City</TableHead>
-                      <TableHead>Assigned Sales Agent</TableHead>
-                      <TableHead>Serial Number Range</TableHead>
-                      <TableHead className="text-right">Actions</TableHead>
+                      <TableHead>Sales Agent</TableHead>
+                      <TableHead>Customer Code Range</TableHead>
+                      <TableHead>Sequence Range</TableHead>
+                      <TableHead>Number of Customers</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {customers.map((customer) => {
-                      const assignment = customer.sales_agent_customers?.[0];
-                      const serialRange = getCustomerSerialRange(customer.id);
-                      
-                      return (
-                        <TableRow key={customer.id}>
-                          <TableCell className="font-semibold">{customer.name}</TableCell>
-                          <TableCell>{customer.company_name}</TableCell>
-                          <TableCell>{customer.phone_number}</TableCell>
-                          <TableCell>{customer.city}</TableCell>
-                          <TableCell>
-                            {assignment?.sales_agents ? (
-                              <div>
-                                <div className="font-medium">{assignment.sales_agents.name}</div>
-                                <div className="text-xs text-secondary-muted">{assignment.sales_agents.email}</div>
-                              </div>
-                            ) : (
-                              <span className="text-secondary-muted text-sm">Not assigned</span>
+                    {getCustomerRangesByAgent().map((entry) => (
+                      <TableRow key={entry.agent.id}>
+                        <TableCell>
+                          <div>
+                            <div className="font-medium">{entry.agent.name}</div>
+                            <div className="text-xs text-secondary-muted">{entry.agent.email}</div>
+                            {entry.agent.code && (
+                              <div className="text-xs font-mono text-primary-accent">Code: {entry.agent.code}</div>
                             )}
-                          </TableCell>
-                          <TableCell>
-                            {serialRange ? (
-                              <span className="font-mono text-sm">{serialRange}</span>
-                            ) : (
-                              <span className="text-secondary-muted text-sm">No range assigned</span>
-                            )}
-                          </TableCell>
-                          <TableCell className="text-right space-x-2">
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              onClick={() => openEdit(customer)}
-                            >
-                              <Edit className="h-4 w-4 mr-1" />
-                              Edit
-                            </Button>
-                            <Button
-                              size="sm"
-                              variant="destructive"
-                              onClick={() => handleDelete(customer)}
-                              disabled={isPending}
-                            >
-                              <Trash2 className="h-4 w-4 mr-1" />
-                              Delete
-                            </Button>
-                          </TableCell>
-                        </TableRow>
-                      );
-                    })}
+                          </div>
+                        </TableCell>
+                        <TableCell>
+                          {entry.range ? (
+                            <span className="font-mono font-semibold text-primary-accent">{entry.range}</span>
+                          ) : (
+                            <span className="text-secondary-muted text-sm">-</span>
+                          )}
+                        </TableCell>
+                        <TableCell>
+                          {entry.customers.length > 0 && (
+                            <span className="font-mono text-sm">
+                              {entry.customers[0].sequential_number?.toString().padStart(2, '0')} - {entry.customers[entry.customers.length - 1].sequential_number?.toString().padStart(2, '0')}
+                            </span>
+                          )}
+                        </TableCell>
+                        <TableCell>
+                          <span className="font-semibold">{entry.customers.length}</span>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                    {getCustomerRangesByAgent().length === 0 && (
+                      <TableRow>
+                        <TableCell colSpan={4} className="text-center text-secondary-muted py-8">
+                          No customers assigned to sales agents yet.
+                        </TableCell>
+                      </TableRow>
+                    )}
                   </TableBody>
                 </Table>
               </div>

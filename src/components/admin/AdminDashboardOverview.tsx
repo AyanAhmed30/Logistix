@@ -132,14 +132,8 @@ export function AdminDashboardOverview() {
 
   // Console statistics
   const emptyConsoles = consoles.filter((c) => c.total_cbm === 0).length;
-  const partiallyFilledConsoles = consoles.filter(
-    (c) => c.total_cbm > 0 && c.total_cbm < c.max_cbm
-  ).length;
-  const fullConsoles = consoles.filter((c) => c.total_cbm >= c.max_cbm).length;
-  const totalConsoleCapacity = consoles.reduce((sum, c) => sum + c.max_cbm, 0);
-  const usedConsoleCapacity = consoles.reduce((sum, c) => sum + c.total_cbm, 0);
-  const capacityUsagePercent =
-    totalConsoleCapacity > 0 ? (usedConsoleCapacity / totalConsoleCapacity) * 100 : 0;
+  const consolesWithOrders = consoles.filter((c) => c.total_cbm > 0).length;
+  const totalConsoleCbm = consoles.reduce((sum, c) => sum + c.total_cbm, 0);
 
   // Calculate percentages
   const ordersAssignedPercent =
@@ -431,17 +425,10 @@ export function AdminDashboardOverview() {
               </div>
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
-                  <div className="h-3 w-3 rounded-full bg-yellow-400"></div>
-                  <span className="text-sm">Partially Filled</span>
-                </div>
-                <span className="text-lg font-semibold">{partiallyFilledConsoles}</span>
-              </div>
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
                   <div className="h-3 w-3 rounded-full bg-green-400"></div>
-                  <span className="text-sm">Full</span>
+                  <span className="text-sm">Has Orders</span>
                 </div>
-                <span className="text-lg font-semibold">{fullConsoles}</span>
+                <span className="text-lg font-semibold">{consolesWithOrders}</span>
               </div>
             </div>
           </CardContent>
@@ -536,36 +523,34 @@ export function AdminDashboardOverview() {
         </CardContent>
       </Card>
 
-      {/* Capacity Usage and Additional Stats */}
+      {/* Total CBM and Additional Stats */}
       <div className="grid gap-6 md:grid-cols-2">
-        {/* Capacity Usage */}
+        {/* Total CBM in Consoles */}
         <Card className="bg-white border shadow-sm">
           <CardHeader>
-            <CardTitle className="text-lg">Console Capacity Usage</CardTitle>
-            <CardDescription>Overall console capacity utilization</CardDescription>
+            <CardTitle className="text-lg">Total CBM in Consoles</CardTitle>
+            <CardDescription>CBM calculated from assigned orders</CardDescription>
           </CardHeader>
           <CardContent>
             <div className="space-y-4">
               <div className="flex items-center justify-center">
-                <CircularProgress
-                  percentage={capacityUsagePercent}
-                  size={140}
-                  strokeWidth={10}
-                  color="text-primary-dark"
-                />
+                <div className="text-center">
+                  <div className="text-4xl font-bold text-primary-dark">{totalConsoleCbm.toFixed(3)}</div>
+                  <div className="text-sm text-secondary-muted mt-1">CBM</div>
+                </div>
               </div>
               <div className="space-y-2 text-center">
                 <div className="flex items-center justify-between px-4">
-                  <span className="text-sm text-secondary-muted">Used</span>
+                  <span className="text-sm text-secondary-muted">Total Consoles</span>
                   <span className="text-sm font-medium">
-                    {usedConsoleCapacity.toFixed(3)} / {totalConsoleCapacity.toFixed(3)} CBM
+                    {stats.totalConsoles}
                   </span>
                 </div>
-                <div className="w-full bg-slate-200 rounded-full h-4 overflow-hidden">
-                  <div
-                    className="bg-primary-dark h-full transition-all duration-500"
-                    style={{ width: `${Math.min(capacityUsagePercent, 100)}%` }}
-                  ></div>
+                <div className="flex items-center justify-between px-4">
+                  <span className="text-sm text-secondary-muted">Consoles with Orders</span>
+                  <span className="text-sm font-medium">
+                    {consolesWithOrders}
+                  </span>
                 </div>
               </div>
             </div>
@@ -682,18 +667,6 @@ export function AdminDashboardOverview() {
               </div>
             )}
 
-            {capacityUsagePercent > 80 && (
-              <div className="flex items-start gap-2 p-3 rounded-md bg-orange-50 border border-orange-200">
-                <AlertCircle className="h-5 w-5 text-orange-600 mt-0.5 flex-shrink-0" />
-                <div>
-                  <p className="text-sm font-medium text-orange-900">High Capacity Usage</p>
-                  <p className="text-xs text-orange-700 mt-1">
-                    Console capacity is {capacityUsagePercent.toFixed(1)}% utilized. Consider creating
-                    new consoles.
-                  </p>
-                </div>
-              </div>
-            )}
 
             {stats.totalUsers === 0 && (
               <div className="flex items-start gap-2 p-3 rounded-md bg-purple-50 border border-purple-200">

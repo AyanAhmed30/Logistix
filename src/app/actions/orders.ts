@@ -21,76 +21,84 @@ type OrderInput = {
 };
 
 export async function getNextCartonSerial() {
-  const supabase = await createAdminClient();
-  const { data, error } = await supabase.rpc("next_carton_serial");
-  if (error || data === null || data === undefined) {
-    return { error: error?.message || "Unable to generate serial number" };
-  }
+  try {
+    const supabase = await createAdminClient();
+    const { data, error } = await supabase.rpc("next_carton_serial");
+    if (error || data === null || data === undefined) {
+      return { error: error?.message || "Unable to generate serial number" };
+    }
 
-  const serial = String(data).padStart(7, "0");
-  return { serial };
+    const serial = String(data).padStart(7, "0");
+    return { serial };
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : "An unexpected error occurred while generating serial number" };
+  }
 }
 
 export async function createOrderWithCartons(order: OrderInput, cartons: CartonInput[]) {
-  const session = await getSession();
-  if (!session || session.role !== "user") {
-    return { error: "Unauthorized" };
+  try {
+    const session = await getSession();
+    if (!session || session.role !== "user") {
+      return { error: "Unauthorized" };
+    }
+
+    if (!order.shipping_mark?.trim()) {
+      return { error: "Shipping mark is required" };
+    }
+
+    if (!order.destination_country?.trim()) {
+      return { error: "Destination country is required" };
+    }
+
+    if (!order.total_cartons || order.total_cartons < 1) {
+      return { error: "Total cartons must be at least 1" };
+    }
+
+    if (cartons.length !== order.total_cartons) {
+      return { error: "Total cartons must match the number of cartons" };
+    }
+
+    const supabase = await createAdminClient();
+    const { data: orderData, error: orderError } = await supabase
+      .from("orders")
+      .insert({
+        username: session.username,
+        shipping_mark: order.shipping_mark,
+        destination_country: order.destination_country,
+        total_cartons: order.total_cartons,
+        item_description: order.item_description,
+      })
+      .select("id")
+      .single();
+
+    if (orderError || !orderData?.id) {
+      return { error: orderError?.message || "Unable to create order" };
+    }
+
+    const cartonsPayload = cartons.map((carton) => ({
+      ...carton,
+      order_id: orderData.id,
+    }));
+
+    const { data: cartonData, error: cartonError } = await supabase
+      .from("cartons")
+      .insert(cartonsPayload)
+      .select(
+        "id, carton_serial_number, weight, length, width, height, carton_index, order_id"
+      );
+
+    if (cartonError) {
+      await supabase.from("orders").delete().eq("id", orderData.id);
+      return { error: cartonError.message };
+    }
+
+    return {
+      orderId: orderData.id as string,
+      cartons: cartonData ?? [],
+    };
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : "An unexpected error occurred while creating order" };
   }
-
-  if (!order.shipping_mark?.trim()) {
-    return { error: "Shipping mark is required" };
-  }
-
-  if (!order.destination_country?.trim()) {
-    return { error: "Destination country is required" };
-  }
-
-  if (!order.total_cartons || order.total_cartons < 1) {
-    return { error: "Total cartons must be at least 1" };
-  }
-
-  if (cartons.length !== order.total_cartons) {
-    return { error: "Total cartons must match the number of cartons" };
-  }
-
-  const supabase = await createAdminClient();
-  const { data: orderData, error: orderError } = await supabase
-    .from("orders")
-    .insert({
-      username: session.username,
-      shipping_mark: order.shipping_mark,
-      destination_country: order.destination_country,
-      total_cartons: order.total_cartons,
-      item_description: order.item_description,
-    })
-    .select("id")
-    .single();
-
-  if (orderError || !orderData?.id) {
-    return { error: orderError?.message || "Unable to create order" };
-  }
-
-  const cartonsPayload = cartons.map((carton) => ({
-    ...carton,
-    order_id: orderData.id,
-  }));
-
-  const { data: cartonData, error: cartonError } = await supabase
-    .from("cartons")
-    .insert(cartonsPayload)
-    .select(
-      "id, carton_serial_number, weight, length, width, height, carton_index, order_id"
-    );
-
-  if (cartonError) {
-    await supabase.from("orders").delete().eq("id", orderData.id);
-    return { error: cartonError.message };
-  }
-
-  return {
-    orderId: orderData.id as string,
-    cartons: cartonData ?? [],
-  };
 }
 
 export async function getOrderHistory() {

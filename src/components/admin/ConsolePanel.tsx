@@ -215,10 +215,9 @@ export function ConsolePanel() {
     }
   };
 
-  const getConsoleStatus = (console: Console): "Empty" | "Partially Filled" | "Full" => {
+  const getConsoleStatus = (console: Console): "Empty" | "Has Orders" => {
     if (console.total_cbm === 0) return "Empty";
-    if (console.total_cbm >= console.max_cbm) return "Full";
-    return "Partially Filled";
+    return "Has Orders";
   };
 
   const calcOrderTotals = (order: Order) => {
@@ -286,8 +285,7 @@ export function ConsolePanel() {
                 const status = getConsoleStatus(console);
                 const statusColors = {
                   Empty: "bg-gray-100 text-gray-700",
-                  "Partially Filled": "bg-yellow-100 text-yellow-700",
-                  Full: "bg-green-100 text-green-700",
+                  "Has Orders": "bg-green-100 text-green-700",
                 };
 
                 return (
@@ -346,8 +344,8 @@ export function ConsolePanel() {
                         <div className="sm:col-span-2 md:col-span-1">
                           <span className="text-secondary-muted">Total CBM:</span>
                           <div className="font-medium break-words">
-                            <span className="block sm:inline">{console.total_cbm.toFixed(3)} / {console.max_cbm}</span>
-                            <span className="text-xs text-secondary-muted block sm:inline sm:ml-1">(Accumulated / Max)</span>
+                            <span className="block sm:inline">{console.total_cbm.toFixed(3)}</span>
+                            <span className="text-xs text-secondary-muted block sm:inline sm:ml-1">(Calculated from assigned orders)</span>
                           </div>
                         </div>
                       </div>
@@ -497,41 +495,39 @@ export function ConsolePanel() {
                 placeholder="SO-001"
               />
             </div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label htmlFor="total_cartons">
-                  Total Number of Cartons
-                  <span className="text-xs text-secondary-muted ml-1">(Auto-calculated)</span>
-                </Label>
-                <Input
-                  id="total_cartons"
-                  type="number"
-                  min="0"
-                  value=""
-                  disabled
-                  placeholder="Auto-calculated after order assignment"
-                  className="bg-slate-50 cursor-not-allowed"
-                />
-                <p className="text-xs text-secondary-muted mt-1">
-                  This value will be automatically calculated and updated when you assign orders to this console from the Order Management page.
-                </p>
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="total_cbm">
-                  Total CBM (Fixed)
-                  <span className="text-xs text-secondary-muted ml-1">(Auto-set)</span>
-                </Label>
-                <Input
-                  id="total_cbm"
-                  type="number"
-                  value="68"
-                  disabled
-                  className="bg-slate-50 cursor-not-allowed"
-                />
-                <p className="text-xs text-secondary-muted mt-1">
-                  Maximum CBM capacity is fixed at 68. Accumulated CBM starts at 0 and increases as orders are assigned.
-                </p>
-              </div>
+            <div className="space-y-2">
+              <Label htmlFor="total_cartons">
+                Total Number of Cartons
+                <span className="text-xs text-secondary-muted ml-1">(Auto-calculated)</span>
+              </Label>
+              <Input
+                id="total_cartons"
+                type="number"
+                min="0"
+                value=""
+                disabled
+                placeholder="Auto-calculated after order assignment"
+                className="bg-slate-50 cursor-not-allowed"
+              />
+              <p className="text-xs text-secondary-muted mt-1">
+                This value will be automatically calculated and updated when you assign orders to this console from the Order Management page.
+              </p>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="total_cbm_info">
+                Total CBM
+                <span className="text-xs text-secondary-muted ml-1">(Auto-calculated)</span>
+              </Label>
+              <Input
+                id="total_cbm_info"
+                type="text"
+                value="Auto-calculated from assigned orders"
+                disabled
+                className="bg-slate-50 cursor-not-allowed"
+              />
+              <p className="text-xs text-secondary-muted mt-1">
+                CBM will be automatically calculated and updated based on the total CBM of orders assigned to this console.
+              </p>
             </div>
           </div>
           <DialogFooter className="flex-col sm:flex-row gap-2 sm:gap-0">
@@ -551,8 +547,7 @@ export function ConsolePanel() {
             <DialogDescription>
               {selectedConsoleForLoading && (
                 <>
-                  Out of total {selectedConsoleForLoading.max_cbm} CBM, this console contains{" "}
-                  {selectedConsoleForLoading.total_cbm.toFixed(3)} CBM.
+                  This console contains {selectedConsoleForLoading.total_cbm.toFixed(3)} CBM calculated from assigned orders.
                   <br />
                   <br />
                   Do you want to move this console to Loading?

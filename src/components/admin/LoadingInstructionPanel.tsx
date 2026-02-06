@@ -230,7 +230,8 @@ export function LoadingInstructionPanel() {
                         <div>
                           <span className="text-secondary-muted">Total CBM:</span>
                           <div className="font-medium">
-                            {console.total_cbm.toFixed(3)} / {console.max_cbm}
+                            {console.total_cbm.toFixed(3)}
+                            <span className="text-xs text-secondary-muted ml-1">(from assigned orders)</span>
                           </div>
                         </div>
                       </div>

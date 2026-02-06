@@ -246,16 +246,7 @@ export function OrderManagementPanel() {
       totalCbm += totals.totalCbm;
     }
 
-    // Get console to check max CBM
-    const console = consoles.find((c) => c.id === selectedConsole);
-    if (console && totalCbm > console.max_cbm) {
-      toast.error(
-        `Total CBM (${totalCbm.toFixed(3)}) exceeds maximum capacity (${console.max_cbm})`
-      );
-      setIsAssigning(false);
-      return;
-    }
-
+    // CBM is calculated automatically from assigned orders - no limit check needed
     const result = await assignOrdersToConsole(selectedConsole, Array.from(selectedOrderIds));
 
     setIsAssigning(false);
@@ -330,7 +321,11 @@ export function OrderManagementPanel() {
                   </div>
                   <div>
                     <span className="font-medium">CBM:</span> {selectedTotalCbm.toFixed(3)}
-                    {selectedConsoleObj && ` / ${selectedConsoleObj.max_cbm}`}
+                    {selectedConsoleObj && (
+                      <span className="text-xs text-secondary-muted ml-1">
+                        (Current console CBM: {selectedConsoleObj.total_cbm.toFixed(3)})
+                      </span>
+                    )}
                   </div>
                 </div>
                 <Button 

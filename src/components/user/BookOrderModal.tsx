@@ -266,6 +266,8 @@ export function BookOrderModal({ open, onOpenChange, onOrderSaved }: Props) {
     const cartonsToPrint = await handleSaveOrder(orderIndex);
     if (!cartonsToPrint) return;
     const pdf = new jsPDF({ unit: "mm", format: [101, 152] });
+    
+    // Generate carton sticker pages (existing functionality)
     for (let i = 0; i < cartonsToPrint.length; i += 1) {
       const carton = cartonsToPrint[i];
       if (i > 0) pdf.addPage();
@@ -336,6 +338,382 @@ export function BookOrderModal({ open, onOpenChange, onOrderSaved }: Props) {
       const qrDataUrl = await QRCode.toDataURL(qrPayload);
       pdf.addImage(qrDataUrl, "PNG", 30, 120, 40, 40);
     }
+
+    // Calculate order totals
+    const totalWeight = cartonsToPrint.reduce((sum, carton) => {
+      const weight = toNumber(carton.weight);
+      return sum + (weight || 0);
+    }, 0);
+
+    const totalCbm = cartonsToPrint.reduce((sum, carton) => {
+      const length = toNumber(carton.length);
+      const width = toNumber(carton.width);
+      const height = toNumber(carton.height);
+      if (!length || !width || !height) return sum;
+      const volumeCm3 = toCm3(length, width, height, order.dimensionUnit);
+      const cbm = volumeCm3 / 1_000_000;
+      return sum + cbm;
+    }, 0);
+
+    const orderDate = new Date().toLocaleDateString('en-US', {
+      year: 'numeric',
+      month: 'long',
+      day: 'numeric'
+    });
+
+    // Add Order Summary Page (same format as stickers)
+    pdf.addPage([101, 152], 'mm');
+    pdf.setLineWidth(0.2);
+    pdf.rect(6, 6, 89, 140);
+    
+    if (logoDataUrl && logoSize) {
+      const maxLogoWidth = 60;
+      const maxLogoHeight = 16;
+      const scale = Math.min(
+        maxLogoWidth / logoSize.width,
+        maxLogoHeight / logoSize.height
+      );
+      const logoWidth = logoSize.width * scale;
+      const logoHeight = logoSize.height * scale;
+      const logoX = (101 - logoWidth) / 2;
+      const logoY = 10;
+      pdf.addImage(logoDataUrl, "PNG", logoX, logoY, logoWidth, logoHeight);
+    }
+
+    pdf.setFontSize(12);
+    pdf.setFont(undefined, 'bold');
+    pdf.text("ORDER SUMMARY", 50, 35, { align: 'center' });
+    
+    pdf.setFontSize(9);
+    pdf.setFont(undefined, 'normal');
+    const summaryStartY = 45;
+    const summaryBoxLeft = 10;
+    const summaryBoxWidth = 81;
+    const summaryRowHeight = 12;
+    let currentY = summaryStartY;
+
+    // Product Description
+    pdf.rect(summaryBoxLeft, currentY, summaryBoxWidth, summaryRowHeight);
+    pdf.text("Product Description:", summaryBoxLeft + 2, currentY + 5);
+    pdf.text(order.itemDescription || "-", summaryBoxLeft + 2, currentY + 9);
+    currentY += summaryRowHeight;
+
+    // Shipping Mark
+    pdf.rect(summaryBoxLeft, currentY, summaryBoxWidth, summaryRowHeight);
+    pdf.text("Shipping Mark:", summaryBoxLeft + 2, currentY + 5);
+    pdf.text(shippingMark || "-", summaryBoxLeft + 2, currentY + 9);
+    currentY += summaryRowHeight;
+
+    // Total Number of Cartons
+    pdf.rect(summaryBoxLeft, currentY, summaryBoxWidth, summaryRowHeight);
+    pdf.text("Total Number of Cartons:", summaryBoxLeft + 2, currentY + 5);
+    pdf.text(cartonsToPrint.length.toString(), summaryBoxLeft + 2, currentY + 9);
+    currentY += summaryRowHeight;
+
+    // Total Weight
+    pdf.rect(summaryBoxLeft, currentY, summaryBoxWidth, summaryRowHeight);
+    pdf.text("Total Weight:", summaryBoxLeft + 2, currentY + 5);
+    pdf.text(`${totalWeight.toFixed(2)} kg`, summaryBoxLeft + 2, currentY + 9);
+    currentY += summaryRowHeight;
+
+    // CBM
+    pdf.rect(summaryBoxLeft, currentY, summaryBoxWidth, summaryRowHeight);
+    pdf.text("CBM:", summaryBoxLeft + 2, currentY + 5);
+    pdf.text(totalCbm.toFixed(3), summaryBoxLeft + 2, currentY + 9);
+    currentY += summaryRowHeight;
+
+    // Order Date
+    pdf.rect(summaryBoxLeft, currentY, summaryBoxWidth, summaryRowHeight);
+    pdf.text("Order Date:", summaryBoxLeft + 2, currentY + 5);
+    pdf.text(orderDate, summaryBoxLeft + 2, currentY + 9);
+
+    // Add Terms & Signature Page (A4 size)
+    pdf.addPage('a4', 'portrait');
+    const a4Width = 210;
+    const a4Height = 297;
+    const margin = 15;
+    const topSectionHeight = 140; // Top half for terms
+    const bottomSectionStartY = topSectionHeight + 10;
+
+    // Top Half: Terms & Conditions Header
+    pdf.setFontSize(16);
+    pdf.setFont(undefined, 'bold');
+    pdf.text("TERMS & CONDITIONS", a4Width / 2, margin + 8, { align: 'center' });
+    
+    pdf.setLineWidth(0.5);
+    pdf.line(margin, margin + 12, a4Width - margin, margin + 12);
+    
+    // Terms content area
+    const termsStartY = margin + 20;
+    const termsEndY = topSectionHeight;
+    const colWidth = (a4Width - 2 * margin) / 3;
+    const colSpacing = 5;
+    const lineHeight = 5;
+    const sectionSpacing = 3;
+
+    pdf.setFontSize(9);
+    pdf.setFont(undefined, 'normal');
+
+    // English Terms Column
+    let englishY = termsStartY;
+    pdf.setFont(undefined, 'bold');
+    pdf.setFontSize(10);
+    pdf.text("ENGLISH", margin + colWidth / 2, englishY, { align: 'center' });
+    englishY += 8;
+    pdf.setLineWidth(0.3);
+    pdf.line(margin, englishY, margin + colWidth - colSpacing, englishY);
+    englishY += 5;
+    
+    pdf.setFontSize(8);
+    pdf.setFont(undefined, 'normal');
+    const englishTerms = [
+      "1. All shipments are subject to inspection.",
+      "2. Carrier not responsible for damage due to improper packaging.",
+      "3. Insurance coverage must be arranged separately.",
+      "4. Delivery times are estimates, not guaranteed.",
+      "5. Customs duties and taxes are recipient's responsibility.",
+      "6. Claims must be filed within 30 days of delivery.",
+      "7. Shipper responsible for accurate documentation."
+    ];
+    englishTerms.forEach(term => {
+      if (englishY < termsEndY - 5) {
+        pdf.text(term, margin + 2, englishY, { maxWidth: colWidth - colSpacing - 4 });
+        englishY += lineHeight + 1;
+      }
+    });
+
+    // Urdu Terms Column - Using HTML for proper Unicode rendering
+    let urduY = termsStartY;
+    pdf.setFont(undefined, 'bold');
+    pdf.setFontSize(10);
+    pdf.text("URDU", margin + colWidth + colSpacing + colWidth / 2, urduY, { align: 'center' });
+    urduY += 8;
+    pdf.line(margin + colWidth + colSpacing, urduY, margin + 2 * colWidth - colSpacing, urduY);
+    urduY += 5;
+    
+    pdf.setFontSize(8);
+    pdf.setFont(undefined, 'normal');
+    const urduTerms = [
+      "1. تمام شپمنٹس معائنہ کے تابع ہیں۔",
+      "2. کیریئر غلط پیکیجنگ کی وجہ سے نقصان کا ذمہ دار نہیں ہے۔",
+      "3. انشورنس کوریج الگ سے ترتیب دی جانی چاہیے۔",
+      "4. ڈیلیوری کے اوقات تخمینے ہیں، ضمانت نہیں۔",
+      "5. کسٹم ڈیوٹیز اور ٹیکس وصول کنندہ کی ذمہ داری ہیں۔",
+      "6. دعوے ڈیلیوری کے 30 دنوں کے اندر دائر کرنے چاہئیں۔",
+      "7. بھیجنے والا درست دستاویزات کا ذمہ دار ہے۔"
+    ];
+    
+    // Render Urdu text using canvas for proper Unicode support
+    const urduCanvas = document.createElement('canvas');
+    const urduCtx = urduCanvas.getContext('2d');
+    if (urduCtx) {
+      urduCanvas.width = (colWidth - colSpacing - 4) * 3.779527559; // Convert mm to pixels
+      urduCanvas.height = (termsEndY - urduY) * 3.779527559;
+      urduCtx.fillStyle = 'white';
+      urduCtx.fillRect(0, 0, urduCanvas.width, urduCanvas.height);
+      urduCtx.fillStyle = 'black';
+      urduCtx.font = '10px Arial Unicode MS, Noto Sans Arabic, Arial, sans-serif';
+      urduCtx.textAlign = 'right';
+      urduCtx.textBaseline = 'top';
+      let urduTextY = 0;
+      urduTerms.forEach(term => {
+        const lines = term.split('\n');
+        lines.forEach(line => {
+          urduCtx.fillText(line, urduCanvas.width - 5, urduTextY);
+          urduTextY += 12;
+        });
+        urduTextY += 2;
+      });
+      const urduDataUrl = urduCanvas.toDataURL('image/png');
+      pdf.addImage(urduDataUrl, 'PNG', margin + colWidth + colSpacing + 2, urduY, colWidth - colSpacing - 4, (termsEndY - urduY));
+    } else {
+      // Fallback: render as text
+      urduTerms.forEach(term => {
+        if (urduY < termsEndY - 5) {
+          pdf.text(term, margin + colWidth + colSpacing + 2, urduY, { maxWidth: colWidth - colSpacing - 4 });
+          urduY += lineHeight + 1;
+        }
+      });
+    }
+
+    // Chinese Terms Column - Using HTML for proper Unicode rendering
+    let chineseY = termsStartY;
+    pdf.setFont(undefined, 'bold');
+    pdf.setFontSize(10);
+    pdf.text("CHINESE", margin + 2 * colWidth + 2 * colSpacing + colWidth / 2, chineseY, { align: 'center' });
+    chineseY += 8;
+    pdf.line(margin + 2 * colWidth + 2 * colSpacing, chineseY, a4Width - margin, chineseY);
+    chineseY += 5;
+    
+    pdf.setFontSize(8);
+    pdf.setFont(undefined, 'normal');
+    const chineseTerms = [
+      "1. 所有货物均需接受检查。",
+      "2. 承运人不承担因包装不当造成的损坏责任。",
+      "3. 保险范围必须单独安排。",
+      "4. 交货时间仅为估计，不保证。",
+      "5. 关税和税费由收件人承担。",
+      "6. 索赔必须在交货后30天内提出。",
+      "7. 发货人负责提供准确的文件。"
+    ];
+    
+    // Render Chinese text using canvas for proper Unicode support
+    const chineseCanvas = document.createElement('canvas');
+    const chineseCtx = chineseCanvas.getContext('2d');
+    if (chineseCtx) {
+      chineseCanvas.width = (colWidth - colSpacing - 4) * 3.779527559; // Convert mm to pixels
+      chineseCanvas.height = (termsEndY - chineseY) * 3.779527559;
+      chineseCtx.fillStyle = 'white';
+      chineseCtx.fillRect(0, 0, chineseCanvas.width, chineseCanvas.height);
+      chineseCtx.fillStyle = 'black';
+      chineseCtx.font = '10px Arial Unicode MS, Noto Sans SC, Microsoft YaHei, Arial, sans-serif';
+      chineseCtx.textAlign = 'left';
+      chineseCtx.textBaseline = 'top';
+      let chineseTextY = 0;
+      chineseTerms.forEach(term => {
+        const lines = term.split('\n');
+        lines.forEach(line => {
+          chineseCtx.fillText(line, 5, chineseTextY);
+          chineseTextY += 12;
+        });
+        chineseTextY += 2;
+      });
+      const chineseDataUrl = chineseCanvas.toDataURL('image/png');
+      pdf.addImage(chineseDataUrl, 'PNG', margin + 2 * colWidth + 2 * colSpacing + 2, chineseY, colWidth - colSpacing - 4, (termsEndY - chineseY));
+    } else {
+      // Fallback: render as text
+      chineseTerms.forEach(term => {
+        if (chineseY < termsEndY - 5) {
+          pdf.text(term, margin + 2 * colWidth + 2 * colSpacing + 2, chineseY, { maxWidth: colWidth - colSpacing - 4 });
+          chineseY += lineHeight + 1;
+        }
+      });
+    }
+
+    // Divider line between sections
+    pdf.setLineWidth(0.8);
+    pdf.line(margin, bottomSectionStartY - 5, a4Width - margin, bottomSectionStartY - 5);
+
+    // Bottom Half: Signature Section
+    pdf.setFontSize(16);
+    pdf.setFont(undefined, 'bold');
+    pdf.text("SIGNATURE SECTION", a4Width / 2, bottomSectionStartY + 8, { align: 'center' });
+    
+    pdf.setLineWidth(0.3);
+    const sigBoxWidth = (a4Width - 2 * margin - 10) / 2;
+    const sigBoxHeight = 50;
+    let sigY = bottomSectionStartY + 20;
+
+    // Shipper Signature Box (Left)
+    pdf.rect(margin, sigY, sigBoxWidth, sigBoxHeight);
+    pdf.setFontSize(9);
+    pdf.setFont(undefined, 'bold');
+    pdf.text("SHIPPER", margin + sigBoxWidth / 2, sigY + 6, { align: 'center' });
+    // Shipper subtitle with proper Unicode rendering using canvas
+    const shipperSubtitleCanvas = document.createElement('canvas');
+    const shipperSubtitleCtx = shipperSubtitleCanvas.getContext('2d');
+    if (shipperSubtitleCtx) {
+      shipperSubtitleCanvas.width = sigBoxWidth * 3.779527559;
+      shipperSubtitleCanvas.height = 8 * 3.779527559;
+      shipperSubtitleCtx.fillStyle = 'white';
+      shipperSubtitleCtx.fillRect(0, 0, shipperSubtitleCanvas.width, shipperSubtitleCanvas.height);
+      shipperSubtitleCtx.fillStyle = 'black';
+      shipperSubtitleCtx.font = '7px Arial Unicode MS, Noto Sans SC, Noto Sans Arabic, Arial, sans-serif';
+      shipperSubtitleCtx.textAlign = 'center';
+      shipperSubtitleCtx.textBaseline = 'middle';
+      shipperSubtitleCtx.fillText('发货人 / بھیجنے والا', shipperSubtitleCanvas.width / 2, shipperSubtitleCanvas.height / 2);
+      const shipperSubtitleDataUrl = shipperSubtitleCanvas.toDataURL('image/png');
+      pdf.addImage(shipperSubtitleDataUrl, 'PNG', margin, sigY + 8, sigBoxWidth, 8);
+    } else {
+      pdf.setFontSize(7);
+      pdf.text("发货人 / بھیجنے والا", margin + sigBoxWidth / 2, sigY + 10, { align: 'center' });
+    }
+    
+    pdf.setFontSize(8);
+    pdf.setFont(undefined, 'normal');
+    // Signature, Name, Date labels with proper Unicode using canvas
+    const labelTexts = [
+      { text: 'Signature / 签名 / دستخط:', y: sigY + 18 },
+      { text: 'Name / 姓名 / نام:', y: sigY + 28 },
+      { text: 'Date / 日期 / تاریخ:', y: sigY + 38 }
+    ];
+    
+    labelTexts.forEach(({ text, y }) => {
+      const labelCanvas = document.createElement('canvas');
+      const labelCtx = labelCanvas.getContext('2d');
+      if (labelCtx) {
+        labelCanvas.width = (sigBoxWidth - 10) * 3.779527559;
+        labelCanvas.height = 8 * 3.779527559;
+        labelCtx.fillStyle = 'white';
+        labelCtx.fillRect(0, 0, labelCanvas.width, labelCanvas.height);
+        labelCtx.fillStyle = 'black';
+        labelCtx.font = '8px Arial Unicode MS, Noto Sans SC, Noto Sans Arabic, Arial, sans-serif';
+        labelCtx.textAlign = 'left';
+        labelCtx.textBaseline = 'middle';
+        labelCtx.fillText(text, 5, labelCanvas.height / 2);
+        const labelDataUrl = labelCanvas.toDataURL('image/png');
+        pdf.addImage(labelDataUrl, 'PNG', margin + 5, y - 4, sigBoxWidth - 10, 8);
+      } else {
+        pdf.text(text, margin + 5, y);
+      }
+    });
+    
+    pdf.line(margin + 5, sigY + 20, margin + sigBoxWidth - 5, sigY + 20);
+    pdf.line(margin + 5, sigY + 30, margin + sigBoxWidth - 5, sigY + 30);
+    pdf.line(margin + 5, sigY + 40, margin + sigBoxWidth - 5, sigY + 40);
+
+    // Receiver Signature Box (Right)
+    pdf.rect(margin + sigBoxWidth + 10, sigY, sigBoxWidth, sigBoxHeight);
+    pdf.setFontSize(9);
+    pdf.setFont(undefined, 'bold');
+    pdf.text("RECEIVER", margin + sigBoxWidth + 10 + sigBoxWidth / 2, sigY + 6, { align: 'center' });
+    // Receiver subtitle with proper Unicode rendering using canvas
+    const receiverSubtitleCanvas = document.createElement('canvas');
+    const receiverSubtitleCtx = receiverSubtitleCanvas.getContext('2d');
+    if (receiverSubtitleCtx) {
+      receiverSubtitleCanvas.width = sigBoxWidth * 3.779527559;
+      receiverSubtitleCanvas.height = 8 * 3.779527559;
+      receiverSubtitleCtx.fillStyle = 'white';
+      receiverSubtitleCtx.fillRect(0, 0, receiverSubtitleCanvas.width, receiverSubtitleCanvas.height);
+      receiverSubtitleCtx.fillStyle = 'black';
+      receiverSubtitleCtx.font = '7px Arial Unicode MS, Noto Sans SC, Noto Sans Arabic, Arial, sans-serif';
+      receiverSubtitleCtx.textAlign = 'center';
+      receiverSubtitleCtx.textBaseline = 'middle';
+      receiverSubtitleCtx.fillText('收货人 / وصول کنندہ', receiverSubtitleCanvas.width / 2, receiverSubtitleCanvas.height / 2);
+      const receiverSubtitleDataUrl = receiverSubtitleCanvas.toDataURL('image/png');
+      pdf.addImage(receiverSubtitleDataUrl, 'PNG', margin + sigBoxWidth + 10, sigY + 8, sigBoxWidth, 8);
+    } else {
+      pdf.setFontSize(7);
+      pdf.text("收货人 / وصول کنندہ", margin + sigBoxWidth + 10 + sigBoxWidth / 2, sigY + 10, { align: 'center' });
+    }
+    
+    pdf.setFontSize(8);
+    pdf.setFont(undefined, 'normal');
+    // Render labels for receiver using canvas
+    labelTexts.forEach(({ text, y }) => {
+      const labelCanvas = document.createElement('canvas');
+      const labelCtx = labelCanvas.getContext('2d');
+      if (labelCtx) {
+        labelCanvas.width = (sigBoxWidth - 10) * 3.779527559;
+        labelCanvas.height = 8 * 3.779527559;
+        labelCtx.fillStyle = 'white';
+        labelCtx.fillRect(0, 0, labelCanvas.width, labelCanvas.height);
+        labelCtx.fillStyle = 'black';
+        labelCtx.font = '8px Arial Unicode MS, Noto Sans SC, Noto Sans Arabic, Arial, sans-serif';
+        labelCtx.textAlign = 'left';
+        labelCtx.textBaseline = 'middle';
+        labelCtx.fillText(text, 5, labelCanvas.height / 2);
+        const labelDataUrl = labelCanvas.toDataURL('image/png');
+        pdf.addImage(labelDataUrl, 'PNG', margin + sigBoxWidth + 15, y - 4, sigBoxWidth - 10, 8);
+      } else {
+        pdf.text(text, margin + sigBoxWidth + 15, y);
+      }
+    });
+    
+    pdf.line(margin + sigBoxWidth + 15, sigY + 20, margin + 2 * sigBoxWidth + 5, sigY + 20);
+    pdf.line(margin + sigBoxWidth + 15, sigY + 30, margin + 2 * sigBoxWidth + 5, sigY + 30);
+    pdf.line(margin + sigBoxWidth + 15, sigY + 40, margin + 2 * sigBoxWidth + 5, sigY + 40);
+
     toast.success("Order successfully added and prints downloaded", {
       className: "bg-green-400 text-white border-green-400",
     });

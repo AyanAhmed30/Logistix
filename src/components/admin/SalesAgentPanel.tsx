@@ -64,7 +64,6 @@ type CustomerWithAssignment = {
 export function SalesAgentPanel() {
   const router = useRouter();
   const [salesAgents, setSalesAgents] = useState<SalesAgent[]>([]);
-  const [customers, setCustomers] = useState<CustomerWithAssignment[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
@@ -98,9 +97,6 @@ export function SalesAgentPanel() {
 
       if ("error" in customersResult) {
         toast.error(customersResult.error || "Unable to load customers");
-        setCustomers([]);
-      } else {
-        setCustomers((customersResult.customers || []) as CustomerWithAssignment[]);
       }
 
       if ("error" in sequencesResult) {

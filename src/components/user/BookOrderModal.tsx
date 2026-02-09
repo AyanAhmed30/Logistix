@@ -430,7 +430,6 @@ export function BookOrderModal({ open, onOpenChange, onOrderSaved }: Props) {
     // Add Terms & Signature Page (A4 size)
     pdf.addPage('a4', 'portrait');
     const a4Width = 210;
-    const a4Height = 297;
     const margin = 15;
     const topSectionHeight = 140; // Top half for terms
     const bottomSectionStartY = topSectionHeight + 10;
@@ -449,7 +448,6 @@ export function BookOrderModal({ open, onOpenChange, onOrderSaved }: Props) {
     const colWidth = (a4Width - 2 * margin) / 3;
     const colSpacing = 5;
     const lineHeight = 5;
-    const sectionSpacing = 3;
 
     pdf.setFontSize(9);
     pdf.setFont(undefined, 'normal');
@@ -602,7 +600,7 @@ export function BookOrderModal({ open, onOpenChange, onOrderSaved }: Props) {
     pdf.setLineWidth(0.3);
     const sigBoxWidth = (a4Width - 2 * margin - 10) / 2;
     const sigBoxHeight = 50;
-    let sigY = bottomSectionStartY + 20;
+    const sigY = bottomSectionStartY + 20;
 
     // Shipper Signature Box (Left)
     pdf.rect(margin, sigY, sigBoxWidth, sigBoxHeight);
@@ -717,7 +715,8 @@ export function BookOrderModal({ open, onOpenChange, onOrderSaved }: Props) {
     toast.success("Order successfully added and prints downloaded", {
       className: "bg-green-400 text-white border-green-400",
     });
-    pdf.save(`logistix-order-${Date.now()}.pdf`);
+    const timestamp = Date.now();
+    pdf.save(`logistix-order-${timestamp}.pdf`);
   }
 
   return (

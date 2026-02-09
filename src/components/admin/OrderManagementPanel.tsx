@@ -237,15 +237,6 @@ export function OrderManagementPanel() {
 
     setIsAssigning(true);
 
-    // Calculate total CBM of selected orders
-    const selectedOrders = orders.filter((order) => selectedOrderIds.has(order.id));
-    let totalCbm = 0;
-
-    for (const order of selectedOrders) {
-      const totals = calcOrderTotals(order);
-      totalCbm += totals.totalCbm;
-    }
-
     // CBM is calculated automatically from assigned orders - no limit check needed
     const result = await assignOrdersToConsole(selectedConsole, Array.from(selectedOrderIds));
 

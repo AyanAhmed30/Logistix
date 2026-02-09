@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useTransition } from "react";
+import { useEffect, useState, useTransition, useRef } from "react";
 import { toast } from "sonner";
 import QRCode from "qrcode";
 import jsPDF from "jspdf";
@@ -54,6 +54,7 @@ export function BookOrderModal({ open, onOpenChange, onOrderSaved }: Props) {
   const [savingOrderIndex, setSavingOrderIndex] = useState<number | null>(null);
   const [logoDataUrl, setLogoDataUrl] = useState<string | null>(null);
   const [logoSize, setLogoSize] = useState<{ width: number; height: number } | null>(null);
+  const orderCounterRef = useRef(0);
 
   useEffect(() => {
     if (!open) {
@@ -715,8 +716,10 @@ export function BookOrderModal({ open, onOpenChange, onOrderSaved }: Props) {
     toast.success("Order successfully added and prints downloaded", {
       className: "bg-green-400 text-white border-green-400",
     });
-    const timestamp = Date.now();
-    pdf.save(`logistix-order-${timestamp}.pdf`);
+    // Generate unique filename using counter ref (avoids impure function call)
+    orderCounterRef.current += 1;
+    const filename = `logistix-order-${orderCounterRef.current}.pdf`;
+    pdf.save(filename);
   }
 
   return (

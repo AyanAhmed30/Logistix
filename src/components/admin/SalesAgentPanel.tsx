@@ -41,25 +41,6 @@ import {
 } from "@/components/ui/select";
 import { PlusCircle, Trash2, Edit } from "lucide-react";
 
-type CustomerWithAssignment = {
-  id: string;
-  name: string;
-  company_name: string;
-  phone_number: string;
-  city: string;
-  address: string;
-  customer_code: string | null;
-  sequential_number: number | null;
-  sales_agent_customers: Array<{
-    sales_agent_id: string;
-    sales_agents: {
-      id: string;
-      name: string;
-      email: string;
-      code: string | null;
-    } | null;
-  }>;
-};
 
 export function SalesAgentPanel() {
   const router = useRouter();

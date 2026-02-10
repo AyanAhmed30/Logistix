@@ -3,7 +3,7 @@
 import { useState, useEffect, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
-import { createImportInvoice, getAllImportInvoices, deleteImportInvoice, type ImportInvoice } from "@/app/actions/import_invoices";
+import { createImportInvoice, getAllImportInvoices, deleteImportInvoice, type ImportInvoice, type ImportInvoiceItem } from "@/app/actions/import_invoices";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -276,7 +276,7 @@ export function ImportInvoicePanel() {
 
     // Get products from items array
     const invoiceProducts = invoice.items && invoice.items.length > 0
-      ? invoice.items.sort((a: any, b: any) => (a.item_order || 0) - (b.item_order || 0))
+      ? invoice.items.sort((a: ImportInvoiceItem, b: ImportInvoiceItem) => (a.item_order || 0) - (b.item_order || 0))
       : [];
 
     // Draw table header with borders
@@ -307,7 +307,7 @@ export function ImportInvoicePanel() {
     let currentY = tableStartY;
     let totalAmount = 0;
     
-    invoiceProducts.forEach((product: any, idx: number) => {
+    invoiceProducts.forEach((product: ImportInvoiceItem, idx: number) => {
       // Check if we need a new page
       if (currentY + rowHeight > pageHeight - margin - 50) {
         doc.addPage();
@@ -706,10 +706,10 @@ export function ImportInvoicePanel() {
                 <TableBody>
                   {invoices.map((invoice) => {
                     const invoiceProducts = invoice.items && invoice.items.length > 0
-                      ? invoice.items.sort((a: any, b: any) => (a.item_order || 0) - (b.item_order || 0))
+                      ? invoice.items.sort((a: ImportInvoiceItem, b: ImportInvoiceItem) => (a.item_order || 0) - (b.item_order || 0))
                       : [];
                     
-                    const totalAmount = invoiceProducts.reduce((sum: number, p: any) => sum + (p.total_amount || 0), 0);
+                    const totalAmount = invoiceProducts.reduce((sum: number, p: ImportInvoiceItem) => sum + (p.total_amount || 0), 0);
                     
                     return (
                       <TableRow key={invoice.id}>
@@ -730,7 +730,7 @@ export function ImportInvoicePanel() {
                                 <div>
                                   <div className="font-medium">{invoiceProducts.length} Products</div>
                                   <div className="text-xs text-muted-foreground">
-                                    {invoiceProducts.slice(0, 2).map((p: any, idx: number) => (
+                                    {invoiceProducts.slice(0, 2).map((p: ImportInvoiceItem, idx: number) => (
                                       <div key={idx}>{p.product_name} (HS: {p.hs_code})</div>
                                     ))}
                                     {invoiceProducts.length > 2 && (
@@ -1151,7 +1151,7 @@ export function ImportInvoicePanel() {
               <h3 className="text-sm font-semibold mb-3">Exporter Bank Details</h3>
               <div className="grid gap-4 md:grid-cols-2">
                 <div className="space-y-2">
-                  <Label htmlFor="exporter_account_name">Beneficiary's A/C Name</Label>
+                  <Label htmlFor="exporter_account_name">Beneficiary&apos;s A/C Name</Label>
                   <Input
                     id="exporter_account_name"
                     name="exporter_account_name"
@@ -1161,7 +1161,7 @@ export function ImportInvoicePanel() {
                   />
                 </div>
                 <div className="space-y-2">
-                  <Label htmlFor="exporter_account_number">Beneficiary's A/C Number</Label>
+                  <Label htmlFor="exporter_account_number">Beneficiary&apos;s A/C Number</Label>
                   <Input
                     id="exporter_account_number"
                     name="exporter_account_number"
@@ -1172,7 +1172,7 @@ export function ImportInvoicePanel() {
                 </div>
               </div>
               <div className="space-y-2 mt-2">
-                <Label htmlFor="exporter_account_address">Beneficiary's Address</Label>
+                <Label htmlFor="exporter_account_address">Beneficiary&apos;s Address</Label>
                 <Input
                   id="exporter_account_address"
                   name="exporter_account_address"
@@ -1182,7 +1182,7 @@ export function ImportInvoicePanel() {
                 />
               </div>
               <div className="space-y-2 mt-2">
-                <Label htmlFor="exporter_bank_name">Beneficiary's Bank</Label>
+                <Label htmlFor="exporter_bank_name">Beneficiary&apos;s Bank</Label>
                 <Input
                   id="exporter_bank_name"
                   name="exporter_bank_name"
@@ -1192,7 +1192,7 @@ export function ImportInvoicePanel() {
                 />
               </div>
               <div className="space-y-2 mt-2">
-                <Label htmlFor="exporter_bank_address">Beneficiary's Bank Address</Label>
+                <Label htmlFor="exporter_bank_address">Beneficiary&apos;s Bank Address</Label>
                 <Input
                   id="exporter_bank_address"
                   name="exporter_bank_address"
@@ -1202,7 +1202,7 @@ export function ImportInvoicePanel() {
                 />
               </div>
               <div className="space-y-2 mt-2">
-                <Label htmlFor="exporter_bank_swift">Beneficiary's Bank Swift Code</Label>
+                <Label htmlFor="exporter_bank_swift">Beneficiary&apos;s Bank Swift Code</Label>
                 <Input
                   id="exporter_bank_swift"
                   name="exporter_bank_swift"
@@ -1218,7 +1218,7 @@ export function ImportInvoicePanel() {
               <h3 className="text-sm font-semibold mb-3">Importer Bank Details</h3>
               <div className="grid gap-4 md:grid-cols-2">
                 <div className="space-y-2">
-                  <Label htmlFor="importer_account_name">Beneficiary's A/C Name</Label>
+                  <Label htmlFor="importer_account_name">Beneficiary&apos;s A/C Name</Label>
                   <Input
                     id="importer_account_name"
                     name="importer_account_name"
@@ -1228,7 +1228,7 @@ export function ImportInvoicePanel() {
                   />
                 </div>
                 <div className="space-y-2">
-                  <Label htmlFor="importer_account_number">Beneficiary's A/C Number</Label>
+                  <Label htmlFor="importer_account_number">Beneficiary&apos;s A/C Number</Label>
                   <Input
                     id="importer_account_number"
                     name="importer_account_number"
@@ -1239,7 +1239,7 @@ export function ImportInvoicePanel() {
                 </div>
               </div>
               <div className="space-y-2 mt-2">
-                <Label htmlFor="importer_iban_number">Beneficiary's IBAN Number</Label>
+                <Label htmlFor="importer_iban_number">Beneficiary&apos;s IBAN Number</Label>
                 <Input
                   id="importer_iban_number"
                   name="importer_iban_number"
@@ -1249,7 +1249,7 @@ export function ImportInvoicePanel() {
                 />
               </div>
               <div className="space-y-2 mt-2">
-                <Label htmlFor="importer_account_address">Beneficiary's Address</Label>
+                <Label htmlFor="importer_account_address">Beneficiary&apos;s Address</Label>
                 <Input
                   id="importer_account_address"
                   name="importer_account_address"
@@ -1259,7 +1259,7 @@ export function ImportInvoicePanel() {
                 />
               </div>
               <div className="space-y-2 mt-2">
-                <Label htmlFor="importer_bank_name">Beneficiary's Bank</Label>
+                <Label htmlFor="importer_bank_name">Beneficiary&apos;s Bank</Label>
                 <Input
                   id="importer_bank_name"
                   name="importer_bank_name"
@@ -1269,7 +1269,7 @@ export function ImportInvoicePanel() {
                 />
               </div>
               <div className="space-y-2 mt-2">
-                <Label htmlFor="importer_bank_address">Beneficiary's Bank Address</Label>
+                <Label htmlFor="importer_bank_address">Beneficiary&apos;s Bank Address</Label>
                 <Input
                   id="importer_bank_address"
                   name="importer_bank_address"
@@ -1279,7 +1279,7 @@ export function ImportInvoicePanel() {
                 />
               </div>
               <div className="space-y-2 mt-2">
-                <Label htmlFor="importer_bank_swift">Beneficiary's Bank Swift Code</Label>
+                <Label htmlFor="importer_bank_swift">Beneficiary&apos;s Bank Swift Code</Label>
                 <Input
                   id="importer_bank_swift"
                   name="importer_bank_swift"

@@ -3,7 +3,7 @@
 import { useState, useEffect, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
-import { createPackingList, getAllPackingLists, deletePackingList, type PackingList } from "@/app/actions/packing_lists";
+import { createPackingList, getAllPackingLists, deletePackingList, type PackingList, type PackingListItem } from "@/app/actions/packing_lists";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -272,8 +272,16 @@ export function ImportPackingListPanel() {
     });
 
     // Get products from items array or fallback to single product
-    const products = packingList.items && packingList.items.length > 0
-      ? packingList.items.sort((a: any, b: any) => (a.item_order || 0) - (b.item_order || 0))
+    type ProductItem = {
+      product_name: string;
+      hs_code: string;
+      no_of_cartons: number;
+      weight: number;
+      net_weight: number;
+    };
+    
+    const products: ProductItem[] = packingList.items && packingList.items.length > 0
+      ? packingList.items.sort((a: PackingListItem, b: PackingListItem) => (a.item_order || 0) - (b.item_order || 0))
       : packingList.product_name
         ? [{
             product_name: packingList.product_name,
@@ -285,16 +293,16 @@ export function ImportPackingListPanel() {
         : [];
 
     // Calculate totals
-    const totalCartons = products.reduce((sum: number, p: any) => sum + (p.no_of_cartons || 0), 0);
-    const totalWeight = products.reduce((sum: number, p: any) => sum + (p.weight || 0), 0);
-    const totalNetWeight = products.reduce((sum: number, p: any) => sum + (p.net_weight || 0), 0);
+    const totalCartons = products.reduce((sum: number, p: ProductItem) => sum + (p.no_of_cartons || 0), 0);
+    const totalWeight = products.reduce((sum: number, p: ProductItem) => sum + (p.weight || 0), 0);
+    const totalNetWeight = products.reduce((sum: number, p: ProductItem) => sum + (p.net_weight || 0), 0);
 
     // Table Data Rows
     doc.setFontSize(9);
     doc.setFont(undefined, "normal");
     let currentY = tableStartY;
     
-    products.forEach((product: any, idx: number) => {
+    products.forEach((product: ProductItem, idx: number) => {
       // Check if we need a new page
       if (currentY + rowHeight > pageHeight - margin - 20) {
         doc.addPage();
@@ -548,15 +556,23 @@ export function ImportPackingListPanel() {
                 </TableHeader>
                 <TableBody>
                   {packingLists.map((packingList) => {
-                    const products = packingList.items && packingList.items.length > 0
-                      ? packingList.items.sort((a: any, b: any) => (a.item_order || 0) - (b.item_order || 0))
+                    type ProductDisplayItem = {
+                      product_name: string;
+                      hs_code?: string;
+                      no_of_cartons?: number;
+                      weight?: number;
+                      net_weight?: number;
+                    };
+                    
+                    const products: ProductDisplayItem[] = packingList.items && packingList.items.length > 0
+                      ? packingList.items.sort((a: PackingListItem, b: PackingListItem) => (a.item_order || 0) - (b.item_order || 0))
                       : packingList.product_name
                         ? [{ product_name: packingList.product_name, hs_code: packingList.hs_code }]
                         : [];
                     
-                    const totalCartons = products.reduce((sum: number, p: any) => sum + (p.no_of_cartons || 0), packingList.no_of_cartons || 0);
-                    const totalWeight = products.reduce((sum: number, p: any) => sum + (p.weight || 0), packingList.weight || 0);
-                    const totalNetWeight = products.reduce((sum: number, p: any) => sum + (p.net_weight || 0), packingList.net_weight || 0);
+                    const totalCartons = products.reduce((sum: number, p: ProductDisplayItem) => sum + (p.no_of_cartons || 0), packingList.no_of_cartons || 0);
+                    const totalWeight = products.reduce((sum: number, p: ProductDisplayItem) => sum + (p.weight || 0), packingList.weight || 0);
+                    const totalNetWeight = products.reduce((sum: number, p: ProductDisplayItem) => sum + (p.net_weight || 0), packingList.net_weight || 0);
                     
                     return (
                       <TableRow key={packingList.id}>
@@ -577,7 +593,7 @@ export function ImportPackingListPanel() {
                                 <div>
                                   <div className="font-medium">{products.length} Products</div>
                                   <div className="text-xs text-muted-foreground">
-                                    {products.slice(0, 2).map((p: any, idx: number) => (
+                                    {products.slice(0, 2).map((p: ProductDisplayItem, idx: number) => (
                                       <div key={idx}>{p.product_name} (HS: {p.hs_code})</div>
                                     ))}
                                     {products.length > 2 && (

@@ -7,8 +7,9 @@ import { revalidatePath } from 'next/cache';
 export type SalesAgent = {
   id: string;
   name: string;
-  email: string;
-  phone_number: string;
+  username: string | null;
+  email: string | null;
+  phone_number: string | null;
   code: string | null;
   created_at: string;
   updated_at: string;
@@ -34,25 +35,25 @@ export async function createSalesAgent(formData: FormData) {
     }
 
     const name = formData.get('name') as string;
-    const email = formData.get('email') as string;
-    const phone_number = formData.get('phone_number') as string;
-    const fromSeq = formData.get('from_seq') ? parseInt(formData.get('from_seq') as string, 10) : null;
-    const toSeq = formData.get('to_seq') ? parseInt(formData.get('to_seq') as string, 10) : null;
+    const username = formData.get('username') as string;
+    const password = formData.get('password') as string;
 
-    if (!name?.trim() || !email?.trim() || !phone_number?.trim()) {
-      return { error: 'Name, email, and phone number are required' };
-    }
-
-    if (fromSeq !== null && toSeq !== null) {
-      if (fromSeq > toSeq) {
-        return { error: 'From sequence must be less than or equal to To sequence' };
-      }
-      if (fromSeq < 1 || toSeq < 1) {
-        return { error: 'Sequence numbers must be positive' };
-      }
+    if (!name?.trim() || !username?.trim() || !password?.trim()) {
+      return { error: 'Name, username, and password are required' };
     }
 
     const supabase = await createAdminClient();
+
+    // Check if username already exists
+    const { data: existingAgent } = await supabase
+      .from('sales_agents')
+      .select('id')
+      .eq('username', username.trim())
+      .maybeSingle();
+
+    if (existingAgent) {
+      return { error: 'Username already exists' };
+    }
 
     // Get the highest existing code to generate next code
     const { data: existingAgents } = await supabase
@@ -68,13 +69,13 @@ export async function createSalesAgent(formData: FormData) {
       nextCode = (highestCode + 1).toString();
     }
 
-    // Create the sales agent first
+    // Create the sales agent
     const { data, error } = await supabase
       .from('sales_agents')
       .insert([{ 
         name: name.trim(), 
-        email: email.trim(), 
-        phone_number: phone_number.trim(),
+        username: username.trim(),
+        password: password.trim(),
         code: nextCode
       }])
       .select()
@@ -84,106 +85,14 @@ export async function createSalesAgent(formData: FormData) {
       if (error.message.includes('does not exist') || error.message.includes('relation') || error.code === '42P01') {
         return { error: 'Sales agents table does not exist. Please run the SQL migration in Supabase.' };
       }
+      if (error.code === '23505') {
+        return { error: 'Username already exists' };
+      }
       return { error: error.message };
     }
 
-    const salesAgentId = data.id;
-    const agentCode = nextCode;
-
-    // Assign customers by sequence range if provided
-    if (fromSeq !== null && toSeq !== null) {
-      // Get all customers in the specified sequence range
-      const { data: customersInRange, error: customersError } = await supabase
-        .from('customers')
-        .select('id, sequential_number')
-        .gte('sequential_number', fromSeq)
-        .lte('sequential_number', toSeq)
-        .order('sequential_number', { ascending: true });
-
-      if (customersError) {
-        await supabase.from('sales_agents').delete().eq('id', salesAgentId);
-        return { error: customersError.message };
-      }
-
-      if (!customersInRange || customersInRange.length === 0) {
-        await supabase.from('sales_agents').delete().eq('id', salesAgentId);
-        return { error: `No customers found in sequence range ${fromSeq}-${toSeq}` };
-      }
-
-      // Check if any customers are already assigned
-      const customerIds = customersInRange.map(c => c.id);
-      const { data: existingAssignments, error: checkError } = await supabase
-        .from('sales_agent_customers')
-        .select('customer_id, sales_agent_id, sales_agents(name)')
-        .in('customer_id', customerIds);
-
-      if (checkError) {
-        await supabase.from('sales_agents').delete().eq('id', salesAgentId);
-        return { error: checkError.message };
-      }
-
-      if (existingAssignments && existingAssignments.length > 0) {
-        await supabase.from('sales_agents').delete().eq('id', salesAgentId);
-        const assignedCustomers = (existingAssignments as CustomerAssignment[]).map((a) => {
-          const agent = Array.isArray(a.sales_agents) ? a.sales_agents[0] : a.sales_agents;
-          return {
-            customerId: a.customer_id,
-            agentName: agent?.name || 'Unknown'
-          };
-        });
-        return { 
-          error: `Some customers in this range are already assigned to other agents`,
-          details: assignedCustomers
-        };
-      }
-
-      // Generate customer codes using existing sequential numbers
-      const updates = [];
-      const assignments = [];
-      
-      for (const customer of customersInRange) {
-        const sequenceNumber = customer.sequential_number;
-        if (!sequenceNumber) continue;
-        
-        const customerCode = `${agentCode}${sequenceNumber.toString().padStart(2, '0')}`;
-
-        updates.push(
-          supabase
-            .from('customers')
-            .update({
-              customer_code: customerCode
-            })
-            .eq('id', customer.id)
-        );
-
-        assignments.push({
-          sales_agent_id: salesAgentId,
-          customer_id: customer.id
-        });
-      }
-
-      // Execute all updates
-      const updateResults = await Promise.all(updates);
-      const updateError = updateResults.find(r => r.error);
-      if (updateError?.error) {
-        await supabase.from('sales_agents').delete().eq('id', salesAgentId);
-        return { error: updateError.error.message || 'Failed to update customer codes' };
-      }
-
-      // Insert assignments
-      const { error: assignError } = await supabase
-        .from('sales_agent_customers')
-        .insert(assignments);
-
-      if (assignError) {
-        await supabase.from('sales_agent_customers').delete().eq('sales_agent_id', salesAgentId);
-        await supabase.from('sales_agents').delete().eq('id', salesAgentId);
-        return { error: assignError.message };
-      }
-    }
-
     revalidatePath('/admin/dashboard');
-    return { success: true, salesAgent: { ...data, code: agentCode } as SalesAgent };
+    return { success: true, salesAgent: { ...data, code: nextCode } as SalesAgent };
   } catch (err) {
     return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };
   }
@@ -373,26 +282,47 @@ export async function updateSalesAgent(formData: FormData) {
 
     const id = formData.get('id') as string;
     const name = formData.get('name') as string;
-    const email = formData.get('email') as string;
-    const phone_number = formData.get('phone_number') as string;
+    const username = formData.get('username') as string;
+    const password = formData.get('password') as string;
 
-    if (!id || !name?.trim() || !email?.trim() || !phone_number?.trim()) {
-      return { error: 'All fields are required' };
+    if (!id || !name?.trim() || !username?.trim()) {
+      return { error: 'Name and username are required' };
     }
 
     const supabase = await createAdminClient();
 
+    // Check if username is taken by another agent
+    const { data: existingAgent } = await supabase
+      .from('sales_agents')
+      .select('id')
+      .eq('username', username.trim())
+      .neq('id', id)
+      .maybeSingle();
+
+    if (existingAgent) {
+      return { error: 'Username already exists' };
+    }
+
+    const updateData: { name: string; username: string; password?: string; updated_at: string } = {
+      name: name.trim(),
+      username: username.trim(),
+      updated_at: new Date().toISOString()
+    };
+
+    // Only update password if provided
+    if (password?.trim()) {
+      updateData.password = password.trim();
+    }
+
     const { error } = await supabase
       .from('sales_agents')
-      .update({ 
-        name: name.trim(), 
-        email: email.trim(), 
-        phone_number: phone_number.trim(),
-        updated_at: new Date().toISOString()
-      })
+      .update(updateData)
       .eq('id', id);
 
     if (error) {
+      if (error.code === '23505') {
+        return { error: 'Username already exists' };
+      }
       return { error: error.message };
     }
 

@@ -31,8 +31,26 @@ export async function login(formData: FormData) {
             redirect('/admin/dashboard');
         }
 
-        // 2. Check Database Users
+        // 2. Check Sales Agents
         const supabase = await createAdminClient();
+        const { data: salesAgent, error: salesAgentError } = await supabase
+            .from('sales_agents')
+            .select('username, password')
+            .eq('username', username)
+            .eq('password', password) // Simple verification for demo
+            .maybeSingle();
+
+        if (salesAgentError) {
+            return { error: salesAgentError.message };
+        }
+
+        if (salesAgent) {
+            const session = await encrypt({ username: salesAgent.username, role: 'sales_agent', expires: cookieOptions.expires });
+            (await cookies()).set('session', session, cookieOptions);
+            redirect('/sales-agent/dashboard');
+        }
+
+        // 3. Check Database Users
         const { data: user, error } = await supabase
             .from('app_users')
             .select('username, password, role')

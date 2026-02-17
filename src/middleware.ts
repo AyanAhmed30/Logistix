@@ -20,10 +20,17 @@ export async function middleware(request: NextRequest) {
         return NextResponse.redirect(new URL('/login', request.url));
     }
 
-    // 4. If logged in and hitting login, redirect to dashboard
+    // 4. Protect Sales Agent Routes
+    if (pathname.startsWith('/sales-agent') && (!session || session.role !== 'sales_agent')) {
+        return NextResponse.redirect(new URL('/login', request.url));
+    }
+
+    // 5. If logged in and hitting login, redirect to dashboard
     if (pathname === '/login' && session) {
         if (session.role === 'admin') {
             return NextResponse.redirect(new URL('/admin/dashboard', request.url));
+        } else if (session.role === 'sales_agent') {
+            return NextResponse.redirect(new URL('/sales-agent/dashboard', request.url));
         } else {
             return NextResponse.redirect(new URL('/user/dashboard', request.url));
         }

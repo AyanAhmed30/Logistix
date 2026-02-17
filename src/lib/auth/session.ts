@@ -7,7 +7,7 @@ const SECRET_KEY = Buffer.from(process.env.SUPABASE_SERVICE_ROLE_KEY || 'default
 
 type SessionPayload = {
     username: string;
-    role: 'admin' | 'user';
+    role: 'admin' | 'user' | 'sales_agent';
     expires?: Date;
 };
 

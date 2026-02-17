@@ -6,12 +6,10 @@ import { toast } from "sonner";
 import {
   createSalesAgent,
   getAllSalesAgents,
-  getAllCustomersWithAssignments,
   updateSalesAgent,
   deleteSalesAgent,
   type SalesAgent,
 } from "@/app/actions/sales_agents";
-import { getAvailableCustomerSequences } from "@/app/actions/customers";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -32,13 +30,6 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { PlusCircle, Trash2, Edit } from "lucide-react";
 
 
@@ -51,9 +42,6 @@ export function SalesAgentPanel() {
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [editSalesAgent, setEditSalesAgent] = useState<SalesAgent | null>(null);
   const [deleteSalesAgentTarget, setDeleteSalesAgentTarget] = useState<SalesAgent | null>(null);
-  const [createFromSeq, setCreateFromSeq] = useState<string>("");
-  const [createToSeq, setCreateToSeq] = useState<string>("");
-  const [availableSequences, setAvailableSequences] = useState<number[]>([]);
   const [isPending, startTransition] = useTransition();
 
   useEffect(() => {
@@ -63,29 +51,13 @@ export function SalesAgentPanel() {
   async function fetchData() {
     setIsLoading(true);
     try {
-      const [agentsResult, customersResult, sequencesResult] = await Promise.all([
-        getAllSalesAgents(),
-        getAllCustomersWithAssignments(),
-        getAvailableCustomerSequences(),
-      ]);
+      const agentsResult = await getAllSalesAgents();
 
       if ("error" in agentsResult) {
         toast.error(agentsResult.error || "Unable to load sales agents");
         setSalesAgents([]);
       } else {
         setSalesAgents(agentsResult.salesAgents || []);
-      }
-
-      if ("error" in customersResult) {
-        toast.error(customersResult.error || "Unable to load customers");
-      }
-
-      if ("error" in sequencesResult) {
-        setAvailableSequences([]);
-      } else {
-        // Remove duplicates and sort
-        const uniqueSequences = Array.from(new Set(sequencesResult.sequences || [])).sort((a, b) => a - b);
-        setAvailableSequences(uniqueSequences);
       }
     } catch {
       toast.error("An unexpected error occurred");
@@ -99,38 +71,20 @@ export function SalesAgentPanel() {
     const form = event.currentTarget;
     const formData = new FormData(event.currentTarget);
     const name = String(formData.get("name") || "").trim();
-    const email = String(formData.get("email") || "").trim();
-    const phone_number = String(formData.get("phone_number") || "").trim();
+    const username = String(formData.get("username") || "").trim();
+    const password = String(formData.get("password") || "").trim();
 
-    if (!name || !email || !phone_number) {
-      toast.error("Name, email, and phone number are required");
+    if (!name || !username || !password) {
+      toast.error("Name, username, and password are required");
       return;
-    }
-
-    // Add sequence range if provided
-    if (createFromSeq && createToSeq) {
-      formData.set("from_seq", createFromSeq);
-      formData.set("to_seq", createToSeq);
     }
 
     startTransition(async () => {
       const result = await createSalesAgent(formData);
       if (result && "error" in result) {
-        if (result.details) {
-          const detailsMsg = Array.isArray(result.details)
-            ? result.details.map((d) => {
-                const detail = d as { agentName?: string; customerId?: string };
-                return detail.agentName || detail.customerId;
-              }).join(", ")
-            : "";
-          toast.error(`${result.error}${detailsMsg ? `: ${detailsMsg}` : ""}`, {
-            className: "bg-red-600 text-white border-red-600",
-          });
-        } else {
-          toast.error(result.error, {
-            className: "bg-red-600 text-white border-red-600",
-          });
-        }
+        toast.error(result.error, {
+          className: "bg-red-600 text-white border-red-600",
+        });
         return;
       }
       toast.success("Sales agent created successfully", {
@@ -138,8 +92,6 @@ export function SalesAgentPanel() {
       });
       setCreateOpen(false);
       form.reset();
-      setCreateFromSeq("");
-      setCreateToSeq("");
       router.refresh();
       fetchData();
     });
@@ -151,12 +103,17 @@ export function SalesAgentPanel() {
     const formData = new FormData(event.currentTarget);
     formData.set("id", editSalesAgent.id);
     const name = String(formData.get("name") || "").trim();
-    const email = String(formData.get("email") || "").trim();
-    const phone_number = String(formData.get("phone_number") || "").trim();
+    const username = String(formData.get("username") || "").trim();
+    const password = String(formData.get("password") || "").trim();
 
-    if (!name || !email || !phone_number) {
-      toast.error("All fields are required");
+    if (!name || !username) {
+      toast.error("Name and username are required");
       return;
+    }
+
+    // Only update password if provided
+    if (password) {
+      formData.set("password", password);
     }
 
     startTransition(async () => {
@@ -209,10 +166,6 @@ export function SalesAgentPanel() {
     setEditOpen(true);
   }
 
-  // Calculate available range info
-  const minSeq = availableSequences.length > 0 ? Math.min(...availableSequences) : null;
-  const maxSeq = availableSequences.length > 0 ? Math.max(...availableSequences) : null;
-
   return (
     <div className="space-y-6">
       <Card className="bg-white border shadow-sm">
@@ -242,11 +195,10 @@ export function SalesAgentPanel() {
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead>Code</TableHead>
-                    <TableHead>Name</TableHead>
-                    <TableHead>Email</TableHead>
-                    <TableHead>Phone</TableHead>
-                    <TableHead className="text-right">Actions</TableHead>
+                <TableHead>Code</TableHead>
+                <TableHead>Name</TableHead>
+                <TableHead>Username</TableHead>
+                <TableHead className="text-right">Actions</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -260,8 +212,7 @@ export function SalesAgentPanel() {
                         )}
                       </TableCell>
                       <TableCell className="font-semibold">{agent.name}</TableCell>
-                      <TableCell>{agent.email}</TableCell>
-                      <TableCell>{agent.phone_number}</TableCell>
+                      <TableCell>{agent.username || "-"}</TableCell>
                       <TableCell className="text-right space-x-2">
                         <Button
                           size="sm"
@@ -291,131 +242,32 @@ export function SalesAgentPanel() {
       </Card>
 
       {/* Create Sales Agent Dialog */}
-      <Dialog open={createOpen} onOpenChange={(open) => {
-        setCreateOpen(open);
-        if (!open) {
-          setCreateFromSeq("");
-          setCreateToSeq("");
-        }
-      }}>
-        <DialogContent className="sm:max-w-[600px] max-h-[90vh] overflow-y-auto">
+      <Dialog open={createOpen} onOpenChange={setCreateOpen}>
+        <DialogContent className="sm:max-w-[500px]">
           <DialogHeader>
             <DialogTitle>Create Sales Agent</DialogTitle>
             <DialogDescription>
-              Add a new sales agent. You can allocate a range of customer sequences during creation. Customer IDs will be generated automatically (e.g., 10101-10115).
+              Add a new sales agent with login credentials.
             </DialogDescription>
           </DialogHeader>
-          <form onSubmit={handleCreateSubmit} className="space-y-6">
-            {/* Basic Information */}
-            <div className="space-y-4">
-              <h3 className="text-sm font-semibold">Basic Information</h3>
-              <div className="space-y-2">
-                <Label htmlFor="create-name">Name *</Label>
-                <Input id="create-name" name="name" placeholder="John Doe" required />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="create-email">Email *</Label>
-                <Input id="create-email" name="email" type="email" placeholder="john@example.com" required />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="create-phone_number">Phone Number *</Label>
-                <Input id="create-phone_number" name="phone_number" placeholder="+1 234 567 8900" required />
-              </div>
+          <form onSubmit={handleCreateSubmit} className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="create-name">Name *</Label>
+              <Input id="create-name" name="name" placeholder="John Doe" required />
             </div>
-
-            {/* Customer Sequence Range Allocation */}
-            <div className="space-y-4">
-              <h3 className="text-sm font-semibold">Customer Sequence Range Allocation (Optional)</h3>
-              <p className="text-xs text-secondary-muted">
-                Select a range of customer sequences to allocate. Example: If you select 01-15, customer IDs will be 10101-10115.
-              </p>
-              {minSeq !== null && maxSeq !== null ? (
-                <>
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="space-y-2">
-                      <Label htmlFor="create-from-seq">From Sequence</Label>
-                      <Select
-                        value={createFromSeq}
-                        onValueChange={setCreateFromSeq}
-                      >
-                        <SelectTrigger id="create-from-seq" className="w-full">
-                          <SelectValue placeholder="Select start" />
-                        </SelectTrigger>
-                        <SelectContent className="max-h-[200px] overflow-y-auto bg-white border border-gray-200 shadow-lg">
-                          {availableSequences.map((seq, index) => (
-                            <SelectItem
-                              key={`from-seq-${seq}-${index}`}
-                              value={seq.toString()}
-                              className="hover:bg-blue-50 cursor-pointer bg-white py-2 px-3"
-                            >
-                              <span className="font-mono text-sm font-medium">{seq.toString().padStart(2, '0')}</span>
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    <div className="space-y-2">
-                      <Label htmlFor="create-to-seq">To Sequence</Label>
-                      <Select
-                        value={createToSeq}
-                        onValueChange={setCreateToSeq}
-                        disabled={!createFromSeq}
-                      >
-                        <SelectTrigger 
-                          id="create-to-seq" 
-                          className={`w-full ${
-                            !createFromSeq 
-                              ? "bg-gray-50 border-gray-200 cursor-not-allowed" 
-                              : "bg-white border-gray-300"
-                          }`}
-                        >
-                          <SelectValue placeholder={createFromSeq ? "Select end" : "Select start first"} />
-                        </SelectTrigger>
-                        <SelectContent className="max-h-[200px] overflow-y-auto bg-white border border-gray-200 shadow-lg">
-                          {availableSequences
-                            .filter((seq) => !createFromSeq || seq >= parseInt(createFromSeq, 10))
-                            .map((seq, index) => (
-                              <SelectItem
-                                key={`to-seq-${seq}-${index}`}
-                                value={seq.toString()}
-                                className="hover:bg-blue-50 cursor-pointer bg-white py-2 px-3"
-                              >
-                                <span className="font-mono text-sm font-medium">{seq.toString().padStart(2, '0')}</span>
-                              </SelectItem>
-                            ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                  </div>
-                  {createFromSeq && createToSeq && (
-                    <div className="p-3 bg-blue-50 rounded-md border border-blue-200">
-                      <div className="text-sm font-semibold text-blue-900">
-                        Selected Range: {createFromSeq.padStart(2, '0')} - {createToSeq.padStart(2, '0')}
-                      </div>
-                      <div className="text-xs text-blue-700 mt-1">
-                        Customer IDs will be generated as: 101{createFromSeq.padStart(2, '0')} - 101{createToSeq.padStart(2, '0')}
-                      </div>
-                    </div>
-                  )}
-                </>
-              ) : (
-                <div className="p-3 bg-gray-50 rounded-md border border-gray-200">
-                  <div className="text-sm text-gray-600">
-                    No unassigned customers available. Create customers first.
-                  </div>
-                </div>
-              )}
+            <div className="space-y-2">
+              <Label htmlFor="create-username">Username *</Label>
+              <Input id="create-username" name="username" placeholder="johndoe" required />
             </div>
-
+            <div className="space-y-2">
+              <Label htmlFor="create-password">Password *</Label>
+              <Input id="create-password" name="password" type="password" placeholder="Enter password" required />
+            </div>
             <DialogFooter>
               <Button
                 variant="outline"
                 type="button"
-                onClick={() => {
-                  setCreateOpen(false);
-                  setCreateFromSeq("");
-                  setCreateToSeq("");
-                }}
+                onClick={() => setCreateOpen(false)}
               >
                 Cancel
               </Button>
@@ -447,22 +299,21 @@ export function SalesAgentPanel() {
               />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="edit-email">Email *</Label>
+              <Label htmlFor="edit-username">Username *</Label>
               <Input
-                id="edit-email"
-                name="email"
-                type="email"
-                defaultValue={editSalesAgent?.email ?? ""}
+                id="edit-username"
+                name="username"
+                defaultValue={editSalesAgent?.username ?? ""}
                 required
               />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="edit-phone_number">Phone Number *</Label>
+              <Label htmlFor="edit-password">Password (leave blank to keep current)</Label>
               <Input
-                id="edit-phone_number"
-                name="phone_number"
-                defaultValue={editSalesAgent?.phone_number ?? ""}
-                required
+                id="edit-password"
+                name="password"
+                type="password"
+                placeholder="Enter new password"
               />
             </div>
             <DialogFooter>

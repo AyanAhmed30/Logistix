@@ -15,18 +15,6 @@ export type SalesAgent = {
   updated_at: string;
 };
 
-type CustomerAssignment = {
-  customer_id: string;
-  sales_agent_id: string;
-  sales_agents: {
-    name: string;
-    code: string | null;
-  } | null | Array<{
-    name: string;
-    code: string | null;
-  }>;
-};
-
 export async function createSalesAgent(formData: FormData) {
   try {
     const session = await getSession();

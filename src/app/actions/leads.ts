@@ -151,7 +151,22 @@ export async function getAllLeadsForAdmin() {
     }
 
     // Transform the data to match LeadWithSalesAgent type
-    const leadsWithAgent = (data || []).map((lead: any) => ({
+    type SupabaseLeadResponse = {
+      id: string;
+      name: string;
+      number: string;
+      source: 'Meta' | 'LinkedIn' | 'WhatsApp' | 'Others';
+      sales_agent_id: string;
+      created_at: string;
+      updated_at: string;
+      sales_agents: {
+        id: string;
+        name: string;
+        username: string | null;
+      } | null;
+    };
+
+    const leadsWithAgent = (data || []).map((lead: SupabaseLeadResponse) => ({
       ...lead,
       sales_agents: lead.sales_agents || null
     })) as LeadWithSalesAgent[];

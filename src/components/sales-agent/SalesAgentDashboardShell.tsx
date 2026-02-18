@@ -7,6 +7,8 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { LogOut, Menu, X, UserPlus, Users, FileText, ShoppingCart } from "lucide-react";
 import Image from "next/image";
 import { LeadPanel } from "@/components/sales-agent/LeadPanel";
+import { PipelinePanel } from "@/components/sales-agent/PipelinePanel";
+import { CustomerListPanel } from "@/components/sales-agent/CustomerListPanel";
 
 type Props = {
   username: string;
@@ -112,36 +114,8 @@ export function SalesAgentDashboardShell({ username }: Props) {
 
       <main className="pt-20 md:pl-72 px-6 md:px-10 pb-10 space-y-6">
         {activeTab === "lead" && <LeadPanel />}
-        {activeTab === "pipeline" && (
-          <Card className="bg-white border shadow-sm">
-            <CardHeader>
-              <CardTitle>Pipeline</CardTitle>
-              <CardDescription>
-                This section is empty for now.
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              <div className="py-16 text-center text-secondary-muted">
-                Pipeline functionality coming soon...
-              </div>
-            </CardContent>
-          </Card>
-        )}
-        {activeTab === "customer-list" && (
-          <Card className="bg-white border shadow-sm">
-            <CardHeader>
-              <CardTitle>Customer List</CardTitle>
-              <CardDescription>
-                This section is empty for now.
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              <div className="py-16 text-center text-secondary-muted">
-                Customer List functionality coming soon...
-              </div>
-            </CardContent>
-          </Card>
-        )}
+        {activeTab === "pipeline" && <PipelinePanel />}
+        {activeTab === "customer-list" && <CustomerListPanel />}
         {activeTab === "manage-request" && (
           <Card className="bg-white border shadow-sm">
             <CardHeader>

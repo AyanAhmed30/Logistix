@@ -110,10 +110,6 @@ export async function convertLeadToCustomer(leadId: string) {
     // Format customer ID: [SalesAgentCode][CustomerSequenceNumber] with zero-padded 2 digits
     const customerIdFormatted = `${salesAgent.code}${nextSequence.toString().padStart(2, '0')}`;
 
-    // Get all comments for the lead
-    const commentsResult = await getLeadComments(leadId);
-    const comments = ('comments' in commentsResult) ? commentsResult.comments || [] : [];
-
     // Create customer record
     const { data: customer, error: customerError } = await supabase
       .from('customers')

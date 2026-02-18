@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useTransition } from "react";
+import { useEffect, useState, useTransition, useCallback } from "react";
 import { toast } from "sonner";
 import {
   DndContext,
@@ -52,9 +52,6 @@ const STATUSES: LeadStatus[] = [
   "Win",
 ];
 
-type LeadWithComments = Lead & {
-  comments?: LeadComment[];
-};
 
 function LeadCard({
   lead,
@@ -244,18 +241,7 @@ function CommentsDialog({
   const [editText, setEditText] = useState("");
   const [isPending, startTransition] = useTransition();
 
-  useEffect(() => {
-    if (open && lead) {
-      fetchComments();
-    } else {
-      setComments([]);
-      setNewComment("");
-      setEditingId(null);
-      setEditText("");
-    }
-  }, [open, lead]);
-
-  async function fetchComments() {
+  const fetchComments = useCallback(async () => {
     if (!lead) return;
     setIsLoading(true);
     try {
@@ -270,7 +256,18 @@ function CommentsDialog({
     } finally {
       setIsLoading(false);
     }
-  }
+  }, [lead]);
+
+  useEffect(() => {
+    if (open && lead) {
+      fetchComments();
+    } else {
+      setComments([]);
+      setNewComment("");
+      setEditingId(null);
+      setEditText("");
+    }
+  }, [open, lead, fetchComments]);
 
   function handleAddComment() {
     if (!lead || !newComment.trim()) return;
@@ -668,7 +665,7 @@ export function PipelinePanel() {
           <DialogHeader>
             <DialogTitle>Convert Lead to Customer</DialogTitle>
             <DialogDescription>
-              Are you sure you want to convert "{leadToConvert?.name}" to a customer? 
+              Are you sure you want to convert &quot;{leadToConvert?.name}&quot; to a customer? 
               This will create a new customer record and mark the lead as converted.
             </DialogDescription>
           </DialogHeader>

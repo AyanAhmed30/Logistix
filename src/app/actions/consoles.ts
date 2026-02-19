@@ -17,7 +17,20 @@ type ConsoleInput = {
 export async function createConsole(console: ConsoleInput) {
   try {
     const session = await getSession();
-    if (!session || session.role !== "admin") {
+    if (!session) {
+      return { error: "Unauthorized" };
+    }
+
+    // Allow admins or sales agents with "console" permission (creating requires full console access)
+    if (session.role === "admin") {
+      // Admin has access
+    } else if (session.role === "sales_agent") {
+      const { hasPermission } = await import("@/lib/auth/permissions");
+      const hasAccess = await hasPermission("console");
+      if (!hasAccess) {
+        return { error: "Unauthorized" };
+      }
+    } else {
       return { error: "Unauthorized" };
     }
 
@@ -82,7 +95,21 @@ export async function createConsole(console: ConsoleInput) {
 export async function getAllConsoles() {
   try {
     const session = await getSession();
-    if (!session || session.role !== "admin") {
+    if (!session) {
+      return { error: "Unauthorized" };
+    }
+
+    // Allow admins or sales agents with "console" or "loading-instruction" permission
+    if (session.role === "admin") {
+      // Admin has access
+    } else if (session.role === "sales_agent") {
+      const { hasPermission } = await import("@/lib/auth/permissions");
+      const hasConsole = await hasPermission("console");
+      const hasLoadingInstruction = await hasPermission("loading-instruction");
+      if (!hasConsole && !hasLoadingInstruction) {
+        return { error: "Unauthorized" };
+      }
+    } else {
       return { error: "Unauthorized" };
     }
 
@@ -112,7 +139,21 @@ export async function getAllConsoles() {
 export async function getReadyForLoadingConsoles() {
   try {
     const session = await getSession();
-    if (!session || session.role !== "admin") {
+    if (!session) {
+      return { error: "Unauthorized" };
+    }
+
+    // Allow admins or sales agents with "console" or "loading-instruction" permission
+    if (session.role === "admin") {
+      // Admin has access
+    } else if (session.role === "sales_agent") {
+      const { hasPermission } = await import("@/lib/auth/permissions");
+      const hasConsole = await hasPermission("console");
+      const hasLoadingInstruction = await hasPermission("loading-instruction");
+      if (!hasConsole && !hasLoadingInstruction) {
+        return { error: "Unauthorized" };
+      }
+    } else {
       return { error: "Unauthorized" };
     }
 
@@ -142,7 +183,21 @@ export async function getReadyForLoadingConsoles() {
 export async function markConsoleReadyForLoading(consoleId: string) {
   try {
     const session = await getSession();
-    if (!session || session.role !== "admin") {
+    if (!session) {
+      return { error: "Unauthorized" };
+    }
+
+    // Allow admins or sales agents with "console" or "loading-instruction" permission
+    if (session.role === "admin") {
+      // Admin has access
+    } else if (session.role === "sales_agent") {
+      const { hasPermission } = await import("@/lib/auth/permissions");
+      const hasConsole = await hasPermission("console");
+      const hasLoadingInstruction = await hasPermission("loading-instruction");
+      if (!hasConsole && !hasLoadingInstruction) {
+        return { error: "Unauthorized" };
+      }
+    } else {
       return { error: "Unauthorized" };
     }
 
@@ -172,7 +227,21 @@ export async function markConsoleReadyForLoading(consoleId: string) {
 export async function getConsoleWithOrders(consoleId: string) {
   try {
     const session = await getSession();
-    if (!session || session.role !== "admin") {
+    if (!session) {
+      return { error: "Unauthorized" };
+    }
+
+    // Allow admins or sales agents with "console" or "loading-instruction" permission
+    if (session.role === "admin") {
+      // Admin has access
+    } else if (session.role === "sales_agent") {
+      const { hasPermission } = await import("@/lib/auth/permissions");
+      const hasConsole = await hasPermission("console");
+      const hasLoadingInstruction = await hasPermission("loading-instruction");
+      if (!hasConsole && !hasLoadingInstruction) {
+        return { error: "Unauthorized" };
+      }
+    } else {
       return { error: "Unauthorized" };
     }
 
@@ -229,7 +298,20 @@ export async function getConsoleWithOrders(consoleId: string) {
 export async function assignOrdersToConsole(consoleId: string, orderIds: string[]) {
   try {
     const session = await getSession();
-    if (!session || session.role !== "admin") {
+    if (!session) {
+      return { error: "Unauthorized" };
+    }
+
+    // Allow admins or sales agents with "management" permission
+    if (session.role === "admin") {
+      // Admin has access
+    } else if (session.role === "sales_agent") {
+      const { hasPermission } = await import("@/lib/auth/permissions");
+      const hasAccess = await hasPermission("management");
+      if (!hasAccess) {
+        return { error: "Unauthorized" };
+      }
+    } else {
       return { error: "Unauthorized" };
     }
 

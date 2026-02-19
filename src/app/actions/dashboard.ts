@@ -6,7 +6,20 @@ import { getSession } from '@/lib/auth/session';
 export async function getDashboardStats() {
   try {
     const session = await getSession();
-    if (!session || session.role !== 'admin') {
+    if (!session) {
+      return { error: 'Unauthorized' };
+    }
+
+    // Allow admins or sales agents with "dashboard" permission
+    if (session.role === 'admin') {
+      // Admin has access
+    } else if (session.role === 'sales_agent') {
+      const { hasPermission } = await import('@/lib/auth/permissions');
+      const hasAccess = await hasPermission('dashboard');
+      if (!hasAccess) {
+        return { error: 'Unauthorized' };
+      }
+    } else {
       return { error: 'Unauthorized' };
     }
 

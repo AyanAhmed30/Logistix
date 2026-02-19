@@ -1,31 +1,64 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { logout } from "@/app/actions/auth";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { LogOut, Menu, X, UserPlus, Users, FileText, ShoppingCart } from "lucide-react";
+import { LogOut, Menu, X, UserPlus, Users, FileText, ShoppingCart, TrendingUp, Truck, Bell, Package, Container, Settings, ClipboardList, Receipt } from "lucide-react";
 import Image from "next/image";
 import { LeadPanel } from "@/components/sales-agent/LeadPanel";
 import { PipelinePanel } from "@/components/sales-agent/PipelinePanel";
 import { CustomerListPanel } from "@/components/sales-agent/CustomerListPanel";
+import { OrderTrackingPanel } from "@/components/admin/OrderTrackingPanel";
+import { AdminNotificationsPanel } from "@/components/admin/AdminNotificationsPanel";
+import { OrderManagementPanel } from "@/components/admin/OrderManagementPanel";
+import { ConsolePanel } from "@/components/admin/ConsolePanel";
+import { LoadingInstructionPanel } from "@/components/admin/LoadingInstructionPanel";
+import { OperationsPanel } from "@/components/admin/OperationsPanel";
+import { ImportPackingListPanel } from "@/components/admin/ImportPackingListPanel";
+import { ImportInvoicePanel } from "@/components/admin/ImportInvoicePanel";
+import { AdminDashboardOverview } from "@/components/admin/AdminDashboardOverview";
 
 type Props = {
   username: string;
+  permissions: string[];
 };
 
-type TabKey = "lead" | "pipeline" | "customer-list" | "manage-request";
+type TabKey = "lead" | "pipeline" | "customer-list" | "manage-request" | "dashboard" | "tracking" | "notifications" | "management" | "console" | "loading-instruction" | "operations" | "import-packing-list" | "import-invoice";
 
-const tabs: { key: TabKey; label: string; icon: React.ReactNode }[] = [
+// Default sales agent tabs (always available)
+const defaultTabs: { key: TabKey; label: string; icon: React.ReactNode }[] = [
   { key: "lead", label: "Lead", icon: <UserPlus className="h-4 w-4" /> },
   { key: "pipeline", label: "Pipeline", icon: <FileText className="h-4 w-4" /> },
   { key: "customer-list", label: "Customer List", icon: <Users className="h-4 w-4" /> },
   { key: "manage-request", label: "Manage Request", icon: <ShoppingCart className="h-4 w-4" /> },
 ];
 
-export function SalesAgentDashboardShell({ username }: Props) {
+// Permission-based tabs mapping
+const permissionTabs: Record<string, { key: TabKey; label: string; icon: React.ReactNode }> = {
+  "dashboard": { key: "dashboard", label: "Dashboard", icon: <TrendingUp className="h-4 w-4" /> },
+  "tracking": { key: "tracking", label: "Order Tracking", icon: <Truck className="h-4 w-4" /> },
+  "notifications": { key: "notifications", label: "Notifications", icon: <Bell className="h-4 w-4" /> },
+  "management": { key: "management", label: "Order Management", icon: <Package className="h-4 w-4" /> },
+  "console": { key: "console", label: "Console", icon: <Container className="h-4 w-4" /> },
+  "loading-instruction": { key: "loading-instruction", label: "Loading Instruction", icon: <FileText className="h-4 w-4" /> },
+  "operations": { key: "operations", label: "Operations", icon: <Settings className="h-4 w-4" /> },
+  "import-packing-list": { key: "import-packing-list", label: "Import Packing List", icon: <ClipboardList className="h-4 w-4" /> },
+  "import-invoice": { key: "import-invoice", label: "Import Invoice", icon: <Receipt className="h-4 w-4" /> },
+};
+
+export function SalesAgentDashboardShell({ username, permissions }: Props) {
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<TabKey>("lead");
+
+  // Build tabs list: default tabs + permission-based tabs
+  const tabs = useMemo(() => {
+    const permissionTabsList = permissions
+      .map((perm) => permissionTabs[perm])
+      .filter((tab): tab is { key: TabKey; label: string; icon: React.ReactNode } => tab !== undefined);
+    
+    return [...defaultTabs, ...permissionTabsList];
+  }, [permissions]);
 
   return (
     <div className="min-h-screen bg-white">
@@ -113,6 +146,7 @@ export function SalesAgentDashboardShell({ username }: Props) {
       )}
 
       <main className="pt-20 md:pl-72 px-6 md:px-10 pb-10 space-y-6">
+        {/* Default Sales Agent Tabs */}
         {activeTab === "lead" && <LeadPanel />}
         {activeTab === "pipeline" && <PipelinePanel />}
         {activeTab === "customer-list" && <CustomerListPanel />}
@@ -131,6 +165,17 @@ export function SalesAgentDashboardShell({ username }: Props) {
             </CardContent>
           </Card>
         )}
+
+        {/* Permission-based Tabs */}
+        {activeTab === "dashboard" && <AdminDashboardOverview />}
+        {activeTab === "tracking" && <OrderTrackingPanel />}
+        {activeTab === "notifications" && <AdminNotificationsPanel />}
+        {activeTab === "management" && <OrderManagementPanel />}
+        {activeTab === "console" && <ConsolePanel />}
+        {activeTab === "loading-instruction" && <LoadingInstructionPanel />}
+        {activeTab === "operations" && <OperationsPanel />}
+        {activeTab === "import-packing-list" && <ImportPackingListPanel />}
+        {activeTab === "import-invoice" && <ImportInvoicePanel />}
       </main>
     </div>
   );

@@ -58,7 +58,20 @@ export type ImportInvoice = {
 export async function createImportInvoice(formData: FormData) {
   try {
     const session = await getSession();
-    if (!session || session.role !== 'admin') {
+    if (!session) {
+      return { error: 'Unauthorized' };
+    }
+
+    // Allow admins or sales agents with "import-invoice" permission
+    if (session.role === 'admin') {
+      // Admin has access
+    } else if (session.role === 'sales_agent') {
+      const { hasPermission } = await import('@/lib/auth/permissions');
+      const hasAccess = await hasPermission('import-invoice');
+      if (!hasAccess) {
+        return { error: 'Unauthorized' };
+      }
+    } else {
       return { error: 'Unauthorized' };
     }
 
@@ -229,7 +242,20 @@ export async function createImportInvoice(formData: FormData) {
 export async function getAllImportInvoices() {
   try {
     const session = await getSession();
-    if (!session || session.role !== 'admin') {
+    if (!session) {
+      return { error: 'Unauthorized' };
+    }
+
+    // Allow admins or sales agents with "import-invoice" permission
+    if (session.role === 'admin') {
+      // Admin has access
+    } else if (session.role === 'sales_agent') {
+      const { hasPermission } = await import('@/lib/auth/permissions');
+      const hasAccess = await hasPermission('import-invoice');
+      if (!hasAccess) {
+        return { error: 'Unauthorized' };
+      }
+    } else {
       return { error: 'Unauthorized' };
     }
 
@@ -256,7 +282,20 @@ export async function getAllImportInvoices() {
 export async function deleteImportInvoice(id: string) {
   try {
     const session = await getSession();
-    if (!session || session.role !== 'admin') {
+    if (!session) {
+      return { error: 'Unauthorized' };
+    }
+
+    // Allow admins or sales agents with "import-invoice" permission
+    if (session.role === 'admin') {
+      // Admin has access
+    } else if (session.role === 'sales_agent') {
+      const { hasPermission } = await import('@/lib/auth/permissions');
+      const hasAccess = await hasPermission('import-invoice');
+      if (!hasAccess) {
+        return { error: 'Unauthorized' };
+      }
+    } else {
       return { error: 'Unauthorized' };
     }
 

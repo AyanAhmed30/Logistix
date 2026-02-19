@@ -30,8 +30,24 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { PlusCircle, Trash2, Edit } from "lucide-react";
+import { PlusCircle, Trash2, Edit, TrendingUp, Truck, Bell, Package, Container, FileText, Settings, ClipboardList, Receipt } from "lucide-react";
+import { Checkbox } from "@/components/ui/checkbox";
 
+
+// Available permissions that can be assigned to sales agents
+const AVAILABLE_PERMISSIONS = [
+  { key: "dashboard", label: "Dashboard", icon: TrendingUp },
+  { key: "tracking", label: "Order Tracking", icon: Truck },
+  { key: "notifications", label: "Notifications", icon: Bell },
+  { key: "management", label: "Order Management", icon: Package },
+  { key: "console", label: "Console", icon: Container },
+  { key: "loading-instruction", label: "Loading Instruction", icon: FileText },
+  { key: "operations", label: "Operations", icon: Settings },
+  { key: "import-packing-list", label: "Import Packing List", icon: ClipboardList },
+  { key: "import-invoice", label: "Import Invoice", icon: Receipt },
+] as const;
+
+export type PermissionKey = typeof AVAILABLE_PERMISSIONS[number]["key"];
 
 export function SalesAgentPanel() {
   const router = useRouter();
@@ -43,6 +59,7 @@ export function SalesAgentPanel() {
   const [editSalesAgent, setEditSalesAgent] = useState<SalesAgent | null>(null);
   const [deleteSalesAgentTarget, setDeleteSalesAgentTarget] = useState<SalesAgent | null>(null);
   const [isPending, startTransition] = useTransition();
+  const [selectedPermissions, setSelectedPermissions] = useState<PermissionKey[]>([]);
 
   useEffect(() => {
     fetchData();
@@ -79,6 +96,9 @@ export function SalesAgentPanel() {
       return;
     }
 
+    // Add permissions to formData
+    formData.set("permissions", JSON.stringify(selectedPermissions));
+
     startTransition(async () => {
       const result = await createSalesAgent(formData);
       if (result && "error" in result) {
@@ -91,6 +111,7 @@ export function SalesAgentPanel() {
         className: "bg-green-400 text-white border-green-400",
       });
       setCreateOpen(false);
+      setSelectedPermissions([]);
       form.reset();
       router.refresh();
       fetchData();
@@ -116,6 +137,9 @@ export function SalesAgentPanel() {
       formData.set("password", password);
     }
 
+    // Add permissions to formData
+    formData.set("permissions", JSON.stringify(selectedPermissions));
+
     startTransition(async () => {
       const result = await updateSalesAgent(formData);
       if (result && "error" in result) {
@@ -129,6 +153,7 @@ export function SalesAgentPanel() {
       });
       setEditOpen(false);
       setEditSalesAgent(null);
+      setSelectedPermissions([]);
       router.refresh();
       fetchData();
     });
@@ -163,7 +188,35 @@ export function SalesAgentPanel() {
 
   function openEdit(salesAgent: SalesAgent) {
     setEditSalesAgent(salesAgent);
+    // Load existing permissions
+    const permissions = Array.isArray(salesAgent.permissions) 
+      ? (salesAgent.permissions as PermissionKey[])
+      : [];
+    setSelectedPermissions(permissions);
     setEditOpen(true);
+  }
+
+  function togglePermission(permission: PermissionKey) {
+    setSelectedPermissions((prev) =>
+      prev.includes(permission)
+        ? prev.filter((p) => p !== permission)
+        : [...prev, permission]
+    );
+  }
+
+  function handleCreateOpenChange(open: boolean) {
+    setCreateOpen(open);
+    if (!open) {
+      setSelectedPermissions([]);
+    }
+  }
+
+  function handleEditOpenChange(open: boolean) {
+    setEditOpen(open);
+    if (!open) {
+      setEditSalesAgent(null);
+      setSelectedPermissions([]);
+    }
   }
 
   return (
@@ -242,86 +295,166 @@ export function SalesAgentPanel() {
       </Card>
 
       {/* Create Sales Agent Dialog */}
-      <Dialog open={createOpen} onOpenChange={setCreateOpen}>
-        <DialogContent className="sm:max-w-[500px]">
+      <Dialog open={createOpen} onOpenChange={handleCreateOpenChange}>
+        <DialogContent className="sm:max-w-[900px] max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Create Sales Agent</DialogTitle>
             <DialogDescription>
-              Add a new sales agent with login credentials.
+              Add a new sales agent with login credentials and assign module permissions.
             </DialogDescription>
           </DialogHeader>
-          <form onSubmit={handleCreateSubmit} className="space-y-4">
-            <div className="space-y-2">
-              <Label htmlFor="create-name">Name *</Label>
-              <Input id="create-name" name="name" placeholder="John Doe" required />
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            {/* Left Side - Form Fields */}
+            <div className="space-y-4">
+              <form onSubmit={handleCreateSubmit} className="space-y-4">
+                <div className="space-y-2">
+                  <Label htmlFor="create-name">Name *</Label>
+                  <Input id="create-name" name="name" placeholder="John Doe" required />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="create-username">Username *</Label>
+                  <Input id="create-username" name="username" placeholder="johndoe" required />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="create-password">Password *</Label>
+                  <Input id="create-password" name="password" type="password" placeholder="Enter password" required />
+                </div>
+                <DialogFooter className="sm:justify-start pt-4">
+                  <Button
+                    variant="outline"
+                    type="button"
+                    onClick={() => handleCreateOpenChange(false)}
+                  >
+                    Cancel
+                  </Button>
+                  <Button type="submit" disabled={isPending} className="create-console-btn">
+                    {isPending ? "Creating..." : "Create Sales Agent"}
+                  </Button>
+                </DialogFooter>
+              </form>
             </div>
-            <div className="space-y-2">
-              <Label htmlFor="create-username">Username *</Label>
-              <Input id="create-username" name="username" placeholder="johndoe" required />
+
+            {/* Right Side - Permission Selector */}
+            <div className="space-y-4 border-l pl-6">
+              <div>
+                <Label className="text-base font-semibold">Module Permissions</Label>
+                <p className="text-sm text-secondary-muted mt-1">
+                  Select additional modules this sales agent can access.
+                </p>
+              </div>
+              <div className="space-y-2 max-h-[400px] overflow-y-auto">
+                {AVAILABLE_PERMISSIONS.map((permission) => {
+                  const Icon = permission.icon;
+                  return (
+                    <div
+                      key={permission.key}
+                      className="flex items-center space-x-2 p-2 rounded-md hover:bg-slate-50 cursor-pointer"
+                      onClick={() => togglePermission(permission.key)}
+                    >
+                      <Checkbox
+                        id={`create-permission-${permission.key}`}
+                        checked={selectedPermissions.includes(permission.key)}
+                        onCheckedChange={() => togglePermission(permission.key)}
+                      />
+                      <Label
+                        htmlFor={`create-permission-${permission.key}`}
+                        className="flex items-center gap-2 cursor-pointer flex-1"
+                      >
+                        <Icon className="h-4 w-4" />
+                        <span>{permission.label}</span>
+                      </Label>
+                    </div>
+                  );
+                })}
+              </div>
             </div>
-            <div className="space-y-2">
-              <Label htmlFor="create-password">Password *</Label>
-              <Input id="create-password" name="password" type="password" placeholder="Enter password" required />
-            </div>
-            <DialogFooter>
-              <Button
-                variant="outline"
-                type="button"
-                onClick={() => setCreateOpen(false)}
-              >
-                Cancel
-              </Button>
-              <Button type="submit" disabled={isPending} className="create-console-btn">
-                {isPending ? "Creating..." : "Create Sales Agent"}
-              </Button>
-            </DialogFooter>
-          </form>
+          </div>
         </DialogContent>
       </Dialog>
 
       {/* Edit Sales Agent Dialog */}
-      <Dialog open={editOpen} onOpenChange={setEditOpen}>
-        <DialogContent>
+      <Dialog open={editOpen} onOpenChange={handleEditOpenChange}>
+        <DialogContent className="sm:max-w-[900px] max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Edit Sales Agent</DialogTitle>
             <DialogDescription>
-              Update sales agent information.
+              Update sales agent information and module permissions.
             </DialogDescription>
           </DialogHeader>
-          <form onSubmit={handleEditSubmit} className="space-y-4">
-            <div className="space-y-2">
-              <Label htmlFor="edit-name">Name *</Label>
-              <Input
-                id="edit-name"
-                name="name"
-                defaultValue={editSalesAgent?.name ?? ""}
-                required
-              />
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            {/* Left Side - Form Fields */}
+            <div className="space-y-4">
+              <form onSubmit={handleEditSubmit} className="space-y-4">
+                <div className="space-y-2">
+                  <Label htmlFor="edit-name">Name *</Label>
+                  <Input
+                    id="edit-name"
+                    name="name"
+                    defaultValue={editSalesAgent?.name ?? ""}
+                    required
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="edit-username">Username *</Label>
+                  <Input
+                    id="edit-username"
+                    name="username"
+                    defaultValue={editSalesAgent?.username ?? ""}
+                    required
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="edit-password">Password (leave blank to keep current)</Label>
+                  <Input
+                    id="edit-password"
+                    name="password"
+                    type="password"
+                    placeholder="Enter new password"
+                  />
+                </div>
+                <DialogFooter className="sm:justify-start pt-4">
+                  <Button type="submit" disabled={isPending}>
+                    {isPending ? "Saving..." : "Save Changes"}
+                  </Button>
+                </DialogFooter>
+              </form>
             </div>
-            <div className="space-y-2">
-              <Label htmlFor="edit-username">Username *</Label>
-              <Input
-                id="edit-username"
-                name="username"
-                defaultValue={editSalesAgent?.username ?? ""}
-                required
-              />
+
+            {/* Right Side - Permission Selector */}
+            <div className="space-y-4 border-l pl-6">
+              <div>
+                <Label className="text-base font-semibold">Module Permissions</Label>
+                <p className="text-sm text-secondary-muted mt-1">
+                  Select additional modules this sales agent can access.
+                </p>
+              </div>
+              <div className="space-y-2 max-h-[400px] overflow-y-auto">
+                {AVAILABLE_PERMISSIONS.map((permission) => {
+                  const Icon = permission.icon;
+                  return (
+                    <div
+                      key={permission.key}
+                      className="flex items-center space-x-2 p-2 rounded-md hover:bg-slate-50 cursor-pointer"
+                      onClick={() => togglePermission(permission.key)}
+                    >
+                      <Checkbox
+                        id={`edit-permission-${permission.key}`}
+                        checked={selectedPermissions.includes(permission.key)}
+                        onCheckedChange={() => togglePermission(permission.key)}
+                      />
+                      <Label
+                        htmlFor={`edit-permission-${permission.key}`}
+                        className="flex items-center gap-2 cursor-pointer flex-1"
+                      >
+                        <Icon className="h-4 w-4" />
+                        <span>{permission.label}</span>
+                      </Label>
+                    </div>
+                  );
+                })}
+              </div>
             </div>
-            <div className="space-y-2">
-              <Label htmlFor="edit-password">Password (leave blank to keep current)</Label>
-              <Input
-                id="edit-password"
-                name="password"
-                type="password"
-                placeholder="Enter new password"
-              />
-            </div>
-            <DialogFooter>
-              <Button type="submit" disabled={isPending}>
-                {isPending ? "Saving..." : "Save Changes"}
-              </Button>
-            </DialogFooter>
-          </form>
+          </div>
         </DialogContent>
       </Dialog>
 

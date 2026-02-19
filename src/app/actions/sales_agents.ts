@@ -11,6 +11,7 @@ export type SalesAgent = {
   email: string | null;
   phone_number: string | null;
   code: string | null;
+  permissions: string[] | null;
   created_at: string;
   updated_at: string;
 };
@@ -25,9 +26,20 @@ export async function createSalesAgent(formData: FormData) {
     const name = formData.get('name') as string;
     const username = formData.get('username') as string;
     const password = formData.get('password') as string;
+    const permissionsJson = formData.get('permissions') as string;
 
     if (!name?.trim() || !username?.trim() || !password?.trim()) {
       return { error: 'Name, username, and password are required' };
+    }
+
+    // Parse permissions JSON
+    let permissions: string[] = [];
+    if (permissionsJson) {
+      try {
+        permissions = JSON.parse(permissionsJson);
+      } catch {
+        permissions = [];
+      }
     }
 
     const supabase = await createAdminClient();
@@ -58,18 +70,50 @@ export async function createSalesAgent(formData: FormData) {
     }
 
     // Create the sales agent
+    const insertData: any = { 
+      name: name.trim(), 
+      username: username.trim(),
+      password: password.trim(),
+      code: nextCode
+    };
+    
+    // Try to include permissions (will fail gracefully if column doesn't exist)
+    if (permissions) {
+      insertData.permissions = permissions;
+    }
+
     const { data, error } = await supabase
       .from('sales_agents')
-      .insert([{ 
-        name: name.trim(), 
-        username: username.trim(),
-        password: password.trim(),
-        code: nextCode
-      }])
+      .insert([insertData])
       .select()
       .single();
 
     if (error) {
+      // If permissions column doesn't exist, try without it
+      if (error.message.includes('permissions') || error.message.includes('column "permissions"')) {
+        delete insertData.permissions;
+        const { data: retryData, error: retryError } = await supabase
+          .from('sales_agents')
+          .insert([insertData])
+          .select()
+          .single();
+        
+        if (retryError) {
+          if (retryError.message.includes('does not exist') || retryError.message.includes('relation') || retryError.code === '42P01') {
+            return { error: 'Sales agents table does not exist. Please run the SQL migration in Supabase.' };
+          }
+          if (retryError.code === '23505') {
+            return { error: 'Username already exists' };
+          }
+          return { error: retryError.message };
+        }
+        
+        return { 
+          success: true, 
+          salesAgent: { ...retryData, permissions: null, code: nextCode } as SalesAgent 
+        };
+      }
+      
       if (error.message.includes('does not exist') || error.message.includes('relation') || error.code === '42P01') {
         return { error: 'Sales agents table does not exist. Please run the SQL migration in Supabase.' };
       }
@@ -95,19 +139,64 @@ export async function getAllSalesAgents() {
 
     const supabase = await createAdminClient();
 
+    // Try to select all columns including permissions
     const { data, error } = await supabase
       .from('sales_agents')
-      .select('*')
+      .select('id, name, username, email, phone_number, code, created_at, updated_at, permissions')
       .order('created_at', { ascending: false });
 
     if (error) {
+      // If permissions column doesn't exist, try without it
+      if (error.message.includes('permissions') || error.message.includes('column "permissions"')) {
+        const { data: dataWithoutPermissions, error: retryError } = await supabase
+          .from('sales_agents')
+          .select('id, name, username, email, phone_number, code, created_at, updated_at')
+          .order('created_at', { ascending: false });
+        
+        if (retryError) {
+          if (retryError.message.includes('does not exist') || retryError.message.includes('relation') || retryError.code === '42P01') {
+            return { error: 'Sales agents table does not exist. Please run the SQL migration in Supabase.' };
+          }
+          return { error: retryError.message };
+        }
+        
+        return { 
+          salesAgents: (dataWithoutPermissions || []).map((agent: any) => ({
+            ...agent,
+            permissions: null
+          })) as SalesAgent[] 
+        };
+      }
+      
       if (error.message.includes('does not exist') || error.message.includes('relation') || error.code === '42P01') {
         return { error: 'Sales agents table does not exist. Please run the SQL migration in Supabase.' };
       }
       return { error: error.message };
     }
 
-    return { salesAgents: (data || []) as SalesAgent[] };
+    // Ensure permissions is always an array or null
+    // Supabase returns JSONB as parsed JSON, so we need to handle it properly
+    const salesAgents = (data || []).map((agent: any) => {
+      let permissionsValue: string[] | null = null;
+      if (agent.permissions) {
+        // If it's already an array, use it; if it's a string, parse it; otherwise null
+        if (Array.isArray(agent.permissions)) {
+          permissionsValue = agent.permissions;
+        } else if (typeof agent.permissions === 'string') {
+          try {
+            permissionsValue = JSON.parse(agent.permissions);
+          } catch {
+            permissionsValue = null;
+          }
+        }
+      }
+      return {
+        ...agent,
+        permissions: permissionsValue
+      };
+    }) as SalesAgent[];
+
+    return { salesAgents };
   } catch (err) {
     return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };
   }
@@ -272,9 +361,20 @@ export async function updateSalesAgent(formData: FormData) {
     const name = formData.get('name') as string;
     const username = formData.get('username') as string;
     const password = formData.get('password') as string;
+    const permissionsJson = formData.get('permissions') as string;
 
     if (!id || !name?.trim() || !username?.trim()) {
       return { error: 'Name and username are required' };
+    }
+
+    // Parse permissions JSON
+    let permissions: string[] = [];
+    if (permissionsJson) {
+      try {
+        permissions = JSON.parse(permissionsJson);
+      } catch {
+        permissions = [];
+      }
     }
 
     const supabase = await createAdminClient();
@@ -291,7 +391,7 @@ export async function updateSalesAgent(formData: FormData) {
       return { error: 'Username already exists' };
     }
 
-    const updateData: { name: string; username: string; password?: string; updated_at: string } = {
+    const updateData: any = {
       name: name.trim(),
       username: username.trim(),
       updated_at: new Date().toISOString()
@@ -302,12 +402,36 @@ export async function updateSalesAgent(formData: FormData) {
       updateData.password = password.trim();
     }
 
+    // Try to include permissions (will fail gracefully if column doesn't exist)
+    if (permissions) {
+      updateData.permissions = permissions;
+    }
+
     const { error } = await supabase
       .from('sales_agents')
       .update(updateData)
       .eq('id', id);
 
     if (error) {
+      // If permissions column doesn't exist, try without it
+      if (error.message.includes('permissions') || error.message.includes('column "permissions"')) {
+        delete updateData.permissions;
+        const { error: retryError } = await supabase
+          .from('sales_agents')
+          .update(updateData)
+          .eq('id', id);
+        
+        if (retryError) {
+          if (retryError.code === '23505') {
+            return { error: 'Username already exists' };
+          }
+          return { error: retryError.message };
+        }
+        
+        revalidatePath('/admin/dashboard');
+        return { success: true };
+      }
+      
       if (error.code === '23505') {
         return { error: 'Username already exists' };
       }
@@ -346,6 +470,73 @@ export async function deleteSalesAgent(formData: FormData) {
 
     revalidatePath('/admin/dashboard');
     return { success: true };
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };
+  }
+}
+
+export async function getSalesAgentByUsername(username: string) {
+  try {
+    const supabase = await createAdminClient();
+
+    // Try to get with permissions first
+    const { data, error } = await supabase
+      .from('sales_agents')
+      .select('id, name, username, permissions')
+      .eq('username', username)
+      .maybeSingle();
+
+    if (error) {
+      // If permissions column doesn't exist, try without it
+      if (error.message.includes('permissions') || error.message.includes('column "permissions"')) {
+        const { data: dataWithoutPermissions, error: retryError } = await supabase
+          .from('sales_agents')
+          .select('id, name, username')
+          .eq('username', username)
+          .maybeSingle();
+
+        if (retryError) {
+          return { error: retryError.message };
+        }
+
+        if (!dataWithoutPermissions) {
+          return { error: 'Sales agent not found' };
+        }
+
+        return { 
+          salesAgent: { 
+            ...dataWithoutPermissions, 
+            permissions: null 
+          } as { id: string; name: string; username: string | null; permissions: string[] | null } 
+        };
+      }
+      return { error: error.message };
+    }
+
+    if (!data) {
+      return { error: 'Sales agent not found' };
+    }
+
+    // Handle permissions - Supabase returns JSONB as parsed JSON
+    let permissionsValue: string[] | null = null;
+    if (data.permissions) {
+      if (Array.isArray(data.permissions)) {
+        permissionsValue = data.permissions;
+      } else if (typeof data.permissions === 'string') {
+        try {
+          permissionsValue = JSON.parse(data.permissions);
+        } catch {
+          permissionsValue = null;
+        }
+      }
+    }
+
+    return { 
+      salesAgent: { 
+        ...data, 
+        permissions: permissionsValue
+      } as { id: string; name: string; username: string | null; permissions: string[] | null } 
+    };
   } catch (err) {
     return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };
   }

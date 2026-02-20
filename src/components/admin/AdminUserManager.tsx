@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState, useTransition, useEffect } from "react";
+import { useMemo, useState, useTransition, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { createUser, deleteUser, updateUser } from "@/app/actions/user";
@@ -90,35 +90,47 @@ export function AdminUserManager({
   onTabChange,
 }: Props) {
   const router = useRouter();
-  const [createSubTab, setCreateSubTab] = useState<"user" | "sales-agent" | null>(null);
+  // Initialize sub-tabs based on activeTab
+  const [createSubTab, setCreateSubTab] = useState<"user" | "sales-agent" | null>(
+    activeTab === "create" ? "user" : null
+  );
   const [createSalesAgentOpen, setCreateSalesAgentOpen] = useState(false);
-  const [profilesSubTab, setProfilesSubTab] = useState<"users" | "sales-agent" | null>(null);
+  const [profilesSubTab, setProfilesSubTab] = useState<"users" | "sales-agent" | null>(
+    activeTab === "profiles" ? "users" : null
+  );
   const [editOpen, setEditOpen] = useState(false);
   const [editUser, setEditUser] = useState<AppUser | null>(null);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [deleteUserTarget, setDeleteUserTarget] = useState<AppUser | null>(null);
   const [isPending, startTransition] = useTransition();
 
-  // Reset sub-tabs when switching main tabs
+  // Track previous activeTab to detect tab changes
+  const prevActiveTabRef = useRef(activeTab);
+  
+  // Handle sub-tab initialization/reset when activeTab changes
+  // Using setTimeout to defer setState calls outside of effect synchronous execution
   useEffect(() => {
-    if (activeTab === "create") {
-      if (createSubTab === null) {
-        setCreateSubTab("user");
-      }
-    } else {
-      setCreateSubTab(null);
-    }
-  }, [activeTab, createSubTab]);
+    const prevActiveTab = prevActiveTabRef.current;
+    
+    if (prevActiveTab !== activeTab) {
+      prevActiveTabRef.current = activeTab;
+      
+      // Defer state updates to avoid synchronous setState in effect
+      setTimeout(() => {
+        if (activeTab === "create") {
+          setCreateSubTab("user");
+        } else if (prevActiveTab === "create") {
+          setCreateSubTab(null);
+        }
 
-  useEffect(() => {
-    if (activeTab === "profiles") {
-      if (profilesSubTab === null) {
-        setProfilesSubTab("users");
-      }
-    } else {
-      setProfilesSubTab(null);
+        if (activeTab === "profiles") {
+          setProfilesSubTab("users");
+        } else if (prevActiveTab === "profiles") {
+          setProfilesSubTab(null);
+        }
+      }, 0);
     }
-  }, [activeTab, profilesSubTab]);
+  }, [activeTab]);
 
   const sortedUsers = useMemo(() => {
     return [...users].sort(

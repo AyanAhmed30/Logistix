@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState, useTransition } from "react";
+import { useMemo, useState, useTransition, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { createUser, deleteUser, updateUser } from "@/app/actions/user";
@@ -24,7 +24,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { PlusCircle, UsersRound, X, Truck, Bell, Package, Container, FileText, TrendingUp, ShoppingCart, Settings, ClipboardList, Receipt, UserCog, ChevronDown } from "lucide-react";
+import { PlusCircle, UsersRound, X, Truck, Bell, Package, Container, FileText, TrendingUp, ShoppingCart, Settings, ClipboardList, Receipt, UserCog } from "lucide-react";
 import { OrderTrackingPanel } from "@/components/admin/OrderTrackingPanel";
 import { AdminNotificationsPanel } from "@/components/admin/AdminNotificationsPanel";
 import { OrderManagementPanel } from "@/components/admin/OrderManagementPanel";
@@ -36,12 +36,6 @@ import { OperationsPanel } from "@/components/admin/OperationsPanel";
 import { ImportPackingListPanel } from "@/components/admin/ImportPackingListPanel";
 import { ImportInvoicePanel } from "@/components/admin/ImportInvoicePanel";
 import { SalesAgentPanel } from "@/components/admin/SalesAgentPanel";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
 
 type AppUser = {
   id: string;
@@ -96,14 +90,35 @@ export function AdminUserManager({
   onTabChange,
 }: Props) {
   const router = useRouter();
-  const [createOpen, setCreateOpen] = useState(false);
+  const [createSubTab, setCreateSubTab] = useState<"user" | "sales-agent" | null>(null);
   const [createSalesAgentOpen, setCreateSalesAgentOpen] = useState(false);
-  const [profilesSubTab, setProfilesSubTab] = useState<"users" | "sales-agent">("users");
+  const [profilesSubTab, setProfilesSubTab] = useState<"users" | "sales-agent" | null>(null);
   const [editOpen, setEditOpen] = useState(false);
   const [editUser, setEditUser] = useState<AppUser | null>(null);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [deleteUserTarget, setDeleteUserTarget] = useState<AppUser | null>(null);
   const [isPending, startTransition] = useTransition();
+
+  // Reset sub-tabs when switching main tabs
+  useEffect(() => {
+    if (activeTab === "create") {
+      if (createSubTab === null) {
+        setCreateSubTab("user");
+      }
+    } else {
+      setCreateSubTab(null);
+    }
+  }, [activeTab, createSubTab]);
+
+  useEffect(() => {
+    if (activeTab === "profiles") {
+      if (profilesSubTab === null) {
+        setProfilesSubTab("users");
+      }
+    } else {
+      setProfilesSubTab(null);
+    }
+  }, [activeTab, profilesSubTab]);
 
   const sortedUsers = useMemo(() => {
     return [...users].sort(
@@ -111,7 +126,7 @@ export function AdminUserManager({
     );
   }, [users]);
 
-  function handleCreateSubmit(event: React.FormEvent<HTMLFormElement>) {
+  function handleCreateSubmitFromTab(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const form = event.currentTarget;
     const formData = new FormData(event.currentTarget);
@@ -134,7 +149,6 @@ export function AdminUserManager({
       toast.success("User account generated", {
         className: "bg-green-400 text-white border-green-400",
       });
-      setCreateOpen(false);
       form.reset();
       router.refresh();
     });
@@ -257,40 +271,18 @@ export function AdminUserManager({
             <TrendingUp className="h-4 w-4 shrink-0 sidebar-icon" />
             {!isSidebarCollapsed && <span className="sidebar-text">Dashboard</span>}
           </Button>
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button
-                variant={activeTab === "create" ? "default" : "outline"}
-                className="justify-start gap-2 sidebar-button"
-                title="Create New User or Sales Agent"
-              >
-                <PlusCircle className="h-4 w-4 shrink-0 sidebar-icon" />
-                {!isSidebarCollapsed && <span className="sidebar-text">Create New User</span>}
-                {!isSidebarCollapsed && <ChevronDown className="h-4 w-4 ml-auto" />}
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="start">
-              <DropdownMenuItem
-                onClick={() => {
-                  setCreateOpen(true);
-                  handleTabSelect("create");
-                }}
-              >
-                <UsersRound className="h-4 w-4 mr-2" />
-                Create User
-              </DropdownMenuItem>
-              <DropdownMenuItem
-                onClick={() => {
-                  setCreateSalesAgentOpen(true);
-                  handleTabSelect("profiles");
-                  setProfilesSubTab("sales-agent");
-                }}
-              >
-                <UserCog className="h-4 w-4 mr-2" />
-                Create Sales Agent
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
+          <Button
+            variant={activeTab === "create" ? "default" : "outline"}
+            className="justify-start gap-2 sidebar-button"
+            title="Create New User or Sales Agent"
+            onClick={() => {
+              handleTabSelect("create");
+              setCreateSubTab("user");
+            }}
+          >
+            <PlusCircle className="h-4 w-4 shrink-0 sidebar-icon" />
+            {!isSidebarCollapsed && <span className="sidebar-text">Create New User</span>}
+          </Button>
           <Button
             variant={activeTab === "profiles" ? "default" : "outline"}
             className="justify-start gap-2 sidebar-button"
@@ -414,6 +406,86 @@ export function AdminUserManager({
           <ImportPackingListPanel />
         ) : activeTab === "import-invoice" ? (
           <ImportInvoicePanel />
+        ) : activeTab === "create" ? (
+          <div className="space-y-6">
+            {/* Sub-tabs */}
+            <div className="flex gap-2 border-b overflow-x-auto">
+              <Button
+                variant={createSubTab === "user" ? "default" : "ghost"}
+                onClick={() => setCreateSubTab("user")}
+                className="rounded-b-none shrink-0 sidebar-button"
+                data-variant={createSubTab === "user" ? "default" : "outline"}
+              >
+                <UsersRound className="h-4 w-4 mr-2 sidebar-icon" />
+                <span className="sidebar-text">Create User</span>
+              </Button>
+              <Button
+                variant={createSubTab === "sales-agent" ? "default" : "ghost"}
+                onClick={() => setCreateSubTab("sales-agent")}
+                className="rounded-b-none shrink-0 sidebar-button"
+                data-variant={createSubTab === "sales-agent" ? "default" : "outline"}
+              >
+                <UserCog className="h-4 w-4 mr-2 sidebar-icon" />
+                <span className="sidebar-text">Create Sales Agent</span>
+              </Button>
+            </div>
+
+            {/* Create User Sub-tab Content - Only show when this tab is selected */}
+            {createSubTab === "user" && (
+              <Card className="bg-white border shadow-sm">
+                <CardHeader>
+                  <CardTitle>Create New User</CardTitle>
+                  <CardDescription>
+                    Add a new member account to the Logistix system.
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <form onSubmit={handleCreateSubmitFromTab} className="space-y-4 max-w-md">
+                    <div className="space-y-2">
+                      <Label htmlFor="create-username-tab">Username</Label>
+                      <Input id="create-username-tab" name="username" placeholder="johndoe" required />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="create-password-tab">Password</Label>
+                      <Input
+                        id="create-password-tab"
+                        name="password"
+                        type="password"
+                        placeholder="••••••••"
+                        required
+                      />
+                    </div>
+                    <Button type="submit" disabled={isPending}>
+                      {isPending ? "Creating..." : "Generate User Account"}
+                    </Button>
+                  </form>
+                </CardContent>
+              </Card>
+            )}
+
+            {/* Create Sales Agent Sub-tab Content - Only show when this tab is selected */}
+            {createSubTab === "sales-agent" && (
+              <Card className="bg-white border shadow-sm">
+                <CardHeader>
+                  <CardTitle>Create Sales Agent</CardTitle>
+                  <CardDescription>
+                    Click the button below to open the Sales Agent creation form.
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <Button onClick={() => {
+                    setCreateSalesAgentOpen(true);
+                    handleTabSelect("profiles");
+                    setProfilesSubTab("sales-agent");
+                  }}>
+                    <UserCog className="h-4 w-4 mr-2" />
+                    Open Sales Agent Creation
+                  </Button>
+                </CardContent>
+              </Card>
+            )}
+
+          </div>
         ) : activeTab === "profiles" ? (
           <div className="space-y-6">
             {/* Sub-tabs */}
@@ -438,7 +510,7 @@ export function AdminUserManager({
               </Button>
             </div>
 
-            {/* Users Sub-tab */}
+            {/* Users Sub-tab Content - Only show when this tab is selected */}
             {profilesSubTab === "users" && (
               <>
                 <Card className="bg-white border shadow-sm">
@@ -460,34 +532,13 @@ export function AdminUserManager({
                         View, update, and remove user accounts in real time.
                       </CardDescription>
                     </div>
-                    <DropdownMenu>
-                      <DropdownMenuTrigger asChild>
-                        <Button>
-                          <PlusCircle className="h-4 w-4 mr-2" />
-                          Create New User
-                          <ChevronDown className="h-4 w-4 ml-2" />
-                        </Button>
-                      </DropdownMenuTrigger>
-                      <DropdownMenuContent align="end">
-                        <DropdownMenuItem
-                          onClick={() => {
-                            setCreateOpen(true);
-                          }}
-                        >
-                          <UsersRound className="h-4 w-4 mr-2" />
-                          Create User
-                        </DropdownMenuItem>
-                        <DropdownMenuItem
-                          onClick={() => {
-                            setCreateSalesAgentOpen(true);
-                            setProfilesSubTab("sales-agent");
-                          }}
-                        >
-                          <UserCog className="h-4 w-4 mr-2" />
-                          Create Sales Agent
-                        </DropdownMenuItem>
-                      </DropdownMenuContent>
-                    </DropdownMenu>
+                    <Button onClick={() => {
+                      handleTabSelect("create");
+                      setCreateSubTab("user");
+                    }}>
+                      <PlusCircle className="h-4 w-4 mr-2" />
+                      Create New User
+                    </Button>
                   </CardHeader>
                   <CardContent>
                     {sortedUsers.length === 0 ? (
@@ -539,7 +590,7 @@ export function AdminUserManager({
               </>
             )}
 
-            {/* Sales Agent Sub-tab */}
+            {/* Sales Agent Sub-tab Content - Only show when this tab is selected */}
             {profilesSubTab === "sales-agent" && (
               <SalesAgentPanel
                 initialCreateOpen={createSalesAgentOpen}
@@ -550,36 +601,6 @@ export function AdminUserManager({
         ) : null}
       </section>
 
-      <Dialog open={createOpen} onOpenChange={setCreateOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Create New User</DialogTitle>
-            <DialogDescription>
-              Add a new member account to the Logistix system.
-            </DialogDescription>
-          </DialogHeader>
-          <form onSubmit={handleCreateSubmit} className="space-y-4">
-            <div className="space-y-2">
-              <Label htmlFor="create-username">Username</Label>
-              <Input id="create-username" name="username" placeholder="johndoe" />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="create-password">Password</Label>
-              <Input
-                id="create-password"
-                name="password"
-                type="password"
-                placeholder="••••••••"
-              />
-            </div>
-            <DialogFooter>
-              <Button type="submit" disabled={isPending}>
-                {isPending ? "Creating..." : "Generate User Account"}
-              </Button>
-            </DialogFooter>
-          </form>
-        </DialogContent>
-      </Dialog>
 
       <Dialog open={editOpen} onOpenChange={setEditOpen}>
         <DialogContent>

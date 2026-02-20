@@ -4,7 +4,7 @@ import { useState, useMemo, useEffect } from "react";
 import { logout } from "@/app/actions/auth";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { LogOut, Menu, X, UserPlus, Users, FileText, ShoppingCart, TrendingUp, Truck, Bell, Package, Container, Settings, ClipboardList, Receipt } from "lucide-react";
+import { LogOut, Menu, X, UserPlus, Users, FileText, ShoppingCart, TrendingUp, Truck, Bell, Package, Container, Settings, ClipboardList, Receipt, PlusCircle, UsersRound } from "lucide-react";
 import Image from "next/image";
 import { LeadPanel } from "@/components/sales-agent/LeadPanel";
 import { PipelinePanel } from "@/components/sales-agent/PipelinePanel";
@@ -24,7 +24,7 @@ type Props = {
   permissions: string[];
 };
 
-type TabKey = "lead" | "pipeline" | "customer-list" | "manage-request" | "dashboard" | "tracking" | "notifications" | "management" | "console" | "loading-instruction" | "operations" | "import-packing-list" | "import-invoice";
+type TabKey = "lead" | "pipeline" | "customer-list" | "manage-request" | "create" | "profiles" | "dashboard" | "tracking" | "notifications" | "management" | "console" | "loading-instruction" | "operations" | "import-packing-list" | "import-invoice";
 
 // All tabs are now permission-based - no default tabs
 const permissionTabs: Record<string, { key: TabKey; label: string; icon: React.ReactNode }> = {
@@ -32,6 +32,8 @@ const permissionTabs: Record<string, { key: TabKey; label: string; icon: React.R
   "pipeline": { key: "pipeline", label: "Pipeline", icon: <FileText className="h-4 w-4" /> },
   "customer-list": { key: "customer-list", label: "Customer List", icon: <Users className="h-4 w-4" /> },
   "manage-request": { key: "manage-request", label: "Manage Request", icon: <ShoppingCart className="h-4 w-4" /> },
+  "create": { key: "create", label: "Create New User", icon: <PlusCircle className="h-4 w-4" /> },
+  "profiles": { key: "profiles", label: "User Profiles", icon: <UsersRound className="h-4 w-4" /> },
   "dashboard": { key: "dashboard", label: "Dashboard", icon: <TrendingUp className="h-4 w-4" /> },
   "tracking": { key: "tracking", label: "Order Tracking", icon: <Truck className="h-4 w-4" /> },
   "notifications": { key: "notifications", label: "Notifications", icon: <Bell className="h-4 w-4" /> },
@@ -192,6 +194,36 @@ export function SalesAgentDashboardShell({ username, permissions }: Props) {
         {activeTab === "operations" && <OperationsPanel />}
         {activeTab === "import-packing-list" && <ImportPackingListPanel />}
         {activeTab === "import-invoice" && <ImportInvoicePanel />}
+        {activeTab === "create" && (
+          <Card className="bg-white border shadow-sm">
+            <CardHeader>
+              <CardTitle>Create New User</CardTitle>
+              <CardDescription>
+                Create new user accounts. This feature requires administrator privileges.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="py-16 text-center text-secondary-muted">
+                User creation functionality is only available to administrators.
+              </div>
+            </CardContent>
+          </Card>
+        )}
+        {activeTab === "profiles" && (
+          <Card className="bg-white border shadow-sm">
+            <CardHeader>
+              <CardTitle>User Profiles</CardTitle>
+              <CardDescription>
+                View and manage user profiles. This feature requires administrator privileges.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="py-16 text-center text-secondary-muted">
+                User profile management is only available to administrators.
+              </div>
+            </CardContent>
+          </Card>
+        )}
         
         {/* Show message if no permissions assigned */}
         {tabs.length === 0 && (

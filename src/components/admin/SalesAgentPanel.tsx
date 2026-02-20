@@ -14,6 +14,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Dialog,
   DialogContent,
@@ -30,8 +31,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { PlusCircle, Trash2, Edit, TrendingUp, Truck, Bell, Package, Container, FileText, Settings, ClipboardList, Receipt, UserPlus, Users, ShoppingCart } from "lucide-react";
-import { Checkbox } from "@/components/ui/checkbox";
+import { PlusCircle, Trash2, Edit, TrendingUp, Truck, Bell, Package, Container, FileText, Settings, ClipboardList, Receipt, UserPlus, Users, ShoppingCart, UsersRound } from "lucide-react";
 
 
 // Available permissions that can be assigned to sales agents
@@ -40,6 +40,8 @@ const AVAILABLE_PERMISSIONS = [
   { key: "pipeline", label: "Pipeline", icon: FileText },
   { key: "customer-list", label: "Customer List", icon: Users },
   { key: "manage-request", label: "Manage Request", icon: ShoppingCart },
+  { key: "create", label: "Create New User", icon: PlusCircle },
+  { key: "profiles", label: "User Profiles", icon: UsersRound },
   { key: "dashboard", label: "Dashboard", icon: TrendingUp },
   { key: "tracking", label: "Order Tracking", icon: Truck },
   { key: "notifications", label: "Notifications", icon: Bell },
@@ -361,25 +363,27 @@ export function SalesAgentPanel({ initialCreateOpen = false, onCreateOpenChange 
                   Select additional modules this sales agent can access.
                 </p>
               </div>
-              <div className="space-y-2 max-h-[400px] overflow-y-auto">
+              <div className="space-y-3 max-h-[400px] overflow-y-auto pr-2">
                 {AVAILABLE_PERMISSIONS.map((permission) => {
                   const Icon = permission.icon;
+                  const isSelected = selectedPermissions.includes(permission.key);
                   return (
                     <div
                       key={permission.key}
-                      className="flex items-center space-x-2 p-2 rounded-md hover:bg-slate-50 cursor-pointer"
+                      className="flex items-center space-x-3 p-2 rounded-md hover:bg-gray-50 cursor-pointer"
                       onClick={() => togglePermission(permission.key)}
                     >
                       <Checkbox
                         id={`create-permission-${permission.key}`}
-                        checked={selectedPermissions.includes(permission.key)}
+                        checked={isSelected}
                         onCheckedChange={() => togglePermission(permission.key)}
+                        className="shrink-0"
                       />
                       <Label
                         htmlFor={`create-permission-${permission.key}`}
-                        className="flex items-center gap-2 cursor-pointer flex-1"
+                        className="flex items-center gap-2 cursor-pointer flex-1 font-normal"
                       >
-                        <Icon className="h-4 w-4" />
+                        <Icon className="h-4 w-4 text-secondary-muted" />
                         <span>{permission.label}</span>
                       </Label>
                     </div>
@@ -447,25 +451,27 @@ export function SalesAgentPanel({ initialCreateOpen = false, onCreateOpenChange 
                   Select additional modules this sales agent can access.
                 </p>
               </div>
-              <div className="space-y-2 max-h-[400px] overflow-y-auto">
+              <div className="space-y-3 max-h-[400px] overflow-y-auto pr-2">
                 {AVAILABLE_PERMISSIONS.map((permission) => {
                   const Icon = permission.icon;
+                  const isSelected = selectedPermissions.includes(permission.key);
                   return (
                     <div
                       key={permission.key}
-                      className="flex items-center space-x-2 p-2 rounded-md hover:bg-slate-50 cursor-pointer"
+                      className="flex items-center space-x-3 p-2 rounded-md hover:bg-gray-50 cursor-pointer"
                       onClick={() => togglePermission(permission.key)}
                     >
                       <Checkbox
                         id={`edit-permission-${permission.key}`}
-                        checked={selectedPermissions.includes(permission.key)}
+                        checked={isSelected}
                         onCheckedChange={() => togglePermission(permission.key)}
+                        className="shrink-0"
                       />
                       <Label
                         htmlFor={`edit-permission-${permission.key}`}
-                        className="flex items-center gap-2 cursor-pointer flex-1"
+                        className="flex items-center gap-2 cursor-pointer flex-1 font-normal"
                       >
-                        <Icon className="h-4 w-4" />
+                        <Icon className="h-4 w-4 text-secondary-muted" />
                         <span>{permission.label}</span>
                       </Label>
                     </div>

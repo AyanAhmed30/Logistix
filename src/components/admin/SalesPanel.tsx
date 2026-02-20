@@ -28,7 +28,8 @@ export function SalesPanel() {
   useEffect(() => {
     if (activeSubTab === "leads") {
       fetchLeads();
-    } else if (activeSubTab === "customer-list") {
+    }
+    if (activeSubTab === "customer-list") {
       fetchCustomers();
     }
   }, [activeSubTab]);
@@ -93,7 +94,7 @@ export function SalesPanel() {
         </Button>
       </div>
 
-      {/* Leads Tab */}
+      {/* Leads Tab Content - Only show when this tab is selected */}
       {activeSubTab === "leads" && (
         <Card className="bg-white border shadow-sm">
           <CardHeader>
@@ -160,7 +161,7 @@ export function SalesPanel() {
         </Card>
       )}
 
-      {/* Customer List Tab (Admin View - All Converted Customers) */}
+      {/* Customer List Tab Content - Only show when this tab is selected */}
       {activeSubTab === "customer-list" && (
         <Card className="bg-white border shadow-sm">
           <CardHeader>

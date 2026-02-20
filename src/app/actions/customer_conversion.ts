@@ -3,7 +3,6 @@
 import { createAdminClient } from '@/utils/supabase/server';
 import { getSession } from '@/lib/auth/session';
 import { revalidatePath } from 'next/cache';
-import { getLeadComments } from './leads';
 
 export type ConvertedCustomer = {
   id: string;

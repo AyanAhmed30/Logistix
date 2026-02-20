@@ -19,7 +19,7 @@ export default async function SalesAgentDashboard() {
                 ? result.salesAgent.permissions 
                 : [];
         }
-    } catch (error) {
+    } catch {
         // If there's an error fetching permissions, use empty array
         permissions = [];
     }

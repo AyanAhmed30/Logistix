@@ -70,7 +70,13 @@ export async function createSalesAgent(formData: FormData) {
     }
 
     // Create the sales agent
-    const insertData: any = { 
+    const insertData: {
+      name: string;
+      username: string;
+      password: string;
+      code: string;
+      permissions?: string[];
+    } = { 
       name: name.trim(), 
       username: username.trim(),
       password: password.trim(),
@@ -161,7 +167,16 @@ export async function getAllSalesAgents() {
         }
         
         return { 
-          salesAgents: (dataWithoutPermissions || []).map((agent: any) => ({
+          salesAgents: (dataWithoutPermissions || []).map((agent: {
+            id: string;
+            name: string;
+            username: string | null;
+            email: string | null;
+            phone_number: string | null;
+            code: string | null;
+            created_at: string;
+            updated_at: string;
+          }) => ({
             ...agent,
             permissions: null
           })) as SalesAgent[] 
@@ -176,7 +191,17 @@ export async function getAllSalesAgents() {
 
     // Ensure permissions is always an array or null
     // Supabase returns JSONB as parsed JSON, so we need to handle it properly
-    const salesAgents = (data || []).map((agent: any) => {
+    const salesAgents = (data || []).map((agent: {
+      id: string;
+      name: string;
+      username: string | null;
+      email: string | null;
+      phone_number: string | null;
+      code: string | null;
+      permissions?: string[] | null;
+      created_at: string;
+      updated_at: string;
+    }) => {
       let permissionsValue: string[] | null = null;
       if (agent.permissions) {
         // If it's already an array, use it; if it's a string, parse it; otherwise null
@@ -391,7 +416,13 @@ export async function updateSalesAgent(formData: FormData) {
       return { error: 'Username already exists' };
     }
 
-    const updateData: any = {
+    const updateData: {
+      name: string;
+      username: string;
+      updated_at: string;
+      password?: string;
+      permissions?: string[];
+    } = {
       name: name.trim(),
       username: username.trim(),
       updated_at: new Date().toISOString()

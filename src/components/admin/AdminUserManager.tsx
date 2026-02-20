@@ -98,7 +98,6 @@ export function AdminUserManager({
   const router = useRouter();
   const [createOpen, setCreateOpen] = useState(false);
   const [createSalesAgentOpen, setCreateSalesAgentOpen] = useState(false);
-  const [createType, setCreateType] = useState<"user" | "sales-agent">("user");
   const [profilesSubTab, setProfilesSubTab] = useState<"users" | "sales-agent">("users");
   const [editOpen, setEditOpen] = useState(false);
   const [editUser, setEditUser] = useState<AppUser | null>(null);
@@ -273,7 +272,6 @@ export function AdminUserManager({
             <DropdownMenuContent align="start">
               <DropdownMenuItem
                 onClick={() => {
-                  setCreateType("user");
                   setCreateOpen(true);
                   handleTabSelect("create");
                 }}
@@ -283,7 +281,6 @@ export function AdminUserManager({
               </DropdownMenuItem>
               <DropdownMenuItem
                 onClick={() => {
-                  setCreateType("sales-agent");
                   setCreateSalesAgentOpen(true);
                   handleTabSelect("profiles");
                   setProfilesSubTab("sales-agent");
@@ -474,7 +471,6 @@ export function AdminUserManager({
                       <DropdownMenuContent align="end">
                         <DropdownMenuItem
                           onClick={() => {
-                            setCreateType("user");
                             setCreateOpen(true);
                           }}
                         >
@@ -483,7 +479,6 @@ export function AdminUserManager({
                         </DropdownMenuItem>
                         <DropdownMenuItem
                           onClick={() => {
-                            setCreateType("sales-agent");
                             setCreateSalesAgentOpen(true);
                             setProfilesSubTab("sales-agent");
                           }}

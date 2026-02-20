@@ -61,15 +61,22 @@ export function SalesAgentDashboardShell({ username, permissions }: Props) {
 
   // Update active tab when permissions change (if current tab is no longer available)
   useEffect(() => {
-    if (permissions.length > 0 && !permissions.includes(activeTab as string)) {
-      const firstAvailable = permissionTabs[permissions[0]]?.key;
-      if (firstAvailable) {
-        setActiveTab(firstAvailable);
+    // Only update if permissions changed, not when activeTab changes
+    if (permissions.length > 0) {
+      const currentTabKey = activeTab as string;
+      if (!permissions.includes(currentTabKey)) {
+        // Current tab is no longer available, switch to first available
+        const firstAvailable = permissionTabs[permissions[0]]?.key;
+        if (firstAvailable) {
+          setActiveTab(firstAvailable);
+        }
       }
     } else if (permissions.length === 0 && activeTab) {
+      // No permissions, clear active tab
       setActiveTab("" as TabKey);
     }
-  }, [permissions, activeTab]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [permissions]);
 
   return (
     <div className="min-h-screen bg-white">

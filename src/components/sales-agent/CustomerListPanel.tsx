@@ -6,7 +6,6 @@ import {
   getAllConvertedCustomersForSalesAgent,
   type ConvertedCustomerWithDetails,
 } from "@/app/actions/customer_conversion";
-import { getLeadComments, type LeadComment } from "@/app/actions/leads";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Table,
@@ -16,23 +15,10 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
-import { Button } from "@/components/ui/button";
-import { MessageSquare } from "lucide-react";
 
 export function CustomerListPanel() {
   const [customers, setCustomers] = useState<ConvertedCustomerWithDetails[]>([]);
   const [isLoading, setIsLoading] = useState(false);
-  const [selectedCustomer, setSelectedCustomer] = useState<ConvertedCustomerWithDetails | null>(null);
-  const [commentsOpen, setCommentsOpen] = useState(false);
-  const [comments, setComments] = useState<LeadComment[]>([]);
-  const [commentsLoading, setCommentsLoading] = useState(false);
 
   useEffect(() => {
     fetchCustomers();
@@ -55,28 +41,6 @@ export function CustomerListPanel() {
     }
   }
 
-  async function handleViewComments(customer: ConvertedCustomerWithDetails) {
-    if (!customer.lead_id) return;
-    
-    setSelectedCustomer(customer);
-    setCommentsOpen(true);
-    setCommentsLoading(true);
-    
-    try {
-      const result = await getLeadComments(customer.lead_id);
-      if ("error" in result) {
-        toast.error(result.error || "Unable to load comments");
-        setComments([]);
-      } else {
-        setComments(result.comments || []);
-      }
-    } catch {
-      toast.error("An unexpected error occurred");
-      setComments([]);
-    } finally {
-      setCommentsLoading(false);
-    }
-  }
 
   return (
     <div className="space-y-6">
@@ -84,7 +48,7 @@ export function CustomerListPanel() {
         <CardHeader>
           <CardTitle>Customer List</CardTitle>
           <CardDescription>
-            View all customers converted from leads. Click the comments icon to view full comment history.
+            View all customers converted from leads.
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -106,7 +70,6 @@ export function CustomerListPanel() {
                     <TableHead>Phone Number</TableHead>
                     <TableHead>Conversion Date</TableHead>
                     <TableHead>Status</TableHead>
-                    <TableHead>Comments</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -127,16 +90,6 @@ export function CustomerListPanel() {
                           Converted
                         </span>
                       </TableCell>
-                      <TableCell>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          className="h-8 w-8 p-0"
-                          onClick={() => handleViewComments(customer)}
-                        >
-                          <MessageSquare className="h-4 w-4" />
-                        </Button>
-                      </TableCell>
                     </TableRow>
                   ))}
                 </TableBody>
@@ -145,48 +98,6 @@ export function CustomerListPanel() {
           )}
         </CardContent>
       </Card>
-
-      {/* Comments Dialog */}
-      <Dialog open={commentsOpen} onOpenChange={setCommentsOpen}>
-        <DialogContent className="sm:max-w-[600px] max-h-[80vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle>
-              Comments - {selectedCustomer?.name || "Customer"}
-            </DialogTitle>
-            <DialogDescription>
-              Full comment history for this customer (from lead conversion).
-            </DialogDescription>
-          </DialogHeader>
-
-          <div className="space-y-4">
-            {commentsLoading ? (
-              <div className="text-center py-8 text-sm text-secondary-muted">
-                Loading comments...
-              </div>
-            ) : comments.length === 0 ? (
-              <div className="text-center py-8 text-sm text-secondary-muted">
-                No comments found for this customer.
-              </div>
-            ) : (
-              <div className="space-y-3">
-                {comments.map((comment) => (
-                  <Card key={comment.id} className="p-3">
-                    <div className="space-y-2">
-                      <p className="text-sm text-primary-dark whitespace-pre-wrap">
-                        {comment.comment}
-                      </p>
-                      <span className="text-xs text-secondary-muted">
-                        {new Date(comment.created_at).toLocaleString()}
-                        {comment.updated_at !== comment.created_at && " (edited)"}
-                      </span>
-                    </div>
-                  </Card>
-                ))}
-              </div>
-            )}
-          </div>
-        </DialogContent>
-      </Dialog>
     </div>
   );
 }

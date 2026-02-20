@@ -11,31 +11,19 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { UserCog, Users, MessageSquare } from "lucide-react";
-import { SalesAgentPanel } from "@/components/admin/SalesAgentPanel";
-import { getAllLeadsForAdmin, getLeadComments, type LeadWithSalesAgent, type LeadComment } from "@/app/actions/leads";
+import { Users } from "lucide-react";
+import { getAllLeadsForAdmin, type LeadWithSalesAgent } from "@/app/actions/leads";
 import { getAllConvertedCustomersForAdmin, type ConvertedCustomerWithDetails } from "@/app/actions/customer_conversion";
 import { toast } from "sonner";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
 
-type SalesSubTab = "sales-agent" | "customer-list" | "leads";
+type SalesSubTab = "leads" | "customer-list";
 
 export function SalesPanel() {
-  const [activeSubTab, setActiveSubTab] = useState<SalesSubTab>("sales-agent");
+  const [activeSubTab, setActiveSubTab] = useState<SalesSubTab>("leads");
   const [leads, setLeads] = useState<LeadWithSalesAgent[]>([]);
   const [isLoadingLeads, setIsLoadingLeads] = useState(false);
   const [customers, setCustomers] = useState<ConvertedCustomerWithDetails[]>([]);
   const [isLoadingCustomers, setIsLoadingCustomers] = useState(false);
-  const [selectedCustomer, setSelectedCustomer] = useState<ConvertedCustomerWithDetails | null>(null);
-  const [commentsOpen, setCommentsOpen] = useState(false);
-  const [comments, setComments] = useState<LeadComment[]>([]);
-  const [commentsLoading, setCommentsLoading] = useState(false);
 
   useEffect(() => {
     if (activeSubTab === "leads") {
@@ -81,41 +69,18 @@ export function SalesPanel() {
     }
   }
 
-  async function handleViewComments(customer: ConvertedCustomerWithDetails) {
-    if (!customer.lead_id) return;
-    
-    setSelectedCustomer(customer);
-    setCommentsOpen(true);
-    setCommentsLoading(true);
-    
-    try {
-      const result = await getLeadComments(customer.lead_id);
-      if ("error" in result) {
-        toast.error(result.error || "Unable to load comments");
-        setComments([]);
-      } else {
-        setComments(result.comments || []);
-      }
-    } catch {
-      toast.error("An unexpected error occurred");
-      setComments([]);
-    } finally {
-      setCommentsLoading(false);
-    }
-  }
 
   return (
     <div className="space-y-6">
       {/* Sub-tabs */}
       <div className="flex gap-2 border-b overflow-x-auto">
         <Button
-          variant={activeSubTab === "sales-agent" ? "default" : "ghost"}
-          onClick={() => setActiveSubTab("sales-agent")}
+          variant={activeSubTab === "leads" ? "default" : "ghost"}
+          onClick={() => setActiveSubTab("leads")}
           className="rounded-b-none shrink-0 sidebar-button"
-          data-variant={activeSubTab === "sales-agent" ? "default" : "outline"}
+          data-variant={activeSubTab === "leads" ? "default" : "outline"}
         >
-          <UserCog className="h-4 w-4 mr-2 sidebar-icon" />
-          <span className="sidebar-text">Sales Agent</span>
+          <span className="sidebar-text">Leads</span>
         </Button>
         <Button
           variant={activeSubTab === "customer-list" ? "default" : "ghost"}
@@ -126,107 +91,7 @@ export function SalesPanel() {
           <Users className="h-4 w-4 mr-2 sidebar-icon" />
           <span className="sidebar-text">Customer List</span>
         </Button>
-        <Button
-          variant={activeSubTab === "leads" ? "default" : "ghost"}
-          onClick={() => setActiveSubTab("leads")}
-          className="rounded-b-none shrink-0 sidebar-button"
-          data-variant={activeSubTab === "leads" ? "default" : "outline"}
-        >
-          <span className="sidebar-text">Leads</span>
-        </Button>
       </div>
-
-      {/* Sales Agent Tab */}
-      {activeSubTab === "sales-agent" && <SalesAgentPanel />}
-
-      {/* Customer List Tab */}
-      {activeSubTab === "customer-list" && (
-        <Card className="bg-white border shadow-sm">
-          <CardHeader>
-            <CardTitle>Customer List</CardTitle>
-            <CardDescription>
-              View all customers converted from leads by sales agents. Click the comments icon to view full comment history.
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            {isLoadingCustomers ? (
-              <div className="py-16 text-center text-secondary-muted">
-                Loading customers...
-              </div>
-            ) : customers.length === 0 ? (
-              <div className="py-16 text-center text-secondary-muted">
-                No converted customers found.
-              </div>
-            ) : (
-              <div className="overflow-x-auto">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Customer ID</TableHead>
-                      <TableHead>Sales Agent</TableHead>
-                      <TableHead>Customer Name</TableHead>
-                      <TableHead>Phone Number</TableHead>
-                      <TableHead>Conversion Date</TableHead>
-                      <TableHead>Status</TableHead>
-                      <TableHead>Comments</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {customers.map((customer) => (
-                      <TableRow key={customer.id}>
-                        <TableCell className="font-semibold text-primary-dark">
-                          {customer.customer_id_formatted || "N/A"}
-                        </TableCell>
-                        <TableCell>
-                          {customer.sales_agents ? (
-                            <div>
-                              <div className="font-medium">{customer.sales_agents.name}</div>
-                              {customer.sales_agents.username && (
-                                <div className="text-xs text-secondary-muted">
-                                  @{customer.sales_agents.username}
-                                </div>
-                              )}
-                              {customer.sales_agents.code && (
-                                <div className="text-xs text-secondary-muted">
-                                  Code: {customer.sales_agents.code}
-                                </div>
-                              )}
-                            </div>
-                          ) : (
-                            <span className="text-secondary-muted text-sm">-</span>
-                          )}
-                        </TableCell>
-                        <TableCell className="font-semibold">{customer.name}</TableCell>
-                        <TableCell>{customer.phone_number}</TableCell>
-                        <TableCell>
-                          {customer.converted_at
-                            ? new Date(customer.converted_at).toLocaleString()
-                            : "N/A"}
-                        </TableCell>
-                        <TableCell>
-                          <span className="px-2 py-1 bg-green-100 text-green-800 rounded-md text-xs">
-                            Converted
-                          </span>
-                        </TableCell>
-                        <TableCell>
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            className="h-8 w-8 p-0"
-                            onClick={() => handleViewComments(customer)}
-                          >
-                            <MessageSquare className="h-4 w-4" />
-                          </Button>
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </div>
-            )}
-          </CardContent>
-        </Card>
-      )}
 
       {/* Leads Tab */}
       {activeSubTab === "leads" && (
@@ -295,47 +160,83 @@ export function SalesPanel() {
         </Card>
       )}
 
-      {/* Comments Dialog */}
-      <Dialog open={commentsOpen} onOpenChange={setCommentsOpen}>
-        <DialogContent className="sm:max-w-[600px] max-h-[80vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle>
-              Comments - {selectedCustomer?.name || "Customer"}
-            </DialogTitle>
-            <DialogDescription>
-              Full comment history for this customer (from lead conversion).
-            </DialogDescription>
-          </DialogHeader>
-
-          <div className="space-y-4">
-            {commentsLoading ? (
-              <div className="text-center py-8 text-sm text-secondary-muted">
-                Loading comments...
+      {/* Customer List Tab (Admin View - All Converted Customers) */}
+      {activeSubTab === "customer-list" && (
+        <Card className="bg-white border shadow-sm">
+          <CardHeader>
+            <CardTitle>Customer List</CardTitle>
+            <CardDescription>
+              View all customers converted from leads by sales agents.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            {isLoadingCustomers ? (
+              <div className="py-16 text-center text-secondary-muted">
+                Loading customers...
               </div>
-            ) : comments.length === 0 ? (
-              <div className="text-center py-8 text-sm text-secondary-muted">
-                No comments found for this customer.
+            ) : customers.length === 0 ? (
+              <div className="py-16 text-center text-secondary-muted">
+                No converted customers found.
               </div>
             ) : (
-              <div className="space-y-3">
-                {comments.map((comment) => (
-                  <Card key={comment.id} className="p-3">
-                    <div className="space-y-2">
-                      <p className="text-sm text-primary-dark whitespace-pre-wrap">
-                        {comment.comment}
-                      </p>
-                      <span className="text-xs text-secondary-muted">
-                        {new Date(comment.created_at).toLocaleString()}
-                        {comment.updated_at !== comment.created_at && " (edited)"}
-                      </span>
-                    </div>
-                  </Card>
-                ))}
+              <div className="overflow-x-auto">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Customer ID</TableHead>
+                      <TableHead>Sales Agent</TableHead>
+                      <TableHead>Customer Name</TableHead>
+                      <TableHead>Phone Number</TableHead>
+                      <TableHead>Conversion Date</TableHead>
+                      <TableHead>Status</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {customers.map((customer) => (
+                      <TableRow key={customer.id}>
+                        <TableCell className="font-semibold text-primary-dark">
+                          {customer.customer_id_formatted || "N/A"}
+                        </TableCell>
+                        <TableCell>
+                          {customer.sales_agents ? (
+                            <div>
+                              <div className="font-medium">{customer.sales_agents.name}</div>
+                              {customer.sales_agents.username && (
+                                <div className="text-xs text-secondary-muted">
+                                  @{customer.sales_agents.username}
+                                </div>
+                              )}
+                              {customer.sales_agents.code && (
+                                <div className="text-xs text-secondary-muted">
+                                  Code: {customer.sales_agents.code}
+                                </div>
+                              )}
+                            </div>
+                          ) : (
+                            <span className="text-secondary-muted text-sm">-</span>
+                          )}
+                        </TableCell>
+                        <TableCell className="font-semibold">{customer.name}</TableCell>
+                        <TableCell>{customer.phone_number}</TableCell>
+                        <TableCell>
+                          {customer.converted_at
+                            ? new Date(customer.converted_at).toLocaleString()
+                            : "N/A"}
+                        </TableCell>
+                        <TableCell>
+                          <span className="px-2 py-1 bg-green-100 text-green-800 rounded-md text-xs">
+                            Converted
+                          </span>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
               </div>
             )}
-          </div>
-        </DialogContent>
-      </Dialog>
+          </CardContent>
+        </Card>
+      )}
     </div>
   );
 }

@@ -33,7 +33,20 @@ export type ConvertedCustomerWithDetails = ConvertedCustomer & {
 export async function convertLeadToCustomer(leadId: string) {
   try {
     const session = await getSession();
-    if (!session || session.role !== 'sales_agent') {
+    if (!session) {
+      return { error: 'Unauthorized' };
+    }
+
+    // Allow admins or sales agents with "pipeline" permission (conversion happens from pipeline)
+    if (session.role === 'admin') {
+      // Admin has access
+    } else if (session.role === 'sales_agent') {
+      const { hasPermission } = await import('@/lib/auth/permissions');
+      const hasAccess = await hasPermission('pipeline');
+      if (!hasAccess) {
+        return { error: 'Unauthorized' };
+      }
+    } else {
       return { error: 'Unauthorized' };
     }
 
@@ -157,7 +170,20 @@ export async function convertLeadToCustomer(leadId: string) {
 export async function getAllConvertedCustomersForSalesAgent() {
   try {
     const session = await getSession();
-    if (!session || session.role !== 'sales_agent') {
+    if (!session) {
+      return { error: 'Unauthorized' };
+    }
+
+    // Allow admins or sales agents with "customer-list" permission
+    if (session.role === 'admin') {
+      // Admin has access
+    } else if (session.role === 'sales_agent') {
+      const { hasPermission } = await import('@/lib/auth/permissions');
+      const hasAccess = await hasPermission('customer-list');
+      if (!hasAccess) {
+        return { error: 'Unauthorized' };
+      }
+    } else {
       return { error: 'Unauthorized' };
     }
 

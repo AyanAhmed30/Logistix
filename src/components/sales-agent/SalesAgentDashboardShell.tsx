@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { logout } from "@/app/actions/auth";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -26,16 +26,12 @@ type Props = {
 
 type TabKey = "lead" | "pipeline" | "customer-list" | "manage-request" | "dashboard" | "tracking" | "notifications" | "management" | "console" | "loading-instruction" | "operations" | "import-packing-list" | "import-invoice";
 
-// Default sales agent tabs (always available)
-const defaultTabs: { key: TabKey; label: string; icon: React.ReactNode }[] = [
-  { key: "lead", label: "Lead", icon: <UserPlus className="h-4 w-4" /> },
-  { key: "pipeline", label: "Pipeline", icon: <FileText className="h-4 w-4" /> },
-  { key: "customer-list", label: "Customer List", icon: <Users className="h-4 w-4" /> },
-  { key: "manage-request", label: "Manage Request", icon: <ShoppingCart className="h-4 w-4" /> },
-];
-
-// Permission-based tabs mapping
+// All tabs are now permission-based - no default tabs
 const permissionTabs: Record<string, { key: TabKey; label: string; icon: React.ReactNode }> = {
+  "lead": { key: "lead", label: "Lead", icon: <UserPlus className="h-4 w-4" /> },
+  "pipeline": { key: "pipeline", label: "Pipeline", icon: <FileText className="h-4 w-4" /> },
+  "customer-list": { key: "customer-list", label: "Customer List", icon: <Users className="h-4 w-4" /> },
+  "manage-request": { key: "manage-request", label: "Manage Request", icon: <ShoppingCart className="h-4 w-4" /> },
   "dashboard": { key: "dashboard", label: "Dashboard", icon: <TrendingUp className="h-4 w-4" /> },
   "tracking": { key: "tracking", label: "Order Tracking", icon: <Truck className="h-4 w-4" /> },
   "notifications": { key: "notifications", label: "Notifications", icon: <Bell className="h-4 w-4" /> },
@@ -49,16 +45,31 @@ const permissionTabs: Record<string, { key: TabKey; label: string; icon: React.R
 
 export function SalesAgentDashboardShell({ username, permissions }: Props) {
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
-  const [activeTab, setActiveTab] = useState<TabKey>("lead");
+  
+  // Set initial tab to first available permission, or empty string if none
+  const initialTab = permissions.length > 0 ? (permissionTabs[permissions[0]]?.key || "") : "";
+  const [activeTab, setActiveTab] = useState<TabKey>(initialTab as TabKey);
 
-  // Build tabs list: default tabs + permission-based tabs
+  // Build tabs list: only permission-based tabs (no default tabs)
   const tabs = useMemo(() => {
     const permissionTabsList = permissions
       .map((perm) => permissionTabs[perm])
       .filter((tab): tab is { key: TabKey; label: string; icon: React.ReactNode } => tab !== undefined);
     
-    return [...defaultTabs, ...permissionTabsList];
+    return permissionTabsList;
   }, [permissions]);
+
+  // Update active tab when permissions change (if current tab is no longer available)
+  useEffect(() => {
+    if (permissions.length > 0 && !permissions.includes(activeTab as string)) {
+      const firstAvailable = permissionTabs[permissions[0]]?.key;
+      if (firstAvailable) {
+        setActiveTab(firstAvailable);
+      }
+    } else if (permissions.length === 0 && activeTab) {
+      setActiveTab("" as TabKey);
+    }
+  }, [permissions, activeTab]);
 
   return (
     <div className="min-h-screen bg-white">
@@ -146,7 +157,7 @@ export function SalesAgentDashboardShell({ username, permissions }: Props) {
       )}
 
       <main className="pt-20 md:pl-72 px-6 md:px-10 pb-10 space-y-6">
-        {/* Default Sales Agent Tabs */}
+        {/* All tabs are permission-based */}
         {activeTab === "lead" && <LeadPanel />}
         {activeTab === "pipeline" && <PipelinePanel />}
         {activeTab === "customer-list" && <CustomerListPanel />}
@@ -165,8 +176,6 @@ export function SalesAgentDashboardShell({ username, permissions }: Props) {
             </CardContent>
           </Card>
         )}
-
-        {/* Permission-based Tabs */}
         {activeTab === "dashboard" && <AdminDashboardOverview />}
         {activeTab === "tracking" && <OrderTrackingPanel />}
         {activeTab === "notifications" && <AdminNotificationsPanel />}
@@ -176,6 +185,23 @@ export function SalesAgentDashboardShell({ username, permissions }: Props) {
         {activeTab === "operations" && <OperationsPanel />}
         {activeTab === "import-packing-list" && <ImportPackingListPanel />}
         {activeTab === "import-invoice" && <ImportInvoicePanel />}
+        
+        {/* Show message if no permissions assigned */}
+        {tabs.length === 0 && (
+          <Card className="bg-white border shadow-sm">
+            <CardHeader>
+              <CardTitle>No Access</CardTitle>
+              <CardDescription>
+                You don&apos;t have access to any modules. Please contact your administrator.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="py-16 text-center text-secondary-muted">
+                No modules assigned. Contact administrator for access.
+              </div>
+            </CardContent>
+          </Card>
+        )}
       </main>
     </div>
   );

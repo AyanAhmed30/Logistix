@@ -24,7 +24,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { PlusCircle, UsersRound, X, Truck, Bell, Package, Container, FileText, TrendingUp, ShoppingCart, Settings, ClipboardList, Receipt } from "lucide-react";
+import { PlusCircle, UsersRound, X, Truck, Bell, Package, Container, FileText, TrendingUp, ShoppingCart, Settings, ClipboardList, Receipt, UserCog, ChevronDown } from "lucide-react";
 import { OrderTrackingPanel } from "@/components/admin/OrderTrackingPanel";
 import { AdminNotificationsPanel } from "@/components/admin/AdminNotificationsPanel";
 import { OrderManagementPanel } from "@/components/admin/OrderManagementPanel";
@@ -35,6 +35,13 @@ import { SalesPanel } from "@/components/admin/SalesPanel";
 import { OperationsPanel } from "@/components/admin/OperationsPanel";
 import { ImportPackingListPanel } from "@/components/admin/ImportPackingListPanel";
 import { ImportInvoicePanel } from "@/components/admin/ImportInvoicePanel";
+import { SalesAgentPanel } from "@/components/admin/SalesAgentPanel";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 
 type AppUser = {
   id: string;
@@ -90,6 +97,9 @@ export function AdminUserManager({
 }: Props) {
   const router = useRouter();
   const [createOpen, setCreateOpen] = useState(false);
+  const [createSalesAgentOpen, setCreateSalesAgentOpen] = useState(false);
+  const [createType, setCreateType] = useState<"user" | "sales-agent">("user");
+  const [profilesSubTab, setProfilesSubTab] = useState<"users" | "sales-agent">("users");
   const [editOpen, setEditOpen] = useState(false);
   const [editUser, setEditUser] = useState<AppUser | null>(null);
   const [deleteOpen, setDeleteOpen] = useState(false);
@@ -248,18 +258,42 @@ export function AdminUserManager({
             <TrendingUp className="h-4 w-4 shrink-0 sidebar-icon" />
             {!isSidebarCollapsed && <span className="sidebar-text">Dashboard</span>}
           </Button>
-          <Button
-            variant={activeTab === "create" ? "default" : "outline"}
-            className="justify-start gap-2 sidebar-button"
-            onClick={() => {
-              setCreateOpen(true);
-              handleTabSelect("create");
-            }}
-            title="Create New User"
-          >
-            <PlusCircle className="h-4 w-4 shrink-0 sidebar-icon" />
-            {!isSidebarCollapsed && <span className="sidebar-text">Create New User</span>}
-          </Button>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button
+                variant={activeTab === "create" ? "default" : "outline"}
+                className="justify-start gap-2 sidebar-button"
+                title="Create New User or Sales Agent"
+              >
+                <PlusCircle className="h-4 w-4 shrink-0 sidebar-icon" />
+                {!isSidebarCollapsed && <span className="sidebar-text">Create New User</span>}
+                {!isSidebarCollapsed && <ChevronDown className="h-4 w-4 ml-auto" />}
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="start">
+              <DropdownMenuItem
+                onClick={() => {
+                  setCreateType("user");
+                  setCreateOpen(true);
+                  handleTabSelect("create");
+                }}
+              >
+                <UsersRound className="h-4 w-4 mr-2" />
+                Create User
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                onClick={() => {
+                  setCreateType("sales-agent");
+                  setCreateSalesAgentOpen(true);
+                  handleTabSelect("profiles");
+                  setProfilesSubTab("sales-agent");
+                }}
+              >
+                <UserCog className="h-4 w-4 mr-2" />
+                Create Sales Agent
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
           <Button
             variant={activeTab === "profiles" ? "default" : "outline"}
             className="justify-start gap-2 sidebar-button"
@@ -385,74 +419,138 @@ export function AdminUserManager({
           <ImportInvoicePanel />
         ) : activeTab === "profiles" ? (
           <div className="space-y-6">
-            <Card className="bg-white border shadow-sm">
-              <CardHeader>
-                <CardTitle>Admin Profile</CardTitle>
-                <CardDescription>Total users in the system</CardDescription>
-              </CardHeader>
-              <CardContent>
-                <div className="text-4xl font-black text-primary-dark">
-                  {userCount.toString().padStart(2, "0")}
-                </div>
-              </CardContent>
-            </Card>
-          <Card className="bg-white border shadow-sm">
-            <CardHeader className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
-              <div>
-                <CardTitle>User Profiles</CardTitle>
-                <CardDescription>
-                  View, update, and remove user accounts in real time.
-                </CardDescription>
-              </div>
-              <Button onClick={() => setCreateOpen(true)}>Create New User</Button>
-            </CardHeader>
-            <CardContent>
-              {sortedUsers.length === 0 ? (
-                <div className="py-16 text-center text-secondary-muted">
-                  No users found. Create your first account to get started.
-                </div>
-              ) : (
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Username</TableHead>
-                      <TableHead>Password</TableHead>
-                      <TableHead>Created</TableHead>
-                      <TableHead className="text-right">Actions</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {sortedUsers.map((user) => (
-                      <TableRow key={user.id}>
-                        <TableCell className="font-semibold">{user.username}</TableCell>
-                        <TableCell className="text-secondary-muted">{user.password}</TableCell>
-                        <TableCell className="text-secondary-muted">
-                          {new Date(user.created_at).toLocaleString()}
-                        </TableCell>
-                        <TableCell className="text-right space-x-2">
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            onClick={() => openEdit(user)}
-                          >
-                            Edit
-                          </Button>
-                          <Button
-                            size="sm"
-                            variant="destructive"
-                            onClick={() => handleDelete(user)}
-                            disabled={isPending}
-                          >
-                            Delete
-                          </Button>
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              )}
-            </CardContent>
-          </Card>
+            {/* Sub-tabs */}
+            <div className="flex gap-2 border-b overflow-x-auto">
+              <Button
+                variant={profilesSubTab === "users" ? "default" : "ghost"}
+                onClick={() => setProfilesSubTab("users")}
+                className="rounded-b-none shrink-0 sidebar-button"
+                data-variant={profilesSubTab === "users" ? "default" : "outline"}
+              >
+                <UsersRound className="h-4 w-4 mr-2 sidebar-icon" />
+                <span className="sidebar-text">Users</span>
+              </Button>
+              <Button
+                variant={profilesSubTab === "sales-agent" ? "default" : "ghost"}
+                onClick={() => setProfilesSubTab("sales-agent")}
+                className="rounded-b-none shrink-0 sidebar-button"
+                data-variant={profilesSubTab === "sales-agent" ? "default" : "outline"}
+              >
+                <UserCog className="h-4 w-4 mr-2 sidebar-icon" />
+                <span className="sidebar-text">Sales Agent</span>
+              </Button>
+            </div>
+
+            {/* Users Sub-tab */}
+            {profilesSubTab === "users" && (
+              <>
+                <Card className="bg-white border shadow-sm">
+                  <CardHeader>
+                    <CardTitle>Admin Profile</CardTitle>
+                    <CardDescription>Total users in the system</CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="text-4xl font-black text-primary-dark">
+                      {userCount.toString().padStart(2, "0")}
+                    </div>
+                  </CardContent>
+                </Card>
+                <Card className="bg-white border shadow-sm">
+                  <CardHeader className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+                    <div>
+                      <CardTitle>User Profiles</CardTitle>
+                      <CardDescription>
+                        View, update, and remove user accounts in real time.
+                      </CardDescription>
+                    </div>
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <Button>
+                          <PlusCircle className="h-4 w-4 mr-2" />
+                          Create New User
+                          <ChevronDown className="h-4 w-4 ml-2" />
+                        </Button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end">
+                        <DropdownMenuItem
+                          onClick={() => {
+                            setCreateType("user");
+                            setCreateOpen(true);
+                          }}
+                        >
+                          <UsersRound className="h-4 w-4 mr-2" />
+                          Create User
+                        </DropdownMenuItem>
+                        <DropdownMenuItem
+                          onClick={() => {
+                            setCreateType("sales-agent");
+                            setCreateSalesAgentOpen(true);
+                            setProfilesSubTab("sales-agent");
+                          }}
+                        >
+                          <UserCog className="h-4 w-4 mr-2" />
+                          Create Sales Agent
+                        </DropdownMenuItem>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+                  </CardHeader>
+                  <CardContent>
+                    {sortedUsers.length === 0 ? (
+                      <div className="py-16 text-center text-secondary-muted">
+                        No users found. Create your first account to get started.
+                      </div>
+                    ) : (
+                      <Table>
+                        <TableHeader>
+                          <TableRow>
+                            <TableHead>Username</TableHead>
+                            <TableHead>Password</TableHead>
+                            <TableHead>Created</TableHead>
+                            <TableHead className="text-right">Actions</TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {sortedUsers.map((user) => (
+                            <TableRow key={user.id}>
+                              <TableCell className="font-semibold">{user.username}</TableCell>
+                              <TableCell className="text-secondary-muted">{user.password}</TableCell>
+                              <TableCell className="text-secondary-muted">
+                                {new Date(user.created_at).toLocaleString()}
+                              </TableCell>
+                              <TableCell className="text-right space-x-2">
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={() => openEdit(user)}
+                                >
+                                  Edit
+                                </Button>
+                                <Button
+                                  size="sm"
+                                  variant="destructive"
+                                  onClick={() => handleDelete(user)}
+                                  disabled={isPending}
+                                >
+                                  Delete
+                                </Button>
+                              </TableCell>
+                            </TableRow>
+                          ))}
+                        </TableBody>
+                      </Table>
+                    )}
+                  </CardContent>
+                </Card>
+              </>
+            )}
+
+            {/* Sales Agent Sub-tab */}
+            {profilesSubTab === "sales-agent" && (
+              <SalesAgentPanel
+                initialCreateOpen={createSalesAgentOpen}
+                onCreateOpenChange={setCreateSalesAgentOpen}
+              />
+            )}
           </div>
         ) : null}
       </section>

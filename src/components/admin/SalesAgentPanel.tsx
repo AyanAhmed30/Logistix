@@ -30,12 +30,16 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { PlusCircle, Trash2, Edit, TrendingUp, Truck, Bell, Package, Container, FileText, Settings, ClipboardList, Receipt } from "lucide-react";
+import { PlusCircle, Trash2, Edit, TrendingUp, Truck, Bell, Package, Container, FileText, Settings, ClipboardList, Receipt, UserPlus, Users, ShoppingCart } from "lucide-react";
 import { Checkbox } from "@/components/ui/checkbox";
 
 
 // Available permissions that can be assigned to sales agents
 const AVAILABLE_PERMISSIONS = [
+  { key: "lead", label: "Lead", icon: UserPlus },
+  { key: "pipeline", label: "Pipeline", icon: FileText },
+  { key: "customer-list", label: "Customer List", icon: Users },
+  { key: "manage-request", label: "Manage Request", icon: ShoppingCart },
   { key: "dashboard", label: "Dashboard", icon: TrendingUp },
   { key: "tracking", label: "Order Tracking", icon: Truck },
   { key: "notifications", label: "Notifications", icon: Bell },
@@ -49,11 +53,23 @@ const AVAILABLE_PERMISSIONS = [
 
 export type PermissionKey = typeof AVAILABLE_PERMISSIONS[number]["key"];
 
-export function SalesAgentPanel() {
+type Props = {
+  initialCreateOpen?: boolean;
+  onCreateOpenChange?: (open: boolean) => void;
+};
+
+export function SalesAgentPanel({ initialCreateOpen = false, onCreateOpenChange }: Props = {}) {
   const router = useRouter();
   const [salesAgents, setSalesAgents] = useState<SalesAgent[]>([]);
   const [isLoading, setIsLoading] = useState(false);
-  const [createOpen, setCreateOpen] = useState(false);
+  const [createOpen, setCreateOpen] = useState(initialCreateOpen);
+  
+  // Sync with external prop changes
+  useEffect(() => {
+    if (initialCreateOpen !== undefined) {
+      setCreateOpen(initialCreateOpen);
+    }
+  }, [initialCreateOpen]);
   const [editOpen, setEditOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [editSalesAgent, setEditSalesAgent] = useState<SalesAgent | null>(null);
@@ -206,6 +222,9 @@ export function SalesAgentPanel() {
 
   function handleCreateOpenChange(open: boolean) {
     setCreateOpen(open);
+    if (onCreateOpenChange) {
+      onCreateOpenChange(open);
+    }
     if (!open) {
       setSelectedPermissions([]);
     }

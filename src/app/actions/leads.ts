@@ -37,7 +37,20 @@ export type LeadWithSalesAgent = Lead & {
 export async function createLead(formData: FormData) {
   try {
     const session = await getSession();
-    if (!session || session.role !== 'sales_agent') {
+    if (!session) {
+      return { error: 'Unauthorized' };
+    }
+
+    // Allow admins or sales agents with "lead" permission
+    if (session.role === 'admin') {
+      // Admin has access
+    } else if (session.role === 'sales_agent') {
+      const { hasPermission } = await import('@/lib/auth/permissions');
+      const hasAccess = await hasPermission('lead');
+      if (!hasAccess) {
+        return { error: 'Unauthorized' };
+      }
+    } else {
       return { error: 'Unauthorized' };
     }
 
@@ -97,7 +110,22 @@ export async function createLead(formData: FormData) {
 export async function getAllLeadsForSalesAgent() {
   try {
     const session = await getSession();
-    if (!session || session.role !== 'sales_agent') {
+    if (!session) {
+      return { error: 'Unauthorized' };
+    }
+
+    // Allow admins or sales agents with "lead" or "pipeline" permission
+    // (pipeline needs to view leads to manage them)
+    if (session.role === 'admin') {
+      // Admin has access
+    } else if (session.role === 'sales_agent') {
+      const { hasPermission } = await import('@/lib/auth/permissions');
+      const hasLead = await hasPermission('lead');
+      const hasPipeline = await hasPermission('pipeline');
+      if (!hasLead && !hasPipeline) {
+        return { error: 'Unauthorized' };
+      }
+    } else {
       return { error: 'Unauthorized' };
     }
 
@@ -201,7 +229,20 @@ export async function getAllLeadsForAdmin() {
 export async function updateLeadStatus(leadId: string, status: LeadStatus) {
   try {
     const session = await getSession();
-    if (!session || session.role !== 'sales_agent') {
+    if (!session) {
+      return { error: 'Unauthorized' };
+    }
+
+    // Allow admins or sales agents with "pipeline" permission
+    if (session.role === 'admin') {
+      // Admin has access
+    } else if (session.role === 'sales_agent') {
+      const { hasPermission } = await import('@/lib/auth/permissions');
+      const hasAccess = await hasPermission('pipeline');
+      if (!hasAccess) {
+        return { error: 'Unauthorized' };
+      }
+    } else {
       return { error: 'Unauthorized' };
     }
 
@@ -326,7 +367,21 @@ export async function getLeadComments(leadId: string) {
 export async function createLeadComment(leadId: string, comment: string) {
   try {
     const session = await getSession();
-    if (!session || session.role !== 'sales_agent') {
+    if (!session) {
+      return { error: 'Unauthorized' };
+    }
+
+    // Allow admins or sales agents with "lead" or "pipeline" permission
+    if (session.role === 'admin') {
+      // Admin has access
+    } else if (session.role === 'sales_agent') {
+      const { hasPermission } = await import('@/lib/auth/permissions');
+      const hasLead = await hasPermission('lead');
+      const hasPipeline = await hasPermission('pipeline');
+      if (!hasLead && !hasPipeline) {
+        return { error: 'Unauthorized' };
+      }
+    } else {
       return { error: 'Unauthorized' };
     }
 
@@ -382,7 +437,21 @@ export async function createLeadComment(leadId: string, comment: string) {
 export async function updateLeadComment(commentId: string, comment: string) {
   try {
     const session = await getSession();
-    if (!session || session.role !== 'sales_agent') {
+    if (!session) {
+      return { error: 'Unauthorized' };
+    }
+
+    // Allow admins or sales agents with "lead" or "pipeline" permission
+    if (session.role === 'admin') {
+      // Admin has access
+    } else if (session.role === 'sales_agent') {
+      const { hasPermission } = await import('@/lib/auth/permissions');
+      const hasLead = await hasPermission('lead');
+      const hasPipeline = await hasPermission('pipeline');
+      if (!hasLead && !hasPipeline) {
+        return { error: 'Unauthorized' };
+      }
+    } else {
       return { error: 'Unauthorized' };
     }
 
@@ -450,7 +519,21 @@ export async function updateLeadComment(commentId: string, comment: string) {
 export async function deleteLeadComment(commentId: string) {
   try {
     const session = await getSession();
-    if (!session || session.role !== 'sales_agent') {
+    if (!session) {
+      return { error: 'Unauthorized' };
+    }
+
+    // Allow admins or sales agents with "lead" or "pipeline" permission
+    if (session.role === 'admin') {
+      // Admin has access
+    } else if (session.role === 'sales_agent') {
+      const { hasPermission } = await import('@/lib/auth/permissions');
+      const hasLead = await hasPermission('lead');
+      const hasPipeline = await hasPermission('pipeline');
+      if (!hasLead && !hasPipeline) {
+        return { error: 'Unauthorized' };
+      }
+    } else {
       return { error: 'Unauthorized' };
     }
 

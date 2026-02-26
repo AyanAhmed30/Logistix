@@ -3,7 +3,7 @@
 import { useEffect, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
-import { createLead, getAllLeadsForSalesAgent, type Lead } from "@/app/actions/leads";
+import { createLead, getAllLeadsForSalesAgent, updateLead, deleteLead, type Lead } from "@/app/actions/leads";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -31,14 +31,19 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { PlusCircle } from "lucide-react";
+import { PlusCircle, Edit, Trash2 } from "lucide-react";
 
 export function LeadPanel() {
   const router = useRouter();
   const [leads, setLeads] = useState<Lead[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
+  const [editOpen, setEditOpen] = useState(false);
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [editLead, setEditLead] = useState<Lead | null>(null);
+  const [deleteLeadTarget, setDeleteLeadTarget] = useState<Lead | null>(null);
   const [source, setSource] = useState<string>("");
+  const [editSource, setEditSource] = useState<string>("");
   const [isPending, startTransition] = useTransition();
 
   useEffect(() => {
@@ -96,6 +101,72 @@ export function LeadPanel() {
     });
   }
 
+  function handleEditSubmit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!editLead) return;
+    const form = event.currentTarget;
+    const formData = new FormData(event.currentTarget);
+    formData.set("id", editLead.id);
+    const name = String(formData.get("name") || "").trim();
+    const number = String(formData.get("number") || "").trim();
+
+    if (!name || !number || !editSource) {
+      toast.error("Name, number, and source are required");
+      return;
+    }
+
+    formData.set("source", editSource);
+
+    startTransition(async () => {
+      const result = await updateLead(formData);
+      if (result && "error" in result) {
+        toast.error(result.error, {
+          className: "bg-red-600 text-white border-red-600",
+        });
+        return;
+      }
+      toast.success("Lead updated successfully", {
+        className: "bg-green-400 text-white border-green-400",
+      });
+      setEditOpen(false);
+      setEditLead(null);
+      setEditSource("");
+      router.refresh();
+      fetchLeads();
+    });
+  }
+
+  function handleDelete() {
+    if (!deleteLeadTarget) return;
+    startTransition(async () => {
+      const result = await deleteLead(deleteLeadTarget.id);
+      if (result && "error" in result) {
+        toast.error(result.error, {
+          className: "bg-red-600 text-white border-red-600",
+        });
+        return;
+      }
+      toast.success("Lead deleted successfully", {
+        className: "bg-green-400 text-white border-green-400",
+      });
+      setDeleteOpen(false);
+      setDeleteLeadTarget(null);
+      router.refresh();
+      fetchLeads();
+    });
+  }
+
+  function openEdit(lead: Lead) {
+    setEditLead(lead);
+    setEditSource(lead.source);
+    setEditOpen(true);
+  }
+
+  function openDelete(lead: Lead) {
+    setDeleteLeadTarget(lead);
+    setDeleteOpen(true);
+  }
+
   return (
     <div className="space-y-6">
       <Card className="bg-white border shadow-sm">
@@ -129,6 +200,7 @@ export function LeadPanel() {
                     <TableHead>Number</TableHead>
                     <TableHead>Source</TableHead>
                     <TableHead>Created At</TableHead>
+                    <TableHead className="text-right">Actions</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -143,6 +215,25 @@ export function LeadPanel() {
                       </TableCell>
                       <TableCell>
                         {new Date(lead.created_at).toLocaleString()}
+                      </TableCell>
+                      <TableCell className="text-right space-x-2">
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => openEdit(lead)}
+                        >
+                          <Edit className="h-4 w-4 mr-1" />
+                          Edit
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="destructive"
+                          onClick={() => openDelete(lead)}
+                          disabled={isPending}
+                        >
+                          <Trash2 className="h-4 w-4 mr-1" />
+                          Delete
+                        </Button>
                       </TableCell>
                     </TableRow>
                   ))}
@@ -206,6 +297,103 @@ export function LeadPanel() {
               </Button>
             </DialogFooter>
           </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* Edit Lead Dialog */}
+      <Dialog open={editOpen} onOpenChange={(open) => {
+        setEditOpen(open);
+        if (!open) {
+          setEditLead(null);
+          setEditSource("");
+        }
+      }}>
+        <DialogContent className="sm:max-w-[500px]">
+          <DialogHeader>
+            <DialogTitle>Edit Lead</DialogTitle>
+            <DialogDescription>Update lead information.</DialogDescription>
+          </DialogHeader>
+          <form onSubmit={handleEditSubmit} className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="edit-lead-name">Name *</Label>
+              <Input 
+                id="edit-lead-name" 
+                name="name" 
+                defaultValue={editLead?.name || ""} 
+                required 
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="edit-lead-number">Number *</Label>
+              <Input 
+                id="edit-lead-number" 
+                name="number" 
+                defaultValue={editLead?.number || ""} 
+                required 
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="edit-lead-source">Source *</Label>
+              <Select value={editSource} onValueChange={setEditSource}>
+                <SelectTrigger id="edit-lead-source">
+                  <SelectValue placeholder="Select source" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="Meta">Meta</SelectItem>
+                  <SelectItem value="LinkedIn">LinkedIn</SelectItem>
+                  <SelectItem value="WhatsApp">WhatsApp</SelectItem>
+                  <SelectItem value="Others">Others</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <DialogFooter>
+              <Button
+                variant="outline"
+                type="button"
+                onClick={() => {
+                  setEditOpen(false);
+                  setEditLead(null);
+                  setEditSource("");
+                }}
+              >
+                Cancel
+              </Button>
+              <Button type="submit" disabled={isPending} className="create-console-btn">
+                {isPending ? "Updating..." : "Update Lead"}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* Delete Lead Dialog */}
+      <Dialog open={deleteOpen} onOpenChange={setDeleteOpen}>
+        <DialogContent className="sm:max-w-[500px]">
+          <DialogHeader>
+            <DialogTitle>Delete Lead</DialogTitle>
+            <DialogDescription>
+              Are you sure you want to delete &quot;{deleteLeadTarget?.name}&quot;? 
+              This action cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setDeleteOpen(false);
+                setDeleteLeadTarget(null);
+              }}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={handleDelete}
+              disabled={isPending}
+            >
+              {isPending ? "Deleting..." : "Delete Lead"}
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
     </div>

@@ -23,13 +23,14 @@ export async function createSalesAgent(formData: FormData) {
       return { error: 'Unauthorized' };
     }
 
+    const code = formData.get('code') as string;
     const name = formData.get('name') as string;
     const username = formData.get('username') as string;
     const password = formData.get('password') as string;
     const permissionsJson = formData.get('permissions') as string;
 
-    if (!name?.trim() || !username?.trim() || !password?.trim()) {
-      return { error: 'Name, username, and password are required' };
+    if (!code?.trim() || !name?.trim() || !username?.trim() || !password?.trim()) {
+      return { error: 'Code, name, username, and password are required' };
     }
 
     // Parse permissions JSON
@@ -55,18 +56,15 @@ export async function createSalesAgent(formData: FormData) {
       return { error: 'Username already exists' };
     }
 
-    // Get the highest existing code to generate next code
-    const { data: existingAgents } = await supabase
+    // Check if code already exists
+    const { data: existingCode } = await supabase
       .from('sales_agents')
-      .select('code')
-      .not('code', 'is', null)
-      .order('code', { ascending: false })
-      .limit(1);
+      .select('id')
+      .eq('code', code.trim())
+      .maybeSingle();
 
-    let nextCode = '101';
-    if (existingAgents && existingAgents.length > 0 && existingAgents[0].code) {
-      const highestCode = parseInt(existingAgents[0].code, 10);
-      nextCode = (highestCode + 1).toString();
+    if (existingCode) {
+      return { error: 'Code already exists. Please use a unique code.' };
     }
 
     // Create the sales agent
@@ -80,7 +78,7 @@ export async function createSalesAgent(formData: FormData) {
       name: name.trim(), 
       username: username.trim(),
       password: password.trim(),
-      code: nextCode
+      code: code.trim()
     };
     
     // Try to include permissions (will fail gracefully if column doesn't exist)
@@ -109,6 +107,10 @@ export async function createSalesAgent(formData: FormData) {
             return { error: 'Sales agents table does not exist. Please run the SQL migration in Supabase.' };
           }
           if (retryError.code === '23505') {
+            // Check if it's a code or username constraint violation
+            if (retryError.message.includes('code')) {
+              return { error: 'Code already exists. Please use a unique code.' };
+            }
             return { error: 'Username already exists' };
           }
           return { error: retryError.message };
@@ -116,7 +118,7 @@ export async function createSalesAgent(formData: FormData) {
         
         return { 
           success: true, 
-          salesAgent: { ...retryData, permissions: null, code: nextCode } as SalesAgent 
+          salesAgent: { ...retryData, permissions: null, code: code.trim() } as SalesAgent 
         };
       }
       
@@ -124,13 +126,17 @@ export async function createSalesAgent(formData: FormData) {
         return { error: 'Sales agents table does not exist. Please run the SQL migration in Supabase.' };
       }
       if (error.code === '23505') {
+        // Check if it's a code or username constraint violation
+        if (error.message.includes('code')) {
+          return { error: 'Code already exists. Please use a unique code.' };
+        }
         return { error: 'Username already exists' };
       }
       return { error: error.message };
     }
 
     revalidatePath('/admin/dashboard');
-    return { success: true, salesAgent: { ...data, code: nextCode } as SalesAgent };
+    return { success: true, salesAgent: { ...data, code: code.trim() } as SalesAgent };
   } catch (err) {
     return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };
   }
@@ -383,13 +389,14 @@ export async function updateSalesAgent(formData: FormData) {
     }
 
     const id = formData.get('id') as string;
+    const code = formData.get('code') as string;
     const name = formData.get('name') as string;
     const username = formData.get('username') as string;
     const password = formData.get('password') as string;
     const permissionsJson = formData.get('permissions') as string;
 
-    if (!id || !name?.trim() || !username?.trim()) {
-      return { error: 'Name and username are required' };
+    if (!id || !code?.trim() || !name?.trim() || !username?.trim()) {
+      return { error: 'Code, name, and username are required' };
     }
 
     // Parse permissions JSON
@@ -404,6 +411,20 @@ export async function updateSalesAgent(formData: FormData) {
 
     const supabase = await createAdminClient();
 
+    // Get current sales agent to compare old code
+    const { data: currentAgent, error: currentAgentError } = await supabase
+      .from('sales_agents')
+      .select('code')
+      .eq('id', id)
+      .single();
+
+    if (currentAgentError || !currentAgent) {
+      return { error: 'Sales agent not found' };
+    }
+
+    const oldCode = currentAgent.code as string | null;
+    const newCode = code.trim();
+
     // Check if username is taken by another agent
     const { data: existingAgent } = await supabase
       .from('sales_agents')
@@ -416,15 +437,29 @@ export async function updateSalesAgent(formData: FormData) {
       return { error: 'Username already exists' };
     }
 
+    // Check if code is taken by another agent
+    const { data: existingCode } = await supabase
+      .from('sales_agents')
+      .select('id')
+      .eq('code', newCode)
+      .neq('id', id)
+      .maybeSingle();
+
+    if (existingCode) {
+      return { error: 'Code already exists. Please use a unique code.' };
+    }
+
     const updateData: {
       name: string;
       username: string;
+      code: string;
       updated_at: string;
       password?: string;
       permissions?: string[];
     } = {
       name: name.trim(),
       username: username.trim(),
+      code: newCode,
       updated_at: new Date().toISOString()
     };
 
@@ -454,9 +489,41 @@ export async function updateSalesAgent(formData: FormData) {
         
         if (retryError) {
           if (retryError.code === '23505') {
+            // Check if it's a code or username constraint violation
+            if (retryError.message.includes('code')) {
+              return { error: 'Code already exists. Please use a unique code.' };
+            }
             return { error: 'Username already exists' };
           }
           return { error: retryError.message };
+        }
+
+        // If code changed, update all related customer IDs for this sales agent
+        if (oldCode && oldCode !== newCode) {
+          const { data: customers, error: customersError } = await supabase
+            .from('customers')
+            .select('id, customer_sequence_number')
+            .eq('sales_agent_id', id)
+            .not('customer_sequence_number', 'is', null);
+
+          if (customersError) {
+            return { error: `Failed to update customer IDs: ${customersError.message}` };
+          }
+
+          const updates = (customers || []).map((customer: { id: string; customer_sequence_number: number | null }) => {
+            const sequence = customer.customer_sequence_number ?? 0;
+            const formattedId = `${newCode}${sequence.toString().padStart(2, '0')}`;
+            return supabase
+              .from('customers')
+              .update({ customer_id_formatted: formattedId })
+              .eq('id', customer.id);
+          });
+
+          const updateResults = await Promise.all(updates);
+          const failedUpdate = updateResults.find((r) => r.error);
+          if (failedUpdate?.error) {
+            return { error: failedUpdate.error.message || 'Failed to update customer IDs' };
+          }
         }
         
         revalidatePath('/admin/dashboard');
@@ -464,9 +531,41 @@ export async function updateSalesAgent(formData: FormData) {
       }
       
       if (error.code === '23505') {
+        // Check if it's a code or username constraint violation
+        if (error.message.includes('code')) {
+          return { error: 'Code already exists. Please use a unique code.' };
+        }
         return { error: 'Username already exists' };
       }
       return { error: error.message };
+    }
+
+    // If code changed, update all related customer IDs for this sales agent
+    if (oldCode && oldCode !== newCode) {
+      const { data: customers, error: customersError } = await supabase
+        .from('customers')
+        .select('id, customer_sequence_number')
+        .eq('sales_agent_id', id)
+        .not('customer_sequence_number', 'is', null);
+
+      if (customersError) {
+        return { error: `Failed to update customer IDs: ${customersError.message}` };
+      }
+
+      const updates = (customers || []).map((customer: { id: string; customer_sequence_number: number | null }) => {
+        const sequence = customer.customer_sequence_number ?? 0;
+        const formattedId = `${newCode}${sequence.toString().padStart(2, '0')}`;
+        return supabase
+          .from('customers')
+          .update({ customer_id_formatted: formattedId })
+          .eq('id', customer.id);
+      });
+
+      const updateResults = await Promise.all(updates);
+      const failedUpdate = updateResults.find((r) => r.error);
+      if (failedUpdate?.error) {
+        return { error: failedUpdate.error.message || 'Failed to update customer IDs' };
+      }
     }
 
     revalidatePath('/admin/dashboard');

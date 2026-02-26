@@ -104,6 +104,43 @@ export async function convertLeadToCustomer(leadId: string) {
       return { error: 'Customer already exists for this lead' };
     }
 
+    // First, migrate any customers with sequence 0 to proper sequential numbers (one-time migration)
+    const { data: customersWithZero } = await supabase
+      .from('customers')
+      .select('id, customer_sequence_number')
+      .eq('sales_agent_id', salesAgent.id)
+      .eq('customer_sequence_number', 0)
+      .not('lead_id', 'is', null);
+
+    if (customersWithZero && customersWithZero.length > 0) {
+      // Get the highest existing sequence number (excluding 0)
+      const { data: existingCustomers } = await supabase
+        .from('customers')
+        .select('customer_sequence_number')
+        .eq('sales_agent_id', salesAgent.id)
+        .not('customer_sequence_number', 'is', null)
+        .neq('customer_sequence_number', 0)
+        .order('customer_sequence_number', { ascending: false });
+
+      const maxSequence = existingCustomers && existingCustomers.length > 0
+        ? Math.max(...existingCustomers.map((c: { customer_sequence_number: number }) => c.customer_sequence_number))
+        : 0;
+
+      // Update all customers with sequence 0 to sequential numbers starting after maxSequence
+      const updates = customersWithZero.map((customer, index) => {
+        const newSequence = maxSequence + index + 1;
+        const newFormattedId = `${salesAgent.code}${newSequence.toString().padStart(2, '0')}`;
+        return supabase
+          .from('customers')
+          .update({
+            customer_sequence_number: newSequence,
+            customer_id_formatted: newFormattedId,
+          })
+          .eq('id', customer.id);
+      });
+      await Promise.all(updates);
+    }
+
     // Get the highest customer_sequence_number for this sales agent
     const { data: lastCustomer } = await supabase
       .from('customers')
@@ -114,13 +151,52 @@ export async function convertLeadToCustomer(leadId: string) {
       .limit(1)
       .maybeSingle();
 
-    // Calculate next sequence number (starting from 0)
+    // Calculate next sequence number (starting from 1)
     const nextSequence = lastCustomer?.customer_sequence_number !== undefined 
       ? lastCustomer.customer_sequence_number + 1 
-      : 0;
+      : 1;
 
     // Format customer ID: [SalesAgentCode][CustomerSequenceNumber] with zero-padded 2 digits
     const customerIdFormatted = `${salesAgent.code}${nextSequence.toString().padStart(2, '0')}`;
+
+    // Check if this customer_id_formatted already exists (safety check)
+    const { data: existingCustomerId } = await supabase
+      .from('customers')
+      .select('id')
+      .eq('customer_id_formatted', customerIdFormatted)
+      .maybeSingle();
+
+    let finalSequence = nextSequence;
+    let finalFormattedId = customerIdFormatted;
+
+    if (existingCustomerId) {
+      // If it exists, find the next available sequence
+      let safeSequence = nextSequence;
+      let safeFormattedId = customerIdFormatted;
+      let attempts = 0;
+      while (attempts < 100) { // Safety limit
+        const { data: check } = await supabase
+          .from('customers')
+          .select('id')
+          .eq('customer_id_formatted', safeFormattedId)
+          .maybeSingle();
+        
+        if (!check) {
+          break; // Found available ID
+        }
+        
+        safeSequence++;
+        safeFormattedId = `${salesAgent.code}${safeSequence.toString().padStart(2, '0')}`;
+        attempts++;
+      }
+      
+      if (attempts >= 100) {
+        return { error: 'Unable to generate unique customer ID. Please try again.' };
+      }
+      
+      finalSequence = safeSequence;
+      finalFormattedId = safeFormattedId;
+    }
 
     // Create customer record
     const { data: customer, error: customerError } = await supabase
@@ -133,8 +209,8 @@ export async function convertLeadToCustomer(leadId: string) {
         company_name: lead.name, // Use lead name as company name initially
         sales_agent_id: salesAgent.id,
         lead_id: leadId,
-        customer_id_formatted: customerIdFormatted,
-        customer_sequence_number: nextSequence,
+        customer_id_formatted: finalFormattedId,
+        customer_sequence_number: finalSequence,
         converted_at: new Date().toISOString(),
       }])
       .select()
@@ -189,10 +265,10 @@ export async function getAllConvertedCustomersForSalesAgent() {
 
     const supabase = await createAdminClient();
 
-    // Get sales agent by username
+    // Get sales agent by username with code
     const { data: salesAgent, error: agentError } = await supabase
       .from('sales_agents')
-      .select('id')
+      .select('id, code')
       .eq('username', session.username)
       .single();
 
@@ -225,6 +301,7 @@ export async function getAllConvertedCustomersForSalesAgent() {
       name: string;
       phone_number: string;
       customer_id_formatted: string;
+      customer_sequence_number: number | null;
       sales_agent_id: string;
       lead_id: string;
       converted_at: string;
@@ -237,17 +314,110 @@ export async function getAllConvertedCustomersForSalesAgent() {
       } | null;
     };
 
-    const customers = (data || []).map((c: SupabaseCustomerResponse) => ({
+    // Migrate customers with sequence 0 to proper sequential numbers (one-time migration)
+    const customersWithZero = (data || []).filter((c: SupabaseCustomerResponse) => c.customer_sequence_number === 0);
+    
+    if (customersWithZero.length > 0 && salesAgent.code) {
+      // Get the highest existing sequence number (excluding 0)
+      const existingCustomers = (data || []).filter((c: SupabaseCustomerResponse) => 
+        c.customer_sequence_number !== null && c.customer_sequence_number !== 0
+      );
+      const maxSequence = existingCustomers.length > 0
+        ? Math.max(...existingCustomers.map((c: SupabaseCustomerResponse) => c.customer_sequence_number || 0))
+        : 0;
+
+      // Update customers with sequence 0 to sequential numbers starting after maxSequence
+      const updates = customersWithZero.map((customer, index) => {
+        const newSequence = maxSequence + index + 1;
+        const newFormattedId = `${salesAgent.code}${newSequence.toString().padStart(2, '0')}`;
+        return supabase
+          .from('customers')
+          .update({
+            customer_sequence_number: newSequence,
+            customer_id_formatted: newFormattedId,
+          })
+          .eq('id', customer.id);
+      });
+
+      await Promise.all(updates);
+      
+      // Refresh data after migration
+      const { data: refreshedData, error: refreshError } = await supabase
+        .from('customers')
+        .select(`
+          *,
+          leads (
+            id,
+            name,
+            number,
+            source
+          )
+        `)
+        .eq('sales_agent_id', salesAgent.id)
+        .not('lead_id', 'is', null)
+        .order('converted_at', { ascending: false });
+
+      if (!refreshError && refreshedData) {
+        // Use refreshed data instead of original data
+        const customers = refreshedData.map((c: SupabaseCustomerResponse, index: number) => ({
+          id: c.id,
+          name: c.name,
+          phone_number: c.phone_number,
+          // Display ID is always based on current sales agent code + 1-based index in this list
+          customer_id_formatted: salesAgent.code
+            ? `${salesAgent.code}${(index + 1).toString().padStart(2, '0')}`
+            : c.customer_id_formatted,
+          sales_agent_id: c.sales_agent_id,
+          lead_id: c.lead_id,
+          converted_at: c.converted_at,
+          created_at: c.created_at,
+          leads: c.leads,
+        })) as ConvertedCustomerWithDetails[];
+
+        return { customers };
+      }
+    }
+
+    let customers = (data || []).map((c: SupabaseCustomerResponse, index: number) => ({
       id: c.id,
       name: c.name,
       phone_number: c.phone_number,
-      customer_id_formatted: c.customer_id_formatted,
+      // Display ID is always based on current sales agent code + 1-based index in this list
+      customer_id_formatted: salesAgent.code
+        ? `${salesAgent.code}${(index + 1).toString().padStart(2, '0')}`
+        : c.customer_id_formatted,
       sales_agent_id: c.sales_agent_id,
       lead_id: c.lead_id,
       converted_at: c.converted_at,
       created_at: c.created_at,
       leads: c.leads,
     })) as ConvertedCustomerWithDetails[];
+
+    // Normalization: if this sales agent has exactly one customer, ensure its ID ends with 01
+    // Example: Agent code 105 -> single customer should be 10501
+    if (customers.length === 1 && salesAgent.code) {
+      const soleCustomer = customers[0];
+      const expectedId = `${salesAgent.code}01`;
+
+      if (soleCustomer.customer_id_formatted !== expectedId) {
+        // Update in database
+        const { error: normalizeError } = await supabase
+          .from('customers')
+          .update({
+            customer_sequence_number: 1,
+            customer_id_formatted: expectedId,
+          })
+          .eq('id', soleCustomer.id);
+
+        if (!normalizeError) {
+          // Update in returned data
+          customers = [{
+            ...soleCustomer,
+            customer_id_formatted: expectedId,
+          }];
+        }
+      }
+    }
 
     return { customers };
   } catch (err) {

@@ -477,24 +477,36 @@ export function AdminUserManager({
 
             {/* Create Sales Agent Sub-tab Content - Only show when this tab is selected */}
             {createSubTab === "sales-agent" && (
-              <Card className="bg-white border shadow-sm">
-                <CardHeader>
-                  <CardTitle>Create Sales Agent</CardTitle>
-                  <CardDescription>
-                    Click the button below to open the Sales Agent creation form.
-                  </CardDescription>
-                </CardHeader>
-                <CardContent>
-                  <Button onClick={() => {
-                    setCreateSalesAgentOpen(true);
-                    handleTabSelect("profiles");
-                    setProfilesSubTab("sales-agent");
-                  }}>
-                    <UserCog className="h-4 w-4 mr-2" />
-                    Open Sales Agent Creation
-                  </Button>
-                </CardContent>
-              </Card>
+              <>
+                <Card className="bg-white border shadow-sm">
+                  <CardHeader>
+                    <CardTitle>Create Sales Agent</CardTitle>
+                    <CardDescription>
+                      Click the button below to open the Sales Agent creation form.
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    <Button
+                      onClick={() => {
+                        // Stay within the "Create New User" tab and open the Sales Agent creation view
+                        setCreateSalesAgentOpen(true);
+                      }}
+                    >
+                      <UserCog className="h-4 w-4 mr-2" />
+                      Open Sales Agent Creation
+                    </Button>
+                  </CardContent>
+                </Card>
+
+                {createSalesAgentOpen && (
+                  <div className="mt-6">
+                    <SalesAgentPanel
+                      initialCreateOpen
+                      onCreateOpenChange={setCreateSalesAgentOpen}
+                    />
+                  </div>
+                )}
+              </>
             )}
 
           </div>

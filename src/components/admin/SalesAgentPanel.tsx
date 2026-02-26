@@ -105,12 +105,13 @@ export function SalesAgentPanel({ initialCreateOpen = false, onCreateOpenChange 
     event.preventDefault();
     const form = event.currentTarget;
     const formData = new FormData(event.currentTarget);
+    const code = String(formData.get("code") || "").trim();
     const name = String(formData.get("name") || "").trim();
     const username = String(formData.get("username") || "").trim();
     const password = String(formData.get("password") || "").trim();
 
-    if (!name || !username || !password) {
-      toast.error("Name, username, and password are required");
+    if (!code || !name || !username || !password) {
+      toast.error("Code, name, username, and password are required");
       return;
     }
 
@@ -141,12 +142,13 @@ export function SalesAgentPanel({ initialCreateOpen = false, onCreateOpenChange 
     if (!editSalesAgent) return;
     const formData = new FormData(event.currentTarget);
     formData.set("id", editSalesAgent.id);
+    const code = String(formData.get("code") || "").trim();
     const name = String(formData.get("name") || "").trim();
     const username = String(formData.get("username") || "").trim();
     const password = String(formData.get("password") || "").trim();
 
-    if (!name || !username) {
-      toast.error("Name and username are required");
+    if (!code || !name || !username) {
+      toast.error("Code, name, and username are required");
       return;
     }
 
@@ -329,6 +331,10 @@ export function SalesAgentPanel({ initialCreateOpen = false, onCreateOpenChange 
             <div className="space-y-4">
               <form onSubmit={handleCreateSubmit} className="space-y-4">
                 <div className="space-y-2">
+                  <Label htmlFor="create-code">Code *</Label>
+                  <Input id="create-code" name="code" placeholder="101" required />
+                </div>
+                <div className="space-y-2">
                   <Label htmlFor="create-name">Name *</Label>
                   <Input id="create-name" name="name" placeholder="John Doe" required />
                 </div>
@@ -408,6 +414,15 @@ export function SalesAgentPanel({ initialCreateOpen = false, onCreateOpenChange 
             {/* Left Side - Form Fields */}
             <div className="space-y-4">
               <form onSubmit={handleEditSubmit} className="space-y-4">
+                <div className="space-y-2">
+                  <Label htmlFor="edit-code">Code *</Label>
+                  <Input
+                    id="edit-code"
+                    name="code"
+                    defaultValue={editSalesAgent?.code ?? ""}
+                    required
+                  />
+                </div>
                 <div className="space-y-2">
                   <Label htmlFor="edit-name">Name *</Label>
                   <Input

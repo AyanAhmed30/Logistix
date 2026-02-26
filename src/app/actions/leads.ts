@@ -588,3 +588,153 @@ export async function deleteLeadComment(commentId: string) {
     return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };
   }
 }
+
+export async function updateLead(formData: FormData) {
+  try {
+    const session = await getSession();
+    if (!session) {
+      return { error: 'Unauthorized' };
+    }
+
+    // Allow admins or sales agents with "lead" permission
+    if (session.role === 'admin') {
+      // Admin has access
+    } else if (session.role === 'sales_agent') {
+      const { hasPermission } = await import('@/lib/auth/permissions');
+      const hasAccess = await hasPermission('lead');
+      if (!hasAccess) {
+        return { error: 'Unauthorized' };
+      }
+    } else {
+      return { error: 'Unauthorized' };
+    }
+
+    const leadId = formData.get('id') as string;
+    const name = formData.get('name') as string;
+    const number = formData.get('number') as string;
+    const source = formData.get('source') as string;
+
+    if (!leadId || !name?.trim() || !number?.trim() || !source?.trim()) {
+      return { error: 'Lead ID, name, number, and source are required' };
+    }
+
+    if (!['Meta', 'LinkedIn', 'WhatsApp', 'Others'].includes(source)) {
+      return { error: 'Invalid source. Must be one of: Meta, LinkedIn, WhatsApp, Others' };
+    }
+
+    const supabase = await createAdminClient();
+
+    // Get sales agent by username
+    const { data: salesAgent, error: agentError } = await supabase
+      .from('sales_agents')
+      .select('id')
+      .eq('username', session.username)
+      .single();
+
+    if (agentError || !salesAgent) {
+      return { error: 'Sales agent not found' };
+    }
+
+    // Verify the lead belongs to this sales agent
+    const { data: lead, error: leadError } = await supabase
+      .from('leads')
+      .select('sales_agent_id')
+      .eq('id', leadId)
+      .single();
+
+    if (leadError || !lead || lead.sales_agent_id !== salesAgent.id) {
+      return { error: 'Lead not found or unauthorized' };
+    }
+
+    // Update the lead
+    const { data, error } = await supabase
+      .from('leads')
+      .update({
+        name: name.trim(),
+        number: number.trim(),
+        source: source as 'Meta' | 'LinkedIn' | 'WhatsApp' | 'Others',
+        updated_at: new Date().toISOString()
+      })
+      .eq('id', leadId)
+      .select()
+      .single();
+
+    if (error) {
+      if (error.message.includes('does not exist') || error.message.includes('relation') || error.code === '42P01') {
+        return { error: 'Leads table does not exist. Please run the SQL migration in Supabase.' };
+      }
+      return { error: error.message };
+    }
+
+    revalidatePath('/sales-agent/dashboard');
+    revalidatePath('/admin/dashboard');
+    return { success: true, lead: data as Lead };
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };
+  }
+}
+
+export async function deleteLead(leadId: string) {
+  try {
+    const session = await getSession();
+    if (!session) {
+      return { error: 'Unauthorized' };
+    }
+
+    // Allow admins or sales agents with "lead" permission
+    if (session.role === 'admin') {
+      // Admin has access
+    } else if (session.role === 'sales_agent') {
+      const { hasPermission } = await import('@/lib/auth/permissions');
+      const hasAccess = await hasPermission('lead');
+      if (!hasAccess) {
+        return { error: 'Unauthorized' };
+      }
+    } else {
+      return { error: 'Unauthorized' };
+    }
+
+    const supabase = await createAdminClient();
+
+    // Get sales agent by username
+    const { data: salesAgent, error: agentError } = await supabase
+      .from('sales_agents')
+      .select('id')
+      .eq('username', session.username)
+      .single();
+
+    if (agentError || !salesAgent) {
+      return { error: 'Sales agent not found' };
+    }
+
+    // Verify the lead belongs to this sales agent
+    const { data: lead, error: leadError } = await supabase
+      .from('leads')
+      .select('sales_agent_id')
+      .eq('id', leadId)
+      .single();
+
+    if (leadError || !lead || lead.sales_agent_id !== salesAgent.id) {
+      return { error: 'Lead not found or unauthorized' };
+    }
+
+    // Delete the lead (cascade will handle related comments)
+    const { error } = await supabase
+      .from('leads')
+      .delete()
+      .eq('id', leadId);
+
+    if (error) {
+      if (error.message.includes('does not exist') || error.message.includes('relation') || error.code === '42P01') {
+        return { error: 'Leads table does not exist. Please run the SQL migration in Supabase.' };
+      }
+      return { error: error.message };
+    }
+
+    revalidatePath('/sales-agent/dashboard');
+    revalidatePath('/admin/dashboard');
+    return { success: true };
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };
+  }
+}

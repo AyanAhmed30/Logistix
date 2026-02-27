@@ -71,7 +71,6 @@ export function LeadPanel() {
     event.preventDefault();
     const form = event.currentTarget;
     const formData = new FormData(event.currentTarget);
-    const name = String(formData.get("name") || "").trim();
     const number = String(formData.get("number") || "").trim();
     const city = String(formData.get("city") || "").trim();
 
@@ -112,11 +111,10 @@ export function LeadPanel() {
     const form = event.currentTarget;
     const formData = new FormData(event.currentTarget);
     formData.set("id", editLead.id);
-    const name = String(formData.get("name") || "").trim();
     const number = String(formData.get("number") || "").trim();
 
-    if (!name || !number || !editSource) {
-      toast.error("Name, number, and source are required");
+    if (!number || !editSource) {
+      toast.error("Number and source are required");
       return;
     }
 

@@ -262,7 +262,7 @@ export function BookOrderModal({ open, onOpenChange, onOrderSaved }: Props) {
     return printable;
   }
 
-  async function appendOrderToPdf(orderIndex: number, pdf: any) {
+  async function appendOrderToPdf(orderIndex: number, pdf: InstanceType<typeof jsPDF>) {
     const order = orders[orderIndex];
     if (!order) return false;
     const cartonsToPrint = await handleSaveOrder(orderIndex);

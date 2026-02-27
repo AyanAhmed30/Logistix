@@ -58,8 +58,9 @@ export async function createLead(formData: FormData) {
     const number = formData.get('number') as string;
     const source = formData.get('source') as string;
 
-    if (!name?.trim() || !number?.trim() || !source?.trim()) {
-      return { error: 'Name, number, and source are required' };
+    // Only number and source are required
+    if (!number?.trim() || !source?.trim()) {
+      return { error: 'Number and source are required' };
     }
 
     if (!['Meta', 'LinkedIn', 'WhatsApp', 'Others'].includes(source)) {
@@ -79,11 +80,14 @@ export async function createLead(formData: FormData) {
       return { error: 'Sales agent not found' };
     }
 
+    // Normalize name: allow it to be empty; NOT NULL constraint is satisfied by using empty string instead of null
+    const safeName = (name ?? '').trim();
+
     // Create the lead with initial status 'Leads'
     const { data, error } = await supabase
       .from('leads')
       .insert([{
-        name: name.trim(),
+        name: safeName,
         number: number.trim(),
         source: source as 'Meta' | 'LinkedIn' | 'WhatsApp' | 'Others',
         status: 'Leads',

@@ -73,14 +73,19 @@ export function LeadPanel() {
     const formData = new FormData(event.currentTarget);
     const name = String(formData.get("name") || "").trim();
     const number = String(formData.get("number") || "").trim();
+    const city = String(formData.get("city") || "").trim();
 
-    if (!name || !number || !source) {
-      toast.error("Name, number, and source are required");
+    // Only number and source are required
+    if (!number || !source) {
+      toast.error("Number and source are required");
       return;
     }
 
     // Add source to formData
     formData.set("source", source);
+
+    // City is optional; it will be available in formData for future use if needed
+    formData.set("city", city);
 
     startTransition(async () => {
       const result = await createLead(formData);
@@ -260,12 +265,16 @@ export function LeadPanel() {
           </DialogHeader>
           <form onSubmit={handleCreateSubmit} className="space-y-4">
             <div className="space-y-2">
-              <Label htmlFor="lead-name">Name *</Label>
-              <Input id="lead-name" name="name" placeholder="John Doe" required />
+              <Label htmlFor="lead-name">Name</Label>
+              <Input id="lead-name" name="name" placeholder="John Doe" />
             </div>
             <div className="space-y-2">
               <Label htmlFor="lead-number">Number *</Label>
               <Input id="lead-number" name="number" placeholder="+1 234 567 8900" required />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="lead-city">City</Label>
+              <Input id="lead-city" name="city" placeholder="City" />
             </div>
             <div className="space-y-2">
               <Label htmlFor="lead-source">Source *</Label>

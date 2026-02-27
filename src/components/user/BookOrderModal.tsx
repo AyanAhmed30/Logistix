@@ -257,21 +257,24 @@ export function BookOrderModal({ open, onOpenChange, onOrderSaved }: Props) {
       height: order.height,
       itemDescription: order.itemDescription,
       destinationCountry: order.destinationCountry,
+      dimensionUnit: order.dimensionUnit,
     }));
     return printable;
   }
 
-  async function handleGeneratePrint(orderIndex: number) {
+  async function appendOrderToPdf(orderIndex: number, pdf: any) {
     const order = orders[orderIndex];
-    if (!order) return;
+    if (!order) return false;
     const cartonsToPrint = await handleSaveOrder(orderIndex);
-    if (!cartonsToPrint) return;
-    const pdf = new jsPDF({ unit: "mm", format: [101, 152] });
-    
+    if (!cartonsToPrint) return false;
+
+    const existingPages = pdf.getNumberOfPages();
+
     // Generate carton sticker pages (existing functionality)
     for (let i = 0; i < cartonsToPrint.length; i += 1) {
       const carton = cartonsToPrint[i];
-      if (i > 0) pdf.addPage();
+      // If this is not the very first page in the combined PDF, add a new page
+      if (i > 0 || existingPages > 1) pdf.addPage();
 
       pdf.setLineWidth(0.2);
       pdf.rect(6, 6, 89, 140);
@@ -713,9 +716,452 @@ export function BookOrderModal({ open, onOpenChange, onOrderSaved }: Props) {
     pdf.line(margin + sigBoxWidth + 15, sigY + 30, margin + 2 * sigBoxWidth + 5, sigY + 30);
     pdf.line(margin + sigBoxWidth + 15, sigY + 40, margin + 2 * sigBoxWidth + 5, sigY + 40);
 
+    return true;
+  }
+
+  async function handleGeneratePrintAll() {
+    if (!orders.length) return;
+
+    // First, save all orders and collect all cartons to print
+    const allCartons: {
+      serial: string;
+      weight: string;
+      length: string;
+      width: string;
+      height: string;
+      itemDescription: string;
+      destinationCountry: string;
+      dimensionUnit: OrderDraft["dimensionUnit"];
+    }[] = [];
+
+    for (let index = 0; index < orders.length; index += 1) {
+      const printable = await handleSaveOrder(index);
+      if (!printable) {
+        // If any order fails validation or saving, abort the combined export
+        return;
+      }
+      allCartons.push(...printable);
+    }
+
+    if (!allCartons.length) return;
+
+    const pdf = new jsPDF({ unit: "mm", format: [101, 152] });
+    const totalCartons = allCartons.length;
+
+    // Generate carton sticker pages with continuous numbering across all orders
+    for (let i = 0; i < allCartons.length; i += 1) {
+      const carton = allCartons[i];
+      if (i > 0) pdf.addPage();
+
+      pdf.setLineWidth(0.2);
+      pdf.rect(6, 6, 89, 140);
+      if (logoDataUrl && logoSize) {
+        const maxLogoWidth = 60;
+        const maxLogoHeight = 16;
+        const scale = Math.min(
+          maxLogoWidth / logoSize.width,
+          maxLogoHeight / logoSize.height
+        );
+        const logoWidth = logoSize.width * scale;
+        const logoHeight = logoSize.height * scale;
+        const logoX = (101 - logoWidth) / 2;
+        const logoY = 10;
+        pdf.addImage(logoDataUrl, "PNG", logoX, logoY, logoWidth, logoHeight);
+      }
+
+      const startY = 30;
+      const boxLeft = 10;
+      const boxWidth = 81;
+      const rowHeight = 14;
+      pdf.setFontSize(9);
+      pdf.rect(boxLeft, startY, boxWidth, rowHeight);
+      pdf.text("Item Description:", boxLeft + 2, startY + 6);
+      pdf.text(carton.itemDescription || "-", boxLeft + 2, startY + 11);
+
+      pdf.rect(boxLeft, startY + rowHeight, boxWidth, rowHeight);
+      pdf.text("Shipping Mark:", boxLeft + 2, startY + rowHeight + 6);
+      pdf.text(shippingMark || "-", boxLeft + 2, startY + rowHeight + 11);
+
+      pdf.rect(boxLeft, startY + rowHeight * 2, boxWidth, rowHeight);
+      pdf.text("Carton Serial No:", boxLeft + 2, startY + rowHeight * 2 + 6);
+      pdf.text(carton.serial || "-", boxLeft + 2, startY + rowHeight * 2 + 11);
+
+      pdf.rect(boxLeft, startY + rowHeight * 3, boxWidth / 2, rowHeight);
+      pdf.rect(boxLeft + boxWidth / 2, startY + rowHeight * 3, boxWidth / 2, rowHeight);
+      pdf.text("TotalWeight:", boxLeft + 2, startY + rowHeight * 3 + 6);
+      pdf.text(carton.weight || "-", boxLeft + 2, startY + rowHeight * 3 + 11);
+      pdf.text("Dimensions:", boxLeft + boxWidth / 2 + 2, startY + rowHeight * 3 + 6);
+      pdf.text(
+        `${carton.length || "-"} x ${carton.width || "-"} x ${carton.height || "-"}`,
+        boxLeft + boxWidth / 2 + 2,
+        startY + rowHeight * 3 + 11
+      );
+
+      pdf.rect(boxLeft, startY + rowHeight * 4, boxWidth, rowHeight);
+      pdf.text("Destination Country:", boxLeft + 2, startY + rowHeight * 4 + 6);
+      pdf.text(carton.destinationCountry || "-", boxLeft + 2, startY + rowHeight * 4 + 11);
+
+      pdf.rect(boxLeft, startY + rowHeight * 5, boxWidth, rowHeight);
+      pdf.text("Total Cartons:", boxLeft + 2, startY + rowHeight * 5 + 6);
+      // Continuous numbering across all orders, e.g. 4-1, 4-2, 4-3, 4-4
+      pdf.text(`${totalCartons}-${i + 1}`, boxLeft + 2, startY + rowHeight * 5 + 11);
+
+      const qrPayload = JSON.stringify({
+        shipping_mark: shippingMark,
+        carton_serial_number: carton.serial,
+        weight: carton.weight,
+        length: carton.length,
+        width: carton.width,
+        height: carton.height,
+        destination_country: carton.destinationCountry,
+        total_cartons: totalCartons,
+        item_description: carton.itemDescription,
+      });
+      const qrDataUrl = await QRCode.toDataURL(qrPayload);
+      pdf.addImage(qrDataUrl, "PNG", 30, 120, 40, 40);
+    }
+
+    // Calculate combined totals across all cartons
+    const totalWeight = allCartons.reduce((sum, carton) => {
+      const weight = toNumber(carton.weight);
+      return sum + (weight || 0);
+    }, 0);
+
+    const totalCbm = allCartons.reduce((sum, carton) => {
+      const length = toNumber(carton.length);
+      const width = toNumber(carton.width);
+      const height = toNumber(carton.height);
+      if (!length || !width || !height) return sum;
+      const volumeCm3 = toCm3(length, width, height, carton.dimensionUnit);
+      const cbm = volumeCm3 / 1_000_000;
+      return sum + cbm;
+    }, 0);
+
+    const orderDate = new Date().toLocaleDateString("en-US", {
+      year: "numeric",
+      month: "long",
+      day: "numeric",
+    });
+
+    const combinedDescription = Array.from(
+      new Set(
+        allCartons
+          .map((carton) => carton.itemDescription?.trim())
+          .filter((desc): desc is string => !!desc)
+      )
+    ).join(", ");
+
+    // Single A4 landscape page with Summary (left) + Terms (right)
+    pdf.addPage("a4", "landscape");
+    const pageWidth = pdf.internal.pageSize.getWidth();
+    const pageHeight = pdf.internal.pageSize.getHeight();
+    const margin = 15;
+    const innerWidth = pageWidth - margin * 2;
+    const innerHeight = pageHeight - margin * 2;
+    const halfWidth = innerWidth / 2;
+
+    const leftX = margin;
+    const rightX = margin + halfWidth;
+
+    // Optional vertical divider between halves
+    pdf.setLineWidth(0.5);
+    pdf.line(margin + halfWidth, margin, margin + halfWidth, pageHeight - margin);
+
+    // ----- LEFT HALF: Summary (top) + Signature (bottom) -----
+    const leftTopHeight = innerHeight * 0.55;
+    const leftBottomY = margin + leftTopHeight + 5;
+
+    // Logo at top-left half (optional)
+    if (logoDataUrl && logoSize) {
+      const maxLogoWidth = halfWidth * 0.6;
+      const maxLogoHeight = 20;
+      const scale = Math.min(
+        maxLogoWidth / logoSize.width,
+        maxLogoHeight / logoSize.height
+      );
+      const logoWidth = logoSize.width * scale;
+      const logoHeight = logoSize.height * scale;
+      const logoX = leftX + (halfWidth - logoWidth) / 2;
+      const logoY = margin;
+      pdf.addImage(logoDataUrl, "PNG", logoX, logoY, logoWidth, logoHeight);
+    }
+
+    // Order Summary title
+    pdf.setFontSize(14);
+    pdf.setFont(undefined, "bold");
+    pdf.text("ORDER SUMMARY", leftX + halfWidth / 2, margin + 28, {
+      align: "center",
+    });
+
+    // Summary content in table format
+    pdf.setFontSize(9);
+    pdf.setFont(undefined, "normal");
+    const summaryStartY = margin + 38;
+    const summaryRowHeight = 9;
+
+    const tableX = leftX + 4;
+    const tableY = summaryStartY - 4;
+    const tableWidth = halfWidth - 12;
+    const labelColWidth = tableWidth * 0.45;
+    const valueColWidth = tableWidth - labelColWidth;
+
+    const summaryRows: { label: string; value: string }[] = [
+      { label: "Product Description", value: combinedDescription || "-" },
+      { label: "Shipping Mark", value: shippingMark || "-" },
+      { label: "Total Cartons", value: totalCartons.toString() },
+      { label: "Total Weight", value: `${totalWeight.toFixed(2)} kg` },
+      { label: "Total CBM", value: totalCbm.toFixed(3) },
+      { label: "Order Date", value: orderDate },
+    ];
+
+    const tableHeight = summaryRows.length * summaryRowHeight + 2;
+
+    // Outer table border
+    pdf.setLineWidth(0.3);
+    pdf.rect(tableX, tableY, tableWidth, tableHeight);
+
+    // Vertical divider between label and value columns
+    pdf.line(tableX + labelColWidth, tableY, tableX + labelColWidth, tableY + tableHeight);
+
+    let currentY = summaryStartY;
+    summaryRows.forEach((row, index) => {
+      // Horizontal row separators (skip top border already drawn)
+      if (index > 0) {
+        pdf.line(tableX, tableY + index * summaryRowHeight, tableX + tableWidth, tableY + index * summaryRowHeight);
+      }
+
+      // Label cell
+      pdf.text(row.label, tableX + 2, currentY, {
+        maxWidth: labelColWidth - 4,
+      });
+
+      // Value cell
+      pdf.text(row.value || "-", tableX + labelColWidth + 2, currentY, {
+        maxWidth: valueColWidth - 4,
+      });
+
+      currentY += summaryRowHeight;
+    });
+
+    // ----- Signature Section (bottom of left half) -----
+    pdf.setFontSize(12);
+    pdf.setFont(undefined, "bold");
+    pdf.text("SIGNATURE SECTION", leftX + halfWidth / 2, leftBottomY + 10, {
+      align: "center",
+    });
+
+    pdf.setLineWidth(0.3);
+    const sigTop = leftBottomY + 18;
+    const sigSectionHeight = innerHeight - (sigTop - margin);
+    const sigColWidth = (halfWidth - 20) / 3;
+
+    const sigLabels = ["Authorized Signature", "Company Stamp", "Date"];
+
+    pdf.setFontSize(9);
+    pdf.setFont(undefined, "normal");
+
+    sigLabels.forEach((label, index) => {
+      const colX = leftX + 10 + index * sigColWidth;
+      const lineY = sigTop + sigSectionHeight / 2;
+
+      // Label
+      pdf.text(label, colX, sigTop);
+
+      // Line for signing/stamp/date
+      pdf.line(colX, lineY, colX + sigColWidth - 10, lineY);
+    });
+
+    // ----- RIGHT HALF: Terms & Conditions in 3 languages -----
+    pdf.setFontSize(14);
+    pdf.setFont(undefined, "bold");
+    pdf.text("TERMS & CONDITIONS", rightX + halfWidth / 2, margin + 8, {
+      align: "center",
+    });
+
+    pdf.setLineWidth(0.3);
+    pdf.line(
+      rightX,
+      margin + 12,
+      rightX + halfWidth,
+      margin + 12
+    );
+
+    const termsStartY = margin + 20;
+    const termsEndY = pageHeight - margin;
+    const colWidth = (halfWidth - 10) / 3;
+    const colSpacing = 5;
+    const lineHeight = 5;
+
+    pdf.setFontSize(9);
+    pdf.setFont(undefined, "normal");
+
+    // English Terms Column
+    let englishY = termsStartY;
+    pdf.setFont(undefined, "bold");
+    pdf.setFontSize(10);
+    pdf.text("ENGLISH", rightX + colWidth / 2, englishY, { align: "center" });
+    englishY += 8;
+    pdf.setLineWidth(0.3);
+    pdf.line(rightX, englishY, rightX + colWidth - colSpacing, englishY);
+    englishY += 5;
+
+    pdf.setFontSize(8);
+    pdf.setFont(undefined, "normal");
+    const englishTerms = [
+      "1. All shipments are subject to inspection.",
+      "2. Carrier not responsible for damage due to improper packaging.",
+      "3. Insurance coverage must be arranged separately.",
+      "4. Delivery times are estimates, not guaranteed.",
+      "5. Customs duties and taxes are recipient's responsibility.",
+      "6. Claims must be filed within 30 days of delivery.",
+      "7. Shipper responsible for accurate documentation.",
+    ];
+    englishTerms.forEach((term) => {
+      if (englishY < termsEndY - 5) {
+        pdf.text(term, rightX + 2, englishY, {
+          maxWidth: colWidth - colSpacing - 4,
+        });
+        englishY += lineHeight + 1;
+      }
+    });
+
+    // Urdu Terms Column - rendered via canvas for proper Unicode
+    let urduY = termsStartY;
+    pdf.setFont(undefined, "bold");
+    pdf.setFontSize(10);
+    const urduColX = rightX + colWidth + colSpacing;
+    pdf.text("URDU", urduColX + colWidth / 2, urduY, {
+      align: "center",
+    });
+    urduY += 8;
+    pdf.line(urduColX, urduY, urduColX + colWidth - colSpacing, urduY);
+    urduY += 5;
+
+    pdf.setFontSize(8);
+    pdf.setFont(undefined, "normal");
+    const urduTerms = [
+      "1. تمام شپمنٹس معائنہ کے تابع ہیں۔",
+      "2. کیریئر غلط پیکیجنگ کی وجہ سے نقصان کا ذمہ دار نہیں ہے۔",
+      "3. انشورنس کوریج الگ سے ترتیب دی جانی چاہیے۔",
+      "4. ڈیلیوری کے اوقات تخمینے ہیں، ضمانت نہیں۔",
+      "5. کسٹم ڈیوٹیز اور ٹیکس وصول کنندہ کی ذمہ داری ہیں۔",
+      "6. دعوے ڈیلیوری کے 30 دنوں کے اندر دائر کرنے چاہئیں۔",
+      "7. بھیجنے والا درست دستاویزات کا ذمہ دار ہے۔",
+    ];
+
+    // Render Urdu text using canvas for proper Unicode support
+    const urduCanvas = document.createElement("canvas");
+    const urduCtx = urduCanvas.getContext("2d");
+    if (urduCtx) {
+      urduCanvas.width = (colWidth - colSpacing - 4) * 3.779527559; // Convert mm to pixels
+      urduCanvas.height = (termsEndY - urduY) * 3.779527559;
+      urduCtx.fillStyle = "white";
+      urduCtx.fillRect(0, 0, urduCanvas.width, urduCanvas.height);
+      urduCtx.fillStyle = "black";
+      urduCtx.font = "10px Arial Unicode MS, Noto Sans Arabic, Arial, sans-serif";
+      urduCtx.textAlign = "right";
+      urduCtx.textBaseline = "top";
+      let urduTextY = 0;
+      urduTerms.forEach((term) => {
+        const lines = term.split("\n");
+        lines.forEach((line) => {
+          urduCtx.fillText(line, urduCanvas.width - 5, urduTextY);
+          urduTextY += 12;
+        });
+        urduTextY += 2;
+      });
+      const urduDataUrl = urduCanvas.toDataURL("image/png");
+      pdf.addImage(
+        urduDataUrl,
+        "PNG",
+        urduColX + 2,
+        urduY,
+        colWidth - colSpacing - 4,
+        termsEndY - urduY
+      );
+    } else {
+      // Fallback: render as text
+      urduTerms.forEach((term) => {
+        if (urduY < termsEndY - 5) {
+          pdf.text(term, urduColX + 2, urduY, {
+            maxWidth: colWidth - colSpacing - 4,
+          });
+          urduY += lineHeight + 1;
+        }
+      });
+    }
+
+    // Chinese Terms Column - Using HTML for proper Unicode rendering
+    let chineseY = termsStartY;
+    pdf.setFont(undefined, "bold");
+    pdf.setFontSize(10);
+    const chineseColX = rightX + 2 * colWidth + 2 * colSpacing;
+    pdf.text("CHINESE", chineseColX + colWidth / 2, chineseY, {
+      align: "center",
+    });
+    chineseY += 8;
+    pdf.line(chineseColX, chineseY, rightX + halfWidth, chineseY);
+    chineseY += 5;
+
+    pdf.setFontSize(8);
+    pdf.setFont(undefined, "normal");
+    const chineseTerms = [
+      "1. 所有货物均需接受检查。",
+      "2. 承运人不承担因包装不当造成的损坏责任。",
+      "3. 保险范围必须单独安排。",
+      "4. 交货时间仅为估计，不保证。",
+      "5. 关税和税费由收件人承担。",
+      "6. 索赔必须在交货后30天内提出。",
+      "7. 发货人负责提供准确的文件。",
+    ];
+
+    // Render Chinese text using canvas for proper Unicode support
+    const chineseCanvas = document.createElement("canvas");
+    const chineseCtx = chineseCanvas.getContext("2d");
+    if (chineseCtx) {
+      chineseCanvas.width = (colWidth - colSpacing - 4) * 3.779527559; // Convert mm to pixels
+      chineseCanvas.height = (termsEndY - chineseY) * 3.779527559;
+      chineseCtx.fillStyle = "white";
+      chineseCtx.fillRect(0, 0, chineseCanvas.width, chineseCanvas.height);
+      chineseCtx.fillStyle = "black";
+      chineseCtx.font =
+        "10px Arial Unicode MS, Noto Sans SC, Microsoft YaHei, Arial, sans-serif";
+      chineseCtx.textAlign = "left";
+      chineseCtx.textBaseline = "top";
+      let chineseTextY = 0;
+      chineseTerms.forEach((term) => {
+        const lines = term.split("\n");
+        lines.forEach((line) => {
+          chineseCtx.fillText(line, 5, chineseTextY);
+          chineseTextY += 12;
+        });
+        chineseTextY += 2;
+      });
+      const chineseDataUrl = chineseCanvas.toDataURL("image/png");
+      pdf.addImage(
+        chineseDataUrl,
+        "PNG",
+        chineseColX + 2,
+        chineseY,
+        colWidth - colSpacing - 4,
+        termsEndY - chineseY
+      );
+    } else {
+      // Fallback: render as text
+      chineseTerms.forEach((term) => {
+        if (chineseY < termsEndY - 5) {
+          pdf.text(term, chineseColX + 2, chineseY, {
+            maxWidth: colWidth - colSpacing - 4,
+          });
+          chineseY += lineHeight + 1;
+        }
+      });
+    }
+
     toast.success("Order successfully added and prints downloaded", {
       className: "bg-green-400 text-white border-green-400",
     });
+
     // Generate unique filename using counter ref (avoids impure function call)
     orderCounterRef.current += 1;
     const filename = `logistix-order-${orderCounterRef.current}.pdf`;
@@ -843,22 +1289,19 @@ export function BookOrderModal({ open, onOpenChange, onOrderSaved }: Props) {
                     CBM: {calcCbm(order)?.toFixed(3) ?? "-"}
                   </div>
                 </div>
-                <div className="flex flex-wrap gap-2 justify-end pt-2">
-                  
-                  <Button
-                    type="button"
-                    onClick={() => handleGeneratePrint(index)}
-                    disabled={isPending || savingOrderIndex === index}
-                  >
-                    Generate Print
-                  </Button>
-                </div>
               </Card>
             ))}
           </div>
         </div>
 
         <DialogFooter className="gap-2">
+          <Button
+            type="button"
+            onClick={handleGeneratePrintAll}
+            disabled={isPending || savingOrderIndex !== null}
+          >
+            Generate Print
+          </Button>
           <Button variant="outline" onClick={() => onOpenChange(false)}>
             Close
           </Button>

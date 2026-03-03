@@ -222,3 +222,164 @@ export async function getAdminNotifications() {
     return { error: "Unable to load notifications" };
   }
 }
+
+export async function getCartonBySerial(serial: string) {
+  try {
+    if (!serial?.trim()) {
+      return { error: "Serial number is required" };
+    }
+
+    const supabase = await createAdminClient();
+    const { data, error } = await supabase
+      .from("cartons")
+      .select(
+        "id, carton_serial_number, weight, length, width, height, dimension_unit, carton_index, item_description, destination_country, created_at, orders!inner(id, shipping_mark, item_description, destination_country, total_cartons, created_at, username)"
+      )
+      .eq("carton_serial_number", serial.trim())
+      .single();
+
+    if (error) {
+      return { error: error.message || "Carton not found" };
+    }
+
+    if (!data) {
+      return { error: "Carton not found" };
+    }
+
+    return { carton: data };
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : "Unable to load carton details" };
+  }
+}
+
+export async function recordCartonScan(serial: string) {
+  try {
+    if (!serial?.trim()) {
+      return { error: "Serial number is required" };
+    }
+
+    const trimmed = serial.trim();
+    const supabase = await createAdminClient();
+
+    const { data: carton, error: cartonError } = await supabase
+      .from("cartons")
+      .select("id, carton_serial_number, order_id, orders(id, username)")
+      .eq("carton_serial_number", trimmed)
+      .single();
+
+    if (cartonError || !carton) {
+      return { error: cartonError?.message || "Carton not found" };
+    }
+
+    const order = (carton as any).orders as { id: string; username: string } | null;
+    if (!order) {
+      return { error: "Order not found for this carton" };
+    }
+
+    const { error: insertError } = await supabase.from("carton_scans").insert({
+      carton_id: carton.id,
+      order_id: order.id,
+      username: order.username,
+      carton_serial_number: carton.carton_serial_number,
+    });
+
+    if (insertError) {
+      return { error: insertError.message };
+    }
+
+    return { success: true };
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : "Unable to record carton scan" };
+  }
+}
+
+export async function getScannedCartonsForUser() {
+  try {
+    const session = await getSession();
+    if (!session || session.role !== "user") {
+      return { error: "Unauthorized" };
+    }
+
+    const supabase = await createAdminClient();
+
+    // 1) Get raw scan rows for this user
+    const { data: scanRows, error } = await supabase
+      .from("carton_scans")
+      .select(
+        "id, carton_serial_number, scanned_at, carton_id, order_id"
+      )
+      .eq("username", session.username)
+      .order("scanned_at", { ascending: false })
+      .limit(200);
+
+    if (error) {
+      return { error: error.message };
+    }
+
+    if (!scanRows || scanRows.length === 0) {
+      return { scans: [] };
+    }
+
+    // 2) Load related cartons and orders in bulk
+    const cartonIds = Array.from(new Set(scanRows.map((row) => row.carton_id)));
+    const orderIds = Array.from(new Set(scanRows.map((row) => row.order_id)));
+
+    const [{ data: cartonsData }, { data: ordersData }] = await Promise.all([
+      supabase
+        .from("cartons")
+        .select(
+          "id, weight, length, width, height, dimension_unit, carton_index, created_at, item_description, destination_country"
+        )
+        .in("id", cartonIds),
+      supabase
+        .from("orders")
+        .select(
+          "id, shipping_mark, destination_country, total_cartons, item_description, created_at"
+        )
+        .in("id", orderIds),
+    ]);
+
+    const cartonMap = new Map(
+      (cartonsData ?? []).map((c) => [c.id as string, c])
+    );
+    const orderMap = new Map(
+      (ordersData ?? []).map((o) => [o.id as string, o])
+    );
+
+    const scans = scanRows.map((row) => ({
+      id: row.id as string,
+      carton_serial_number: row.carton_serial_number as string,
+      scanned_at: row.scanned_at as string,
+      cartons: cartonMap.get(row.carton_id) ?? null,
+      orders: orderMap.get(row.order_id) ?? null,
+    }));
+
+    return { scans };
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : "Unable to load scanned cartons" };
+  }
+}
+
+export async function deleteCartonScan(scanId: string) {
+  try {
+    const session = await getSession();
+    if (!session || session.role !== "user") {
+      return { error: "Unauthorized" };
+    }
+
+    const supabase = await createAdminClient();
+    const { error } = await supabase
+      .from("carton_scans")
+      .delete()
+      .eq("id", scanId)
+      .eq("username", session.username);
+
+    if (error) {
+      return { error: error.message };
+    }
+
+    return { success: true };
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : "Unable to delete scanned sticker" };
+  }
+}

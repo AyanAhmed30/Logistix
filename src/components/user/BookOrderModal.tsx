@@ -2,8 +2,8 @@
 
 import { useEffect, useState, useTransition, useRef } from "react";
 import { toast } from "sonner";
-import QRCode from "qrcode";
 import jsPDF from "jspdf";
+import JsBarcode from "jsbarcode";
 import { getNextCartonSerial, createOrderWithCartons } from "@/app/actions/orders";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -34,6 +34,43 @@ type OrderDraft = {
 function toNumber(value: string) {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : null;
+}
+
+function generateBarcodeDataUrl(serial: string) {
+  try {
+    // Generate URL that points to the scan endpoint, which will record the scan and redirect.
+    // IMPORTANT: Use a configurable base URL so that barcodes work from other devices too.
+    // If NEXT_PUBLIC_APP_BASE_URL is set, we use that (recommended for production / LAN).
+    // Otherwise, we fall back to window.location.origin (works only on the same device).
+    const envBase =
+      typeof process !== "undefined"
+        ? (process.env.NEXT_PUBLIC_APP_BASE_URL as string | undefined)
+        : undefined;
+    const runtimeOrigin =
+      typeof window !== "undefined" ? window.location.origin : "";
+    const baseUrl = (envBase && envBase.trim()) || runtimeOrigin;
+    const cartonUrl = `${baseUrl.replace(/\/+$/, "")}/scan/${serial}`;
+
+    // Create a high-resolution canvas for barcode to keep lines crisp when scaled in PDF
+    const canvas = document.createElement("canvas");
+    canvas.width = 800;
+    canvas.height = 240;
+
+    // Generate Code128 barcode with the URL
+    JsBarcode(canvas, cartonUrl, {
+      format: "CODE128",
+      width: 3,        // thicker bars for better recognition
+      height: 160,     // taller barcode
+      displayValue: true,
+      fontSize: 24,
+      margin: 10,
+    });
+
+    return canvas.toDataURL("image/png");
+  } catch (error) {
+    console.error("Error generating barcode:", error);
+    return "";
+  }
 }
 
 export function BookOrderModal({ open, onOpenChange, onOrderSaved }: Props) {
@@ -328,19 +365,11 @@ export function BookOrderModal({ open, onOpenChange, onOrderSaved }: Props) {
       pdf.text("Total Cartons:", boxLeft + 2, startY + rowHeight * 5 + 6);
       pdf.text(`${cartonsToPrint.length}-${i + 1}`, boxLeft + 2, startY + rowHeight * 5 + 11);
 
-      const qrPayload = JSON.stringify({
-        shipping_mark: shippingMark,
-        carton_serial_number: carton.serial,
-        weight: carton.weight,
-        length: carton.length,
-        width: carton.width,
-        height: carton.height,
-        destination_country: carton.destinationCountry,
-        total_cartons: cartonsToPrint.length,
-        item_description: carton.itemDescription,
-      });
-      const qrDataUrl = await QRCode.toDataURL(qrPayload);
-      pdf.addImage(qrDataUrl, "PNG", 30, 120, 40, 40);
+      const barcodeDataUrl = generateBarcodeDataUrl(carton.serial || "");
+      if (barcodeDataUrl) {
+        // Draw barcode larger on the sticker to improve scan reliability
+        pdf.addImage(barcodeDataUrl, "PNG", 16, 112, 70, 24);
+      }
     }
 
     // Calculate order totals
@@ -806,19 +835,11 @@ export function BookOrderModal({ open, onOpenChange, onOrderSaved }: Props) {
       // Continuous numbering across all orders, e.g. 4-1, 4-2, 4-3, 4-4
       pdf.text(`${totalCartons}-${i + 1}`, boxLeft + 2, startY + rowHeight * 5 + 11);
 
-      const qrPayload = JSON.stringify({
-        shipping_mark: shippingMark,
-        carton_serial_number: carton.serial,
-        weight: carton.weight,
-        length: carton.length,
-        width: carton.width,
-        height: carton.height,
-        destination_country: carton.destinationCountry,
-        total_cartons: totalCartons,
-        item_description: carton.itemDescription,
-      });
-      const qrDataUrl = await QRCode.toDataURL(qrPayload);
-      pdf.addImage(qrDataUrl, "PNG", 30, 120, 40, 40);
+      const barcodeDataUrl = generateBarcodeDataUrl(carton.serial || "");
+      if (barcodeDataUrl) {
+        // Draw barcode larger on the sticker to improve scan reliability
+        pdf.addImage(barcodeDataUrl, "PNG", 16, 112, 70, 24);
+      }
     }
 
     // Calculate combined totals across all cartons

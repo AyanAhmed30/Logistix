@@ -5,27 +5,32 @@ export async function middleware(request: NextRequest) {
     const session = await getSession();
     const { pathname } = request.nextUrl;
 
-    // 1. If hitting root, redirect to login
+    // 1. Allow public access to carton scan/details pages (for barcode scanning)
+    if (pathname.startsWith('/carton/') || pathname.startsWith('/scan/')) {
+        return NextResponse.next();
+    }
+
+    // 2. If hitting root, redirect to login
     if (pathname === '/') {
         return NextResponse.redirect(new URL('/login', request.url));
     }
 
-    // 2. Protect Admin Routes
+    // 3. Protect Admin Routes
     if (pathname.startsWith('/admin') && (!session || session.role !== 'admin')) {
         return NextResponse.redirect(new URL('/login', request.url));
     }
 
-    // 3. Protect User Routes
+    // 4. Protect User Routes
     if (pathname.startsWith('/user') && (!session || (session.role !== 'user' && session.role !== 'admin'))) {
         return NextResponse.redirect(new URL('/login', request.url));
     }
 
-    // 4. Protect Sales Agent Routes
+    // 5. Protect Sales Agent Routes
     if (pathname.startsWith('/sales-agent') && (!session || session.role !== 'sales_agent')) {
         return NextResponse.redirect(new URL('/login', request.url));
     }
 
-    // 5. If logged in and hitting login, redirect to dashboard
+    // 6. If logged in and hitting login, redirect to dashboard
     if (pathname === '/login' && session) {
         if (session.role === 'admin') {
             return NextResponse.redirect(new URL('/admin/dashboard', request.url));

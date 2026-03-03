@@ -271,7 +271,21 @@ export async function recordCartonScan(serial: string) {
       return { error: cartonError?.message || "Carton not found" };
     }
 
-    const order = (carton as any).orders as { id: string; username: string } | null;
+    type CartonWithOrder = {
+      id: string;
+      carton_serial_number: string;
+      order_id: string;
+      orders: { id: string; username: string }[] | { id: string; username: string } | null;
+    };
+
+    const typedCarton = carton as unknown as CartonWithOrder;
+    const ordersValue = typedCarton.orders;
+    const order =
+      Array.isArray(ordersValue) && ordersValue.length > 0
+        ? ordersValue[0]
+        : !Array.isArray(ordersValue)
+        ? ordersValue
+        : null;
     if (!order) {
       return { error: "Order not found for this carton" };
     }

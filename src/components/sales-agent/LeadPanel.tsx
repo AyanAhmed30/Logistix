@@ -170,14 +170,27 @@ export function LeadPanel() {
     setDeleteOpen(true);
   }
 
+  const totalLeads = leads.length;
+  const convertedLeads = leads.filter((l) => l.converted).length;
+
   return (
     <div className="space-y-6">
       <Card className="bg-white border shadow-sm">
         <CardHeader className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
           <div>
-            <CardTitle>Leads</CardTitle>
+            <div className="flex items-center gap-2">
+              <CardTitle>Leads</CardTitle>
+              {totalLeads > 0 && (
+                <span className="inline-flex items-center justify-center px-2 py-0.5 rounded-full bg-primary text-white text-xs">
+                  {totalLeads}
+                </span>
+              )}
+            </div>
             <CardDescription>
               Manage your leads. Add new leads and track their information.
+              {totalLeads > 0 && (
+                <> ({convertedLeads} converted)</>
+              )}
             </CardDescription>
           </div>
           <Button onClick={() => setCreateOpen(true)} className="create-console-btn">
@@ -203,6 +216,7 @@ export function LeadPanel() {
                     <TableHead>Number</TableHead>
                     <TableHead>Source</TableHead>
                     <TableHead>Created At</TableHead>
+                    <TableHead>Status</TableHead>
                     <TableHead className="text-right">Actions</TableHead>
                   </TableRow>
                 </TableHeader>
@@ -218,6 +232,17 @@ export function LeadPanel() {
                       </TableCell>
                       <TableCell>
                         {new Date(lead.created_at).toLocaleString()}
+                      </TableCell>
+                      <TableCell>
+                        {lead.converted ? (
+                          <span className="px-2 py-1 bg-green-100 text-green-800 rounded-md text-xs">
+                            Converted
+                          </span>
+                        ) : (
+                          <span className="px-2 py-1 bg-yellow-100 text-yellow-800 rounded-md text-xs">
+                            Active
+                          </span>
+                        )}
                       </TableCell>
                       <TableCell className="text-right space-x-2">
                         <Button

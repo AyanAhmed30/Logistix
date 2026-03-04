@@ -342,7 +342,7 @@ export async function getScannedCartonsForUser() {
       supabase
         .from("cartons")
         .select(
-          "id, weight, length, width, height, dimension_unit, carton_index, created_at, item_description, destination_country"
+          "id, carton_serial_number, weight, length, width, height, dimension_unit, carton_index, created_at, item_description, destination_country"
         )
         .in("id", cartonIds),
       supabase
@@ -353,20 +353,29 @@ export async function getScannedCartonsForUser() {
         .in("id", orderIds),
     ]);
 
-    const cartonMap = new Map(
+    const cartonByIdMap = new Map(
       (cartonsData ?? []).map((c) => [c.id as string, c])
+    );
+    const cartonBySerialMap = new Map(
+      (cartonsData ?? []).map((c) => [c.carton_serial_number as string, c])
     );
     const orderMap = new Map(
       (ordersData ?? []).map((o) => [o.id as string, o])
     );
 
-    const scans = scanRows.map((row) => ({
-      id: row.id as string,
-      carton_serial_number: row.carton_serial_number as string,
-      scanned_at: row.scanned_at as string,
-      cartons: cartonMap.get(row.carton_id) ?? null,
-      orders: orderMap.get(row.order_id) ?? null,
-    }));
+    const scans = scanRows.map((row) => {
+      const serial = row.carton_serial_number as string;
+      const cartonFromId = cartonByIdMap.get(row.carton_id as string);
+      const cartonFromSerial = cartonBySerialMap.get(serial);
+
+      return {
+        id: row.id as string,
+        carton_serial_number: serial,
+        scanned_at: row.scanned_at as string,
+        cartons: cartonFromId ?? cartonFromSerial ?? null,
+        orders: orderMap.get(row.order_id as string) ?? null,
+      };
+    });
 
     return { scans };
   } catch (err) {

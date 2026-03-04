@@ -32,7 +32,12 @@ type OrderDraft = {
 };
 
 function toNumber(value: string) {
-  const parsed = Number(value);
+  if (!value) return null;
+  // Allow users to type things like "20", "20.5", or "20 kg"
+  const cleaned = value.replace(/,/g, " ").trim();
+  const match = cleaned.match(/-?\d+(\.\d+)?/);
+  if (!match) return null;
+  const parsed = Number(match[0]);
   return Number.isFinite(parsed) ? parsed : null;
 }
 
@@ -51,19 +56,21 @@ function generateBarcodeDataUrl(serial: string) {
     const baseUrl = (envBase && envBase.trim()) || runtimeOrigin;
     const cartonUrl = `${baseUrl.replace(/\/+$/, "")}/scan/${serial}`;
 
-    // Create a high-resolution canvas for barcode to keep lines crisp when scaled in PDF
+    // Create a high-resolution canvas. We will render into a roughly square area so the
+    // final barcode on the sticker is more compact and closer to a square.
     const canvas = document.createElement("canvas");
-    canvas.width = 800;
-    canvas.height = 240;
+    canvas.width = 500;
+    canvas.height = 500;
 
-    // Generate Code128 barcode with the URL
+    // Generate Code128 barcode with the URL.
+    // Use a smaller bar width so the graphic stays closer to square.
     JsBarcode(canvas, cartonUrl, {
       format: "CODE128",
-      width: 3,        // thicker bars for better recognition
-      height: 160,     // taller barcode
+      width: 1.8,
+      height: 320,
       displayValue: true,
-      fontSize: 24,
-      margin: 10,
+      fontSize: 22,
+      margin: 18,
     });
 
     return canvas.toDataURL("image/png");
@@ -367,8 +374,8 @@ export function BookOrderModal({ open, onOpenChange, onOrderSaved }: Props) {
 
       const barcodeDataUrl = generateBarcodeDataUrl(carton.serial || "");
       if (barcodeDataUrl) {
-        // Draw barcode larger on the sticker to improve scan reliability
-        pdf.addImage(barcodeDataUrl, "PNG", 16, 112, 70, 24);
+        // Draw barcode in a compact, nearly square area
+        pdf.addImage(barcodeDataUrl, "PNG", 30, 110, 40, 40);
       }
     }
 
@@ -837,8 +844,8 @@ export function BookOrderModal({ open, onOpenChange, onOrderSaved }: Props) {
 
       const barcodeDataUrl = generateBarcodeDataUrl(carton.serial || "");
       if (barcodeDataUrl) {
-        // Draw barcode larger on the sticker to improve scan reliability
-        pdf.addImage(barcodeDataUrl, "PNG", 16, 112, 70, 24);
+        // Draw barcode in a compact, nearly square area
+        pdf.addImage(barcodeDataUrl, "PNG", 30, 110, 40, 40);
       }
     }
 

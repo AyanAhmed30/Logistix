@@ -140,11 +140,18 @@ export function UserScannedStickersPanel() {
                 const carton = scan.cartons;
 
                 const scannedAt = new Date(scan.scanned_at).toLocaleString();
-                const weight = carton?.weight != null ? `${carton.weight} kg` : "-";
-                const dimensions =
-                  carton && carton.length && carton.width && carton.height
-                    ? `${carton.length} x ${carton.width} x ${carton.height} ${carton.dimension_unit || "cm"}`
+                const weight =
+                  carton && carton.weight != null
+                    ? `${carton.weight} kg`
                     : "-";
+                const hasDimensions =
+                  carton &&
+                  carton.length != null &&
+                  carton.width != null &&
+                  carton.height != null;
+                const dimensions = hasDimensions
+                  ? `${carton.length} x ${carton.width} x ${carton.height} ${carton.dimension_unit || "cm"}`
+                  : "-";
 
                 return (
                   <TableRow key={scan.id}>

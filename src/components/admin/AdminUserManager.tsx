@@ -35,6 +35,7 @@ import { SalesPanel } from "@/components/admin/SalesPanel";
 import { OperationsPanel } from "@/components/admin/OperationsPanel";
 import { ImportPackingListPanel } from "@/components/admin/ImportPackingListPanel";
 import { ImportInvoicePanel } from "@/components/admin/ImportInvoicePanel";
+import { AdminInvoicePanel } from "@/components/admin/AdminInvoicePanel";
 import { SalesAgentPanel } from "@/components/admin/SalesAgentPanel";
 
 type AppUser = {
@@ -62,7 +63,8 @@ type Props = {
     | "sales"
     | "operations"
     | "import-packing-list"
-    | "import-invoice";
+    | "import-invoice"
+    | "invoice";
   onTabChange: (
     tab:
       | "dashboard"
@@ -77,6 +79,7 @@ type Props = {
       | "operations"
       | "import-packing-list"
       | "import-invoice"
+      | "invoice"
   ) => void;
 };
 
@@ -241,6 +244,7 @@ export function AdminUserManager({
       | "operations"
       | "import-packing-list"
       | "import-invoice"
+      | "invoice"
   ) {
     onTabChange(tab);
     onSidebarClose();
@@ -275,10 +279,10 @@ export function AdminUserManager({
           </div>
           <div className="grid gap-2 sidebar-buttons">
           <Button
-            variant={activeTab === "dashboard" ? "default" : "outline"}
-            className="justify-start gap-2 sidebar-button"
-            onClick={() => handleTabSelect("dashboard")}
-            title="Dashboard"
+          variant={activeTab === "dashboard" ? "default" : "outline"}
+          className="justify-start gap-2 sidebar-button"
+          onClick={() => handleTabSelect("dashboard")}
+          title="Dashboard"
           >
             <TrendingUp className="h-4 w-4 shrink-0 sidebar-icon" />
             {!isSidebarCollapsed && <span className="sidebar-text">Dashboard</span>}
@@ -382,8 +386,17 @@ export function AdminUserManager({
             onClick={() => handleTabSelect("import-invoice")}
             title="Import Invoice"
           >
-            <Receipt className="h-4 w-4 shrink-0 sidebar-icon" />
-            {!isSidebarCollapsed && <span className="sidebar-text">Import Invoice</span>}
+          <Receipt className="h-4 w-4 shrink-0 sidebar-icon" />
+          {!isSidebarCollapsed && <span className="sidebar-text">Import Invoice</span>}
+          </Button>
+          <Button
+            variant={activeTab === "invoice" ? "default" : "outline"}
+            className="justify-start gap-2 sidebar-button"
+            onClick={() => handleTabSelect("invoice")}
+            title="Invoice"
+          >
+            <FileText className="h-4 w-4 shrink-0 sidebar-icon" />
+            {!isSidebarCollapsed && <span className="sidebar-text">Invoice</span>}
           </Button>
           </div>
         </div>
@@ -418,6 +431,8 @@ export function AdminUserManager({
           <ImportPackingListPanel />
         ) : activeTab === "import-invoice" ? (
           <ImportInvoicePanel />
+        ) : activeTab === "invoice" ? (
+          <AdminInvoicePanel />
         ) : activeTab === "create" ? (
           <div className="space-y-6">
             {/* Sub-tabs */}

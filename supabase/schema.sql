@@ -71,6 +71,32 @@ create index if not exists idx_carton_scans_username on carton_scans(username);
 create index if not exists idx_carton_scans_carton_serial on carton_scans(carton_serial_number);
 
 -- =====================================================
+-- Table: admin_invoices
+-- Purpose: Store proforma invoices created from the admin dashboard
+-- Related Functionality: Admin Portal - Invoice tab
+-- =====================================================
+create table if not exists admin_invoices (
+  id uuid primary key default gen_random_uuid(),
+  invoice_number text not null,
+  invoice_date date not null,
+  due_date date not null,
+  source text,
+  description text,
+  quantity text,
+  unit_price text,
+  taxes text,
+  amount text,
+  untaxed_amount text,
+  total text,
+  payment_communication text,
+  created_at timestamptz default now(),
+  updated_at timestamptz default now()
+);
+
+create index if not exists idx_admin_invoices_created_at on admin_invoices(created_at desc);
+create index if not exists idx_admin_invoices_invoice_number on admin_invoices(invoice_number);
+
+-- =====================================================
 -- Table: serial_counter
 -- Purpose: Track serial number generation for cartons
 -- Related Functionality: Order Creation, Carton Serial Number Generation

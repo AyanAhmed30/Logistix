@@ -4,7 +4,7 @@ import { createAdminClient } from '@/utils/supabase/server';
 import { getSession } from '@/lib/auth/session';
 import { revalidatePath } from 'next/cache';
 
-export type LeadStatus = 'Leads' | 'Inquiry Received' | 'Quotation Sent' | 'Negotiation' | 'Win';
+export type LeadStatus = 'Leads' | 'Inquiry Received' | 'Quotation Sent' | 'Negotiation' | 'Win' | 'Follow up' | 'Lose';
 
 export type Lead = {
   id: string;
@@ -252,7 +252,7 @@ export async function updateLeadStatus(leadId: string, status: LeadStatus) {
 
     // Normalize and validate status value
     const normalizedStatus = (typeof status === 'string' ? status.trim() : String(status)) as LeadStatus;
-    const validStatuses: LeadStatus[] = ['Leads', 'Inquiry Received', 'Quotation Sent', 'Negotiation', 'Win'];
+    const validStatuses: LeadStatus[] = ['Leads', 'Inquiry Received', 'Quotation Sent', 'Negotiation', 'Win', 'Follow up', 'Lose'];
     
     if (!validStatuses.includes(normalizedStatus)) {
       return { error: `Invalid status "${status}". Must be one of: ${validStatuses.join(', ')}` };

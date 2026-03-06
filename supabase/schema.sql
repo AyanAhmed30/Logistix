@@ -291,3 +291,93 @@ create table if not exists sales_agent_serial_ranges (
 create index if not exists idx_sales_agent_serial_ranges_agent_id on sales_agent_serial_ranges(sales_agent_id);
 create index if not exists idx_sales_agent_serial_ranges_from on sales_agent_serial_ranges(serial_from);
 create index if not exists idx_sales_agent_serial_ranges_to on sales_agent_serial_ranges(serial_to);
+
+-- =====================================================
+-- Table: quotations
+-- Purpose: Store sales quotations with three-stage workflow
+-- Related Functionality: Sales Management - Quotation Module
+-- =====================================================
+create table if not exists quotations (
+  id uuid primary key default gen_random_uuid(),
+  customer_name text not null,
+  product_service text not null,
+  quantity numeric(10, 2) not null,
+  unit_price numeric(10, 2) not null,
+  total_amount numeric(10, 2) not null,
+  status text not null default 'quotation' check (status in ('quotation', 'quotation_sent', 'sales_order')),
+  created_by text not null,
+  created_at timestamptz default now(),
+  updated_at timestamptz default now()
+);
+
+create index if not exists idx_quotations_status on quotations(status);
+create index if not exists idx_quotations_created_at on quotations(created_at desc);
+create index if not exists idx_quotations_created_by on quotations(created_by);
+
+-- =====================================================
+-- Table: quotation_logs
+-- Purpose: Track all actions and status changes for quotations
+-- Related Functionality: Sales Management - Activity History
+-- =====================================================
+create table if not exists quotation_logs (
+  id uuid primary key default gen_random_uuid(),
+  quotation_id uuid not null references quotations(id) on delete cascade,
+  action text not null check (action in ('created', 'updated', 'deleted', 'status_changed', 'printed')),
+  previous_status text,
+  new_status text,
+  performed_by text not null,
+  performed_at timestamptz default now(),
+  details jsonb
+);
+
+create index if not exists idx_quotation_logs_quotation_id on quotation_logs(quotation_id);
+create index if not exists idx_quotation_logs_performed_at on quotation_logs(performed_at desc);
+create index if not exists idx_quotation_logs_performed_by on quotation_logs(performed_by);
+
+-- =====================================================
+-- Table: invoices
+-- Purpose: Store invoices created from sales orders
+-- Related Functionality: Sales Management - Invoice Module
+-- =====================================================
+create table if not exists invoices (
+  id uuid primary key default gen_random_uuid(),
+  quotation_id uuid not null references quotations(id) on delete cascade,
+  invoice_number text not null unique,
+  customer_name text not null,
+  product_service text not null,
+  quantity numeric(10, 2) not null,
+  unit_price numeric(10, 2) not null,
+  total_amount numeric(10, 2) not null,
+  invoice_date date not null,
+  payment_status text not null default 'unpaid' check (payment_status in ('unpaid', 'paid', 'partial')),
+  invoice_status text not null default 'draft' check (invoice_status in ('draft', 'posted', 'paid')),
+  created_by text not null,
+  created_at timestamptz default now(),
+  updated_at timestamptz default now()
+);
+
+create index if not exists idx_invoices_quotation_id on invoices(quotation_id);
+create index if not exists idx_invoices_status on invoices(invoice_status);
+create index if not exists idx_invoices_invoice_number on invoices(invoice_number);
+create index if not exists idx_invoices_created_at on invoices(created_at desc);
+create index if not exists idx_invoices_created_by on invoices(created_by);
+
+-- =====================================================
+-- Table: invoice_logs
+-- Purpose: Track all actions and status changes for invoices
+-- Related Functionality: Sales Management - Invoice Activity History
+-- =====================================================
+create table if not exists invoice_logs (
+  id uuid primary key default gen_random_uuid(),
+  invoice_id uuid not null references invoices(id) on delete cascade,
+  action text not null check (action in ('created', 'updated', 'deleted', 'status_changed', 'payment_registered', 'printed')),
+  previous_status text,
+  new_status text,
+  performed_by text not null,
+  performed_at timestamptz default now(),
+  details jsonb
+);
+
+create index if not exists idx_invoice_logs_invoice_id on invoice_logs(invoice_id);
+create index if not exists idx_invoice_logs_performed_at on invoice_logs(performed_at desc);
+create index if not exists idx_invoice_logs_performed_by on invoice_logs(performed_by);

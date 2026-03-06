@@ -52,6 +52,11 @@ const STATUSES: LeadStatus[] = [
   "Win",
 ];
 
+const STATUSES_ROW_2: LeadStatus[] = [
+  "Follow up",
+  "Lose",
+];
+
 
 function LeadCard({
   lead,
@@ -491,7 +496,7 @@ export function PipelinePanel() {
     // If dropped on a lead card, find which column it belongs to
     let newStatus: LeadStatus | null = null;
     
-    if (STATUSES.includes(droppedOnId as LeadStatus)) {
+    if (STATUSES.includes(droppedOnId as LeadStatus) || STATUSES_ROW_2.includes(droppedOnId as LeadStatus)) {
       // Dropped directly on a column
       newStatus = droppedOnId as LeadStatus;
     } else {
@@ -609,17 +614,33 @@ export function PipelinePanel() {
               onDragStart={handleDragStart}
               onDragEnd={handleDragEnd}
             >
-              <div className="flex gap-2 sm:gap-3 md:gap-4 overflow-x-auto pb-4 scrollbar-thin">
-                {STATUSES.map((status) => (
-                  <KanbanColumn
-                    key={status}
-                    status={status}
-                    leads={leads}
-                    onOpenComments={handleOpenComments}
-                    onConvert={handleConvertLead}
-                    searchQuery={searchQuery}
-                  />
-                ))}
+              <div className="space-y-4">
+                {/* First Row: Original Statuses */}
+                <div className="flex gap-2 sm:gap-3 md:gap-4 overflow-x-auto pb-4 scrollbar-thin">
+                  {STATUSES.map((status) => (
+                    <KanbanColumn
+                      key={status}
+                      status={status}
+                      leads={leads}
+                      onOpenComments={handleOpenComments}
+                      onConvert={handleConvertLead}
+                      searchQuery={searchQuery}
+                    />
+                  ))}
+                </div>
+                {/* Second Row: Follow up and Lose */}
+                <div className="flex gap-2 sm:gap-3 md:gap-4 overflow-x-auto pb-4 scrollbar-thin">
+                  {STATUSES_ROW_2.map((status) => (
+                    <KanbanColumn
+                      key={status}
+                      status={status}
+                      leads={leads}
+                      onOpenComments={handleOpenComments}
+                      onConvert={handleConvertLead}
+                      searchQuery={searchQuery}
+                    />
+                  ))}
+                </div>
               </div>
               <DragOverlay>
                 {activeLead ? (

@@ -31,7 +31,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { PlusCircle, Edit, Trash2 } from "lucide-react";
+import { PlusCircle, Edit, Trash2, Search, X } from "lucide-react";
 
 export function LeadPanel() {
   const router = useRouter();
@@ -44,6 +44,7 @@ export function LeadPanel() {
   const [deleteLeadTarget, setDeleteLeadTarget] = useState<Lead | null>(null);
   const [source, setSource] = useState<string>("");
   const [editSource, setEditSource] = useState<string>("");
+  const [searchQuery, setSearchQuery] = useState<string>("");
   const [isPending, startTransition] = useTransition();
 
   useEffect(() => {
@@ -173,6 +174,15 @@ export function LeadPanel() {
   const totalLeads = leads.length;
   const convertedLeads = leads.filter((l) => l.converted).length;
 
+  // Filter leads based on search query
+  const filteredLeads = searchQuery.trim()
+    ? leads.filter((lead) =>
+        lead.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        lead.number.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        lead.source.toLowerCase().includes(searchQuery.toLowerCase())
+      )
+    : leads;
+
   return (
     <div className="space-y-6">
       <Card className="bg-white border shadow-sm">
@@ -199,13 +209,36 @@ export function LeadPanel() {
           </Button>
         </CardHeader>
         <CardContent>
+          {/* Search Bar */}
+          <div className="mb-4">
+            <div className="relative w-full max-w-md">
+              <Search className="absolute left-2.5 top-1/2 transform -translate-y-1/2 h-4 w-4 text-secondary-muted pointer-events-none" />
+              <Input
+                type="text"
+                placeholder="Search leads by name, number, or source..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="pl-8 pr-8 h-9 text-sm"
+              />
+              {searchQuery && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="absolute right-1 top-1/2 transform -translate-y-1/2 h-7 w-7 p-0 hover:bg-transparent"
+                  onClick={() => setSearchQuery("")}
+                >
+                  <X className="h-3.5 w-3.5 text-secondary-muted" />
+                </Button>
+              )}
+            </div>
+          </div>
           {isLoading ? (
             <div className="py-16 text-center text-secondary-muted">
               Loading leads...
             </div>
-          ) : leads.length === 0 ? (
+          ) : filteredLeads.length === 0 ? (
             <div className="py-16 text-center text-secondary-muted">
-              No leads found. Create your first lead to get started.
+              {searchQuery.trim() ? "No leads found matching your search." : "No leads found. Create your first lead to get started."}
             </div>
           ) : (
             <div className="overflow-x-auto">
@@ -221,7 +254,7 @@ export function LeadPanel() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {leads.map((lead) => (
+                  {filteredLeads.map((lead) => (
                     <TableRow key={lead.id}>
                       <TableCell className="font-semibold">{lead.name}</TableCell>
                       <TableCell>{lead.number}</TableCell>

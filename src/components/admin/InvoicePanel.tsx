@@ -98,7 +98,6 @@ export function InvoicePanel() {
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [logsOpen, setLogsOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<Invoice | null>(null);
-  const [logsTarget, setLogsTarget] = useState<Invoice | null>(null);
   const [logs, setLogs] = useState<InvoiceLog[]>([]);
   const [formState, setFormState] = useState<InvoiceFormState>({
     customer_name: "",
@@ -109,10 +108,9 @@ export function InvoicePanel() {
     invoice_date: "",
   });
 
-  const isEditing = Boolean(formState.id);
-
   useEffect(() => {
     fetchInvoices();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTab]);
 
   async function fetchInvoices() {
@@ -254,7 +252,6 @@ export function InvoicePanel() {
   }
 
   async function openLogs(invoice: Invoice) {
-    setLogsTarget(invoice);
     setLogsOpen(true);
     const result = await getInvoiceLogs(invoice.id);
     if ("error" in result) {
@@ -709,11 +706,18 @@ export function InvoicePanel() {
             ) : (
               <div className="space-y-3">
                 {logs.map((log) => {
-                  const details = log.details as any;
+                  const details = log.details as 
+                    | { previous?: { quantity?: unknown; unit_price?: unknown; total_amount?: unknown }; new?: { quantity?: unknown; unit_price?: unknown; total_amount?: unknown } }
+                    | { quantity?: unknown; unit_price?: unknown; total_amount?: unknown }
+                    | null;
                   const hasChanges =
                     log.action === "updated" &&
-                    details?.previous &&
-                    details?.new;
+                    details &&
+                    'previous' in details &&
+                    'new' in details &&
+                    details.previous &&
+                    details.new;
+                  const isCreatedDetails = log.action === "created" && details && !('previous' in details);
 
                   return (
                     <div
@@ -753,7 +757,7 @@ export function InvoicePanel() {
                           Payment registered - Invoice marked as Paid
                         </div>
                       )}
-                      {hasChanges && (
+                      {hasChanges && details && details.previous && details.new && (
                         <div className="text-sm space-y-1 mt-2">
                           {(details.previous.quantity !== details.new.quantity ||
                             details.previous.unit_price !== details.new.unit_price ||
@@ -763,11 +767,11 @@ export function InvoicePanel() {
                                 <div className="text-xs">
                                   <span className="text-secondary-muted">Quantity: </span>
                                   <span className="line-through text-red-600">
-                                    {details.previous.quantity}
+                                    {String(details.previous.quantity ?? '')}
                                   </span>
                                   {" → "}
                                   <span className="text-green-600 font-semibold">
-                                    {details.new.quantity}
+                                    {String(details.new.quantity ?? '')}
                                   </span>
                                 </div>
                               )}
@@ -775,11 +779,11 @@ export function InvoicePanel() {
                                 <div className="text-xs">
                                   <span className="text-secondary-muted">Unit Price: </span>
                                   <span className="line-through text-red-600">
-                                    Rs. {parseFloat(details.previous.unit_price).toFixed(2)}
+                                    Rs. {parseFloat(String(details.previous.unit_price ?? '0')).toFixed(2)}
                                   </span>
                                   {" → "}
                                   <span className="text-green-600 font-semibold">
-                                    Rs. {parseFloat(details.new.unit_price).toFixed(2)}
+                                    Rs. {parseFloat(String(details.new.unit_price ?? '0')).toFixed(2)}
                                   </span>
                                 </div>
                               )}
@@ -787,11 +791,11 @@ export function InvoicePanel() {
                                 <div className="text-xs">
                                   <span className="text-secondary-muted">Total Amount: </span>
                                   <span className="line-through text-red-600">
-                                    Rs. {parseFloat(details.previous.total_amount).toFixed(2)}
+                                    Rs. {parseFloat(String(details.previous.total_amount ?? '0')).toFixed(2)}
                                   </span>
                                   {" → "}
                                   <span className="text-green-600 font-semibold">
-                                    Rs. {parseFloat(details.new.total_amount).toFixed(2)}
+                                    Rs. {parseFloat(String(details.new.total_amount ?? '0')).toFixed(2)}
                                   </span>
                                 </div>
                               )}
@@ -799,11 +803,11 @@ export function InvoicePanel() {
                           )}
                         </div>
                       )}
-                      {log.action === "created" && details && (
+                      {isCreatedDetails && (
                         <div className="text-xs text-secondary-muted space-y-0.5 mt-1">
-                          <div>Quantity: {details.quantity}</div>
-                          <div>Unit Price: Rs. {parseFloat(details.unit_price).toFixed(2)}</div>
-                          <div>Total Amount: Rs. {parseFloat(details.total_amount).toFixed(2)}</div>
+                          <div>Quantity: {String((details as { quantity?: unknown; unit_price?: unknown; total_amount?: unknown }).quantity ?? '')}</div>
+                          <div>Unit Price: Rs. {parseFloat(String((details as { quantity?: unknown; unit_price?: unknown; total_amount?: unknown }).unit_price ?? '0')).toFixed(2)}</div>
+                          <div>Total Amount: Rs. {parseFloat(String((details as { quantity?: unknown; unit_price?: unknown; total_amount?: unknown }).total_amount ?? '0')).toFixed(2)}</div>
                         </div>
                       )}
                       <div className="text-xs text-secondary-muted">

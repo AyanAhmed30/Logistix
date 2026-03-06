@@ -3,6 +3,7 @@
 import { createAdminClient } from '@/utils/supabase/server';
 import { getSession } from '@/lib/auth/session';
 import { revalidatePath } from 'next/cache';
+import type { SupabaseClient } from '@supabase/supabase-js';
 
 export type QuotationStatus = 'quotation' | 'quotation_sent' | 'sales_order';
 
@@ -27,7 +28,7 @@ export type QuotationLog = {
   new_status: string | null;
   performed_by: string;
   performed_at: string;
-  details: Record<string, any> | null;
+  details: Record<string, unknown> | null;
 };
 
 function ensureAdmin(session: { role: string } | null) {
@@ -37,13 +38,13 @@ function ensureAdmin(session: { role: string } | null) {
 }
 
 async function logQuotationAction(
-  supabase: any,
+  supabase: Awaited<ReturnType<typeof createAdminClient>>,
   quotationId: string,
   action: QuotationLog['action'],
   performedBy: string,
   previousStatus?: string | null,
   newStatus?: string | null,
-  details?: Record<string, any>
+  details?: Record<string, unknown>
 ) {
   await supabase.from('quotation_logs').insert([
     {

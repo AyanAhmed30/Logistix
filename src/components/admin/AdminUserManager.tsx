@@ -35,7 +35,6 @@ import { SalesPanel } from "@/components/admin/SalesPanel";
 import { OperationsPanel } from "@/components/admin/OperationsPanel";
 import { ImportPackingListPanel } from "@/components/admin/ImportPackingListPanel";
 import { ImportInvoicePanel } from "@/components/admin/ImportInvoicePanel";
-import { AdminInvoicePanel } from "@/components/admin/AdminInvoicePanel";
 import { SalesAgentPanel } from "@/components/admin/SalesAgentPanel";
 import { QuotationPanel } from "@/components/admin/QuotationPanel";
 import { InvoicePanel } from "@/components/admin/InvoicePanel";

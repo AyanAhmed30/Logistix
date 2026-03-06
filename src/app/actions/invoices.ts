@@ -32,7 +32,7 @@ export type InvoiceLog = {
   new_status: string | null;
   performed_by: string;
   performed_at: string;
-  details: Record<string, any> | null;
+  details: Record<string, unknown> | null;
 };
 
 function ensureAdmin(session: { role: string } | null) {
@@ -41,7 +41,7 @@ function ensureAdmin(session: { role: string } | null) {
   }
 }
 
-async function generateInvoiceNumber(supabase: any, year: number): Promise<string> {
+async function generateInvoiceNumber(supabase: Awaited<ReturnType<typeof createAdminClient>>, year: number): Promise<string> {
   // Format: INV/YYYY/XXXX (e.g., INV/2026/0001)
   const prefix = `INV/${year}/`;
   
@@ -67,13 +67,13 @@ async function generateInvoiceNumber(supabase: any, year: number): Promise<strin
 }
 
 async function logInvoiceAction(
-  supabase: any,
+  supabase: Awaited<ReturnType<typeof createAdminClient>>,
   invoiceId: string,
   action: InvoiceLog['action'],
   performedBy: string,
   previousStatus?: string | null,
   newStatus?: string | null,
-  details?: Record<string, any>
+  details?: Record<string, unknown>
 ) {
   await supabase.from('invoice_logs').insert([
     {

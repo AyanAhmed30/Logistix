@@ -21,7 +21,7 @@ import {
   getInvoiceByQuotationId,
   type Invoice,
 } from "@/app/actions/invoices";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -41,7 +41,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { PlusCircle, Trash2, Edit2, Send, CheckCircle, History, X, FileText, ExternalLink, Printer } from "lucide-react";
+import { PlusCircle, Trash2, Edit2, Send, CheckCircle, History, FileText, ExternalLink, Printer } from "lucide-react";
 import jsPDF from "jspdf";
 import { Badge } from "@/components/ui/badge";
 
@@ -98,7 +98,6 @@ export function QuotationPanel() {
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [logsOpen, setLogsOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<Quotation | null>(null);
-  const [logsTarget, setLogsTarget] = useState<Quotation | null>(null);
   const [logs, setLogs] = useState<QuotationLog[]>([]);
   const [formState, setFormState] = useState<QuotationFormState>(emptyForm);
   const [invoiceMap, setInvoiceMap] = useState<Record<string, Invoice>>({});
@@ -281,7 +280,6 @@ export function QuotationPanel() {
   }
 
   async function openLogs(quotation: Quotation) {
-    setLogsTarget(quotation);
     setLogsOpen(true);
     const result = await getQuotationLogs(quotation.id);
     if ("error" in result) {
@@ -750,11 +748,18 @@ export function QuotationPanel() {
             ) : (
               <div className="space-y-3">
                 {logs.map((log) => {
-                  const details = log.details as any;
+                  const details = log.details as 
+                    | { previous?: { quantity?: unknown; unit_price?: unknown; total_amount?: unknown; customer_name?: unknown; product_service?: unknown }; new?: { quantity?: unknown; unit_price?: unknown; total_amount?: unknown; customer_name?: unknown; product_service?: unknown } }
+                    | { quantity?: unknown; unit_price?: unknown; total_amount?: unknown; customer_name?: unknown; product_service?: unknown }
+                    | null;
                   const hasChanges =
                     log.action === "updated" &&
-                    details?.previous &&
-                    details?.new;
+                    details &&
+                    'previous' in details &&
+                    'new' in details &&
+                    details.previous &&
+                    details.new;
+                  const isCreatedDetails = log.action === "created" && details && !('previous' in details);
 
                   return (
                     <div
@@ -788,7 +793,7 @@ export function QuotationPanel() {
                           )}
                         </div>
                       )}
-                      {hasChanges && (
+                      {hasChanges && details && 'previous' in details && 'new' in details && details.previous && details.new && (
                         <div className="text-sm space-y-1 mt-2">
                           {(details.previous.quantity !== details.new.quantity ||
                             details.previous.unit_price !== details.new.unit_price ||
@@ -798,11 +803,11 @@ export function QuotationPanel() {
                                 <div className="text-xs">
                                   <span className="text-secondary-muted">Quantity: </span>
                                   <span className="line-through text-red-600">
-                                    {details.previous.quantity}
+                                    {String(details.previous.quantity ?? '')}
                                   </span>
                                   {" → "}
                                   <span className="text-green-600 font-semibold">
-                                    {details.new.quantity}
+                                    {String(details.new.quantity ?? '')}
                                   </span>
                                 </div>
                               )}
@@ -810,11 +815,11 @@ export function QuotationPanel() {
                                 <div className="text-xs">
                                   <span className="text-secondary-muted">Unit Price: </span>
                                   <span className="line-through text-red-600">
-                                    Rs. {parseFloat(details.previous.unit_price).toFixed(2)}
+                                    Rs. {parseFloat(String(details.previous.unit_price ?? '0')).toFixed(2)}
                                   </span>
                                   {" → "}
                                   <span className="text-green-600 font-semibold">
-                                    Rs. {parseFloat(details.new.unit_price).toFixed(2)}
+                                    Rs. {parseFloat(String(details.new.unit_price ?? '0')).toFixed(2)}
                                   </span>
                                 </div>
                               )}
@@ -822,11 +827,11 @@ export function QuotationPanel() {
                                 <div className="text-xs">
                                   <span className="text-secondary-muted">Total Amount: </span>
                                   <span className="line-through text-red-600">
-                                    Rs. {parseFloat(details.previous.total_amount).toFixed(2)}
+                                    Rs. {parseFloat(String(details.previous.total_amount ?? '0')).toFixed(2)}
                                   </span>
                                   {" → "}
                                   <span className="text-green-600 font-semibold">
-                                    Rs. {parseFloat(details.new.total_amount).toFixed(2)}
+                                    Rs. {parseFloat(String(details.new.total_amount ?? '0')).toFixed(2)}
                                   </span>
                                 </div>
                               )}
@@ -838,26 +843,26 @@ export function QuotationPanel() {
                               {details.previous.customer_name !== details.new.customer_name && (
                                 <div>
                                   Customer:{" "}
-                                  <span className="line-through">{details.previous.customer_name}</span> →{" "}
-                                  <span className="font-semibold">{details.new.customer_name}</span>
+                                  <span className="line-through">{String(details.previous.customer_name ?? '')}</span> →{" "}
+                                  <span className="font-semibold">{String(details.new.customer_name ?? '')}</span>
                                 </div>
                               )}
                               {details.previous.product_service !== details.new.product_service && (
                                 <div>
                                   Product/Service:{" "}
-                                  <span className="line-through">{details.previous.product_service}</span> →{" "}
-                                  <span className="font-semibold">{details.new.product_service}</span>
+                                  <span className="line-through">{String(details.previous.product_service ?? '')}</span> →{" "}
+                                  <span className="font-semibold">{String(details.new.product_service ?? '')}</span>
                                 </div>
                               )}
                             </div>
                           )}
                         </div>
                       )}
-                      {log.action === "created" && details && (
+                      {isCreatedDetails && (
                         <div className="text-xs text-secondary-muted space-y-0.5 mt-1">
-                          <div>Quantity: {details.quantity}</div>
-                          <div>Unit Price: Rs. {parseFloat(details.unit_price).toFixed(2)}</div>
-                          <div>Total Amount: Rs. {parseFloat(details.total_amount).toFixed(2)}</div>
+                          <div>Quantity: {String((details as { quantity?: unknown; unit_price?: unknown; total_amount?: unknown }).quantity ?? '')}</div>
+                          <div>Unit Price: Rs. {parseFloat(String((details as { quantity?: unknown; unit_price?: unknown; total_amount?: unknown }).unit_price ?? '0')).toFixed(2)}</div>
+                          <div>Total Amount: Rs. {parseFloat(String((details as { quantity?: unknown; unit_price?: unknown; total_amount?: unknown }).total_amount ?? '0')).toFixed(2)}</div>
                         </div>
                       )}
                       <div className="text-xs text-secondary-muted">

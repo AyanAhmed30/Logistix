@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useTransition } from "react";
+import { useEffect, useState, useTransition, useCallback } from "react";
 import { toast } from "sonner";
 import { useRouter } from "next/navigation";
 import {
@@ -25,10 +25,10 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import {
   Dialog,
   DialogContent,
-  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -41,17 +41,37 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { PlusCircle, Trash2, Edit2, Send, CheckCircle, History, FileText, ExternalLink, Printer } from "lucide-react";
+import {
+  PlusCircle,
+  Trash2,
+  Edit2,
+  Send,
+  CheckCircle,
+  FileText,
+  ExternalLink,
+  Printer,
+  ArrowLeft,
+  X,
+  Paperclip,
+  ChevronLeft,
+  ChevronRight,
+  Search,
+} from "lucide-react";
 import jsPDF from "jspdf";
 import { Badge } from "@/components/ui/badge";
 
+// ─── Types ───────────────────────────────────────────────────────────
+
+type ViewMode = "list" | "detail";
+
 type QuotationFormState = {
-  id?: string;
   customer_name: string;
   product_service: string;
   quantity: string;
   unit_price: string;
-  total_amount: string;
+  taxes: string;
+  expiration_date: string;
+  payment_terms: string;
 };
 
 const emptyForm: QuotationFormState = {
@@ -59,84 +79,378 @@ const emptyForm: QuotationFormState = {
   product_service: "",
   quantity: "",
   unit_price: "",
-  total_amount: "",
+  taxes: "17",
+  expiration_date: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split("T")[0],
+  payment_terms: "Immediate",
 };
+
+// ─── Helpers ─────────────────────────────────────────────────────────
 
 function formatStatus(status: QuotationStatus): string {
   switch (status) {
-    case "quotation":
-      return "Quotation";
-    case "quotation_sent":
-      return "Quotation Sent";
-    case "sales_order":
-      return "Sales Order";
-    default:
-      return status;
+    case "quotation": return "Quotation";
+    case "quotation_sent": return "Quotation Sent";
+    case "sales_order": return "Sales Order";
+    default: return status;
   }
 }
 
-function getStatusBadgeVariant(status: QuotationStatus): "default" | "secondary" | "outline" {
+function getStatusBadgeColor(status: QuotationStatus): string {
   switch (status) {
-    case "quotation":
-      return "outline";
-    case "quotation_sent":
-      return "secondary";
-    case "sales_order":
-      return "default";
-    default:
-      return "outline";
+    case "quotation": return "bg-emerald-100 text-emerald-800 border-emerald-300";
+    case "quotation_sent": return "bg-green-100 text-green-800 border-green-400";
+    case "sales_order": return "bg-purple-100 text-purple-800 border-purple-300";
+    default: return "";
   }
 }
+
+function computeAmounts(quantity: string, unitPrice: string, taxes: string) {
+  const qty = parseFloat(quantity) || 0;
+  const price = parseFloat(unitPrice) || 0;
+  const taxRate = parseFloat(taxes) || 0;
+  const untaxed = qty * price;
+  const tax = untaxed * (taxRate / 100);
+  const total = untaxed + tax;
+  return { untaxed, tax, total, taxRate };
+}
+
+function getQAmounts(q: Quotation) {
+  const untaxed = q.quantity * q.unit_price;
+  const taxRate = q.taxes || 0;
+  const tax = untaxed * (taxRate / 100);
+  const total = untaxed + tax;
+  return { untaxed, tax, total, taxRate };
+}
+
+// ─── Status Stepper Component ────────────────────────────────────────
+
+function StatusStepper({ currentStatus }: { currentStatus: QuotationStatus }) {
+  const steps: { key: QuotationStatus; label: string }[] = [
+    { key: "quotation", label: "Quotation" },
+    { key: "quotation_sent", label: "Quotation Sent" },
+    { key: "sales_order", label: "Sales Order" },
+  ];
+
+  const currentIdx = steps.findIndex((s) => s.key === currentStatus);
+
+  return (
+    <div className="flex items-center">
+      {steps.map((step, idx) => {
+        const isActive = idx === currentIdx;
+        const isPast = idx < currentIdx;
+        const isFirst = idx === 0;
+        const isLast = idx === steps.length - 1;
+
+        return (
+          <div key={step.key} className="flex items-center">
+            <div
+              className={`
+                relative px-4 py-1.5 text-xs font-semibold whitespace-nowrap
+                ${isActive
+                  ? "bg-teal-600 text-white"
+                  : isPast
+                    ? "bg-teal-100 text-teal-800"
+                    : "bg-slate-100 text-slate-500"
+                }
+                ${isFirst ? "rounded-l-md" : ""}
+                ${isLast ? "rounded-r-md" : ""}
+              `}
+            >
+              {step.label}
+            </div>
+            {!isLast && (
+              <div className={`w-0 h-0 border-t-[14px] border-b-[14px] border-l-[8px] ${
+                idx < currentIdx
+                  ? "border-t-transparent border-b-transparent border-l-teal-100"
+                  : idx === currentIdx
+                    ? "border-t-transparent border-b-transparent border-l-teal-600"
+                    : "border-t-transparent border-b-transparent border-l-slate-100"
+              }`} />
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// ─── Log Content Renderer ────────────────────────────────────────────
+
+function renderLogContent(log: QuotationLog) {
+  const d = log.details as Record<string, unknown> | null;
+
+  if (log.action === "created") {
+    return <p className="text-sm text-slate-500">Creating a new record...</p>;
+  }
+
+  if (log.action === "printed") {
+    return <p className="text-sm text-slate-500">Quotation Printed</p>;
+  }
+
+  if (log.action === "status_changed") {
+    const hasMessage = d && typeof d.message_subject === "string" && d.message_subject;
+
+    if (hasMessage) {
+      return (
+        <div className="bg-teal-50 border border-teal-200 rounded-lg p-3 mt-1 space-y-1">
+          <p className="text-xs text-teal-700 italic">
+            Subject: {String(d.message_subject)}
+          </p>
+          {typeof d.message_body === "string" && d.message_body && (
+            <div className="text-sm whitespace-pre-wrap text-slate-700">
+              {d.message_body}
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    if (log.new_status === "sales_order") {
+      return <p className="text-sm text-slate-500">Sales Order created</p>;
+    }
+
+    return (
+      <p className="text-sm text-slate-500">
+        Status changed to {formatStatus(log.new_status as QuotationStatus)}
+      </p>
+    );
+  }
+
+  if (log.action === "updated" && d) {
+    const prev = d.previous as Record<string, unknown> | undefined;
+    const next = d.new as Record<string, unknown> | undefined;
+
+    if (prev && next) {
+      const changes: { field: string; oldVal: string; newVal: string }[] = [];
+
+      if (prev.total_amount !== next.total_amount) {
+        changes.push({
+          field: "Total",
+          oldVal: `${parseFloat(String(prev.total_amount || 0)).toFixed(2)} Rs.`,
+          newVal: `${parseFloat(String(next.total_amount || 0)).toFixed(2)} Rs.`,
+        });
+      }
+      if (prev.quantity !== next.quantity) {
+        changes.push({
+          field: "Quantity",
+          oldVal: String(prev.quantity ?? ""),
+          newVal: String(next.quantity ?? ""),
+        });
+      }
+      if (prev.unit_price !== next.unit_price) {
+        changes.push({
+          field: "Unit Price",
+          oldVal: `${parseFloat(String(prev.unit_price || 0)).toFixed(2)} Rs.`,
+          newVal: `${parseFloat(String(next.unit_price || 0)).toFixed(2)} Rs.`,
+        });
+      }
+      if (prev.customer_name !== next.customer_name) {
+        changes.push({
+          field: "Customer",
+          oldVal: String(prev.customer_name ?? ""),
+          newVal: String(next.customer_name ?? ""),
+        });
+      }
+      if (prev.product_service !== next.product_service) {
+        changes.push({
+          field: "Product/Service",
+          oldVal: String(prev.product_service ?? ""),
+          newVal: String(next.product_service ?? ""),
+        });
+      }
+      if (prev.taxes !== next.taxes) {
+        changes.push({
+          field: "Taxes",
+          oldVal: `${parseFloat(String(prev.taxes || 0)).toFixed(0)}%`,
+          newVal: `${parseFloat(String(next.taxes || 0)).toFixed(0)}%`,
+        });
+      }
+
+      if (changes.length > 0) {
+        return (
+          <div className="space-y-1 mt-1">
+            {changes.map((c, i) => (
+              <div key={i} className="text-sm">
+                <span className="text-slate-400">{c.oldVal}</span>
+                <span className="mx-1.5 text-slate-400">→</span>
+                <span className="font-semibold text-teal-700">{c.newVal}</span>
+                <span className="text-xs text-slate-400 ml-1.5">({c.field})</span>
+              </div>
+            ))}
+          </div>
+        );
+      }
+    }
+  }
+
+  return null;
+}
+
+// ─── PDF Generator ───────────────────────────────────────────────────
+
+function generateQuotationPdf(q: Quotation) {
+  const doc = new jsPDF();
+  const pageWidth = doc.internal.pageSize.getWidth();
+  const margin = 20;
+  let y = margin;
+
+  const qNum = q.quotation_number || `QT-${q.id.substring(0, 8).toUpperCase()}`;
+  const amounts = getQAmounts(q);
+
+  // Header
+  doc.setFontSize(16);
+  doc.setFont(undefined, "bold");
+  doc.setTextColor(0, 128, 128);
+  doc.text("LOGISTIX", margin, y);
+
+  doc.setFontSize(10);
+  doc.setFont(undefined, "normal");
+  doc.setTextColor(0, 0, 0);
+  doc.text("Seamless, Strategic Logistics & Financing", pageWidth - margin, y, { align: "right" });
+  y += 8;
+
+  doc.setFontSize(9);
+  doc.text("National Incubation Center, NED University, Karachi,", margin, y);
+  y += 5;
+  doc.text("Karachi City, Sindh 75270", margin, y);
+  y += 12;
+
+  // Title
+  doc.setFontSize(20);
+  doc.setFont(undefined, "bold");
+  doc.setTextColor(0, 128, 128);
+  doc.text(`Quotation # ${qNum}`, pageWidth / 2, y, { align: "center" });
+  y += 12;
+
+  // Info
+  doc.setFontSize(10);
+  doc.setFont(undefined, "normal");
+  doc.setTextColor(0, 0, 0);
+  doc.text(`Customer: ${q.customer_name}`, margin, y);
+  doc.text(`Date: ${new Date(q.created_at).toLocaleDateString()}`, pageWidth - margin, y, { align: "right" });
+  y += 6;
+  if (q.expiration_date) {
+    doc.text(`Expiration: ${new Date(q.expiration_date).toLocaleDateString()}`, margin, y);
+  }
+  doc.text(`Payment Terms: ${q.payment_terms || "Immediate"}`, pageWidth - margin, y, { align: "right" });
+  y += 10;
+
+  // Table header
+  doc.setDrawColor(200);
+  doc.setLineWidth(0.5);
+  doc.line(margin, y, pageWidth - margin, y);
+  y += 6;
+
+  doc.setFont(undefined, "bold");
+  const cols = { desc: margin, qty: margin + 80, price: margin + 110, tax: margin + 140, amt: pageWidth - margin };
+  doc.text("Product/Service", cols.desc, y);
+  doc.text("Quantity", cols.qty, y);
+  doc.text("Unit Price", cols.price, y);
+  doc.text("Taxes", cols.tax, y);
+  doc.text("Amount", cols.amt, y, { align: "right" });
+  y += 5;
+  doc.setLineWidth(0.2);
+  doc.line(margin, y, pageWidth - margin, y);
+  y += 7;
+
+  // Table row
+  doc.setFont(undefined, "normal");
+  doc.text(q.product_service, cols.desc, y);
+  doc.text(q.quantity.toFixed(2), cols.qty, y);
+  doc.text(q.unit_price.toFixed(2), cols.price, y);
+  doc.text(`${q.taxes || 0}%`, cols.tax, y);
+  doc.text(`${amounts.untaxed.toFixed(2)} Rs.`, cols.amt, y, { align: "right" });
+  y += 10;
+  doc.line(margin, y, pageWidth - margin, y);
+  y += 10;
+
+  // Amounts
+  doc.text("Untaxed Amount:", pageWidth - margin - 55, y);
+  doc.setFont(undefined, "bold");
+  doc.text(`${amounts.untaxed.toFixed(2)} Rs.`, pageWidth - margin, y, { align: "right" });
+  y += 6;
+
+  if (amounts.taxRate > 0) {
+    doc.setFont(undefined, "normal");
+    doc.text(`Tax ${amounts.taxRate}%:`, pageWidth - margin - 55, y);
+    doc.setFont(undefined, "bold");
+    doc.text(`${amounts.tax.toFixed(2)} Rs.`, pageWidth - margin, y, { align: "right" });
+    y += 6;
+  }
+
+  doc.setFontSize(13);
+  doc.setFont(undefined, "bold");
+  doc.text("Total:", pageWidth - margin - 55, y + 2);
+  doc.setTextColor(0, 128, 128);
+  doc.text(`${amounts.total.toFixed(2)} Rs.`, pageWidth - margin, y + 2, { align: "right" });
+  y += 20;
+
+  // Footer
+  doc.setFontSize(8);
+  doc.setFont(undefined, "normal");
+  doc.setTextColor(100, 100, 100);
+  doc.text("This quotation is valid for 30 days from the date of issue.", margin, y);
+  y += 5;
+  doc.text(`Generated on: ${new Date().toLocaleString()}`, margin, y);
+
+  doc.save(`Quotation - ${qNum}.pdf`);
+}
+
+// ─── Main Component ──────────────────────────────────────────────────
 
 export function QuotationPanel() {
   const router = useRouter();
+  const [view, setView] = useState<ViewMode>("list");
   const [quotations, setQuotations] = useState<Quotation[]>([]);
+  const [selectedQuotation, setSelectedQuotation] = useState<Quotation | null>(null);
+  const [isNewMode, setIsNewMode] = useState(false);
+  const [isEditMode, setIsEditMode] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [isPending, startTransition] = useTransition();
-  const [activeTab, setActiveTab] = useState<QuotationStatus>("quotation");
-  const [formOpen, setFormOpen] = useState(false);
-  const [deleteOpen, setDeleteOpen] = useState(false);
-  const [logsOpen, setLogsOpen] = useState(false);
-  const [deleteTarget, setDeleteTarget] = useState<Quotation | null>(null);
-  const [logs, setLogs] = useState<QuotationLog[]>([]);
   const [formState, setFormState] = useState<QuotationFormState>(emptyForm);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [logs, setLogs] = useState<QuotationLog[]>([]);
   const [invoiceMap, setInvoiceMap] = useState<Record<string, Invoice>>({});
 
-  const isEditing = Boolean(formState.id);
+  // Send modal
+  const [sendModalOpen, setSendModalOpen] = useState(false);
+  const [sendRecipients, setSendRecipients] = useState("");
+  const [sendSubject, setSendSubject] = useState("");
+  const [sendBody, setSendBody] = useState("");
 
-  useEffect(() => {
-    fetchQuotations();
-  }, [activeTab]);
+  // Delete modal
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<Quotation | null>(null);
 
-  async function fetchQuotations() {
+  // ─── Computed values ─────────────────────────────────────
+  const amounts = computeAmounts(formState.quantity, formState.unit_price, formState.taxes);
+
+  const filteredQuotations = quotations.filter((q) => {
+    if (!searchQuery.trim()) return true;
+    const search = searchQuery.toLowerCase();
+    return (
+      (q.quotation_number || "").toLowerCase().includes(search) ||
+      q.customer_name.toLowerCase().includes(search) ||
+      q.product_service.toLowerCase().includes(search) ||
+      q.created_by.toLowerCase().includes(search)
+    );
+  });
+
+  const currentIndex = selectedQuotation
+    ? filteredQuotations.findIndex((q) => q.id === selectedQuotation.id)
+    : -1;
+
+  // ─── Data fetching ───────────────────────────────────────
+
+  const fetchQuotations = useCallback(async () => {
     setIsLoading(true);
     try {
-      const result = await getAllQuotations(activeTab);
+      const result = await getAllQuotations();
       if ("error" in result) {
         toast.error(result.error || "Unable to load quotations");
         setQuotations([]);
       } else {
         setQuotations(result.quotations || []);
-        // Fetch invoices for sales orders
-        if (activeTab === "sales_order") {
-          const invoicePromises = result.quotations.map(async (q) => {
-            const invoiceResult = await getInvoiceByQuotationId(q.id);
-            if ("invoice" in invoiceResult && invoiceResult.invoice) {
-              return { quotationId: q.id, invoice: invoiceResult.invoice };
-            }
-            return null;
-          });
-          const invoiceResults = await Promise.all(invoicePromises);
-          const newInvoiceMap: Record<string, Invoice> = {};
-          invoiceResults.forEach((result) => {
-            if (result) {
-              newInvoiceMap[result.quotationId] = result.invoice;
-            }
-          });
-          setInvoiceMap(newInvoiceMap);
-        } else {
-          setInvoiceMap({});
-        }
       }
     } catch {
       toast.error("An unexpected error occurred while loading quotations");
@@ -144,71 +458,222 @@ export function QuotationPanel() {
     } finally {
       setIsLoading(false);
     }
+  }, []);
+
+  const fetchLogs = useCallback(async (quotationId: string) => {
+    const result = await getQuotationLogs(quotationId);
+    if ("error" in result) {
+      setLogs([]);
+    } else {
+      setLogs(result.logs || []);
+    }
+  }, []);
+
+  const fetchInvoiceForQuotation = useCallback(async (quotationId: string) => {
+    const result = await getInvoiceByQuotationId(quotationId);
+    if ("invoice" in result && result.invoice) {
+      setInvoiceMap((prev) => ({ ...prev, [quotationId]: result.invoice! }));
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchQuotations();
+  }, [fetchQuotations]);
+
+  // ─── Navigation ──────────────────────────────────────────
+
+  function openDetail(quotation: Quotation) {
+    setSelectedQuotation(quotation);
+    setIsNewMode(false);
+    setIsEditMode(false);
+    setView("detail");
+    fetchLogs(quotation.id);
+    if (quotation.status === "sales_order") {
+      fetchInvoiceForQuotation(quotation.id);
+    }
   }
 
-  function openCreate() {
+  function openNew() {
+    setSelectedQuotation(null);
+    setIsNewMode(true);
+    setIsEditMode(true);
+    setFormState({ ...emptyForm });
+    setLogs([]);
+    setView("detail");
+  }
+
+  function backToList() {
+    setView("list");
+    setSelectedQuotation(null);
+    setIsNewMode(false);
+    setIsEditMode(false);
     setFormState(emptyForm);
-    setFormOpen(true);
+    setLogs([]);
+    fetchQuotations();
   }
 
-  function openEdit(quotation: Quotation) {
+  function navigatePrev() {
+    if (currentIndex > 0) {
+      openDetail(filteredQuotations[currentIndex - 1]);
+    }
+  }
+
+  function navigateNext() {
+    if (currentIndex < filteredQuotations.length - 1) {
+      openDetail(filteredQuotations[currentIndex + 1]);
+    }
+  }
+
+  function startEdit() {
+    if (!selectedQuotation) return;
+    const q = selectedQuotation;
     setFormState({
-      id: quotation.id,
-      customer_name: quotation.customer_name,
-      product_service: quotation.product_service,
-      quantity: String(quotation.quantity),
-      unit_price: String(quotation.unit_price),
-      total_amount: String(quotation.total_amount),
+      customer_name: q.customer_name,
+      product_service: q.product_service,
+      quantity: String(q.quantity),
+      unit_price: String(q.unit_price),
+      taxes: String(q.taxes || 0),
+      expiration_date: q.expiration_date || "",
+      payment_terms: q.payment_terms || "Immediate",
     });
-    setFormOpen(true);
+    setIsEditMode(true);
   }
 
-  function handleFormChange<K extends keyof QuotationFormState>(key: K, value: string) {
-    setFormState((prev) => {
-      const updated = { ...prev, [key]: value };
-      // Auto-calculate total_amount if quantity or unit_price changes
-      if (key === "quantity" || key === "unit_price") {
-        const qty = parseFloat(updated.quantity) || 0;
-        const price = parseFloat(updated.unit_price) || 0;
-        updated.total_amount = (qty * price).toFixed(2);
-      }
-      return updated;
-    });
+  // ─── Form handlers ──────────────────────────────────────
+
+  function handleFormChange(key: keyof QuotationFormState, value: string) {
+    setFormState((prev) => ({ ...prev, [key]: value }));
   }
 
-  function handleCloseForm(open: boolean) {
-    setFormOpen(open);
-    if (!open) {
-      setFormState(emptyForm);
+  async function handleSave() {
+    if (!formState.customer_name.trim() || !formState.product_service.trim()) {
+      toast.error("Customer name and product/service are required");
+      return;
     }
-  }
-
-  async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const form = event.currentTarget;
-    const fd = new FormData(form);
-
-    if (formState.id) {
-      fd.set("id", formState.id);
+    const qty = parseFloat(formState.quantity);
+    const price = parseFloat(formState.unit_price);
+    if (isNaN(qty) || qty <= 0 || isNaN(price) || price <= 0) {
+      toast.error("Quantity and unit price must be greater than zero");
+      return;
     }
+
+    const fd = new FormData();
+    if (selectedQuotation?.id) fd.set("id", selectedQuotation.id);
+    fd.set("customer_name", formState.customer_name.trim());
+    fd.set("product_service", formState.product_service.trim());
+    fd.set("quantity", formState.quantity);
+    fd.set("unit_price", formState.unit_price);
+    fd.set("taxes", formState.taxes);
+    fd.set("expiration_date", formState.expiration_date);
+    fd.set("payment_terms", formState.payment_terms);
 
     startTransition(async () => {
-      const action = formState.id ? updateQuotation : createQuotation;
+      const action = selectedQuotation?.id ? updateQuotation : createQuotation;
       const result = await action(fd);
 
       if ("error" in result) {
-        toast.error(result.error || "Unable to save quotation");
+        toast.error(result.error || "Failed to save quotation");
         return;
       }
 
-      toast.success("Quotation saved", {
-        className: "bg-green-500 text-white border-green-500",
-      });
-      handleCloseForm(false);
-      await fetchQuotations();
+      toast.success(isNewMode ? "Quotation created" : "Quotation updated");
+      const q = result.quotation as Quotation;
+      setSelectedQuotation(q);
+      setIsNewMode(false);
+      setIsEditMode(false);
+      fetchLogs(q.id);
+      fetchQuotations();
       router.refresh();
     });
   }
+
+  // ─── Send handlers ──────────────────────────────────────
+
+  function openSendModal() {
+    if (!selectedQuotation) return;
+    const q = selectedQuotation;
+    const qNum = q.quotation_number || "New";
+    const total = q.total_amount.toFixed(2);
+    setSendRecipients("");
+    setSendSubject(`logistix Quotation ${qNum}`);
+    setSendBody(
+      `Hello,\n\nYour quotation ${qNum} amounting in ${total} Rs. is ready for review.\n\nDo not hesitate to contact us if you have any questions.\n--\nAdministrator`
+    );
+    setSendModalOpen(true);
+  }
+
+  async function handleSend() {
+    if (!selectedQuotation) return;
+
+    startTransition(async () => {
+      const result = await sendQuotation(selectedQuotation.id, {
+        recipients: sendRecipients,
+        subject: sendSubject,
+        body: sendBody,
+      });
+
+      if ("error" in result) {
+        toast.error(result.error || "Failed to send quotation");
+        return;
+      }
+
+      toast.success("Quotation sent!");
+      setSendModalOpen(false);
+      const q = result.quotation as Quotation;
+      setSelectedQuotation(q);
+      fetchLogs(q.id);
+      fetchQuotations();
+      router.refresh();
+    });
+  }
+
+  // ─── Print handler ──────────────────────────────────────
+
+  async function handlePrint() {
+    if (!selectedQuotation) return;
+    startTransition(async () => {
+      await logQuotationPrint(selectedQuotation.id);
+      generateQuotationPdf(selectedQuotation);
+      fetchLogs(selectedQuotation.id);
+    });
+  }
+
+  // ─── Confirm handler ───────────────────────────────────
+
+  async function handleConfirm() {
+    if (!selectedQuotation) return;
+    startTransition(async () => {
+      const result = await confirmOrder(selectedQuotation.id);
+      if ("error" in result) {
+        toast.error(result.error || "Failed to confirm order");
+        return;
+      }
+      toast.success("Sales Order confirmed!");
+      const q = result.quotation as Quotation;
+      setSelectedQuotation(q);
+      fetchLogs(q.id);
+      fetchQuotations();
+      router.refresh();
+    });
+  }
+
+  // ─── Create Invoice handler ────────────────────────────
+
+  async function handleCreateInvoice() {
+    if (!selectedQuotation) return;
+    startTransition(async () => {
+      const result = await createInvoiceFromSalesOrder(selectedQuotation.id);
+      if ("error" in result) {
+        toast.error(result.error || "Unable to create invoice");
+        return;
+      }
+      toast.success("Invoice created successfully");
+      fetchInvoiceForQuotation(selectedQuotation.id);
+      router.refresh();
+    });
+  }
+
+  // ─── Delete handlers ───────────────────────────────────
 
   function confirmDelete(quotation: Quotation) {
     setDeleteTarget(quotation);
@@ -217,666 +682,711 @@ export function QuotationPanel() {
 
   async function handleDelete() {
     if (!deleteTarget) return;
-
     startTransition(async () => {
       const result = await deleteQuotation(deleteTarget.id);
       if ("error" in result) {
         toast.error(result.error || "Unable to delete quotation");
         return;
       }
-      toast.success("Quotation deleted", {
-        className: "bg-green-500 text-white border-green-500",
-      });
+      toast.success("Quotation deleted");
       setDeleteOpen(false);
       setDeleteTarget(null);
-      await fetchQuotations();
+      if (view === "detail") backToList();
+      else fetchQuotations();
       router.refresh();
     });
   }
 
-  async function handleSendQuotation(quotation: Quotation) {
-    startTransition(async () => {
-      const result = await sendQuotation(quotation.id);
-      if ("error" in result) {
-        toast.error(result.error || "Unable to send quotation");
-        return;
-      }
-      toast.success("Quotation sent", {
-        className: "bg-green-500 text-white border-green-500",
-      });
-      await fetchQuotations();
-      router.refresh();
-    });
-  }
+  // ═══════════════════════════════════════════════════════════════════
+  //  DETAIL VIEW
+  // ═══════════════════════════════════════════════════════════════════
 
-  async function handleConfirmOrder(quotation: Quotation) {
-    startTransition(async () => {
-      const result = await confirmOrder(quotation.id);
-      if ("error" in result) {
-        toast.error(result.error || "Unable to confirm order");
-        return;
-      }
-      toast.success("Order confirmed", {
-        className: "bg-green-500 text-white border-green-500",
-      });
-      await fetchQuotations();
-      router.refresh();
-    });
-  }
+  if (view === "detail") {
+    const q = selectedQuotation;
+    const qAmounts = q ? getQAmounts(q) : { untaxed: 0, tax: 0, total: 0, taxRate: 0 };
 
-  async function handleCreateInvoice(quotation: Quotation) {
-    startTransition(async () => {
-      const result = await createInvoiceFromSalesOrder(quotation.id);
-      if ("error" in result) {
-        toast.error(result.error || "Unable to create invoice");
-        return;
-      }
-      toast.success("Invoice created successfully", {
-        className: "bg-green-500 text-white border-green-500",
-      });
-      await fetchQuotations();
-      router.refresh();
-    });
-  }
+    return (
+      <div className="space-y-4">
+        {/* ─── Top navigation bar ─────────────────────────────── */}
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2 text-sm">
+            <button
+              onClick={backToList}
+              className="text-teal-600 hover:underline flex items-center gap-1"
+            >
+              <ArrowLeft className="h-4 w-4" />
+              Quotations
+            </button>
+            <span className="text-slate-400">/</span>
+            <span className="font-semibold text-slate-700">
+              {q?.quotation_number || "New"}
+            </span>
+          </div>
+          {q && !isNewMode && (
+            <div className="flex items-center gap-2 text-sm text-slate-500">
+              <span>
+                {currentIndex + 1} / {filteredQuotations.length}
+              </span>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={navigatePrev}
+                disabled={currentIndex <= 0}
+                className="h-7 w-7 p-0"
+              >
+                <ChevronLeft className="h-4 w-4" />
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={navigateNext}
+                disabled={currentIndex >= filteredQuotations.length - 1}
+                className="h-7 w-7 p-0"
+              >
+                <ChevronRight className="h-4 w-4" />
+              </Button>
+            </div>
+          )}
+        </div>
 
-  async function openLogs(quotation: Quotation) {
-    setLogsOpen(true);
-    const result = await getQuotationLogs(quotation.id);
-    if ("error" in result) {
-      toast.error(result.error || "Unable to load logs");
-      setLogs([]);
-    } else {
-      setLogs(result.logs || []);
-    }
-  }
+        {/* ─── Action buttons + Status stepper ────────────────── */}
+        <div className="flex items-center justify-between flex-wrap gap-3">
+          <div className="flex items-center gap-2 flex-wrap">
+            {isNewMode || isEditMode ? (
+              <>
+                <Button
+                  onClick={handleSave}
+                  disabled={isPending}
+                  className="bg-teal-600 hover:bg-teal-700 text-white"
+                  size="sm"
+                >
+                  {isPending ? "Saving..." : isNewMode ? "Save" : "Save"}
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    setIsEditMode(false);
+                    if (isNewMode) backToList();
+                  }}
+                >
+                  Discard
+                </Button>
+              </>
+            ) : (
+              <>
+                {q?.status === "quotation" && (
+                  <>
+                    <Button
+                      size="sm"
+                      onClick={openSendModal}
+                      className="bg-teal-600 hover:bg-teal-700 text-white"
+                    >
+                      <Send className="h-3.5 w-3.5 mr-1" /> Send
+                    </Button>
+                    <Button variant="outline" size="sm" onClick={handlePrint} disabled={isPending}>
+                      <Printer className="h-3.5 w-3.5 mr-1" /> Print
+                    </Button>
+                    <Button variant="outline" size="sm" onClick={handleConfirm} disabled={isPending}>
+                      <CheckCircle className="h-3.5 w-3.5 mr-1" /> Confirm
+                    </Button>
+                  </>
+                )}
+                {q?.status === "quotation_sent" && (
+                  <>
+                    <Button
+                      size="sm"
+                      onClick={handleConfirm}
+                      disabled={isPending}
+                      className="bg-teal-600 hover:bg-teal-700 text-white"
+                    >
+                      <CheckCircle className="h-3.5 w-3.5 mr-1" /> Confirm
+                    </Button>
+                    <Button variant="outline" size="sm" onClick={handlePrint} disabled={isPending}>
+                      <Printer className="h-3.5 w-3.5 mr-1" /> Print
+                    </Button>
+                    <Button variant="outline" size="sm" onClick={openSendModal}>
+                      <Send className="h-3.5 w-3.5 mr-1" /> Send
+                    </Button>
+                  </>
+                )}
+                {q?.status === "sales_order" && (
+                  <>
+                    <Button variant="outline" size="sm" onClick={handlePrint} disabled={isPending}>
+                      <Printer className="h-3.5 w-3.5 mr-1" /> Print
+                    </Button>
+                    {invoiceMap[q.id] ? (
+                      <Button variant="outline" size="sm" onClick={() => toast.info(`Invoice: ${invoiceMap[q.id].invoice_number}`)}>
+                        <ExternalLink className="h-3.5 w-3.5 mr-1" /> View Invoice
+                      </Button>
+                    ) : (
+                      <Button
+                        size="sm"
+                        onClick={handleCreateInvoice}
+                        disabled={isPending}
+                        className="bg-teal-600 hover:bg-teal-700 text-white"
+                      >
+                        <FileText className="h-3.5 w-3.5 mr-1" /> Create Invoice
+                      </Button>
+                    )}
+                  </>
+                )}
+              </>
+            )}
+          </div>
 
-  async function handlePrintQuotation(quotation: Quotation) {
-    startTransition(async () => {
-      // Log the print action
-      await logQuotationPrint(quotation.id);
-      
-      // Generate and download PDF
-      downloadQuotationPdf(quotation);
-    });
-  }
+          {q && !isNewMode && <StatusStepper currentStatus={q.status} />}
+        </div>
 
-  function downloadQuotationPdf(quotation: Quotation) {
-    const doc = new jsPDF();
-    const pageWidth = doc.internal.pageSize.getWidth();
-    const margin = 20;
-    let y = margin;
+        {/* ─── Main content: Form + Activity ──────────────────── */}
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          {/* Left: Form area */}
+          <div className="lg:col-span-2">
+            <Card className="border shadow-sm">
+              <CardContent className="p-6 space-y-6">
+                {/* Title */}
+                <h1 className="text-2xl font-bold text-slate-800">
+                  {q?.quotation_number || "New"}
+                </h1>
 
-    // Header: Company name (top-left)
-    doc.setFontSize(16);
-    doc.setFont(undefined, "bold");
-    doc.setTextColor(0, 128, 128); // Teal color
-    doc.text("LOGISTIX", margin, y);
-    
-    // Tagline (top-right)
-    doc.setFontSize(10);
-    doc.setFont(undefined, "normal");
-    doc.setTextColor(0, 0, 0);
-    doc.text(
-      "Seamless, Strategic Logistics & Financing",
-      pageWidth - margin,
-      y,
-      { align: "right" }
+                {/* Customer / Details Grid */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-4">
+                  {/* Left column */}
+                  <div className="space-y-3">
+                    <div>
+                      <Label className="text-xs text-slate-500 font-medium">Customer</Label>
+                      {isEditMode ? (
+                        <Input
+                          value={formState.customer_name}
+                          onChange={(e) => handleFormChange("customer_name", e.target.value)}
+                          placeholder="Type to find a customer..."
+                          className="mt-1"
+                        />
+                      ) : (
+                        <div className="font-semibold mt-1 text-slate-800">
+                          {q?.customer_name || "-"}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Right column */}
+                  <div className="space-y-3">
+                    <div className="flex items-start gap-6">
+                      <div className="flex-1">
+                        <Label className="text-xs text-slate-500 font-medium">
+                          Expiration
+                        </Label>
+                        {isEditMode ? (
+                          <Input
+                            type="date"
+                            value={formState.expiration_date}
+                            onChange={(e) => handleFormChange("expiration_date", e.target.value)}
+                            className="mt-1"
+                          />
+                        ) : (
+                          <div className="mt-1 text-sm text-slate-700">
+                            {q?.expiration_date
+                              ? new Date(q.expiration_date).toLocaleDateString("en-US", {
+                                  month: "short",
+                                  day: "numeric",
+                                })
+                              : "-"}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                    <div>
+                      <Label className="text-xs text-slate-500 font-medium">
+                        Payment Terms
+                      </Label>
+                      {isEditMode ? (
+                        <Input
+                          value={formState.payment_terms}
+                          onChange={(e) => handleFormChange("payment_terms", e.target.value)}
+                          className="mt-1"
+                        />
+                      ) : (
+                        <div className="mt-1 text-sm text-slate-700">
+                          {q?.payment_terms || "Immediate"}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Separator */}
+                <div className="border-t" />
+
+                {/* Order Lines / Other Info Tabs */}
+                <div>
+                  <div className="flex gap-6 mb-4 border-b">
+                    <span className="text-sm font-semibold text-teal-700 border-b-2 border-teal-600 pb-2 cursor-pointer">
+                      Order Lines
+                    </span>
+                    <span className="text-sm text-slate-400 pb-2 cursor-pointer hover:text-slate-600">
+                      Other Info
+                    </span>
+                  </div>
+
+                  {/* Product Table */}
+                  <div className="overflow-x-auto">
+                    <Table>
+                      <TableHeader>
+                        <TableRow className="bg-slate-50">
+                          <TableHead className="font-semibold">Product</TableHead>
+                          <TableHead className="text-right font-semibold">Quantity</TableHead>
+                          <TableHead className="text-right font-semibold">Unit Price</TableHead>
+                          <TableHead className="text-center font-semibold">Taxes</TableHead>
+                          <TableHead className="text-right font-semibold">Amount</TableHead>
+                          {isEditMode && <TableHead className="w-10" />}
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {isEditMode ? (
+                          <TableRow>
+                            <TableCell>
+                              <Input
+                                value={formState.product_service}
+                                onChange={(e) =>
+                                  handleFormChange("product_service", e.target.value)
+                                }
+                                placeholder="Enter product/service"
+                                className="min-w-[150px]"
+                              />
+                            </TableCell>
+                            <TableCell>
+                              <Input
+                                type="number"
+                                value={formState.quantity}
+                                onChange={(e) => handleFormChange("quantity", e.target.value)}
+                                className="text-right w-24"
+                                step="0.01"
+                                min="0"
+                              />
+                            </TableCell>
+                            <TableCell>
+                              <Input
+                                type="number"
+                                value={formState.unit_price}
+                                onChange={(e) => handleFormChange("unit_price", e.target.value)}
+                                className="text-right w-28"
+                                step="0.01"
+                                min="0"
+                              />
+                            </TableCell>
+                            <TableCell>
+                              <div className="flex items-center justify-center gap-1">
+                                <Input
+                                  type="number"
+                                  value={formState.taxes}
+                                  onChange={(e) => handleFormChange("taxes", e.target.value)}
+                                  className="text-center w-16"
+                                  min="0"
+                                  max="100"
+                                />
+                                <span className="text-xs text-slate-500">%</span>
+                              </div>
+                            </TableCell>
+                            <TableCell className="text-right font-semibold whitespace-nowrap">
+                              {amounts.untaxed.toFixed(2)} Rs.
+                            </TableCell>
+                            <TableCell>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="h-7 w-7 p-0"
+                                onClick={() =>
+                                  setFormState((prev) => ({
+                                    ...prev,
+                                    product_service: "",
+                                    quantity: "",
+                                    unit_price: "",
+                                  }))
+                                }
+                              >
+                                <Trash2 className="h-4 w-4 text-red-400" />
+                              </Button>
+                            </TableCell>
+                          </TableRow>
+                        ) : q?.product_service ? (
+                          <TableRow>
+                            <TableCell className="text-slate-800">{q.product_service}</TableCell>
+                            <TableCell className="text-right">{q.quantity.toFixed(2)}</TableCell>
+                            <TableCell className="text-right">{q.unit_price.toFixed(2)}</TableCell>
+                            <TableCell className="text-center">
+                              <Badge variant="secondary" className="text-xs">
+                                {q.taxes || 0}%
+                              </Badge>
+                            </TableCell>
+                            <TableCell className="text-right font-semibold">
+                              {qAmounts.untaxed.toFixed(2)} Rs.
+                            </TableCell>
+                          </TableRow>
+                        ) : (
+                          <TableRow>
+                            <TableCell
+                              colSpan={5}
+                              className="text-center text-slate-400 py-6 text-sm"
+                            >
+                              No products added yet.
+                            </TableCell>
+                          </TableRow>
+                        )}
+                      </TableBody>
+                    </Table>
+                  </div>
+
+                  {/* Add a product link */}
+                  {isEditMode && !formState.product_service && (
+                    <div className="flex gap-4 mt-2 pl-4 text-sm">
+                      <button
+                        className="text-teal-600 hover:underline"
+                        onClick={() => {
+                          /* product field is already shown in edit mode */
+                        }}
+                      >
+                        Add a product
+                      </button>
+                    </div>
+                  )}
+                </div>
+
+                {/* Terms and conditions */}
+                <div className="text-sm text-slate-400 italic pt-4">
+                  Terms and conditions...
+                </div>
+
+                {/* Amount Summary */}
+                <div className="flex justify-end border-t pt-4">
+                  <div className="space-y-2 text-right min-w-[250px]">
+                    <div className="flex justify-between text-sm">
+                      <span className="text-slate-500">Untaxed Amount:</span>
+                      <span className="font-semibold">
+                        {isEditMode
+                          ? amounts.untaxed.toFixed(2)
+                          : qAmounts.untaxed.toFixed(2)}{" "}
+                        Rs.
+                      </span>
+                    </div>
+                    {(isEditMode ? parseFloat(formState.taxes) > 0 : (q?.taxes || 0) > 0) && (
+                      <div className="flex justify-between text-sm">
+                        <span className="text-slate-500">
+                          Tax {isEditMode ? formState.taxes : q?.taxes || 0}%:
+                        </span>
+                        <span className="font-semibold">
+                          {isEditMode
+                            ? amounts.tax.toFixed(2)
+                            : qAmounts.tax.toFixed(2)}{" "}
+                          Rs.
+                        </span>
+                      </div>
+                    )}
+                    <div className="flex justify-between text-base border-t pt-2">
+                      <span className="font-bold">Total:</span>
+                      <span className="font-bold text-lg text-teal-700">
+                        {isEditMode
+                          ? amounts.total.toFixed(2)
+                          : qAmounts.total.toFixed(2)}{" "}
+                        Rs.
+                      </span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Edit button (read mode, quotation status only) */}
+                {!isNewMode && !isEditMode && q?.status === "quotation" && (
+                  <div className="flex justify-end gap-2">
+                    <Button variant="outline" size="sm" onClick={startEdit}>
+                      <Edit2 className="h-3.5 w-3.5 mr-1" /> Edit
+                    </Button>
+                    <Button
+                      variant="destructive"
+                      size="sm"
+                      onClick={() => confirmDelete(q)}
+                      disabled={isPending}
+                    >
+                      <Trash2 className="h-3.5 w-3.5 mr-1" /> Delete
+                    </Button>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </div>
+
+          {/* Right: Activity Panel */}
+          {q && !isNewMode && (
+            <div className="lg:col-span-1 space-y-3">
+              {/* Action buttons */}
+              <div className="flex gap-1 flex-wrap">
+                <Button
+                  size="sm"
+                  className="bg-orange-500 hover:bg-orange-600 text-white text-xs h-7 px-3"
+                >
+                  Send message
+                </Button>
+                <Button variant="outline" size="sm" className="text-xs h-7 px-3">
+                  Log note
+                </Button>
+                <Button variant="outline" size="sm" className="text-xs h-7 px-3">
+                  Activity
+                </Button>
+              </div>
+
+              {/* Activity Feed */}
+              <div className="space-y-4 max-h-[calc(100vh-320px)] overflow-y-auto pr-1">
+                {logs.length === 0 ? (
+                  <p className="text-sm text-slate-400 text-center py-8">
+                    No activity yet.
+                  </p>
+                ) : (
+                  <>
+                    <div className="text-xs text-slate-400 font-semibold uppercase tracking-wider">
+                      Today
+                    </div>
+                    {logs.map((log) => (
+                      <div key={log.id} className="flex gap-3">
+                        <div className="h-8 w-8 rounded-full bg-teal-100 flex items-center justify-center text-teal-800 font-semibold text-xs shrink-0 mt-0.5">
+                          {(log.performed_by || "?").charAt(0).toUpperCase()}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-baseline gap-2 flex-wrap">
+                            <span className="font-semibold text-sm text-slate-700">
+                              {log.performed_by}
+                            </span>
+                            {log.action === "status_changed" &&
+                              log.details &&
+                              typeof (log.details as Record<string, unknown>).message_subject === "string" && (
+                                <span className="text-xs">✉</span>
+                              )}
+                            <span className="text-xs text-slate-400">
+                              {new Date(log.performed_at).toLocaleTimeString([], {
+                                hour: "2-digit",
+                                minute: "2-digit",
+                              })}
+                            </span>
+                          </div>
+                          {renderLogContent(log)}
+                        </div>
+                      </div>
+                    ))}
+                  </>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* ─── Send Modal ─────────────────────────────────────── */}
+        <Dialog open={sendModalOpen} onOpenChange={setSendModalOpen}>
+          <DialogContent className="sm:max-w-[600px]">
+            <DialogHeader>
+              <DialogTitle className="flex items-center justify-between">
+                <span>Send</span>
+              </DialogTitle>
+            </DialogHeader>
+            <div className="space-y-4">
+              <div className="flex items-center gap-3">
+                <Label className="w-16 text-right text-sm text-slate-500 shrink-0">To</Label>
+                <Input
+                  value={sendRecipients}
+                  onChange={(e) => setSendRecipients(e.target.value)}
+                  placeholder="Add recipients..."
+                  className="flex-1"
+                />
+              </div>
+              <div className="flex items-center gap-3">
+                <Label className="w-16 text-right text-sm text-slate-500 shrink-0">Subject</Label>
+                <Input
+                  value={sendSubject}
+                  onChange={(e) => setSendSubject(e.target.value)}
+                  className="flex-1"
+                />
+              </div>
+              <Textarea
+                value={sendBody}
+                onChange={(e) => setSendBody(e.target.value)}
+                rows={8}
+                className="resize-none"
+              />
+              {/* Attachment indicator */}
+              <div className="flex items-center gap-2 text-sm px-1">
+                <Paperclip className="h-4 w-4 text-teal-600" />
+                <span className="text-teal-600">
+                  Quotation - {q?.quotation_number || "New"}.pdf
+                </span>
+                <button className="text-slate-400 hover:text-red-500">
+                  <X className="h-3 w-3" />
+                </button>
+              </div>
+            </div>
+            <DialogFooter className="justify-start gap-2 sm:justify-start">
+              <Button
+                onClick={handleSend}
+                disabled={isPending}
+                className="bg-teal-600 hover:bg-teal-700 text-white"
+              >
+                {isPending ? "Sending..." : "Send"}
+              </Button>
+              <Button variant="outline" onClick={() => setSendModalOpen(false)}>
+                Discard
+              </Button>
+              <div className="flex-1" />
+              <Paperclip className="h-4 w-4 text-slate-400 cursor-pointer" />
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        {/* ─── Delete Modal ───────────────────────────────────── */}
+        <Dialog open={deleteOpen} onOpenChange={setDeleteOpen}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Delete Quotation</DialogTitle>
+            </DialogHeader>
+            <p className="text-sm text-slate-500">
+              Are you sure you want to delete this quotation? This action cannot be undone.
+            </p>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setDeleteOpen(false)}>
+                Cancel
+              </Button>
+              <Button variant="destructive" onClick={handleDelete} disabled={isPending}>
+                {isPending ? "Deleting..." : "Delete"}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      </div>
     );
-    y += 8;
-
-    // Company contact details (under logo)
-    doc.setFontSize(9);
-    const addressLines = [
-      "National Incubation Center, NED University, Karachi,",
-      "Karachi City, Sindh 75270",
-    ];
-    addressLines.forEach((line) => {
-      doc.text(line, margin, y);
-      y += 5;
-    });
-    y += 10;
-
-    // Document Title: QUOTATION
-    doc.setFontSize(18);
-    doc.setFont(undefined, "bold");
-    doc.setTextColor(0, 128, 128);
-    doc.text("QUOTATION", pageWidth / 2, y, { align: "center" });
-    y += 10;
-
-    // Quotation Number and Date
-    doc.setFontSize(10);
-    doc.setFont(undefined, "normal");
-    doc.setTextColor(0, 0, 0);
-    const quotationNumber = `QT-${quotation.id.substring(0, 8).toUpperCase()}`;
-    doc.text(`Quotation Number: ${quotationNumber}`, margin, y);
-    const quotationDate = new Date(quotation.created_at).toLocaleDateString();
-    doc.text(`Quotation Date: ${quotationDate}`, pageWidth - margin, y, { align: "right" });
-    y += 12;
-
-    // Customer Details Section
-    doc.setFontSize(11);
-    doc.setFont(undefined, "bold");
-    doc.text("Customer Details:", margin, y);
-    y += 7;
-    doc.setFontSize(10);
-    doc.setFont(undefined, "normal");
-    doc.text(`Customer Name: ${quotation.customer_name}`, margin + 5, y);
-    y += 6;
-    doc.text("Customer Contact: [To be filled]", margin + 5, y);
-    y += 10;
-
-    // Horizontal line
-    doc.setDrawColor(200);
-    doc.setLineWidth(0.5);
-    doc.line(margin, y, pageWidth - margin, y);
-    y += 8;
-
-    // Product/Service Table Header
-    doc.setFontSize(10);
-    doc.setFont(undefined, "bold");
-    const descX = margin;
-    const qtyX = margin + 90;
-    const unitX = margin + 130;
-    const totalX = pageWidth - margin;
-    
-    doc.text("Product/Service", descX, y);
-    doc.text("Quantity", qtyX, y);
-    doc.text("Unit Price", unitX, y);
-    doc.text("Total Amount", totalX, y, { align: "right" });
-    y += 6;
-
-    // Table line
-    doc.setDrawColor(0);
-    doc.setLineWidth(0.2);
-    doc.line(margin, y, pageWidth - margin, y);
-    y += 7;
-
-    // Product/Service Row
-    doc.setFont(undefined, "normal");
-    doc.text(quotation.product_service, descX, y);
-    doc.text(String(quotation.quantity), qtyX, y);
-    doc.text(`Rs. ${quotation.unit_price.toFixed(2)}`, unitX, y);
-    doc.text(`Rs. ${quotation.total_amount.toFixed(2)}`, totalX, y, { align: "right" });
-    y += 10;
-
-    // Bottom line
-    doc.line(margin, y, pageWidth - margin, y);
-    y += 8;
-
-    // Total Amount (right-aligned)
-    doc.setFontSize(12);
-    doc.setFont(undefined, "bold");
-    doc.text("Total Amount:", pageWidth - margin - 50, y);
-    doc.text(`Rs. ${quotation.total_amount.toFixed(2)}`, totalX, y, { align: "right" });
-    y += 12;
-
-    // Quotation Status
-    doc.setFontSize(10);
-    doc.setFont(undefined, "normal");
-    doc.text(`Status: ${formatStatus(quotation.status)}`, margin, y);
-    y += 15;
-
-    // Footer Notes
-    doc.setFontSize(8);
-    doc.setTextColor(100, 100, 100);
-    doc.text("This quotation is valid for 30 days from the date of issue.", margin, y);
-    y += 5;
-    doc.text("For any queries, please contact us at the above address.", margin, y);
-    y += 5;
-    doc.text(`Generated on: ${new Date().toLocaleString()}`, margin, y);
-
-    // Save PDF
-    doc.save(`quotation-${quotationNumber}.pdf`);
   }
 
-  const filteredQuotations = quotations.filter((q) => q.status === activeTab);
+  // ═══════════════════════════════════════════════════════════════════
+  //  LIST VIEW
+  // ═══════════════════════════════════════════════════════════════════
+
+  // Compute total of all displayed quotations
+  const displayTotal = filteredQuotations.reduce((sum, q) => sum + q.total_amount, 0);
 
   return (
-    <div className="space-y-6">
-      {/* Header with Create Button */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h2 className="text-2xl font-bold">Sales Management</h2>
-          <p className="text-sm text-secondary-muted">
-            Manage quotations through the sales workflow
-          </p>
+    <div className="space-y-4">
+      {/* Header */}
+      <div className="flex items-center justify-between flex-wrap gap-3">
+        <div className="flex items-center gap-3">
+          <Button
+            onClick={openNew}
+            className="bg-pink-600 hover:bg-pink-700 text-white"
+            size="sm"
+          >
+            New
+          </Button>
+          <h1 className="text-xl font-bold text-slate-800">Quotations</h1>
         </div>
-        <Button onClick={openCreate} className="create-console-btn">
-          <PlusCircle className="h-4 w-4 mr-2" />
-          New Quotation
-        </Button>
-      </div>
-
-      {/* Tabs */}
-      <div className="flex gap-2 border-b overflow-x-auto">
-        <Button
-          variant={activeTab === "quotation" ? "default" : "ghost"}
-          onClick={() => setActiveTab("quotation")}
-          className="rounded-b-none shrink-0 sidebar-button"
-          data-variant={activeTab === "quotation" ? "default" : "outline"}
-        >
-          <span className="sidebar-text">Quotations</span>
-        </Button>
-        <Button
-          variant={activeTab === "quotation_sent" ? "default" : "ghost"}
-          onClick={() => setActiveTab("quotation_sent")}
-          className="rounded-b-none shrink-0 sidebar-button"
-          data-variant={activeTab === "quotation_sent" ? "default" : "outline"}
-        >
-          <span className="sidebar-text">Quotations Sent</span>
-        </Button>
-        <Button
-          variant={activeTab === "sales_order" ? "default" : "ghost"}
-          onClick={() => setActiveTab("sales_order")}
-          className="rounded-b-none shrink-0 sidebar-button"
-          data-variant={activeTab === "sales_order" ? "default" : "outline"}
-        >
-          <span className="sidebar-text">Sales Orders</span>
-        </Button>
+        <div className="flex items-center gap-3">
+          <div className="relative">
+            <Search className="h-4 w-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+            <Input
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Search..."
+              className="pl-9 w-60"
+            />
+          </div>
+          <span className="text-sm text-slate-500">
+            {filteredQuotations.length} record{filteredQuotations.length !== 1 ? "s" : ""}
+          </span>
+        </div>
       </div>
 
       {/* Table */}
-      <Card>
+      <Card className="border shadow-sm">
         <CardContent className="p-0">
           {isLoading ? (
-            <div className="py-16 text-center text-secondary-muted">
-              Loading quotations...
-            </div>
+            <div className="py-16 text-center text-slate-400">Loading quotations...</div>
           ) : filteredQuotations.length === 0 ? (
-            <div className="py-16 text-center text-secondary-muted">
-              No quotations found in this stage.
+            <div className="py-16 text-center text-slate-400">
+              {searchQuery ? "No quotations match your search." : "No quotations found. Click New to create one."}
             </div>
           ) : (
             <div className="overflow-x-auto">
               <Table>
                 <TableHeader>
-                  <TableRow>
-                    <TableHead>Customer</TableHead>
-                    <TableHead>Product/Service</TableHead>
-                    <TableHead>Quantity</TableHead>
-                    <TableHead>Unit Price</TableHead>
-                    <TableHead>Total</TableHead>
-                    <TableHead>Status</TableHead>
-                    <TableHead className="text-right">Actions</TableHead>
+                  <TableRow className="bg-slate-50">
+                    <TableHead className="font-semibold">Number</TableHead>
+                    <TableHead className="font-semibold">Creation Date</TableHead>
+                    <TableHead className="font-semibold">Customer</TableHead>
+                    <TableHead className="font-semibold">Salesperson</TableHead>
+                    <TableHead className="text-right font-semibold">Total</TableHead>
+                    <TableHead className="font-semibold">Status</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {filteredQuotations.map((quotation) => (
-                    <TableRow key={quotation.id}>
-                      <TableCell className="font-semibold">
-                        {quotation.customer_name}
+                  {filteredQuotations.map((q) => (
+                    <TableRow
+                      key={q.id}
+                      className="cursor-pointer hover:bg-slate-50 transition-colors"
+                      onClick={() => openDetail(q)}
+                    >
+                      <TableCell className="font-semibold text-teal-700">
+                        {q.quotation_number || `QT-${q.id.substring(0, 8)}`}
                       </TableCell>
-                      <TableCell>{quotation.product_service}</TableCell>
-                      <TableCell>{quotation.quantity}</TableCell>
-                      <TableCell>Rs. {quotation.unit_price.toFixed(2)}</TableCell>
-                      <TableCell className="font-semibold">
-                        Rs. {quotation.total_amount.toFixed(2)}
+                      <TableCell className="text-slate-600">
+                        {new Date(q.created_at).toLocaleDateString("en-US", {
+                          month: "short",
+                          day: "numeric",
+                          hour: "2-digit",
+                          minute: "2-digit",
+                        })}
+                      </TableCell>
+                      <TableCell className="text-slate-800">{q.customer_name}</TableCell>
+                      <TableCell>
+                        <div className="flex items-center gap-2">
+                          <div className="h-6 w-6 rounded-full bg-purple-100 flex items-center justify-center text-purple-800 text-xs font-semibold">
+                            {(q.created_by || "?").charAt(0).toUpperCase()}
+                          </div>
+                          <span className="text-sm text-slate-600">{q.created_by}</span>
+                        </div>
+                      </TableCell>
+                      <TableCell className="text-right font-semibold text-slate-800">
+                        {q.total_amount.toFixed(2)} Rs.
                       </TableCell>
                       <TableCell>
-                        <Badge variant={getStatusBadgeVariant(quotation.status)}>
-                          {formatStatus(quotation.status)}
+                        <Badge
+                          variant="outline"
+                          className={`text-xs ${getStatusBadgeColor(q.status)}`}
+                        >
+                          {formatStatus(q.status)}
                         </Badge>
-                      </TableCell>
-                      <TableCell className="text-right">
-                        <div className="flex items-center justify-end gap-2">
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            onClick={() => handlePrintQuotation(quotation)}
-                            title="Print Quotation"
-                            disabled={isPending}
-                          >
-                            <Printer className="h-4 w-4 mr-1" />
-                            Print
-                          </Button>
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            onClick={() => openLogs(quotation)}
-                            title="View History"
-                          >
-                            <History className="h-4 w-4" />
-                          </Button>
-                          {quotation.status === "quotation" && (
-                            <>
-                              <Button
-                                size="sm"
-                                variant="outline"
-                                onClick={() => openEdit(quotation)}
-                              >
-                                <Edit2 className="h-4 w-4 mr-1" />
-                                Edit
-                              </Button>
-                              <Button
-                                size="sm"
-                                variant="default"
-                                onClick={() => handleSendQuotation(quotation)}
-                                disabled={isPending}
-                              >
-                                <Send className="h-4 w-4 mr-1" />
-                                Send Quotation
-                              </Button>
-                            </>
-                          )}
-                          {quotation.status === "quotation_sent" && (
-                            <Button
-                              size="sm"
-                              variant="default"
-                              onClick={() => handleConfirmOrder(quotation)}
-                              disabled={isPending}
-                            >
-                              <CheckCircle className="h-4 w-4 mr-1" />
-                              Confirm Order
-                            </Button>
-                          )}
-                          {quotation.status === "sales_order" && (
-                            <>
-                              {invoiceMap[quotation.id] ? (
-                                <Button
-                                  size="sm"
-                                  variant="outline"
-                                  onClick={() => {
-                                    toast.info(`Invoice: ${invoiceMap[quotation.id].invoice_number}`, {
-                                      description: "View in Customer Invoice tab",
-                                    });
-                                  }}
-                                >
-                                  <ExternalLink className="h-4 w-4 mr-1" />
-                                  View Invoice
-                                </Button>
-                              ) : (
-                                <Button
-                                  size="sm"
-                                  variant="default"
-                                  onClick={() => handleCreateInvoice(quotation)}
-                                  disabled={isPending}
-                                >
-                                  <FileText className="h-4 w-4 mr-1" />
-                                  Create Invoice
-                                </Button>
-                              )}
-                            </>
-                          )}
-                          <Button
-                            size="sm"
-                            variant="destructive"
-                            onClick={() => confirmDelete(quotation)}
-                            disabled={isPending}
-                          >
-                            <Trash2 className="h-4 w-4 mr-1" />
-                            Delete
-                          </Button>
-                        </div>
                       </TableCell>
                     </TableRow>
                   ))}
                 </TableBody>
               </Table>
+              {/* Footer total */}
+              <div className="flex justify-end px-6 py-3 border-t bg-slate-50">
+                <span className="font-bold text-slate-800">
+                  {displayTotal.toFixed(2)} Rs.
+                </span>
+              </div>
             </div>
           )}
         </CardContent>
       </Card>
 
-      {/* Create/Edit Modal */}
-      <Dialog open={formOpen} onOpenChange={handleCloseForm}>
-        <DialogContent className="sm:max-w-[600px]">
-          <DialogHeader>
-            <DialogTitle>
-              {isEditing ? "Edit Quotation" : "New Quotation"}
-            </DialogTitle>
-            <DialogDescription>
-              {isEditing
-                ? "Update the quotation details below."
-                : "Create a new quotation to start the sales workflow."}
-            </DialogDescription>
-          </DialogHeader>
-          <form onSubmit={handleSubmit}>
-            <div className="space-y-4 py-4">
-              <div className="space-y-2">
-                <Label htmlFor="customer_name">Customer Name *</Label>
-                <Input
-                  id="customer_name"
-                  name="customer_name"
-                  value={formState.customer_name}
-                  onChange={(e) => handleFormChange("customer_name", e.target.value)}
-                  required
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="product_service">Product/Service *</Label>
-                <Input
-                  id="product_service"
-                  name="product_service"
-                  value={formState.product_service}
-                  onChange={(e) => handleFormChange("product_service", e.target.value)}
-                  required
-                />
-              </div>
-              <div className="grid grid-cols-3 gap-4">
-                <div className="space-y-2">
-                  <Label htmlFor="quantity">Quantity *</Label>
-                  <Input
-                    id="quantity"
-                    name="quantity"
-                    type="number"
-                    step="0.01"
-                    min="0"
-                    value={formState.quantity}
-                    onChange={(e) => handleFormChange("quantity", e.target.value)}
-                    required
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="unit_price">Unit Price *</Label>
-                  <Input
-                    id="unit_price"
-                    name="unit_price"
-                    type="number"
-                    step="0.01"
-                    min="0"
-                    value={formState.unit_price}
-                    onChange={(e) => handleFormChange("unit_price", e.target.value)}
-                    required
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="total_amount">Total Amount *</Label>
-                  <Input
-                    id="total_amount"
-                    name="total_amount"
-                    type="number"
-                    step="0.01"
-                    min="0"
-                    value={formState.total_amount}
-                    onChange={(e) => handleFormChange("total_amount", e.target.value)}
-                    required
-                    readOnly
-                  />
-                </div>
-              </div>
-            </div>
-            <DialogFooter>
-              <Button
-                type="button"
-                variant="outline"
-                onClick={() => handleCloseForm(false)}
-              >
-                Cancel
-              </Button>
-              <Button type="submit" disabled={isPending}>
-                {isPending ? "Saving..." : isEditing ? "Update" : "Create"}
-              </Button>
-            </DialogFooter>
-          </form>
-        </DialogContent>
-      </Dialog>
-
-      {/* Delete Confirmation Modal */}
+      {/* Delete Modal (from list) */}
       <Dialog open={deleteOpen} onOpenChange={setDeleteOpen}>
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Delete Quotation</DialogTitle>
-            <DialogDescription>
-              Are you sure you want to delete this quotation? This action cannot be undone.
-            </DialogDescription>
           </DialogHeader>
+          <p className="text-sm text-slate-500">
+            Are you sure you want to delete this quotation? This action cannot be undone.
+          </p>
           <DialogFooter>
             <Button variant="outline" onClick={() => setDeleteOpen(false)}>
               Cancel
             </Button>
             <Button variant="destructive" onClick={handleDelete} disabled={isPending}>
               {isPending ? "Deleting..." : "Delete"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* Activity Logs Modal */}
-      <Dialog open={logsOpen} onOpenChange={setLogsOpen}>
-        <DialogContent className="sm:max-w-[700px] max-h-[80vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle>Activity History</DialogTitle>
-            <DialogDescription>
-              Complete activity log for this quotation
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-4 py-4">
-            {logs.length === 0 ? (
-              <div className="py-8 text-center text-secondary-muted">
-                No activity logs found.
-              </div>
-            ) : (
-              <div className="space-y-3">
-                {logs.map((log) => {
-                  const details = log.details as 
-                    | { previous?: { quantity?: unknown; unit_price?: unknown; total_amount?: unknown; customer_name?: unknown; product_service?: unknown }; new?: { quantity?: unknown; unit_price?: unknown; total_amount?: unknown; customer_name?: unknown; product_service?: unknown } }
-                    | { quantity?: unknown; unit_price?: unknown; total_amount?: unknown; customer_name?: unknown; product_service?: unknown }
-                    | null;
-                  const hasChanges =
-                    log.action === "updated" &&
-                    details &&
-                    'previous' in details &&
-                    'new' in details &&
-                    details.previous &&
-                    details.new;
-                  const isCreatedDetails = log.action === "created" && details && !('previous' in details);
-
-                  return (
-                    <div
-                      key={log.id}
-                      className="border-l-2 border-slate-300 pl-4 py-2 space-y-1"
-                    >
-                      <div className="flex items-center justify-between">
-                        <span className="font-semibold text-sm">
-                          {log.action === "created" && "Created"}
-                          {log.action === "updated" && "Updated"}
-                          {log.action === "deleted" && "Deleted"}
-                          {log.action === "status_changed" && "Status Changed"}
-                          {log.action === "printed" && "Quotation Printed"}
-                        </span>
-                        <span className="text-xs text-secondary-muted">
-                          {new Date(log.performed_at).toLocaleString()}
-                        </span>
-                      </div>
-                      {log.action === "status_changed" && (
-                        <div className="text-sm text-secondary-muted">
-                          {log.previous_status && (
-                            <span>
-                              From: <strong>{formatStatus(log.previous_status as QuotationStatus)}</strong>
-                            </span>
-                          )}
-                          {log.previous_status && log.new_status && " → "}
-                          {log.new_status && (
-                            <span>
-                              To: <strong>{formatStatus(log.new_status as QuotationStatus)}</strong>
-                            </span>
-                          )}
-                        </div>
-                      )}
-                      {hasChanges && details && 'previous' in details && 'new' in details && details.previous && details.new && (
-                        <div className="text-sm space-y-1 mt-2">
-                          {(details.previous.quantity !== details.new.quantity ||
-                            details.previous.unit_price !== details.new.unit_price ||
-                            details.previous.total_amount !== details.new.total_amount) && (
-                            <div className="bg-slate-50 p-2 rounded space-y-1">
-                              {details.previous.quantity !== details.new.quantity && (
-                                <div className="text-xs">
-                                  <span className="text-secondary-muted">Quantity: </span>
-                                  <span className="line-through text-red-600">
-                                    {String(details.previous.quantity ?? '')}
-                                  </span>
-                                  {" → "}
-                                  <span className="text-green-600 font-semibold">
-                                    {String(details.new.quantity ?? '')}
-                                  </span>
-                                </div>
-                              )}
-                              {details.previous.unit_price !== details.new.unit_price && (
-                                <div className="text-xs">
-                                  <span className="text-secondary-muted">Unit Price: </span>
-                                  <span className="line-through text-red-600">
-                                    Rs. {parseFloat(String(details.previous.unit_price ?? '0')).toFixed(2)}
-                                  </span>
-                                  {" → "}
-                                  <span className="text-green-600 font-semibold">
-                                    Rs. {parseFloat(String(details.new.unit_price ?? '0')).toFixed(2)}
-                                  </span>
-                                </div>
-                              )}
-                              {details.previous.total_amount !== details.new.total_amount && (
-                                <div className="text-xs">
-                                  <span className="text-secondary-muted">Total Amount: </span>
-                                  <span className="line-through text-red-600">
-                                    Rs. {parseFloat(String(details.previous.total_amount ?? '0')).toFixed(2)}
-                                  </span>
-                                  {" → "}
-                                  <span className="text-green-600 font-semibold">
-                                    Rs. {parseFloat(String(details.new.total_amount ?? '0')).toFixed(2)}
-                                  </span>
-                                </div>
-                              )}
-                            </div>
-                          )}
-                          {(details.previous.customer_name !== details.new.customer_name ||
-                            details.previous.product_service !== details.new.product_service) && (
-                            <div className="text-xs text-secondary-muted space-y-0.5">
-                              {details.previous.customer_name !== details.new.customer_name && (
-                                <div>
-                                  Customer:{" "}
-                                  <span className="line-through">{String(details.previous.customer_name ?? '')}</span> →{" "}
-                                  <span className="font-semibold">{String(details.new.customer_name ?? '')}</span>
-                                </div>
-                              )}
-                              {details.previous.product_service !== details.new.product_service && (
-                                <div>
-                                  Product/Service:{" "}
-                                  <span className="line-through">{String(details.previous.product_service ?? '')}</span> →{" "}
-                                  <span className="font-semibold">{String(details.new.product_service ?? '')}</span>
-                                </div>
-                              )}
-                            </div>
-                          )}
-                        </div>
-                      )}
-                      {isCreatedDetails && (
-                        <div className="text-xs text-secondary-muted space-y-0.5 mt-1">
-                          <div>Quantity: {String((details as { quantity?: unknown; unit_price?: unknown; total_amount?: unknown }).quantity ?? '')}</div>
-                          <div>Unit Price: Rs. {parseFloat(String((details as { quantity?: unknown; unit_price?: unknown; total_amount?: unknown }).unit_price ?? '0')).toFixed(2)}</div>
-                          <div>Total Amount: Rs. {parseFloat(String((details as { quantity?: unknown; unit_price?: unknown; total_amount?: unknown }).total_amount ?? '0')).toFixed(2)}</div>
-                        </div>
-                      )}
-                      <div className="text-xs text-secondary-muted">
-                        By: {log.performed_by}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setLogsOpen(false)}>
-              Close
             </Button>
           </DialogFooter>
         </DialogContent>

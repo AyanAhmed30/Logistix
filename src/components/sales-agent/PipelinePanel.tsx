@@ -41,8 +41,18 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { MessageSquare, Edit2, Trash2, Plus, UserPlus, Search, X } from "lucide-react";
+import { MessageSquare, Edit2, Trash2, Plus, UserPlus, Search, X, Send, FileText, Link2, ImageIcon, History } from "lucide-react";
 import { Input } from "@/components/ui/input";
+import { Badge } from "@/components/ui/badge";
+import {
+  saveInquiry,
+  sendInquiryToAccounting,
+  getInquiryForLead,
+  getQuotationsForLead,
+  type LeadInquiry,
+  type InquiryQuotation,
+} from "@/app/actions/inquiries";
+import jsPDF from "jspdf";
 
 const STATUSES: LeadStatus[] = [
   "Leads",
@@ -62,12 +72,16 @@ function LeadCard({
   lead,
   onOpenComments,
   onConvert,
+  onOpenInquiry,
   showConvertButton,
+  showInquiryButton,
 }: {
   lead: Lead;
   onOpenComments: (lead: Lead) => void;
   onConvert?: (lead: Lead) => void;
+  onOpenInquiry?: (lead: Lead) => void;
   showConvertButton?: boolean;
+  showInquiryButton?: boolean;
 }) {
   const {
     attributes,
@@ -97,17 +111,33 @@ function LeadCard({
               <span className="px-1.5 py-0.5 bg-blue-100 text-blue-800 rounded text-[10px] truncate flex-1 min-w-0">
                 {lead.source}
               </span>
-              <Button
-                variant="ghost"
-                size="sm"
-                className="h-6 w-6 p-0 flex-shrink-0"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onOpenComments(lead);
-                }}
-              >
-                <MessageSquare className="h-3 w-3" />
-              </Button>
+              <div className="flex gap-0.5 flex-shrink-0">
+                {showInquiryButton && onOpenInquiry && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-6 w-6 p-0"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onOpenInquiry(lead);
+                    }}
+                    title="Open Inquiry"
+                  >
+                    <FileText className="h-3 w-3 text-orange-600" />
+                  </Button>
+                )}
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-6 w-6 p-0"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onOpenComments(lead);
+                  }}
+                >
+                  <MessageSquare className="h-3 w-3" />
+                </Button>
+              </div>
             </div>
             {showConvertButton && !lead.converted && onConvert && (
               <Button
@@ -140,12 +170,14 @@ function KanbanColumn({
   leads,
   onOpenComments,
   onConvert,
+  onOpenInquiry,
   searchQuery,
 }: {
   status: LeadStatus;
   leads: Lead[];
   onOpenComments: (lead: Lead) => void;
   onConvert?: (lead: Lead) => void;
+  onOpenInquiry?: (lead: Lead) => void;
   searchQuery?: string;
 }) {
   const { setNodeRef } = useDroppable({ id: status });
@@ -174,6 +206,7 @@ function KanbanColumn({
   }
   
   const showConvertButton = status === 'Win';
+  const showInquiryButton = status === 'Inquiry Received';
 
   return (
     <div ref={setNodeRef} className="flex-1 min-w-[200px] sm:min-w-[240px] md:min-w-[280px]">
@@ -219,7 +252,9 @@ function KanbanColumn({
                   lead={lead} 
                   onOpenComments={onOpenComments}
                   onConvert={onConvert}
+                  onOpenInquiry={onOpenInquiry}
                   showConvertButton={showConvertButton}
+                  showInquiryButton={showInquiryButton}
                 />
               ))
             )}
@@ -439,12 +474,332 @@ function CommentsDialog({
   );
 }
 
+function InquiryDialog({
+  lead,
+  open,
+  onOpenChange,
+}: {
+  lead: Lead | null;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+}) {
+  const [inquiry, setInquiry] = useState<LeadInquiry | null>(null);
+  const [quotations, setQuotations] = useState<InquiryQuotation[]>([]);
+  const [description, setDescription] = useState("");
+  const [imageUrl, setImageUrl] = useState("");
+  const [linkUrl, setLinkUrl] = useState("");
+  const [isLoading, setIsLoading] = useState(false);
+  const [isPending, startTransition] = useTransition();
+  const [showQuotationHistory, setShowQuotationHistory] = useState(false);
+
+  const fetchInquiryData = useCallback(async () => {
+    if (!lead) return;
+    setIsLoading(true);
+    try {
+      const [inquiryResult, quotationsResult] = await Promise.all([
+        getInquiryForLead(lead.id),
+        getQuotationsForLead(lead.id),
+      ]);
+      if ("error" in inquiryResult) {
+        // No inquiry yet, that's fine
+      } else if (inquiryResult.inquiry) {
+        setInquiry(inquiryResult.inquiry);
+        setDescription(inquiryResult.inquiry.description || "");
+        setImageUrl(inquiryResult.inquiry.image_url || "");
+        setLinkUrl(inquiryResult.inquiry.link_url || "");
+      }
+      if (!("error" in quotationsResult)) {
+        setQuotations(quotationsResult.quotations || []);
+      }
+    } catch {
+      toast.error("Failed to load inquiry data");
+    } finally {
+      setIsLoading(false);
+    }
+  }, [lead]);
+
+  useEffect(() => {
+    if (open && lead) {
+      fetchInquiryData();
+    } else {
+      setInquiry(null);
+      setQuotations([]);
+      setDescription("");
+      setImageUrl("");
+      setLinkUrl("");
+      setShowQuotationHistory(false);
+    }
+  }, [open, lead, fetchInquiryData]);
+
+  function handleSaveInquiry() {
+    if (!lead) return;
+    startTransition(async () => {
+      const result = await saveInquiry(lead.id, description, imageUrl || null, linkUrl || null);
+      if ("error" in result) {
+        toast.error(result.error);
+      } else {
+        toast.success("Inquiry saved successfully");
+        if (result.inquiry) setInquiry(result.inquiry);
+      }
+    });
+  }
+
+  function handleSendToAccounting() {
+    if (!lead) return;
+    if (!description.trim()) {
+      toast.error("Please add an inquiry description before sending.");
+      return;
+    }
+    startTransition(async () => {
+      // Save first
+      const saveResult = await saveInquiry(lead.id, description, imageUrl || null, linkUrl || null);
+      if ("error" in saveResult) {
+        toast.error(saveResult.error);
+        return;
+      }
+      // Then send
+      const result = await sendInquiryToAccounting(lead.id);
+      if ("error" in result) {
+        toast.error(result.error);
+      } else {
+        toast.success("Inquiry sent to Accounting Department!");
+        if (result.inquiry) setInquiry(result.inquiry);
+      }
+    });
+  }
+
+  function handleDownloadQuotationPDF(q: InquiryQuotation) {
+    const doc = new jsPDF();
+    doc.setFontSize(18);
+    doc.text("Quotation", 105, 20, { align: "center" });
+    doc.setFontSize(10);
+    doc.text(`Quotation #: ${q.quotation_number}`, 20, 35);
+    doc.text(`Date: ${new Date(q.created_at).toLocaleDateString()}`, 20, 42);
+    doc.text(`Version: ${q.version}`, 150, 35);
+    
+    doc.setFontSize(12);
+    doc.text("Customer Details", 20, 55);
+    doc.setFontSize(10);
+    doc.text(`Customer: ${q.customer_name}`, 20, 63);
+    
+    doc.setFontSize(12);
+    doc.text("Quotation Details", 20, 78);
+    doc.setFontSize(10);
+    
+    // Table header
+    doc.setFillColor(240, 240, 240);
+    doc.rect(20, 84, 170, 8, "F");
+    doc.text("Product/Service", 22, 90);
+    doc.text("Qty", 105, 90);
+    doc.text("Unit Price", 125, 90);
+    doc.text("Total", 160, 90);
+    
+    // Table row
+    doc.text(q.product_service, 22, 100);
+    doc.text(String(q.quantity), 105, 100);
+    doc.text(`Rs. ${Number(q.unit_price).toFixed(2)}`, 125, 100);
+    doc.text(`Rs. ${Number(q.total_amount).toFixed(2)}`, 160, 100);
+    
+    // Total
+    doc.setFontSize(12);
+    doc.text(`Total Amount: Rs. ${Number(q.total_amount).toFixed(2)}`, 20, 118);
+    
+    if (q.notes) {
+      doc.setFontSize(10);
+      doc.text("Notes:", 20, 132);
+      doc.text(q.notes, 20, 140);
+    }
+    
+    doc.save(`quotation_${q.quotation_number.replace(/\//g, '_')}.pdf`);
+  }
+
+  if (!lead) return null;
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-[700px] max-h-[85vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <FileText className="h-5 w-5 text-orange-600" />
+            Inquiry - {lead.name}
+          </DialogTitle>
+          <DialogDescription>
+            Add inquiry details, attach images/links, and send to the Accounting Department.
+          </DialogDescription>
+        </DialogHeader>
+
+        {isLoading ? (
+          <div className="py-8 text-center text-secondary-muted text-sm">Loading inquiry data...</div>
+        ) : (
+          <div className="space-y-4">
+            {/* Status badge */}
+            {inquiry?.sent_to_accounting && (
+              <div className="flex items-center gap-2">
+                <Badge variant="outline" className="bg-green-50 text-green-700 border-green-300">
+                  Sent to Accounting
+                </Badge>
+                {inquiry.sent_at && (
+                  <span className="text-xs text-secondary-muted">
+                    on {new Date(inquiry.sent_at).toLocaleString()}
+                  </span>
+                )}
+              </div>
+            )}
+
+            {/* Inquiry Description */}
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Inquiry Description</label>
+              <Textarea
+                placeholder="Describe the inquiry details here..."
+                value={description}
+                onChange={(e) => setDescription(e.target.value)}
+                rows={4}
+                className="resize-none"
+              />
+            </div>
+
+            {/* Image URL */}
+            <div className="space-y-2">
+              <label className="text-sm font-medium flex items-center gap-1">
+                <ImageIcon className="h-4 w-4" /> Attach Image (URL)
+              </label>
+              <Input
+                type="url"
+                placeholder="https://example.com/image.jpg"
+                value={imageUrl}
+                onChange={(e) => setImageUrl(e.target.value)}
+              />
+              {imageUrl && (
+                <div className="mt-2 border rounded-md p-2">
+                  <img
+                    src={imageUrl}
+                    alt="Inquiry attachment"
+                    className="max-h-48 rounded object-contain"
+                    onError={(e) => {
+                      (e.target as HTMLImageElement).style.display = 'none';
+                    }}
+                  />
+                </div>
+              )}
+            </div>
+
+            {/* Link */}
+            <div className="space-y-2">
+              <label className="text-sm font-medium flex items-center gap-1">
+                <Link2 className="h-4 w-4" /> Add Link
+              </label>
+              <Input
+                type="url"
+                placeholder="https://example.com"
+                value={linkUrl}
+                onChange={(e) => setLinkUrl(e.target.value)}
+              />
+              {linkUrl && (
+                <a
+                  href={linkUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-xs text-blue-600 hover:underline break-all"
+                >
+                  {linkUrl}
+                </a>
+              )}
+            </div>
+
+            {/* Actions */}
+            <div className="flex flex-col sm:flex-row gap-2 pt-2">
+              <Button onClick={handleSaveInquiry} disabled={isPending} variant="outline" className="flex-1">
+                {isPending ? "Saving..." : "Save Inquiry"}
+              </Button>
+              <Button
+                onClick={handleSendToAccounting}
+                disabled={isPending || !description.trim()}
+                className="flex-1 bg-orange-600 hover:bg-orange-700 text-white"
+              >
+                <Send className="h-4 w-4 mr-2" />
+                {isPending ? "Sending..." : "Send to Accounting Department"}
+              </Button>
+            </div>
+
+            {/* Quotations from Accounting */}
+            {quotations.length > 0 && (
+              <div className="border-t pt-4 space-y-3">
+                <div className="flex items-center justify-between">
+                  <h3 className="font-semibold text-sm flex items-center gap-1">
+                    <History className="h-4 w-4" />
+                    Quotations from Accounting ({quotations.length})
+                  </h3>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => setShowQuotationHistory(!showQuotationHistory)}
+                  >
+                    {showQuotationHistory ? "Show Latest" : "Show All"}
+                  </Button>
+                </div>
+                {(showQuotationHistory ? quotations : quotations.slice(0, 1)).map((q) => (
+                  <Card key={q.id} className="p-3">
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between">
+                        <span className="font-semibold text-sm">{q.quotation_number}</span>
+                        <div className="flex items-center gap-2">
+                          <Badge variant="outline" className="text-xs">
+                            v{q.version}
+                          </Badge>
+                          {q.sent_to_agent && (
+                            <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-300 text-xs">
+                              From Accounting
+                            </Badge>
+                          )}
+                        </div>
+                      </div>
+                      <div className="grid grid-cols-2 gap-1 text-xs text-secondary-muted">
+                        <div>Product: <span className="text-primary-dark">{q.product_service}</span></div>
+                        <div>Customer: <span className="text-primary-dark">{q.customer_name}</span></div>
+                        <div>Qty: <span className="text-primary-dark">{q.quantity}</span></div>
+                        <div>Unit Price: <span className="text-primary-dark">Rs. {Number(q.unit_price).toFixed(2)}</span></div>
+                        <div className="col-span-2 font-semibold text-primary-dark">
+                          Total: Rs. {Number(q.total_amount).toFixed(2)}
+                        </div>
+                      </div>
+                      {q.notes && (
+                        <p className="text-xs text-secondary-muted bg-slate-50 p-2 rounded">{q.notes}</p>
+                      )}
+                      <div className="flex items-center gap-2 text-xs text-secondary-muted">
+                        <span>{new Date(q.created_at).toLocaleString()}</span>
+                        <span>by {q.created_by}</span>
+                      </div>
+                      {q.sent_to_agent && (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="w-full text-xs h-7"
+                          onClick={() => handleDownloadQuotationPDF(q)}
+                        >
+                          <FileText className="h-3 w-3 mr-1" />
+                          Download PDF
+                        </Button>
+                      )}
+                    </div>
+                  </Card>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 export function PipelinePanel() {
   const [leads, setLeads] = useState<Lead[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [selectedLead, setSelectedLead] = useState<Lead | null>(null);
   const [commentsOpen, setCommentsOpen] = useState(false);
+  const [inquiryLead, setInquiryLead] = useState<Lead | null>(null);
+  const [inquiryOpen, setInquiryOpen] = useState(false);
   const [convertDialogOpen, setConvertDialogOpen] = useState(false);
   const [leadToConvert, setLeadToConvert] = useState<Lead | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
@@ -541,6 +896,11 @@ export function PipelinePanel() {
     setCommentsOpen(true);
   }
 
+  function handleOpenInquiry(lead: Lead) {
+    setInquiryLead(lead);
+    setInquiryOpen(true);
+  }
+
   function handleConvertLead(lead: Lead) {
     setLeadToConvert(lead);
     setConvertDialogOpen(true);
@@ -624,6 +984,7 @@ export function PipelinePanel() {
                       leads={leads}
                       onOpenComments={handleOpenComments}
                       onConvert={handleConvertLead}
+                      onOpenInquiry={handleOpenInquiry}
                       searchQuery={searchQuery}
                     />
                   ))}
@@ -637,6 +998,7 @@ export function PipelinePanel() {
                       leads={leads}
                       onOpenComments={handleOpenComments}
                       onConvert={handleConvertLead}
+                      onOpenInquiry={handleOpenInquiry}
                       searchQuery={searchQuery}
                     />
                   ))}
@@ -670,6 +1032,15 @@ export function PipelinePanel() {
         lead={selectedLead}
         open={commentsOpen}
         onOpenChange={setCommentsOpen}
+      />
+
+      <InquiryDialog
+        lead={inquiryLead}
+        open={inquiryOpen}
+        onOpenChange={(open) => {
+          setInquiryOpen(open);
+          if (!open) setInquiryLead(null);
+        }}
       />
 
       {/* Convert to Customer Dialog */}

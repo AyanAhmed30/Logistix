@@ -3,17 +3,20 @@
 import { createAdminClient } from '@/utils/supabase/server';
 import { getSession } from '@/lib/auth/session';
 import { revalidatePath } from 'next/cache';
-import type { SupabaseClient } from '@supabase/supabase-js';
 
 export type QuotationStatus = 'quotation' | 'quotation_sent' | 'sales_order';
 
 export type Quotation = {
   id: string;
+  quotation_number: string | null;
   customer_name: string;
   product_service: string;
   quantity: number;
   unit_price: number;
   total_amount: number;
+  taxes: number;
+  expiration_date: string | null;
+  payment_terms: string;
   status: QuotationStatus;
   created_by: string;
   created_at: string;
@@ -58,6 +61,24 @@ async function logQuotationAction(
   ]);
 }
 
+async function generateQuotationNumber(supabase: Awaited<ReturnType<typeof createAdminClient>>): Promise<string> {
+  const { data: lastQuotation } = await supabase
+    .from('quotations')
+    .select('quotation_number')
+    .not('quotation_number', 'is', null)
+    .order('quotation_number', { ascending: false })
+    .limit(1);
+
+  let nextNum = 1;
+  if (lastQuotation && lastQuotation.length > 0 && lastQuotation[0].quotation_number) {
+    const match = lastQuotation[0].quotation_number.match(/S(\d+)/);
+    if (match) {
+      nextNum = parseInt(match[1], 10) + 1;
+    }
+  }
+  return `S${String(nextNum).padStart(5, '0')}`;
+}
+
 export async function createQuotation(formData: FormData) {
   try {
     const session = await getSession();
@@ -70,27 +91,41 @@ export async function createQuotation(formData: FormData) {
     const product_service = String(formData.get('product_service') || '').trim();
     const quantity = parseFloat(String(formData.get('quantity') || '0'));
     const unit_price = parseFloat(String(formData.get('unit_price') || '0'));
-    const total_amount = parseFloat(String(formData.get('total_amount') || '0'));
+    const taxes = parseFloat(String(formData.get('taxes') || '0'));
+    const expiration_date = String(formData.get('expiration_date') || '').trim() || null;
+    const payment_terms = String(formData.get('payment_terms') || 'Immediate').trim();
 
     if (!customer_name || !product_service) {
       return { error: 'Customer name and product/service are required' };
     }
 
-    if (quantity <= 0 || unit_price <= 0 || total_amount <= 0) {
-      return { error: 'Quantity, unit price, and total amount must be greater than zero' };
+    if (quantity <= 0 || unit_price <= 0) {
+      return { error: 'Quantity and unit price must be greater than zero' };
     }
 
+    // Calculate total with taxes
+    const untaxed = quantity * unit_price;
+    const tax_amount = untaxed * (taxes / 100);
+    const total_amount = untaxed + tax_amount;
+
     const supabase = await createAdminClient();
+
+    // Generate quotation number
+    const quotation_number = await generateQuotationNumber(supabase);
 
     const { data, error } = await supabase
       .from('quotations')
       .insert([
         {
+          quotation_number,
           customer_name,
           product_service,
           quantity,
           unit_price,
           total_amount,
+          taxes,
+          expiration_date,
+          payment_terms,
           status: 'quotation',
           created_by: session.username,
         },
@@ -110,7 +145,7 @@ export async function createQuotation(formData: FormData) {
       session.username,
       null,
       'quotation',
-      { customer_name, product_service, quantity, unit_price, total_amount }
+      { customer_name, product_service, quantity, unit_price, total_amount, taxes }
     );
 
     revalidatePath('/admin/dashboard');
@@ -166,15 +201,22 @@ export async function updateQuotation(formData: FormData) {
     const product_service = String(formData.get('product_service') || '').trim();
     const quantity = parseFloat(String(formData.get('quantity') || '0'));
     const unit_price = parseFloat(String(formData.get('unit_price') || '0'));
-    const total_amount = parseFloat(String(formData.get('total_amount') || '0'));
+    const taxes = parseFloat(String(formData.get('taxes') || '0'));
+    const expiration_date = String(formData.get('expiration_date') || '').trim() || null;
+    const payment_terms = String(formData.get('payment_terms') || 'Immediate').trim();
 
     if (!customer_name || !product_service) {
       return { error: 'Customer name and product/service are required' };
     }
 
-    if (quantity <= 0 || unit_price <= 0 || total_amount <= 0) {
-      return { error: 'Quantity, unit price, and total amount must be greater than zero' };
+    if (quantity <= 0 || unit_price <= 0) {
+      return { error: 'Quantity and unit price must be greater than zero' };
     }
+
+    // Calculate total with taxes
+    const untaxed = quantity * unit_price;
+    const tax_amount = untaxed * (taxes / 100);
+    const total_amount = untaxed + tax_amount;
 
     const supabase = await createAdminClient();
 
@@ -197,6 +239,9 @@ export async function updateQuotation(formData: FormData) {
         quantity,
         unit_price,
         total_amount,
+        taxes,
+        expiration_date,
+        payment_terms,
         updated_at: new Date().toISOString(),
       })
       .eq('id', id)
@@ -207,7 +252,7 @@ export async function updateQuotation(formData: FormData) {
       return { error: error?.message || 'Failed to update quotation' };
     }
 
-    // Log the update
+    // Log the update with previous and new values
     await logQuotationAction(
       supabase,
       id,
@@ -222,6 +267,7 @@ export async function updateQuotation(formData: FormData) {
           quantity: currentQuotation.quantity,
           unit_price: currentQuotation.unit_price,
           total_amount: currentQuotation.total_amount,
+          taxes: currentQuotation.taxes || 0,
         },
         new: {
           customer_name,
@@ -229,6 +275,7 @@ export async function updateQuotation(formData: FormData) {
           quantity,
           unit_price,
           total_amount,
+          taxes,
         },
       }
     );
@@ -268,7 +315,7 @@ export async function deleteQuotation(id: string) {
       return { error: error.message };
     }
 
-    // Log the deletion (before the record is deleted)
+    // Log the deletion
     if (quotation) {
       await logQuotationAction(
         supabase,
@@ -295,7 +342,10 @@ export async function deleteQuotation(id: string) {
   }
 }
 
-export async function sendQuotation(id: string) {
+export async function sendQuotation(
+  id: string,
+  messageData?: { recipients?: string; subject?: string; body?: string }
+) {
   try {
     const session = await getSession();
     ensureAdmin(session);
@@ -320,37 +370,44 @@ export async function sendQuotation(id: string) {
       return { error: fetchError?.message || 'Quotation not found' };
     }
 
-    if (currentQuotation.status !== 'quotation') {
-      return { error: 'Only quotations with status "Quotation" can be sent' };
+    let updatedData = currentQuotation;
+
+    // Only change status if currently "quotation"
+    if (currentQuotation.status === 'quotation') {
+      const { data, error } = await supabase
+        .from('quotations')
+        .update({
+          status: 'quotation_sent',
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', id)
+        .select()
+        .single();
+
+      if (error || !data) {
+        return { error: error?.message || 'Failed to send quotation' };
+      }
+      updatedData = data;
     }
 
-    const { data, error } = await supabase
-      .from('quotations')
-      .update({
-        status: 'quotation_sent',
-        updated_at: new Date().toISOString(),
-      })
-      .eq('id', id)
-      .select()
-      .single();
-
-    if (error || !data) {
-      return { error: error?.message || 'Failed to send quotation' };
-    }
-
-    // Log the status change
+    // Log the send action with message data
     await logQuotationAction(
       supabase,
       id,
       'status_changed',
       session.username,
-      'quotation',
-      'quotation_sent',
-      { action: 'Send Quotation' }
+      currentQuotation.status,
+      updatedData.status,
+      {
+        action: 'Send Quotation',
+        message_subject: messageData?.subject || null,
+        message_body: messageData?.body || null,
+        message_recipients: messageData?.recipients || null,
+      }
     );
 
     revalidatePath('/admin/dashboard');
-    return { quotation: data as Quotation };
+    return { quotation: updatedData as Quotation };
   } catch (err) {
     const message = err instanceof Error ? err.message : 'An unexpected error occurred';
     return { error: message };
@@ -382,8 +439,8 @@ export async function confirmOrder(id: string) {
       return { error: fetchError?.message || 'Quotation not found' };
     }
 
-    if (currentQuotation.status !== 'quotation_sent') {
-      return { error: 'Only quotations with status "Quotation Sent" can be confirmed as orders' };
+    if (currentQuotation.status !== 'quotation_sent' && currentQuotation.status !== 'quotation') {
+      return { error: 'Only quotations can be confirmed as orders' };
     }
 
     const { data, error } = await supabase
@@ -406,7 +463,7 @@ export async function confirmOrder(id: string) {
       id,
       'status_changed',
       session.username,
-      'quotation_sent',
+      currentQuotation.status,
       'sales_order',
       { action: 'Confirm Order' }
     );
@@ -485,7 +542,7 @@ export async function logQuotationPrint(quotationId: string) {
       quotation.status,
       {
         action: 'Quotation Printed',
-        quotation_number: `QT-${quotation.id.substring(0, 8).toUpperCase()}`,
+        quotation_number: quotation.quotation_number || `QT-${quotation.id.substring(0, 8).toUpperCase()}`,
       }
     );
 

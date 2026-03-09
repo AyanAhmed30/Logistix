@@ -24,7 +24,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { PlusCircle, UsersRound, X, Truck, Bell, Package, Container, FileText, TrendingUp, ShoppingCart, Settings, ClipboardList, Receipt, UserCog, Calculator } from "lucide-react";
+import { PlusCircle, UsersRound, X, Truck, Bell, Package, Container, FileText, TrendingUp, ShoppingCart, Settings, ClipboardList, Receipt, UserCog, Calculator, MessageSquare } from "lucide-react";
 import { OrderTrackingPanel } from "@/components/admin/OrderTrackingPanel";
 import { AdminNotificationsPanel } from "@/components/admin/AdminNotificationsPanel";
 import { OrderManagementPanel } from "@/components/admin/OrderManagementPanel";
@@ -38,6 +38,7 @@ import { ImportInvoicePanel } from "@/components/admin/ImportInvoicePanel";
 import { SalesAgentPanel } from "@/components/admin/SalesAgentPanel";
 import { QuotationPanel } from "@/components/admin/QuotationPanel";
 import { InvoicePanel } from "@/components/admin/InvoicePanel";
+import { AccountingInquiriesPanel } from "@/components/admin/AccountingInquiriesPanel";
 
 type AppUser = {
   id: string;
@@ -102,8 +103,8 @@ export function AdminUserManager({
   const [profilesSubTab, setProfilesSubTab] = useState<"users" | "sales-agent" | null>(
     activeTab === "profiles" ? "users" : null
   );
-  const [accountingSubTab, setAccountingSubTab] = useState<"quotation" | "customer-invoice" | null>(
-    activeTab === "accounting" ? "quotation" : null
+  const [accountingSubTab, setAccountingSubTab] = useState<"quotation" | "customer-invoice" | "inquiries" | null>(
+    activeTab === "accounting" ? "inquiries" : null
   );
   const [editOpen, setEditOpen] = useState(false);
   const [editUser, setEditUser] = useState<AppUser | null>(null);
@@ -137,7 +138,7 @@ export function AdminUserManager({
         }
 
         if (activeTab === "accounting") {
-          setAccountingSubTab("quotation");
+          setAccountingSubTab("inquiries");
         } else if (prevActiveTab === "accounting") {
           setAccountingSubTab(null);
         }
@@ -446,6 +447,15 @@ export function AdminUserManager({
             {/* Sub-tabs */}
             <div className="flex gap-2 border-b overflow-x-auto">
               <Button
+                variant={accountingSubTab === "inquiries" ? "default" : "ghost"}
+                onClick={() => setAccountingSubTab("inquiries")}
+                className="rounded-b-none shrink-0 sidebar-button"
+                data-variant={accountingSubTab === "inquiries" ? "default" : "outline"}
+              >
+                <MessageSquare className="h-4 w-4 mr-2 sidebar-icon" />
+                <span className="sidebar-text">Inquiries</span>
+              </Button>
+              <Button
                 variant={accountingSubTab === "quotation" ? "default" : "ghost"}
                 onClick={() => setAccountingSubTab("quotation")}
                 className="rounded-b-none shrink-0 sidebar-button"
@@ -464,6 +474,11 @@ export function AdminUserManager({
                 <span className="sidebar-text">Customer Invoice</span>
               </Button>
             </div>
+
+            {/* Inquiries Sub-tab Content */}
+            {accountingSubTab === "inquiries" && (
+              <AccountingInquiriesPanel />
+            )}
 
             {/* Quotation Sub-tab Content */}
             {accountingSubTab === "quotation" && (

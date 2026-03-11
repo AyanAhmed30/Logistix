@@ -3,6 +3,7 @@
 import { createAdminClient } from '@/utils/supabase/server';
 import { getSession } from '@/lib/auth/session';
 import { revalidatePath } from 'next/cache';
+import { sendWhatsAppMessage } from '@/lib/whatsapp';
 
 export type QuotationStatus = 'quotation' | 'quotation_sent' | 'sales_order';
 
@@ -26,7 +27,7 @@ export type Quotation = {
 export type QuotationLog = {
   id: string;
   quotation_id: string;
-  action: 'created' | 'updated' | 'deleted' | 'status_changed' | 'printed';
+  action: 'created' | 'updated' | 'deleted' | 'status_changed' | 'printed' | 'log_note' | 'activity';
   previous_status: string | null;
   new_status: string | null;
   performed_by: string;
@@ -344,7 +345,7 @@ export async function deleteQuotation(id: string) {
 
 export async function sendQuotation(
   id: string,
-  messageData?: { recipients?: string; subject?: string; body?: string }
+  messageData?: { phone_number?: string; whatsapp_message?: string }
 ) {
   try {
     const session = await getSession();
@@ -370,9 +371,33 @@ export async function sendQuotation(
       return { error: fetchError?.message || 'Quotation not found' };
     }
 
+    // ── Try sending via WhatsApp Business Cloud API (if configured) ──
+    let whatsappMessageId: string | null = null;
+    let sendMethod = 'whatsapp_web';
+
+    if (messageData?.phone_number && messageData?.whatsapp_message) {
+      const whatsappResult = await sendWhatsAppMessage(
+        messageData.phone_number.trim(),
+        messageData.whatsapp_message.trim()
+      );
+
+      if (whatsappResult.useWebFallback) {
+        // API not configured — frontend already opened WhatsApp Web
+        sendMethod = 'whatsapp_web';
+      } else if (!whatsappResult.success) {
+        // API configured but failed — still allow status update since WhatsApp Web was already opened
+        console.error('[sendQuotation] WhatsApp API error:', whatsappResult.error);
+        sendMethod = 'whatsapp_web';
+      } else {
+        // API sent successfully
+        sendMethod = 'whatsapp_api';
+        whatsappMessageId = whatsappResult.messageId || null;
+      }
+    }
+
+    // ── Update quotation status ──
     let updatedData = currentQuotation;
 
-    // Only change status if currently "quotation"
     if (currentQuotation.status === 'quotation') {
       const { data, error } = await supabase
         .from('quotations')
@@ -385,12 +410,12 @@ export async function sendQuotation(
         .single();
 
       if (error || !data) {
-        return { error: error?.message || 'Failed to send quotation' };
+        return { error: error?.message || 'Failed to update quotation status' };
       }
       updatedData = data;
     }
 
-    // Log the send action with message data
+    // Log the send action
     await logQuotationAction(
       supabase,
       id,
@@ -399,10 +424,11 @@ export async function sendQuotation(
       currentQuotation.status,
       updatedData.status,
       {
-        action: 'Send Quotation',
-        message_subject: messageData?.subject || null,
-        message_body: messageData?.body || null,
-        message_recipients: messageData?.recipients || null,
+        action: 'Send Quotation via WhatsApp',
+        send_method: sendMethod,
+        phone_number: messageData?.phone_number || null,
+        whatsapp_message: messageData?.whatsapp_message || null,
+        whatsapp_message_id: whatsappMessageId,
       }
     );
 
@@ -546,6 +572,99 @@ export async function logQuotationPrint(quotationId: string) {
       }
     );
 
+    return { success: true };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'An unexpected error occurred';
+    return { error: message };
+  }
+}
+
+export async function addQuotationLogNote(quotationId: string, note: string) {
+  try {
+    const session = await getSession();
+    ensureAdmin(session);
+    if (!session) {
+      return { error: 'Unauthorized' };
+    }
+
+    if (!quotationId || !note.trim()) {
+      return { error: 'Quotation id and note are required' };
+    }
+
+    const supabase = await createAdminClient();
+
+    // Get quotation to capture current status
+    const { data: quotation } = await supabase
+      .from('quotations')
+      .select('status')
+      .eq('id', quotationId)
+      .single();
+
+    if (!quotation) {
+      return { error: 'Quotation not found' };
+    }
+
+    await logQuotationAction(
+      supabase,
+      quotationId,
+      'log_note',
+      session.username,
+      quotation.status,
+      quotation.status,
+      { note: note.trim() }
+    );
+
+    revalidatePath('/admin/dashboard');
+    return { success: true };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'An unexpected error occurred';
+    return { error: message };
+  }
+}
+
+export async function addQuotationActivity(
+  quotationId: string,
+  summary: string,
+  dueDate: string | null
+) {
+  try {
+    const session = await getSession();
+    ensureAdmin(session);
+    if (!session) {
+      return { error: 'Unauthorized' };
+    }
+
+    if (!quotationId || !summary.trim()) {
+      return { error: 'Quotation id and activity summary are required' };
+    }
+
+    const supabase = await createAdminClient();
+
+    // Get quotation to capture current status
+    const { data: quotation } = await supabase
+      .from('quotations')
+      .select('status')
+      .eq('id', quotationId)
+      .single();
+
+    if (!quotation) {
+      return { error: 'Quotation not found' };
+    }
+
+    await logQuotationAction(
+      supabase,
+      quotationId,
+      'activity',
+      session.username,
+      quotation.status,
+      quotation.status,
+      {
+        summary: summary.trim(),
+        due_date: dueDate || null,
+      }
+    );
+
+    revalidatePath('/admin/dashboard');
     return { success: true };
   } catch (err) {
     const message = err instanceof Error ? err.message : 'An unexpected error occurred';

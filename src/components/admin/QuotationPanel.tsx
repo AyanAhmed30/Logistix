@@ -12,6 +12,8 @@ import {
   confirmOrder,
   getQuotationLogs,
   logQuotationPrint,
+  addQuotationLogNote,
+  addQuotationActivity,
   type Quotation,
   type QuotationStatus,
   type QuotationLog,
@@ -52,10 +54,13 @@ import {
   Printer,
   ArrowLeft,
   X,
-  Paperclip,
   ChevronLeft,
   ChevronRight,
   Search,
+  Phone,
+  StickyNote,
+  CalendarClock,
+  Clock,
 } from "lucide-react";
 import jsPDF from "jspdf";
 import { Badge } from "@/components/ui/badge";
@@ -187,9 +192,69 @@ function renderLogContent(log: QuotationLog) {
     return <p className="text-sm text-slate-500">Quotation Printed</p>;
   }
 
-  if (log.action === "status_changed") {
-    const hasMessage = d && typeof d.message_subject === "string" && d.message_subject;
+  if (log.action === "log_note" && d) {
+    return (
+      <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 mt-1">
+        <div className="flex items-center gap-1.5 mb-1">
+          <StickyNote className="h-3.5 w-3.5 text-amber-600" />
+          <span className="text-xs font-semibold text-amber-700">Internal Note</span>
+        </div>
+        <p className="text-sm whitespace-pre-wrap text-slate-700">
+          {String(d.note || "")}
+        </p>
+      </div>
+    );
+  }
 
+  if (log.action === "activity" && d) {
+    const dueDate = d.due_date ? new Date(String(d.due_date)) : null;
+    const isPast = dueDate && dueDate < new Date();
+    return (
+      <div className={`border rounded-lg p-3 mt-1 ${isPast ? "bg-red-50 border-red-200" : "bg-blue-50 border-blue-200"}`}>
+        <div className="flex items-center gap-1.5 mb-1">
+          <CalendarClock className={`h-3.5 w-3.5 ${isPast ? "text-red-600" : "text-blue-600"}`} />
+          <span className={`text-xs font-semibold ${isPast ? "text-red-700" : "text-blue-700"}`}>
+            Reminder / Task
+          </span>
+          {dueDate && (
+            <span className={`text-xs ml-auto ${isPast ? "text-red-500" : "text-blue-500"}`}>
+              Due: {dueDate.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
+            </span>
+          )}
+        </div>
+        <p className="text-sm whitespace-pre-wrap text-slate-700">
+          {String(d.summary || "")}
+        </p>
+      </div>
+    );
+  }
+
+  if (log.action === "status_changed") {
+    const isWhatsApp = d && d.send_method === "whatsapp";
+
+    if (isWhatsApp) {
+      return (
+        <div className="bg-green-50 border border-green-200 rounded-lg p-3 mt-1 space-y-1">
+          <div className="flex items-center gap-1.5">
+            <Phone className="h-3.5 w-3.5 text-green-600" />
+            <span className="text-xs font-semibold text-green-700">Sent via WhatsApp</span>
+          </div>
+          {typeof d.phone_number === "string" && d.phone_number && (
+            <p className="text-xs text-green-700">
+              To: {d.phone_number}
+            </p>
+          )}
+          {typeof d.whatsapp_message === "string" && d.whatsapp_message && (
+            <div className="text-sm whitespace-pre-wrap text-slate-700 mt-1">
+              {d.whatsapp_message}
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    // Legacy email-based sends (backwards compatibility)
+    const hasMessage = d && typeof d.message_subject === "string" && d.message_subject;
     if (hasMessage) {
       return (
         <div className="bg-teal-50 border border-teal-200 rounded-lg p-3 mt-1 space-y-1">
@@ -412,15 +477,24 @@ export function QuotationPanel() {
   const [logs, setLogs] = useState<QuotationLog[]>([]);
   const [invoiceMap, setInvoiceMap] = useState<Record<string, Invoice>>({});
 
-  // Send modal
+  // Send modal (WhatsApp)
   const [sendModalOpen, setSendModalOpen] = useState(false);
-  const [sendRecipients, setSendRecipients] = useState("");
-  const [sendSubject, setSendSubject] = useState("");
-  const [sendBody, setSendBody] = useState("");
+  const [sendPhoneNumber, setSendPhoneNumber] = useState("");
+  const [sendWhatsAppMessage, setSendWhatsAppMessage] = useState("");
 
   // Delete modal
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<Quotation | null>(null);
+
+  // Right panel active tab
+  const [activeRightTab, setActiveRightTab] = useState<"send_message" | "log_note" | "activity">("send_message");
+
+  // Log Note
+  const [logNoteText, setLogNoteText] = useState("");
+
+  // Activity / Reminder
+  const [activitySummary, setActivitySummary] = useState("");
+  const [activityDueDate, setActivityDueDate] = useState("");
 
   // ─── Computed values ─────────────────────────────────────
   const amounts = computeAmounts(formState.quantity, formState.unit_price, formState.taxes);
@@ -589,15 +663,38 @@ export function QuotationPanel() {
 
   // ─── Send handlers ──────────────────────────────────────
 
+  /**
+   * Convert a local Pakistani number to international format.
+   * 03001234567 → 923001234567
+   * 923001234567 → 923001234567 (already international)
+   * +923001234567 → 923001234567
+   */
+  function formatPhoneForWhatsApp(raw: string): string {
+    let digits = raw.replace(/[^0-9]/g, "");
+    // Pakistani local number starting with 0 (e.g. 03001234567)
+    if (digits.startsWith("0") && digits.length === 11) {
+      digits = "92" + digits.substring(1);
+    }
+    return digits;
+  }
+
   function openSendModal() {
     if (!selectedQuotation) return;
     const q = selectedQuotation;
     const qNum = q.quotation_number || "New";
-    const total = q.total_amount.toFixed(2);
-    setSendRecipients("");
-    setSendSubject(`logistix Quotation ${qNum}`);
-    setSendBody(
-      `Hello,\n\nYour quotation ${qNum} amounting in ${total} Rs. is ready for review.\n\nDo not hesitate to contact us if you have any questions.\n--\nAdministrator`
+    const amounts = getQAmounts(q);
+    setSendPhoneNumber("");
+    setSendWhatsAppMessage(
+      `*Quotation: ${qNum}*\n\n` +
+      `Dear ${q.customer_name},\n\n` +
+      `Here are the quotation details:\n` +
+      `Product/Service: ${q.product_service}\n` +
+      `Quantity: ${q.quantity}\n` +
+      `Unit Price: Rs. ${q.unit_price.toFixed(2)}\n` +
+      (q.taxes > 0 ? `Tax: ${q.taxes}%\n` : "") +
+      `*Total Amount: Rs. ${amounts.total.toFixed(2)}*\n\n` +
+      `Do not hesitate to contact us if you have any questions.\n\n` +
+      `Thank you for your business!`
     );
     setSendModalOpen(true);
   }
@@ -605,25 +702,97 @@ export function QuotationPanel() {
   async function handleSend() {
     if (!selectedQuotation) return;
 
+    if (!sendPhoneNumber.trim()) {
+      toast.error("Please enter the customer's WhatsApp number");
+      return;
+    }
+
+    // Format the phone number (auto-convert 03xx → 923xx)
+    const phone = formatPhoneForWhatsApp(sendPhoneNumber);
+    if (!phone || phone.length < 10) {
+      toast.error("Please enter a valid WhatsApp number (e.g. 03001234567 or 923001234567)");
+      return;
+    }
+
+    if (!sendWhatsAppMessage.trim()) {
+      toast.error("Message cannot be empty");
+      return;
+    }
+
+    // First: open WhatsApp Web IMMEDIATELY (preserves user-gesture for popup)
+    const encodedMsg = encodeURIComponent(sendWhatsAppMessage);
+    const waUrl = `https://web.whatsapp.com/send?phone=${phone}&text=${encodedMsg}`;
+    window.open(waUrl, "_blank");
+
+    // Close modal and show success
+    setSendModalOpen(false);
+    toast.success("WhatsApp Web opened — the message is ready, just press Send!");
+
+    // Then: update status + log on the server in background
     startTransition(async () => {
       const result = await sendQuotation(selectedQuotation.id, {
-        recipients: sendRecipients,
-        subject: sendSubject,
-        body: sendBody,
+        phone_number: phone,
+        whatsapp_message: sendWhatsAppMessage,
       });
 
       if ("error" in result) {
-        toast.error(result.error || "Failed to send quotation");
+        toast.error(result.error || "Failed to update quotation status");
         return;
       }
 
-      toast.success("Quotation sent!");
-      setSendModalOpen(false);
-      const q = result.quotation as Quotation;
+      const res = result as { quotation: Quotation };
+      const q = res.quotation;
       setSelectedQuotation(q);
       fetchLogs(q.id);
       fetchQuotations();
       router.refresh();
+    });
+  }
+
+  // ─── Log Note handler ──────────────────────────────────
+
+  async function handleAddLogNote() {
+    if (!selectedQuotation || !logNoteText.trim()) {
+      toast.error("Please enter a note");
+      return;
+    }
+
+    startTransition(async () => {
+      const result = await addQuotationLogNote(selectedQuotation.id, logNoteText);
+      if ("error" in result) {
+        toast.error(result.error || "Failed to add note");
+        return;
+      }
+      toast.success("Note added");
+      setLogNoteText("");
+      setActiveRightTab("send_message");
+      fetchLogs(selectedQuotation.id);
+    });
+  }
+
+  // ─── Activity handler ──────────────────────────────────
+
+  async function handleAddActivity() {
+    if (!selectedQuotation || !activitySummary.trim()) {
+      toast.error("Please enter an activity or reminder");
+      return;
+    }
+
+    startTransition(async () => {
+      const result = await addQuotationActivity(
+        selectedQuotation.id,
+        activitySummary,
+        activityDueDate || null
+      );
+      if ("error" in result) {
+        toast.error(result.error || "Failed to add activity");
+        return;
+      }
+      toast.success("Activity added");
+      setActivitySummary("");
+      setActivityDueDate("");
+      setActiveRightTab("send_message");
+      fetchLogs(selectedQuotation.id);
     });
   }
 
@@ -1117,24 +1286,135 @@ export function QuotationPanel() {
           {/* Right: Activity Panel */}
           {q && !isNewMode && (
             <div className="lg:col-span-1 space-y-3">
-              {/* Action buttons */}
+              {/* Tab buttons */}
               <div className="flex gap-1 flex-wrap">
                 <Button
                   size="sm"
-                  className="bg-orange-500 hover:bg-orange-600 text-white text-xs h-7 px-3"
+                  className={`text-xs h-7 px-3 ${
+                    activeRightTab === "send_message"
+                      ? "bg-orange-500 hover:bg-orange-600 text-white"
+                      : ""
+                  }`}
+                  variant={activeRightTab === "send_message" ? "default" : "outline"}
+                  onClick={() => setActiveRightTab("send_message")}
                 >
                   Send message
                 </Button>
-                <Button variant="outline" size="sm" className="text-xs h-7 px-3">
+                <Button
+                  size="sm"
+                  className={`text-xs h-7 px-3 ${
+                    activeRightTab === "log_note"
+                      ? "bg-amber-500 hover:bg-amber-600 text-white"
+                      : ""
+                  }`}
+                  variant={activeRightTab === "log_note" ? "default" : "outline"}
+                  onClick={() => setActiveRightTab("log_note")}
+                >
                   Log note
                 </Button>
-                <Button variant="outline" size="sm" className="text-xs h-7 px-3">
+                <Button
+                  size="sm"
+                  className={`text-xs h-7 px-3 ${
+                    activeRightTab === "activity"
+                      ? "bg-blue-500 hover:bg-blue-600 text-white"
+                      : ""
+                  }`}
+                  variant={activeRightTab === "activity" ? "default" : "outline"}
+                  onClick={() => setActiveRightTab("activity")}
+                >
                   Activity
                 </Button>
               </div>
 
+              {/* Log Note Input */}
+              {activeRightTab === "log_note" && (
+                <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 space-y-2">
+                  <div className="flex items-center gap-1.5">
+                    <StickyNote className="h-4 w-4 text-amber-600" />
+                    <span className="text-xs font-semibold text-amber-700">Add Internal Note</span>
+                  </div>
+                  <Textarea
+                    value={logNoteText}
+                    onChange={(e) => setLogNoteText(e.target.value)}
+                    placeholder='e.g. "Customer asked for a 5% discount."'
+                    rows={3}
+                    className="bg-white text-sm resize-none"
+                  />
+                  <div className="flex gap-2 justify-end">
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="text-xs h-7"
+                      onClick={() => {
+                        setLogNoteText("");
+                        setActiveRightTab("send_message");
+                      }}
+                    >
+                      Cancel
+                    </Button>
+                    <Button
+                      size="sm"
+                      className="bg-amber-500 hover:bg-amber-600 text-white text-xs h-7"
+                      onClick={handleAddLogNote}
+                      disabled={isPending || !logNoteText.trim()}
+                    >
+                      {isPending ? "Adding..." : "Add Note"}
+                    </Button>
+                  </div>
+                </div>
+              )}
+
+              {/* Activity / Reminder Input */}
+              {activeRightTab === "activity" && (
+                <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 space-y-2">
+                  <div className="flex items-center gap-1.5">
+                    <CalendarClock className="h-4 w-4 text-blue-600" />
+                    <span className="text-xs font-semibold text-blue-700">Schedule Activity / Reminder</span>
+                  </div>
+                  <Textarea
+                    value={activitySummary}
+                    onChange={(e) => setActivitySummary(e.target.value)}
+                    placeholder='e.g. "Call the customer tomorrow."'
+                    rows={2}
+                    className="bg-white text-sm resize-none"
+                  />
+                  <div className="flex items-center gap-2">
+                    <Clock className="h-3.5 w-3.5 text-blue-500" />
+                    <Label className="text-xs text-blue-600">Due Date</Label>
+                    <Input
+                      type="date"
+                      value={activityDueDate}
+                      onChange={(e) => setActivityDueDate(e.target.value)}
+                      className="bg-white text-sm h-8 flex-1"
+                    />
+                  </div>
+                  <div className="flex gap-2 justify-end">
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="text-xs h-7"
+                      onClick={() => {
+                        setActivitySummary("");
+                        setActivityDueDate("");
+                        setActiveRightTab("send_message");
+                      }}
+                    >
+                      Cancel
+                    </Button>
+                    <Button
+                      size="sm"
+                      className="bg-blue-500 hover:bg-blue-600 text-white text-xs h-7"
+                      onClick={handleAddActivity}
+                      disabled={isPending || !activitySummary.trim()}
+                    >
+                      {isPending ? "Adding..." : "Schedule"}
+                    </Button>
+                  </div>
+                </div>
+              )}
+
               {/* Activity Feed */}
-              <div className="space-y-4 max-h-[calc(100vh-320px)] overflow-y-auto pr-1">
+              <div className="space-y-4 max-h-[calc(100vh-420px)] overflow-y-auto pr-1">
                 {logs.length === 0 ? (
                   <p className="text-sm text-slate-400 text-center py-8">
                     No activity yet.
@@ -1142,11 +1422,17 @@ export function QuotationPanel() {
                 ) : (
                   <>
                     <div className="text-xs text-slate-400 font-semibold uppercase tracking-wider">
-                      Today
+                      Activity History
                     </div>
                     {logs.map((log) => (
                       <div key={log.id} className="flex gap-3">
-                        <div className="h-8 w-8 rounded-full bg-teal-100 flex items-center justify-center text-teal-800 font-semibold text-xs shrink-0 mt-0.5">
+                        <div className={`h-8 w-8 rounded-full flex items-center justify-center font-semibold text-xs shrink-0 mt-0.5 ${
+                          log.action === "log_note"
+                            ? "bg-amber-100 text-amber-800"
+                            : log.action === "activity"
+                              ? "bg-blue-100 text-blue-800"
+                              : "bg-teal-100 text-teal-800"
+                        }`}>
                           {(log.performed_by || "?").charAt(0).toUpperCase()}
                         </div>
                         <div className="flex-1 min-w-0">
@@ -1156,13 +1442,18 @@ export function QuotationPanel() {
                             </span>
                             {log.action === "status_changed" &&
                               log.details &&
-                              typeof (log.details as Record<string, unknown>).message_subject === "string" && (
-                                <span className="text-xs">✉</span>
+                              (log.details as Record<string, unknown>).send_method === "whatsapp" && (
+                                <Phone className="h-3 w-3 text-green-600 inline" />
                               )}
                             <span className="text-xs text-slate-400">
                               {new Date(log.performed_at).toLocaleTimeString([], {
                                 hour: "2-digit",
                                 minute: "2-digit",
+                              })}
+                              {" · "}
+                              {new Date(log.performed_at).toLocaleDateString([], {
+                                month: "short",
+                                day: "numeric",
                               })}
                             </span>
                           </div>
@@ -1177,62 +1468,72 @@ export function QuotationPanel() {
           )}
         </div>
 
-        {/* ─── Send Modal ─────────────────────────────────────── */}
+        {/* ─── Send via WhatsApp Modal ─────────────────────────── */}
         <Dialog open={sendModalOpen} onOpenChange={setSendModalOpen}>
           <DialogContent className="sm:max-w-[600px]">
             <DialogHeader>
-              <DialogTitle className="flex items-center justify-between">
-                <span>Send</span>
+              <DialogTitle className="flex items-center gap-2">
+                <Phone className="h-5 w-5 text-green-600" />
+                <span>Send Quotation via WhatsApp</span>
               </DialogTitle>
             </DialogHeader>
             <div className="space-y-4">
               <div className="flex items-center gap-3">
-                <Label className="w-16 text-right text-sm text-slate-500 shrink-0">To</Label>
+                <Label className="w-28 text-right text-sm text-slate-500 shrink-0">
+                  WhatsApp No.
+                </Label>
                 <Input
-                  value={sendRecipients}
-                  onChange={(e) => setSendRecipients(e.target.value)}
-                  placeholder="Add recipients..."
+                  value={sendPhoneNumber}
+                  onChange={(e) => setSendPhoneNumber(e.target.value)}
+                  placeholder="e.g. 03001234567"
                   className="flex-1"
                 />
               </div>
-              <div className="flex items-center gap-3">
-                <Label className="w-16 text-right text-sm text-slate-500 shrink-0">Subject</Label>
-                <Input
-                  value={sendSubject}
-                  onChange={(e) => setSendSubject(e.target.value)}
-                  className="flex-1"
+              {/* Live preview of formatted number */}
+              {sendPhoneNumber.trim() && (
+                <div className="pl-[7.5rem] text-xs">
+                  <span className="text-slate-400">Will send to: </span>
+                  <span className="font-semibold text-green-700">
+                    +{formatPhoneForWhatsApp(sendPhoneNumber)}
+                  </span>
+                  {sendPhoneNumber.replace(/[^0-9]/g, "").startsWith("0") && (
+                    <span className="text-blue-500 ml-2">(auto-converted to international format)</span>
+                  )}
+                </div>
+              )}
+              {!sendPhoneNumber.trim() && (
+                <div className="text-xs text-slate-400 pl-[7.5rem]">
+                  Enter the customer&apos;s number (e.g. 03001234567 or 923001234567)
+                </div>
+              )}
+              <div>
+                <Label className="text-sm text-slate-500 mb-1 block">Message</Label>
+                <Textarea
+                  value={sendWhatsAppMessage}
+                  onChange={(e) => setSendWhatsAppMessage(e.target.value)}
+                  rows={10}
+                  className="resize-none font-mono text-sm"
                 />
               </div>
-              <Textarea
-                value={sendBody}
-                onChange={(e) => setSendBody(e.target.value)}
-                rows={8}
-                className="resize-none"
-              />
-              {/* Attachment indicator */}
-              <div className="flex items-center gap-2 text-sm px-1">
-                <Paperclip className="h-4 w-4 text-teal-600" />
-                <span className="text-teal-600">
-                  Quotation - {q?.quotation_number || "New"}.pdf
+              <div className="flex items-center gap-2 text-xs text-green-600 bg-green-50 p-2 rounded-md">
+                <Phone className="h-3.5 w-3.5 shrink-0" />
+                <span>
+                  WhatsApp Web will open with this message pre-filled in the chat. Just press <strong>Enter</strong> or click <strong>Send</strong> to deliver it.
                 </span>
-                <button className="text-slate-400 hover:text-red-500">
-                  <X className="h-3 w-3" />
-                </button>
               </div>
             </div>
             <DialogFooter className="justify-start gap-2 sm:justify-start">
               <Button
                 onClick={handleSend}
-                disabled={isPending}
-                className="bg-teal-600 hover:bg-teal-700 text-white"
+                disabled={isPending || !sendPhoneNumber.trim() || !sendWhatsAppMessage.trim()}
+                className="bg-green-600 hover:bg-green-700 text-white"
               >
-                {isPending ? "Sending..." : "Send"}
+                <Phone className="h-3.5 w-3.5 mr-1" />
+                {isPending ? "Opening WhatsApp..." : "Send to WhatsApp"}
               </Button>
-              <Button variant="outline" onClick={() => setSendModalOpen(false)}>
+              <Button variant="outline" onClick={() => setSendModalOpen(false)} disabled={isPending}>
                 Discard
               </Button>
-              <div className="flex-1" />
-              <Paperclip className="h-4 w-4 text-slate-400 cursor-pointer" />
             </DialogFooter>
           </DialogContent>
         </Dialog>

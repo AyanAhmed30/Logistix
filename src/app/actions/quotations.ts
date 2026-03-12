@@ -16,6 +16,7 @@ export type Quotation = {
   unit_price: number;
   total_amount: number;
   taxes: number;
+  uom: string;
   expiration_date: string | null;
   payment_terms: string;
   status: QuotationStatus;
@@ -93,6 +94,7 @@ export async function createQuotation(formData: FormData) {
     const quantity = parseFloat(String(formData.get('quantity') || '0'));
     const unit_price = parseFloat(String(formData.get('unit_price') || '0'));
     const taxes = parseFloat(String(formData.get('taxes') || '0'));
+    const uom = String(formData.get('uom') || 'pcs / u').trim();
     const expiration_date = String(formData.get('expiration_date') || '').trim() || null;
     const payment_terms = String(formData.get('payment_terms') || 'Immediate').trim();
 
@@ -125,6 +127,7 @@ export async function createQuotation(formData: FormData) {
           unit_price,
           total_amount,
           taxes,
+          uom,
           expiration_date,
           payment_terms,
           status: 'quotation',
@@ -146,7 +149,7 @@ export async function createQuotation(formData: FormData) {
       session.username,
       null,
       'quotation',
-      { customer_name, product_service, quantity, unit_price, total_amount, taxes }
+      { customer_name, product_service, quantity, unit_price, total_amount, taxes, uom }
     );
 
     revalidatePath('/admin/dashboard');
@@ -203,6 +206,7 @@ export async function updateQuotation(formData: FormData) {
     const quantity = parseFloat(String(formData.get('quantity') || '0'));
     const unit_price = parseFloat(String(formData.get('unit_price') || '0'));
     const taxes = parseFloat(String(formData.get('taxes') || '0'));
+    const uom = String(formData.get('uom') || 'pcs / u').trim();
     const expiration_date = String(formData.get('expiration_date') || '').trim() || null;
     const payment_terms = String(formData.get('payment_terms') || 'Immediate').trim();
 
@@ -241,6 +245,7 @@ export async function updateQuotation(formData: FormData) {
         unit_price,
         total_amount,
         taxes,
+        uom,
         expiration_date,
         payment_terms,
         updated_at: new Date().toISOString(),
@@ -269,6 +274,7 @@ export async function updateQuotation(formData: FormData) {
           unit_price: currentQuotation.unit_price,
           total_amount: currentQuotation.total_amount,
           taxes: currentQuotation.taxes || 0,
+          uom: currentQuotation.uom || 'pcs / u',
         },
         new: {
           customer_name,
@@ -277,6 +283,7 @@ export async function updateQuotation(formData: FormData) {
           unit_price,
           total_amount,
           taxes,
+          uom,
         },
       }
     );

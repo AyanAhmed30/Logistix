@@ -75,9 +75,17 @@ type QuotationFormState = {
   quantity: string;
   unit_price: string;
   taxes: string;
+  uom: string;
   expiration_date: string;
   payment_terms: string;
 };
+
+const UOM_OPTIONS = [
+  { value: "kg", label: "kg (Kilogram)" },
+  { value: "m³", label: "m³ (Cubic Meter)" },
+  { value: "pcs / u", label: "pcs / u (Pieces / Units)" },
+  { value: "pairs (2u)", label: "pairs (2u)" },
+] as const;
 
 const emptyForm: QuotationFormState = {
   customer_name: "",
@@ -85,6 +93,7 @@ const emptyForm: QuotationFormState = {
   quantity: "",
   unit_price: "",
   taxes: "17",
+  uom: "pcs / u",
   expiration_date: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split("T")[0],
   payment_terms: "Immediate",
 };
@@ -407,9 +416,10 @@ function generateQuotationPdf(q: Quotation) {
   y += 6;
 
   doc.setFont(undefined, "bold");
-  const cols = { desc: margin, qty: margin + 80, price: margin + 110, tax: margin + 140, amt: pageWidth - margin };
+  const cols = { desc: margin, qty: margin + 65, uom: margin + 90, price: margin + 115, tax: margin + 143, amt: pageWidth - margin };
   doc.text("Product/Service", cols.desc, y);
   doc.text("Quantity", cols.qty, y);
+  doc.text("UOM", cols.uom, y);
   doc.text("Unit Price", cols.price, y);
   doc.text("Taxes", cols.tax, y);
   doc.text("Amount", cols.amt, y, { align: "right" });
@@ -422,6 +432,7 @@ function generateQuotationPdf(q: Quotation) {
   doc.setFont(undefined, "normal");
   doc.text(q.product_service, cols.desc, y);
   doc.text(q.quantity.toFixed(2), cols.qty, y);
+  doc.text(q.uom || "pcs / u", cols.uom, y);
   doc.text(q.unit_price.toFixed(2), cols.price, y);
   doc.text(`${q.taxes || 0}%`, cols.tax, y);
   doc.text(`${amounts.untaxed.toFixed(2)} Rs.`, cols.amt, y, { align: "right" });
@@ -607,6 +618,7 @@ export function QuotationPanel() {
       quantity: String(q.quantity),
       unit_price: String(q.unit_price),
       taxes: String(q.taxes || 0),
+      uom: q.uom || "pcs / u",
       expiration_date: q.expiration_date || "",
       payment_terms: q.payment_terms || "Immediate",
     });
@@ -638,6 +650,7 @@ export function QuotationPanel() {
     fd.set("quantity", formState.quantity);
     fd.set("unit_price", formState.unit_price);
     fd.set("taxes", formState.taxes);
+    fd.set("uom", formState.uom);
     fd.set("expiration_date", formState.expiration_date);
     fd.set("payment_terms", formState.payment_terms);
 
@@ -689,7 +702,7 @@ export function QuotationPanel() {
       `Dear ${q.customer_name},\n\n` +
       `Here are the quotation details:\n` +
       `Product/Service: ${q.product_service}\n` +
-      `Quantity: ${q.quantity}\n` +
+      `Quantity: ${q.quantity} ${q.uom || "pcs / u"}\n` +
       `Unit Price: Rs. ${q.unit_price.toFixed(2)}\n` +
       (q.taxes > 0 ? `Tax: ${q.taxes}%\n` : "") +
       `*Total Amount: Rs. ${amounts.total.toFixed(2)}*\n\n` +
@@ -1105,6 +1118,7 @@ export function QuotationPanel() {
                         <TableRow className="bg-slate-50">
                           <TableHead className="font-semibold">Product</TableHead>
                           <TableHead className="text-right font-semibold">Quantity</TableHead>
+                          <TableHead className="text-center font-semibold">UOM</TableHead>
                           <TableHead className="text-right font-semibold">Unit Price</TableHead>
                           <TableHead className="text-center font-semibold">Taxes</TableHead>
                           <TableHead className="text-right font-semibold">Amount</TableHead>
@@ -1133,6 +1147,19 @@ export function QuotationPanel() {
                                 step="0.01"
                                 min="0"
                               />
+                            </TableCell>
+                            <TableCell>
+                              <select
+                                value={formState.uom}
+                                onChange={(e) => handleFormChange("uom", e.target.value)}
+                                className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                              >
+                                {UOM_OPTIONS.map((opt) => (
+                                  <option key={opt.value} value={opt.value}>
+                                    {opt.label}
+                                  </option>
+                                ))}
+                              </select>
                             </TableCell>
                             <TableCell>
                               <Input
@@ -1182,6 +1209,11 @@ export function QuotationPanel() {
                           <TableRow>
                             <TableCell className="text-slate-800">{q.product_service}</TableCell>
                             <TableCell className="text-right">{q.quantity.toFixed(2)}</TableCell>
+                            <TableCell className="text-center">
+                              <Badge variant="secondary" className="text-xs">
+                                {q.uom || "pcs / u"}
+                              </Badge>
+                            </TableCell>
                             <TableCell className="text-right">{q.unit_price.toFixed(2)}</TableCell>
                             <TableCell className="text-center">
                               <Badge variant="secondary" className="text-xs">
@@ -1195,7 +1227,7 @@ export function QuotationPanel() {
                         ) : (
                           <TableRow>
                             <TableCell
-                              colSpan={5}
+                              colSpan={6}
                               className="text-center text-slate-400 py-6 text-sm"
                             >
                               No products added yet.
@@ -1263,8 +1295,8 @@ export function QuotationPanel() {
                   </div>
                 </div>
 
-                {/* Edit button (read mode, quotation status only) */}
-                {!isNewMode && !isEditMode && q?.status === "quotation" && (
+                {/* Edit & Delete buttons (always visible in read mode) */}
+                {!isNewMode && !isEditMode && q && (
                   <div className="flex justify-end gap-2">
                     <Button variant="outline" size="sm" onClick={startEdit}>
                       <Edit2 className="h-3.5 w-3.5 mr-1" /> Edit
@@ -1616,6 +1648,7 @@ export function QuotationPanel() {
                     <TableHead className="font-semibold">Creation Date</TableHead>
                     <TableHead className="font-semibold">Customer</TableHead>
                     <TableHead className="font-semibold">Salesperson</TableHead>
+                    <TableHead className="text-center font-semibold">UOM</TableHead>
                     <TableHead className="text-right font-semibold">Total</TableHead>
                     <TableHead className="font-semibold">Status</TableHead>
                   </TableRow>
@@ -1646,6 +1679,11 @@ export function QuotationPanel() {
                           </div>
                           <span className="text-sm text-slate-600">{q.created_by}</span>
                         </div>
+                      </TableCell>
+                      <TableCell className="text-center">
+                        <Badge variant="secondary" className="text-xs">
+                          {q.uom || "pcs / u"}
+                        </Badge>
                       </TableCell>
                       <TableCell className="text-right font-semibold text-slate-800">
                         {q.total_amount.toFixed(2)} Rs.

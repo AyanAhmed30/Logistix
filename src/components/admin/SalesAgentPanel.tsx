@@ -105,13 +105,12 @@ export function SalesAgentPanel({ initialCreateOpen = false, onCreateOpenChange 
     event.preventDefault();
     const form = event.currentTarget;
     const formData = new FormData(event.currentTarget);
-    const code = String(formData.get("code") || "").trim();
     const name = String(formData.get("name") || "").trim();
     const username = String(formData.get("username") || "").trim();
     const password = String(formData.get("password") || "").trim();
 
-    if (!code || !name || !username || !password) {
-      toast.error("Code, name, username, and password are required");
+    if (!name || !username || !password) {
+      toast.error("Name, username, and password are required");
       return;
     }
 
@@ -142,13 +141,12 @@ export function SalesAgentPanel({ initialCreateOpen = false, onCreateOpenChange 
     if (!editSalesAgent) return;
     const formData = new FormData(event.currentTarget);
     formData.set("id", editSalesAgent.id);
-    const code = String(formData.get("code") || "").trim();
     const name = String(formData.get("name") || "").trim();
     const username = String(formData.get("username") || "").trim();
     const password = String(formData.get("password") || "").trim();
 
-    if (!code || !name || !username) {
-      toast.error("Code, name, and username are required");
+    if (!name || !username) {
+      toast.error("Name and username are required");
       return;
     }
 
@@ -271,7 +269,6 @@ export function SalesAgentPanel({ initialCreateOpen = false, onCreateOpenChange 
               <Table>
                 <TableHeader>
                   <TableRow>
-                <TableHead>Code</TableHead>
                 <TableHead>Name</TableHead>
                 <TableHead>Username</TableHead>
                 <TableHead className="text-right">Actions</TableHead>
@@ -280,13 +277,6 @@ export function SalesAgentPanel({ initialCreateOpen = false, onCreateOpenChange 
                 <TableBody>
                   {salesAgents.map((agent) => (
                     <TableRow key={agent.id}>
-                      <TableCell>
-                        {agent.code ? (
-                          <span className="font-mono font-semibold text-primary-accent">{agent.code}</span>
-                        ) : (
-                          <span className="text-secondary-muted text-sm">-</span>
-                        )}
-                      </TableCell>
                       <TableCell className="font-semibold">{agent.name}</TableCell>
                       <TableCell>{agent.username || "-"}</TableCell>
                       <TableCell className="text-right space-x-2">
@@ -330,10 +320,6 @@ export function SalesAgentPanel({ initialCreateOpen = false, onCreateOpenChange 
             {/* Left Side - Form Fields */}
             <div className="space-y-4">
               <form onSubmit={handleCreateSubmit} className="space-y-4">
-                <div className="space-y-2">
-                  <Label htmlFor="create-code">Code *</Label>
-                  <Input id="create-code" name="code" placeholder="101" required />
-                </div>
                 <div className="space-y-2">
                   <Label htmlFor="create-name">Name *</Label>
                   <Input id="create-name" name="name" placeholder="John Doe" required />
@@ -414,15 +400,6 @@ export function SalesAgentPanel({ initialCreateOpen = false, onCreateOpenChange 
             {/* Left Side - Form Fields */}
             <div className="space-y-4">
               <form onSubmit={handleEditSubmit} className="space-y-4">
-                <div className="space-y-2">
-                  <Label htmlFor="edit-code">Code *</Label>
-                  <Input
-                    id="edit-code"
-                    name="code"
-                    defaultValue={editSalesAgent?.code ?? ""}
-                    required
-                  />
-                </div>
                 <div className="space-y-2">
                   <Label htmlFor="edit-name">Name *</Label>
                   <Input

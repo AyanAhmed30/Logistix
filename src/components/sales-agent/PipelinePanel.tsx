@@ -41,7 +41,13 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { MessageSquare, Edit2, Trash2, Plus, UserPlus, Search, X, Send, FileText, Link2, ImageIcon, History } from "lucide-react";
+import { MessageSquare, Edit2, Trash2, Plus, UserPlus, Search, X, Send, FileText, Link2, ImageIcon, History, MoreVertical } from "lucide-react";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -68,11 +74,17 @@ const STATUSES_ROW_2: LeadStatus[] = [
 ];
 
 
+// Boards where the dropdown shows "Follow Up" and "Lose"
+const NORMAL_BOARDS: LeadStatus[] = ["Leads", "Inquiry Received", "Quotation Sent", "Negotiation", "Win"];
+// Boards where the dropdown shows the normal board options
+const SPECIAL_BOARDS: LeadStatus[] = ["Follow up", "Lose"];
+
 function LeadCard({
   lead,
   onOpenComments,
   onConvert,
   onOpenInquiry,
+  onMoveToStatus,
   showConvertButton,
   showInquiryButton,
 }: {
@@ -80,6 +92,7 @@ function LeadCard({
   onOpenComments: (lead: Lead) => void;
   onConvert?: (lead: Lead) => void;
   onOpenInquiry?: (lead: Lead) => void;
+  onMoveToStatus?: (lead: Lead, status: LeadStatus) => void;
   showConvertButton?: boolean;
   showInquiryButton?: boolean;
 }) {
@@ -98,14 +111,52 @@ function LeadCard({
     opacity: isDragging ? 0.5 : 1,
   };
 
+  // Determine dropdown options based on current board
+  const isInSpecialBoard = SPECIAL_BOARDS.includes(lead.status);
+  const dropdownOptions: LeadStatus[] = isInSpecialBoard ? NORMAL_BOARDS : SPECIAL_BOARDS;
+
   return (
     <div ref={setNodeRef} style={style} {...attributes} {...listeners}>
       <Card className="mb-2 cursor-grab active:cursor-grabbing hover:shadow-md transition-shadow">
         <CardContent className="p-2.5">
           <div className="space-y-1.5">
-            <div>
-              <h4 className="font-semibold text-xs text-primary-dark leading-tight truncate">{lead.name}</h4>
-              <p className="text-[10px] text-secondary-muted truncate">{lead.number}</p>
+            <div className="flex items-start justify-between gap-1">
+              <div className="min-w-0 flex-1">
+                {lead.lead_id_formatted && (
+                  <span className="font-mono text-[10px] text-primary-accent font-semibold">#{lead.lead_id_formatted}</span>
+                )}
+                <h4 className="font-semibold text-xs text-primary-dark leading-tight truncate">{lead.name}</h4>
+                <p className="text-[10px] text-secondary-muted truncate">{lead.number}</p>
+              </div>
+              {/* Three-dot menu */}
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-6 w-6 p-0 flex-shrink-0"
+                    onClick={(e) => e.stopPropagation()}
+                    onPointerDown={(e) => e.stopPropagation()}
+                  >
+                    <MoreVertical className="h-3.5 w-3.5 text-secondary-muted" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="w-44">
+                  {dropdownOptions.map((status) => (
+                    <DropdownMenuItem
+                      key={status}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onMoveToStatus?.(lead, status);
+                      }}
+                      onPointerDown={(e) => e.stopPropagation()}
+                      className="text-xs cursor-pointer"
+                    >
+                      {status}
+                    </DropdownMenuItem>
+                  ))}
+                </DropdownMenuContent>
+              </DropdownMenu>
             </div>
             <div className="flex items-center justify-between gap-1">
               <span className="px-1.5 py-0.5 bg-blue-100 text-blue-800 rounded text-[10px] truncate flex-1 min-w-0">
@@ -171,6 +222,7 @@ function KanbanColumn({
   onOpenComments,
   onConvert,
   onOpenInquiry,
+  onMoveToStatus,
   searchQuery,
 }: {
   status: LeadStatus;
@@ -178,6 +230,7 @@ function KanbanColumn({
   onOpenComments: (lead: Lead) => void;
   onConvert?: (lead: Lead) => void;
   onOpenInquiry?: (lead: Lead) => void;
+  onMoveToStatus?: (lead: Lead, status: LeadStatus) => void;
   searchQuery?: string;
 }) {
   const { setNodeRef } = useDroppable({ id: status });
@@ -253,6 +306,7 @@ function KanbanColumn({
                   onOpenComments={onOpenComments}
                   onConvert={onConvert}
                   onOpenInquiry={onOpenInquiry}
+                  onMoveToStatus={onMoveToStatus}
                   showConvertButton={showConvertButton}
                   showInquiryButton={showInquiryButton}
                 />
@@ -901,6 +955,27 @@ export function PipelinePanel() {
     setInquiryOpen(true);
   }
 
+  function handleMoveToStatus(lead: Lead, newStatus: LeadStatus) {
+    if (lead.status === newStatus) return;
+
+    // Optimistic update
+    setLeads((prev) =>
+      prev.map((l) => (l.id === lead.id ? { ...l, status: newStatus } : l))
+    );
+
+    // Update in database
+    startTransition(async () => {
+      const result = await updateLeadStatus(lead.id, newStatus);
+      if ("error" in result) {
+        toast.error(result.error);
+        // Revert on error
+        fetchLeads();
+      } else {
+        toast.success(`Lead moved to ${newStatus}`);
+      }
+    });
+  }
+
   function handleConvertLead(lead: Lead) {
     setLeadToConvert(lead);
     setConvertDialogOpen(true);
@@ -985,6 +1060,7 @@ export function PipelinePanel() {
                       onOpenComments={handleOpenComments}
                       onConvert={handleConvertLead}
                       onOpenInquiry={handleOpenInquiry}
+                      onMoveToStatus={handleMoveToStatus}
                       searchQuery={searchQuery}
                     />
                   ))}
@@ -999,6 +1075,7 @@ export function PipelinePanel() {
                       onOpenComments={handleOpenComments}
                       onConvert={handleConvertLead}
                       onOpenInquiry={handleOpenInquiry}
+                      onMoveToStatus={handleMoveToStatus}
                       searchQuery={searchQuery}
                     />
                   ))}

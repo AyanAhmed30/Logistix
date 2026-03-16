@@ -179,7 +179,8 @@ export function LeadPanel() {
     ? leads.filter((lead) =>
         lead.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
         lead.number.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        lead.source.toLowerCase().includes(searchQuery.toLowerCase())
+        lead.source.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        (lead.lead_id_formatted && lead.lead_id_formatted.includes(searchQuery))
       )
     : leads;
 
@@ -245,6 +246,7 @@ export function LeadPanel() {
               <Table>
                 <TableHeader>
                   <TableRow>
+                    <TableHead>Lead ID</TableHead>
                     <TableHead>Name</TableHead>
                     <TableHead>Number</TableHead>
                     <TableHead>Source</TableHead>
@@ -256,6 +258,11 @@ export function LeadPanel() {
                 <TableBody>
                   {filteredLeads.map((lead) => (
                     <TableRow key={lead.id}>
+                      <TableCell>
+                        <span className="font-mono font-semibold text-primary-accent">
+                          {lead.lead_id_formatted || "-"}
+                        </span>
+                      </TableCell>
                       <TableCell className="font-semibold">{lead.name}</TableCell>
                       <TableCell>{lead.number}</TableCell>
                       <TableCell>

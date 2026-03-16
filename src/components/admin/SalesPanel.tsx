@@ -117,6 +117,7 @@ export function SalesPanel() {
                 <Table>
                   <TableHeader>
                     <TableRow>
+                      <TableHead>Lead ID</TableHead>
                       <TableHead>Lead Name</TableHead>
                       <TableHead>Number</TableHead>
                       <TableHead>Source</TableHead>
@@ -127,6 +128,11 @@ export function SalesPanel() {
                   <TableBody>
                     {leads.map((lead) => (
                       <TableRow key={lead.id}>
+                        <TableCell>
+                          <span className="font-mono font-semibold text-primary-accent">
+                            {lead.lead_id_formatted || "-"}
+                          </span>
+                        </TableCell>
                         <TableCell className="font-semibold">{lead.name}</TableCell>
                         <TableCell>{lead.number}</TableCell>
                         <TableCell>
@@ -205,11 +211,6 @@ export function SalesPanel() {
                               {customer.sales_agents.username && (
                                 <div className="text-xs text-secondary-muted">
                                   @{customer.sales_agents.username}
-                                </div>
-                              )}
-                              {customer.sales_agents.code && (
-                                <div className="text-xs text-secondary-muted">
-                                  Code: {customer.sales_agents.code}
                                 </div>
                               )}
                             </div>

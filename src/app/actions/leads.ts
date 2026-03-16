@@ -8,6 +8,7 @@ export type LeadStatus = 'Leads' | 'Inquiry Received' | 'Quotation Sent' | 'Nego
 
 export type Lead = {
   id: string;
+  lead_id_formatted: string | null;
   name: string;
   number: string;
   source: 'Meta' | 'LinkedIn' | 'WhatsApp' | 'Others';
@@ -83,6 +84,27 @@ export async function createLead(formData: FormData) {
     // Normalize name: allow it to be empty; NOT NULL constraint is satisfied by using empty string instead of null
     const safeName = (name ?? '').trim();
 
+    // Generate a unique random 6-digit Lead ID
+    let leadIdFormatted: string | null = null;
+    let attempts = 0;
+    while (attempts < 100) {
+      const candidate = String(100000 + Math.floor(Math.random() * 900000));
+      const { data: existing } = await supabase
+        .from('leads')
+        .select('id')
+        .eq('lead_id_formatted', candidate)
+        .maybeSingle();
+      if (!existing) {
+        leadIdFormatted = candidate;
+        break;
+      }
+      attempts++;
+    }
+
+    if (!leadIdFormatted) {
+      return { error: 'Unable to generate unique Lead ID. Please try again.' };
+    }
+
     // Create the lead with initial status 'Leads'
     const { data, error } = await supabase
       .from('leads')
@@ -91,7 +113,8 @@ export async function createLead(formData: FormData) {
         number: number.trim(),
         source: source as 'Meta' | 'LinkedIn' | 'WhatsApp' | 'Others',
         status: 'Leads',
-        sales_agent_id: salesAgent.id
+        sales_agent_id: salesAgent.id,
+        lead_id_formatted: leadIdFormatted,
       }])
       .select()
       .single();
@@ -206,6 +229,7 @@ export async function getAllLeadsForAdmin() {
     // Transform the data to match LeadWithSalesAgent type
     type SupabaseLeadResponse = {
       id: string;
+      lead_id_formatted: string | null;
       name: string;
       number: string;
       source: 'Meta' | 'LinkedIn' | 'WhatsApp' | 'Others';

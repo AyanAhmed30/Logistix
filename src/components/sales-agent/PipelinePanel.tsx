@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useTransition, useCallback } from "react";
+import { useEffect, useState, useTransition, useCallback, useRef } from "react";
 import { toast } from "sonner";
 import {
   DndContext,
@@ -41,7 +41,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { MessageSquare, Edit2, Trash2, Plus, UserPlus, Search, X, Send, FileText, Link2, ImageIcon, History, MoreVertical } from "lucide-react";
+import { MessageSquare, Edit2, Trash2, Plus, UserPlus, Search, X, Send, FileText, ImageIcon, History, MoreVertical } from "lucide-react";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -539,12 +539,17 @@ function InquiryDialog({
 }) {
   const [inquiry, setInquiry] = useState<LeadInquiry | null>(null);
   const [quotations, setQuotations] = useState<InquiryQuotation[]>([]);
-  const [description, setDescription] = useState("");
-  const [imageUrl, setImageUrl] = useState("");
-  const [linkUrl, setLinkUrl] = useState("");
+  const [productName, setProductName] = useState("");
+  const [totalWeight, setTotalWeight] = useState("");
+  const [cbm, setCbm] = useState("");
+  const [quantity, setQuantity] = useState("");
+  const [imageData, setImageData] = useState("");
+  const [otherDetails, setOtherDetails] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [isPending, startTransition] = useTransition();
   const [showQuotationHistory, setShowQuotationHistory] = useState(false);
+  const [isDragging, setIsDragging] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const fetchInquiryData = useCallback(async () => {
     if (!lead) return;
@@ -558,9 +563,12 @@ function InquiryDialog({
         // No inquiry yet, that's fine
       } else if (inquiryResult.inquiry) {
         setInquiry(inquiryResult.inquiry);
-        setDescription(inquiryResult.inquiry.description || "");
-        setImageUrl(inquiryResult.inquiry.image_url || "");
-        setLinkUrl(inquiryResult.inquiry.link_url || "");
+        setProductName(inquiryResult.inquiry.product_name || "");
+        setTotalWeight(inquiryResult.inquiry.total_weight || "");
+        setCbm(inquiryResult.inquiry.cbm || "");
+        setQuantity(inquiryResult.inquiry.quantity || "");
+        setImageData(inquiryResult.inquiry.image_url || "");
+        setOtherDetails(inquiryResult.inquiry.description || "");
       }
       if (!("error" in quotationsResult)) {
         setQuotations(quotationsResult.quotations || []);
@@ -578,17 +586,99 @@ function InquiryDialog({
     } else {
       setInquiry(null);
       setQuotations([]);
-      setDescription("");
-      setImageUrl("");
-      setLinkUrl("");
+      setProductName("");
+      setTotalWeight("");
+      setCbm("");
+      setQuantity("");
+      setImageData("");
+      setOtherDetails("");
       setShowQuotationHistory(false);
+      setIsDragging(false);
     }
   }, [open, lead, fetchInquiryData]);
+
+  // Handle image file (from drop, paste, or file input)
+  const handleImageFile = useCallback((file: File) => {
+    if (file.size > 5 * 1024 * 1024) {
+      toast.error("Image must be less than 5MB");
+      return;
+    }
+    if (!file.type.startsWith("image/")) {
+      toast.error("Please upload an image file");
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => {
+      setImageData(reader.result as string);
+    };
+    reader.readAsDataURL(file);
+  }, []);
+
+  // Global paste handler for Ctrl+V image paste
+  useEffect(() => {
+    if (!open) return;
+    function handlePaste(e: ClipboardEvent) {
+      const items = e.clipboardData?.items;
+      if (!items) return;
+      for (const item of Array.from(items)) {
+        if (item.type.startsWith("image/")) {
+          e.preventDefault();
+          const file = item.getAsFile();
+          if (file) handleImageFile(file);
+          break;
+        }
+      }
+    }
+    document.addEventListener("paste", handlePaste);
+    return () => document.removeEventListener("paste", handlePaste);
+  }, [open, handleImageFile]);
+
+  function handleDragOver(e: React.DragEvent) {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(true);
+  }
+
+  function handleDragLeave(e: React.DragEvent) {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(false);
+  }
+
+  function handleDrop(e: React.DragEvent) {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(false);
+    const files = e.dataTransfer.files;
+    if (files.length > 0) {
+      handleImageFile(files[0]);
+    }
+  }
+
+  function handleFileSelect(e: React.ChangeEvent<HTMLInputElement>) {
+    const files = e.target.files;
+    if (files && files.length > 0) {
+      handleImageFile(files[0]);
+    }
+    // Reset input so the same file can be selected again
+    if (fileInputRef.current) fileInputRef.current.value = "";
+  }
+
+  function removeImage() {
+    setImageData("");
+  }
 
   function handleSaveInquiry() {
     if (!lead) return;
     startTransition(async () => {
-      const result = await saveInquiry(lead.id, description, imageUrl || null, linkUrl || null);
+      const result = await saveInquiry(lead.id, {
+        product_name: productName,
+        total_weight: totalWeight,
+        cbm,
+        quantity,
+        image_url: imageData || null,
+        description: otherDetails,
+      });
       if ("error" in result) {
         toast.error(result.error);
       } else {
@@ -598,25 +688,32 @@ function InquiryDialog({
     });
   }
 
-  function handleSendToAccounting() {
+  function handleSendInquiry() {
     if (!lead) return;
-    if (!description.trim()) {
-      toast.error("Please add an inquiry description before sending.");
+    if (!productName.trim()) {
+      toast.error("Please add a product name before sending.");
       return;
     }
     startTransition(async () => {
       // Save first
-      const saveResult = await saveInquiry(lead.id, description, imageUrl || null, linkUrl || null);
+      const saveResult = await saveInquiry(lead.id, {
+        product_name: productName,
+        total_weight: totalWeight,
+        cbm,
+        quantity,
+        image_url: imageData || null,
+        description: otherDetails,
+      });
       if ("error" in saveResult) {
         toast.error(saveResult.error);
         return;
       }
-      // Then send
+      // Then send to Accounting + Operations
       const result = await sendInquiryToAccounting(lead.id);
       if ("error" in result) {
         toast.error(result.error);
       } else {
-        toast.success("Inquiry sent to Accounting Department!");
+        toast.success("Inquiry sent to Accounting & Operations!");
         if (result.inquiry) setInquiry(result.inquiry);
       }
     });
@@ -669,6 +766,8 @@ function InquiryDialog({
 
   if (!lead) return null;
 
+  const isFormValid = productName.trim().length > 0;
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-[700px] max-h-[85vh] overflow-y-auto">
@@ -678,7 +777,7 @@ function InquiryDialog({
             Inquiry - {lead.name}
           </DialogTitle>
           <DialogDescription>
-            Add inquiry details, attach images/links, and send to the Accounting Department.
+            Submit product inquiry details to the Accounting & Operations departments.
           </DialogDescription>
         </DialogHeader>
 
@@ -686,11 +785,14 @@ function InquiryDialog({
           <div className="py-8 text-center text-secondary-muted text-sm">Loading inquiry data...</div>
         ) : (
           <div className="space-y-4">
-            {/* Status badge */}
+            {/* Status badges */}
             {inquiry?.sent_to_accounting && (
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 flex-wrap">
                 <Badge variant="outline" className="bg-green-50 text-green-700 border-green-300">
                   Sent to Accounting
+                </Badge>
+                <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-300">
+                  Sent to Operations
                 </Badge>
                 {inquiry.sent_at && (
                   <span className="text-xs text-secondary-muted">
@@ -700,78 +802,125 @@ function InquiryDialog({
               </div>
             )}
 
-            {/* Inquiry Description */}
-            <div className="space-y-2">
-              <label className="text-sm font-medium">Inquiry Description</label>
-              <Textarea
-                placeholder="Describe the inquiry details here..."
-                value={description}
-                onChange={(e) => setDescription(e.target.value)}
-                rows={4}
-                className="resize-none"
+            {/* Product Name */}
+            <div className="space-y-1.5">
+              <label className="text-sm font-medium">
+                Product Name <span className="text-red-500">*</span>
+              </label>
+              <Input
+                placeholder="e.g. Steel Pipes, Cotton Fabric..."
+                value={productName}
+                onChange={(e) => setProductName(e.target.value)}
               />
             </div>
 
-            {/* Image URL */}
-            <div className="space-y-2">
-              <label className="text-sm font-medium flex items-center gap-1">
-                <ImageIcon className="h-4 w-4" /> Attach Image (URL)
-              </label>
+            {/* Total Weight & CBM Row */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <label className="text-sm font-medium">Total Weight</label>
+                <Input
+                  placeholder="e.g. 500 kg"
+                  value={totalWeight}
+                  onChange={(e) => setTotalWeight(e.target.value)}
+                />
+              </div>
+              <div className="space-y-1.5">
+                <label className="text-sm font-medium">CBM (Cubic Meter)</label>
+                <Input
+                  placeholder="e.g. 12.5 m³"
+                  value={cbm}
+                  onChange={(e) => setCbm(e.target.value)}
+                />
+              </div>
+            </div>
+
+            {/* Quantity */}
+            <div className="space-y-1.5">
+              <label className="text-sm font-medium">Quantity</label>
               <Input
-                type="url"
-                placeholder="https://example.com/image.jpg"
-                value={imageUrl}
-                onChange={(e) => setImageUrl(e.target.value)}
+                placeholder="e.g. 1000 pcs"
+                value={quantity}
+                onChange={(e) => setQuantity(e.target.value)}
               />
-              {imageUrl && (
-                <div className="mt-2 border rounded-md p-2">
+            </div>
+
+            {/* Image Upload - Drag & Drop + Paste */}
+            <div className="space-y-1.5">
+              <label className="text-sm font-medium flex items-center gap-1">
+                <ImageIcon className="h-4 w-4" /> Image
+              </label>
+              {imageData ? (
+                <div className="relative border rounded-lg p-3 bg-slate-50">
                   <img
-                    src={imageUrl}
+                    src={imageData}
                     alt="Inquiry attachment"
-                    className="max-h-48 rounded object-contain"
-                    onError={(e) => {
-                      (e.target as HTMLImageElement).style.display = 'none';
-                    }}
+                    className="max-h-56 rounded object-contain mx-auto"
                   />
+                  <Button
+                    variant="destructive"
+                    size="sm"
+                    className="absolute top-2 right-2 h-7 w-7 p-0"
+                    onClick={removeImage}
+                    type="button"
+                  >
+                    <X className="h-3.5 w-3.5" />
+                  </Button>
+                </div>
+              ) : (
+                <div
+                  className={`border-2 border-dashed rounded-lg p-6 text-center cursor-pointer transition-colors ${
+                    isDragging
+                      ? "border-orange-500 bg-orange-50"
+                      : "border-slate-300 hover:border-orange-400 hover:bg-orange-50/50"
+                  }`}
+                  onDragOver={handleDragOver}
+                  onDragLeave={handleDragLeave}
+                  onDrop={handleDrop}
+                  onClick={() => fileInputRef.current?.click()}
+                >
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept="image/*"
+                    className="hidden"
+                    onChange={handleFileSelect}
+                  />
+                  <ImageIcon className="h-8 w-8 mx-auto text-slate-400 mb-2" />
+                  <p className="text-sm text-slate-600 font-medium">
+                    {isDragging ? "Drop image here..." : "Drag & drop an image here"}
+                  </p>
+                  <p className="text-xs text-slate-400 mt-1">
+                    or click to browse &bull; Paste with <kbd className="px-1 py-0.5 bg-slate-200 rounded text-[10px] font-mono">Ctrl+V</kbd>
+                  </p>
+                  <p className="text-[10px] text-slate-400 mt-1">Max 5MB &bull; JPG, PNG, GIF, WebP</p>
                 </div>
               )}
             </div>
 
-            {/* Link */}
-            <div className="space-y-2">
-              <label className="text-sm font-medium flex items-center gap-1">
-                <Link2 className="h-4 w-4" /> Add Link
-              </label>
-              <Input
-                type="url"
-                placeholder="https://example.com"
-                value={linkUrl}
-                onChange={(e) => setLinkUrl(e.target.value)}
+            {/* Other Details */}
+            <div className="space-y-1.5">
+              <label className="text-sm font-medium">Other Details</label>
+              <Textarea
+                placeholder="Any additional information, specifications, or notes..."
+                value={otherDetails}
+                onChange={(e) => setOtherDetails(e.target.value)}
+                rows={3}
+                className="resize-none"
               />
-              {linkUrl && (
-                <a
-                  href={linkUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-xs text-blue-600 hover:underline break-all"
-                >
-                  {linkUrl}
-                </a>
-              )}
             </div>
 
             {/* Actions */}
             <div className="flex flex-col sm:flex-row gap-2 pt-2">
               <Button onClick={handleSaveInquiry} disabled={isPending} variant="outline" className="flex-1">
-                {isPending ? "Saving..." : "Save Inquiry"}
+                {isPending ? "Saving..." : "Save Draft"}
               </Button>
               <Button
-                onClick={handleSendToAccounting}
-                disabled={isPending || !description.trim()}
+                onClick={handleSendInquiry}
+                disabled={isPending || !isFormValid}
                 className="flex-1 bg-orange-600 hover:bg-orange-700 text-white"
               >
                 <Send className="h-4 w-4 mr-2" />
-                {isPending ? "Sending..." : "Send to Accounting Department"}
+                {isPending ? "Sending..." : "Send Inquiry"}
               </Button>
             </div>
 

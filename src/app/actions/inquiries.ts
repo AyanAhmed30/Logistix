@@ -12,8 +12,13 @@ export type LeadInquiry = {
   description: string;
   image_url: string | null;
   link_url: string | null;
+  product_name: string;
+  total_weight: string;
+  cbm: string;
+  quantity: string;
   status: InquiryStatus;
   sent_to_accounting: boolean;
+  sent_to_operations: boolean;
   sent_at: string | null;
   created_at: string;
   updated_at: string;
@@ -69,9 +74,14 @@ export type InquiryLog = {
 
 export async function saveInquiry(
   leadId: string,
-  description: string,
-  imageUrl: string | null,
-  linkUrl: string | null
+  data: {
+    product_name: string;
+    total_weight: string;
+    cbm: string;
+    quantity: string;
+    image_url: string | null;
+    description: string;
+  }
 ) {
   try {
     const session = await getSession();
@@ -86,39 +96,43 @@ export async function saveInquiry(
       .eq('lead_id', leadId)
       .maybeSingle();
 
+    const inquiryData = {
+      product_name: data.product_name.trim(),
+      total_weight: data.total_weight.trim(),
+      cbm: data.cbm.trim(),
+      quantity: data.quantity.trim(),
+      description: data.description.trim(),
+      image_url: data.image_url || null,
+      updated_at: new Date().toISOString(),
+    };
+
     if (existing) {
       // Update existing inquiry
-      const { data, error } = await supabase
+      const { data: result, error } = await supabase
         .from('lead_inquiries')
-        .update({
-          description: description.trim(),
-          image_url: imageUrl || null,
-          link_url: linkUrl || null,
-          updated_at: new Date().toISOString(),
-        })
+        .update(inquiryData)
         .eq('id', existing.id)
         .select()
         .single();
 
       if (error) return { error: error.message };
-      return { success: true, inquiry: data as LeadInquiry };
+      return { success: true, inquiry: result as LeadInquiry };
     } else {
       // Create new inquiry
-      const { data, error } = await supabase
+      const { data: result, error } = await supabase
         .from('lead_inquiries')
         .insert([{
           lead_id: leadId,
-          description: description.trim(),
-          image_url: imageUrl || null,
-          link_url: linkUrl || null,
+          ...inquiryData,
           status: 'pending',
           sent_to_accounting: false,
+          sent_to_operations: false,
         }])
         .select()
         .single();
 
       if (error) return { error: error.message };
-      return { success: true, inquiry: data as LeadInquiry };
+      return { success: true, inquiry: result as LeadInquiry };
     }
   } catch (err) {
     return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };
@@ -143,19 +157,21 @@ export async function sendInquiryToAccounting(leadId: string) {
       return { error: 'No inquiry found for this lead. Please add inquiry details first.' };
     }
 
-    if (!inquiry.description || inquiry.description.trim() === '') {
-      return { error: 'Please add inquiry description before sending.' };
+    if (!inquiry.product_name || inquiry.product_name.trim() === '') {
+      return { error: 'Please add a product name before sending.' };
     }
 
-    // Update inquiry status
+    // Update inquiry status - send to accounting (operations reads from same flag)
+    const updatePayload: Record<string, unknown> = {
+      sent_to_accounting: true,
+      sent_at: new Date().toISOString(),
+      status: 'pending',
+      updated_at: new Date().toISOString(),
+    };
+
     const { data, error } = await supabase
       .from('lead_inquiries')
-      .update({
-        sent_to_accounting: true,
-        sent_at: new Date().toISOString(),
-        status: 'pending',
-        updated_at: new Date().toISOString(),
-      })
+      .update(updatePayload)
       .eq('id', inquiry.id)
       .select()
       .single();
@@ -248,6 +264,46 @@ export async function getAllInquiriesForAccounting() {
   }
 }
 
+// ========== Operations Actions ==========
+
+export async function getAllInquiriesForOperations() {
+  try {
+    const session = await getSession();
+    if (!session || session.role !== 'admin') {
+      return { error: 'Unauthorized' };
+    }
+
+    const supabase = await createAdminClient();
+
+    // Query using sent_to_accounting as the source of truth
+    // Every inquiry sent to accounting is also visible in operations
+    const { data, error } = await supabase
+      .from('lead_inquiries')
+      .select(`
+        *,
+        leads (
+          id,
+          name,
+          number,
+          source,
+          sales_agent_id,
+          sales_agents (
+            id,
+            name,
+            username
+          )
+        )
+      `)
+      .eq('sent_to_accounting', true)
+      .order('sent_at', { ascending: false });
+
+    if (error) return { error: error.message };
+    return { inquiries: (data || []) as LeadInquiryWithLead[] };
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };
+  }
+}
+
 export async function updateInquiryForAccounting(
   inquiryId: string,
   updates: {
@@ -255,6 +311,10 @@ export async function updateInquiryForAccounting(
     status?: InquiryStatus;
     image_url?: string | null;
     link_url?: string | null;
+    product_name?: string;
+    total_weight?: string;
+    cbm?: string;
+    quantity?: string;
   }
 ) {
   try {
@@ -284,6 +344,10 @@ export async function updateInquiryForAccounting(
     if (updates.status !== undefined) updateData.status = updates.status;
     if (updates.image_url !== undefined) updateData.image_url = updates.image_url;
     if (updates.link_url !== undefined) updateData.link_url = updates.link_url;
+    if (updates.product_name !== undefined) updateData.product_name = updates.product_name.trim();
+    if (updates.total_weight !== undefined) updateData.total_weight = updates.total_weight.trim();
+    if (updates.cbm !== undefined) updateData.cbm = updates.cbm.trim();
+    if (updates.quantity !== undefined) updateData.quantity = updates.quantity.trim();
 
     const { data, error } = await supabase
       .from('lead_inquiries')
@@ -307,12 +371,28 @@ export async function updateInquiryForAccounting(
       newValues.status = updates.status;
     }
     if (updates.image_url !== undefined && updates.image_url !== current.image_url) {
-      previousValues.image_url = current.image_url;
-      newValues.image_url = updates.image_url;
+      previousValues.image_url = current.image_url ? 'Attached' : 'None';
+      newValues.image_url = updates.image_url ? 'Attached' : 'Removed';
     }
     if (updates.link_url !== undefined && updates.link_url !== current.link_url) {
       previousValues.link_url = current.link_url;
       newValues.link_url = updates.link_url;
+    }
+    if (updates.product_name !== undefined && updates.product_name !== current.product_name) {
+      previousValues.product_name = current.product_name;
+      newValues.product_name = updates.product_name;
+    }
+    if (updates.total_weight !== undefined && updates.total_weight !== current.total_weight) {
+      previousValues.total_weight = current.total_weight;
+      newValues.total_weight = updates.total_weight;
+    }
+    if (updates.cbm !== undefined && updates.cbm !== current.cbm) {
+      previousValues.cbm = current.cbm;
+      newValues.cbm = updates.cbm;
+    }
+    if (updates.quantity !== undefined && updates.quantity !== current.quantity) {
+      previousValues.quantity = current.quantity;
+      newValues.quantity = updates.quantity;
     }
 
     // Only log if there are actual changes

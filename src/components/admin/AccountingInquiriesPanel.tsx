@@ -9,19 +9,11 @@ import {
   type LeadInquiryWithLead,
   type InquiryLog,
 } from "@/app/actions/inquiries";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
 import {
   Table,
   TableBody,
@@ -43,6 +35,7 @@ import {
   X,
   Save,
   RefreshCcw,
+  Package,
 } from "lucide-react";
 
 // ─── Helpers ─────────────────────────────────────────────────────────
@@ -96,33 +89,38 @@ function InquiryLogEntry({ log }: { log: InquiryLog }) {
   const changes: { field: string; oldVal: string; newVal: string }[] = [];
 
   if (prev && next) {
-    if (prev.description !== next.description) {
-      changes.push({
-        field: "Description",
-        oldVal: String(prev.description || "(empty)"),
-        newVal: String(next.description || "(empty)"),
-      });
-    }
-    if (prev.status !== next.status) {
-      changes.push({
-        field: "Status",
-        oldVal: formatStatus(String(prev.status || "")),
-        newVal: formatStatus(String(next.status || "")),
-      });
-    }
-    if (prev.image_url !== next.image_url) {
-      changes.push({
-        field: "Image",
-        oldVal: prev.image_url ? "Attached" : "None",
-        newVal: next.image_url ? "Attached" : "Removed",
-      });
-    }
-    if (prev.link_url !== next.link_url) {
-      changes.push({
-        field: "Link",
-        oldVal: String(prev.link_url || "(none)"),
-        newVal: String(next.link_url || "(none)"),
-      });
+    const fieldLabels: Record<string, string> = {
+      description: "Other Details",
+      status: "Status",
+      image_url: "Image",
+      link_url: "Link",
+      product_name: "Product Name",
+      total_weight: "Total Weight",
+      cbm: "CBM",
+      quantity: "Quantity",
+    };
+
+    for (const key of Object.keys(next)) {
+      const label = fieldLabels[key] || key;
+      if (key === "status") {
+        changes.push({
+          field: label,
+          oldVal: formatStatus(String(prev[key] || "")),
+          newVal: formatStatus(String(next[key] || "")),
+        });
+      } else if (key === "image_url") {
+        changes.push({
+          field: label,
+          oldVal: prev[key] ? "Attached" : "None",
+          newVal: next[key] ? "Attached" : "Removed",
+        });
+      } else {
+        changes.push({
+          field: label,
+          oldVal: String(prev[key] || "(empty)"),
+          newVal: String(next[key] || "(empty)"),
+        });
+      }
     }
   }
 
@@ -184,6 +182,10 @@ export function AccountingInquiriesPanel() {
 
   // Edit state
   const [isEditing, setIsEditing] = useState(false);
+  const [editProductName, setEditProductName] = useState("");
+  const [editTotalWeight, setEditTotalWeight] = useState("");
+  const [editCbm, setEditCbm] = useState("");
+  const [editQuantity, setEditQuantity] = useState("");
   const [editDescription, setEditDescription] = useState("");
   const [editStatus, setEditStatus] = useState<string>("");
   const [editLink, setEditLink] = useState("");
@@ -233,6 +235,7 @@ export function AccountingInquiriesPanel() {
       (inq.leads?.number || "").toLowerCase().includes(s) ||
       (inq.leads?.source || "").toLowerCase().includes(s) ||
       (inq.leads?.sales_agents?.name || "").toLowerCase().includes(s) ||
+      (inq.product_name || "").toLowerCase().includes(s) ||
       (inq.description || "").toLowerCase().includes(s) ||
       inq.status.toLowerCase().includes(s)
     );
@@ -257,6 +260,10 @@ export function AccountingInquiriesPanel() {
 
   function startEdit() {
     if (!selectedInquiry) return;
+    setEditProductName(selectedInquiry.product_name || "");
+    setEditTotalWeight(selectedInquiry.total_weight || "");
+    setEditCbm(selectedInquiry.cbm || "");
+    setEditQuantity(selectedInquiry.quantity || "");
     setEditDescription(selectedInquiry.description || "");
     setEditStatus(selectedInquiry.status);
     setEditLink(selectedInquiry.link_url || "");
@@ -274,11 +281,27 @@ export function AccountingInquiriesPanel() {
 
     startTransition(async () => {
       const updates: {
+        product_name?: string;
+        total_weight?: string;
+        cbm?: string;
+        quantity?: string;
         description?: string;
         status?: "pending" | "in_progress" | "quotation_sent" | "completed";
         link_url?: string | null;
       } = {};
 
+      if (editProductName !== (selectedInquiry.product_name || "")) {
+        updates.product_name = editProductName;
+      }
+      if (editTotalWeight !== (selectedInquiry.total_weight || "")) {
+        updates.total_weight = editTotalWeight;
+      }
+      if (editCbm !== (selectedInquiry.cbm || "")) {
+        updates.cbm = editCbm;
+      }
+      if (editQuantity !== (selectedInquiry.quantity || "")) {
+        updates.quantity = editQuantity;
+      }
       if (editDescription !== (selectedInquiry.description || "")) {
         updates.description = editDescription;
       }
@@ -427,23 +450,71 @@ export function AccountingInquiriesPanel() {
                 {/* Separator */}
                 <div className="border-t" />
 
-                {/* Description */}
+                {/* Product Details */}
                 <div>
-                  <label className="text-xs text-slate-500 font-medium">Inquiry Description</label>
-                  {isEditing ? (
-                    <Textarea
-                      value={editDescription}
-                      onChange={(e) => setEditDescription(e.target.value)}
-                      rows={4}
-                      className="mt-1"
-                      placeholder="Inquiry description..."
-                    />
-                  ) : (
-                    <div className="mt-1 bg-slate-50 border rounded-lg p-3 text-sm whitespace-pre-wrap min-h-[60px]">
-                      {inq.description || "No description provided."}
+                  <h3 className="text-sm font-semibold text-slate-700 mb-3 flex items-center gap-1">
+                    <Package className="h-4 w-4" /> Product Details
+                  </h3>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-3">
+                    <div>
+                      <label className="text-xs text-slate-500 font-medium">Product Name</label>
+                      {isEditing ? (
+                        <Input
+                          value={editProductName}
+                          onChange={(e) => setEditProductName(e.target.value)}
+                          className="mt-0.5"
+                          placeholder="Product name..."
+                        />
+                      ) : (
+                        <div className="font-semibold text-slate-800 mt-0.5">
+                          {inq.product_name || "-"}
+                        </div>
+                      )}
                     </div>
-                  )}
+                    <div>
+                      <label className="text-xs text-slate-500 font-medium">Total Weight</label>
+                      {isEditing ? (
+                        <Input
+                          value={editTotalWeight}
+                          onChange={(e) => setEditTotalWeight(e.target.value)}
+                          className="mt-0.5"
+                          placeholder="e.g. 500 kg"
+                        />
+                      ) : (
+                        <div className="text-slate-700 mt-0.5">{inq.total_weight || "-"}</div>
+                      )}
+                    </div>
+                    <div>
+                      <label className="text-xs text-slate-500 font-medium">CBM (Cubic Meter)</label>
+                      {isEditing ? (
+                        <Input
+                          value={editCbm}
+                          onChange={(e) => setEditCbm(e.target.value)}
+                          className="mt-0.5"
+                          placeholder="e.g. 12.5 m³"
+                        />
+                      ) : (
+                        <div className="text-slate-700 mt-0.5">{inq.cbm || "-"}</div>
+                      )}
+                    </div>
+                    <div>
+                      <label className="text-xs text-slate-500 font-medium">Quantity</label>
+                      {isEditing ? (
+                        <Input
+                          value={editQuantity}
+                          onChange={(e) => setEditQuantity(e.target.value)}
+                          className="mt-0.5"
+                          placeholder="e.g. 1000 pcs"
+                        />
+                      ) : (
+                        <div className="text-slate-700 mt-0.5">{inq.quantity || "-"}</div>
+                      )}
+                    </div>
+                  </div>
                 </div>
+
+                {/* Separator */}
+                <div className="border-t" />
 
                 {/* Image */}
                 {inq.image_url && (
@@ -455,38 +526,56 @@ export function AccountingInquiriesPanel() {
                       <img
                         src={inq.image_url}
                         alt="Inquiry attachment"
-                        className="max-h-48 rounded object-contain"
+                        className="max-h-56 rounded object-contain"
                       />
                     </div>
                   </div>
                 )}
 
-                {/* Link */}
+                {/* Other Details (Description) */}
                 <div>
-                  <label className="text-xs text-slate-500 font-medium flex items-center gap-1">
-                    <Link2 className="h-3.5 w-3.5" /> Attached Link
-                  </label>
+                  <label className="text-xs text-slate-500 font-medium">Other Details</label>
                   {isEditing ? (
-                    <Input
-                      value={editLink}
-                      onChange={(e) => setEditLink(e.target.value)}
+                    <Textarea
+                      value={editDescription}
+                      onChange={(e) => setEditDescription(e.target.value)}
+                      rows={4}
                       className="mt-1"
-                      placeholder="https://..."
+                      placeholder="Other details..."
                     />
-                  ) : inq.link_url ? (
-                    <a
-                      href={inq.link_url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="mt-1 text-sm text-blue-600 hover:underline flex items-center gap-1"
-                    >
-                      {inq.link_url}
-                      <ExternalLink className="h-3 w-3" />
-                    </a>
                   ) : (
-                    <div className="mt-1 text-sm text-slate-400">No link attached.</div>
+                    <div className="mt-1 bg-slate-50 border rounded-lg p-3 text-sm whitespace-pre-wrap min-h-[60px]">
+                      {inq.description || "No details provided."}
+                    </div>
                   )}
                 </div>
+
+                {/* Link (backward compatibility) */}
+                {(inq.link_url || isEditing) && (
+                  <div>
+                    <label className="text-xs text-slate-500 font-medium flex items-center gap-1">
+                      <Link2 className="h-3.5 w-3.5" /> Attached Link
+                    </label>
+                    {isEditing ? (
+                      <Input
+                        value={editLink}
+                        onChange={(e) => setEditLink(e.target.value)}
+                        className="mt-1"
+                        placeholder="https://..."
+                      />
+                    ) : inq.link_url ? (
+                      <a
+                        href={inq.link_url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="mt-1 text-sm text-blue-600 hover:underline flex items-center gap-1"
+                      >
+                        {inq.link_url}
+                        <ExternalLink className="h-3 w-3" />
+                      </a>
+                    ) : null}
+                  </div>
+                )}
               </CardContent>
             </Card>
           </div>
@@ -566,10 +655,11 @@ export function AccountingInquiriesPanel() {
                 <TableHeader>
                   <TableRow className="bg-slate-50">
                     <TableHead className="font-semibold">Lead Name</TableHead>
-                    <TableHead className="font-semibold">Phone</TableHead>
-                    <TableHead className="font-semibold">Source</TableHead>
+                    <TableHead className="font-semibold">Product Name</TableHead>
+                    <TableHead className="font-semibold">Weight</TableHead>
+                    <TableHead className="font-semibold">CBM</TableHead>
+                    <TableHead className="font-semibold">Qty</TableHead>
                     <TableHead className="font-semibold">Sales Agent</TableHead>
-                    <TableHead className="font-semibold">Description</TableHead>
                     <TableHead className="font-semibold">Status</TableHead>
                     <TableHead className="font-semibold">Sent At</TableHead>
                     <TableHead className="text-right font-semibold">Actions</TableHead>
@@ -585,17 +675,20 @@ export function AccountingInquiriesPanel() {
                       <TableCell className="font-semibold text-teal-700">
                         {inquiry.leads?.name || "Unknown"}
                       </TableCell>
-                      <TableCell className="text-slate-600">{inquiry.leads?.number || "-"}</TableCell>
-                      <TableCell>
-                        <Badge variant="outline" className="text-xs">
-                          {inquiry.leads?.source || "-"}
-                        </Badge>
+                      <TableCell className="text-slate-700 font-medium">
+                        {inquiry.product_name || "-"}
+                      </TableCell>
+                      <TableCell className="text-slate-600">
+                        {inquiry.total_weight || "-"}
+                      </TableCell>
+                      <TableCell className="text-slate-600">
+                        {inquiry.cbm || "-"}
+                      </TableCell>
+                      <TableCell className="text-slate-600">
+                        {inquiry.quantity || "-"}
                       </TableCell>
                       <TableCell className="text-slate-600">
                         {inquiry.leads?.sales_agents?.name || "-"}
-                      </TableCell>
-                      <TableCell className="max-w-[200px] truncate text-sm text-slate-500">
-                        {inquiry.description || "No description"}
                       </TableCell>
                       <TableCell>
                         <Badge variant="outline" className={`text-xs ${statusColor(inquiry.status)}`}>

@@ -33,6 +33,7 @@ import { LoadingInstructionPanel } from "@/components/admin/LoadingInstructionPa
 import { AdminDashboardOverview } from "@/components/admin/AdminDashboardOverview";
 import { SalesPanel } from "@/components/admin/SalesPanel";
 import { OperationsPanel } from "@/components/admin/OperationsPanel";
+import { OperationsLeadsInquiryPanel } from "@/components/admin/OperationsLeadsInquiryPanel";
 import { ImportPackingListPanel } from "@/components/admin/ImportPackingListPanel";
 import { ImportInvoicePanel } from "@/components/admin/ImportInvoicePanel";
 import { SalesAgentPanel } from "@/components/admin/SalesAgentPanel";
@@ -106,6 +107,9 @@ export function AdminUserManager({
   const [accountingSubTab, setAccountingSubTab] = useState<"quotation" | "customer-invoice" | "inquiries" | null>(
     activeTab === "accounting" ? "inquiries" : null
   );
+  const [operationsSubTab, setOperationsSubTab] = useState<"operations" | "leads-inquiry" | null>(
+    activeTab === "operations" ? "operations" : null
+  );
   const [editOpen, setEditOpen] = useState(false);
   const [editUser, setEditUser] = useState<AppUser | null>(null);
   const [deleteOpen, setDeleteOpen] = useState(false);
@@ -141,6 +145,12 @@ export function AdminUserManager({
           setAccountingSubTab("inquiries");
         } else if (prevActiveTab === "accounting") {
           setAccountingSubTab(null);
+        }
+
+        if (activeTab === "operations") {
+          setOperationsSubTab("operations");
+        } else if (prevActiveTab === "operations") {
+          setOperationsSubTab(null);
         }
       }, 0);
     }
@@ -437,7 +447,39 @@ export function AdminUserManager({
         ) : activeTab === "sales" ? (
           <SalesPanel />
         ) : activeTab === "operations" ? (
-          <OperationsPanel />
+          <div className="space-y-6">
+            {/* Sub-tabs */}
+            <div className="flex gap-2 border-b overflow-x-auto">
+              <Button
+                variant={operationsSubTab === "operations" ? "default" : "ghost"}
+                onClick={() => setOperationsSubTab("operations")}
+                className="rounded-b-none shrink-0 sidebar-button"
+                data-variant={operationsSubTab === "operations" ? "default" : "outline"}
+              >
+                <Settings className="h-4 w-4 mr-2 sidebar-icon" />
+                <span className="sidebar-text">Operations</span>
+              </Button>
+              <Button
+                variant={operationsSubTab === "leads-inquiry" ? "default" : "ghost"}
+                onClick={() => setOperationsSubTab("leads-inquiry")}
+                className="rounded-b-none shrink-0 sidebar-button"
+                data-variant={operationsSubTab === "leads-inquiry" ? "default" : "outline"}
+              >
+                <ClipboardList className="h-4 w-4 mr-2 sidebar-icon" />
+                <span className="sidebar-text">Leads Inquiry</span>
+              </Button>
+            </div>
+
+            {/* Operations Sub-tab Content */}
+            {operationsSubTab === "operations" && (
+              <OperationsPanel />
+            )}
+
+            {/* Leads Inquiry Sub-tab Content */}
+            {operationsSubTab === "leads-inquiry" && (
+              <OperationsLeadsInquiryPanel />
+            )}
+          </div>
         ) : activeTab === "import-packing-list" ? (
           <ImportPackingListPanel />
         ) : activeTab === "import-invoice" ? (

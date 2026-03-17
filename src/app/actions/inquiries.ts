@@ -37,6 +37,11 @@ export type LeadInquiryWithLead = LeadInquiry & {
       username: string | null;
     } | null;
   } | null;
+  inquiry_confirmations?: {
+    id: string;
+    status: string;
+    created_at: string;
+  }[];
 };
 
 export type InquiryQuotation = {
@@ -269,7 +274,7 @@ export async function getAllInquiriesForAccounting() {
 export async function getAllInquiriesForOperations() {
   try {
     const session = await getSession();
-    if (!session || session.role !== 'admin') {
+    if (!session || (session.role !== 'admin' && session.role !== 'operations')) {
       return { error: 'Unauthorized' };
     }
 
@@ -277,6 +282,7 @@ export async function getAllInquiriesForOperations() {
 
     // Query using sent_to_accounting as the source of truth
     // Every inquiry sent to accounting is also visible in operations
+    // Also fetch related inquiry_confirmations so Operations can see approval status
     const { data, error } = await supabase
       .from('lead_inquiries')
       .select(`
@@ -292,6 +298,11 @@ export async function getAllInquiriesForOperations() {
             name,
             username
           )
+        ),
+        inquiry_confirmations (
+          id,
+          status,
+          created_at
         )
       `)
       .eq('sent_to_accounting', true)
@@ -319,7 +330,7 @@ export async function updateInquiryForAccounting(
 ) {
   try {
     const session = await getSession();
-    if (!session || session.role !== 'admin') {
+    if (!session || (session.role !== 'admin' && session.role !== 'operations')) {
       return { error: 'Unauthorized' };
     }
 
@@ -407,7 +418,46 @@ export async function updateInquiryForAccounting(
     }
 
     revalidatePath('/admin/dashboard');
+    revalidatePath('/operations/dashboard');
     return { success: true, inquiry: data as LeadInquiry };
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };
+  }
+}
+
+export async function deleteInquiry(inquiryId: string) {
+  try {
+    const session = await getSession();
+    if (!session || (session.role !== 'admin' && session.role !== 'operations')) {
+      return { error: 'Unauthorized' };
+    }
+
+    const supabase = await createAdminClient();
+
+    // Delete related confirmations first (cascade should handle this, but be explicit)
+    await supabase
+      .from('inquiry_confirmations')
+      .delete()
+      .eq('inquiry_id', inquiryId);
+
+    // Delete related logs
+    await supabase
+      .from('inquiry_logs')
+      .delete()
+      .eq('inquiry_id', inquiryId);
+
+    // Delete the inquiry itself
+    const { error } = await supabase
+      .from('lead_inquiries')
+      .delete()
+      .eq('id', inquiryId);
+
+    if (error) return { error: error.message };
+
+    revalidatePath('/admin/dashboard');
+    revalidatePath('/sales-agent/dashboard');
+    revalidatePath('/operations/dashboard');
+    return { success: true };
   } catch (err) {
     return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };
   }

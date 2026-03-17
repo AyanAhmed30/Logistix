@@ -36,6 +36,7 @@ export function AdminDashboardShell({ users, dbError }: Props) {
     | "import-packing-list"
     | "import-invoice"
     | "accounting"
+    | "inquiry-confirmation"
   >("dashboard");
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const [unreadCount, setUnreadCount] = useState(0);

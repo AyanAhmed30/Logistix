@@ -24,7 +24,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { PlusCircle, UsersRound, X, Truck, Bell, Package, Container, FileText, TrendingUp, ShoppingCart, Settings, ClipboardList, Receipt, UserCog, Calculator, MessageSquare } from "lucide-react";
+import { PlusCircle, UsersRound, X, Truck, Bell, Package, Container, FileText, TrendingUp, ShoppingCart, Settings, ClipboardList, Receipt, UserCog, Calculator, MessageSquare, ClipboardCheck, Wrench } from "lucide-react";
 import { OrderTrackingPanel } from "@/components/admin/OrderTrackingPanel";
 import { AdminNotificationsPanel } from "@/components/admin/AdminNotificationsPanel";
 import { OrderManagementPanel } from "@/components/admin/OrderManagementPanel";
@@ -40,6 +40,8 @@ import { SalesAgentPanel } from "@/components/admin/SalesAgentPanel";
 import { QuotationPanel } from "@/components/admin/QuotationPanel";
 import { InvoicePanel } from "@/components/admin/InvoicePanel";
 import { AccountingInquiriesPanel } from "@/components/admin/AccountingInquiriesPanel";
+import { InquiryConfirmationPanel } from "@/components/admin/InquiryConfirmationPanel";
+import { OperationsUserPanel } from "@/components/admin/OperationsUserPanel";
 
 type AppUser = {
   id: string;
@@ -67,7 +69,8 @@ type Props = {
     | "operations"
     | "import-packing-list"
     | "import-invoice"
-    | "accounting";
+    | "accounting"
+    | "inquiry-confirmation";
   onTabChange: (
     tab:
       | "dashboard"
@@ -83,6 +86,7 @@ type Props = {
       | "import-packing-list"
       | "import-invoice"
       | "accounting"
+      | "inquiry-confirmation"
   ) => void;
 };
 
@@ -97,11 +101,12 @@ export function AdminUserManager({
 }: Props) {
   const router = useRouter();
   // Initialize sub-tabs based on activeTab
-  const [createSubTab, setCreateSubTab] = useState<"user" | "sales-agent" | null>(
+  const [createSubTab, setCreateSubTab] = useState<"user" | "sales-agent" | "operations-user" | null>(
     activeTab === "create" ? "user" : null
   );
   const [createSalesAgentOpen, setCreateSalesAgentOpen] = useState(false);
-  const [profilesSubTab, setProfilesSubTab] = useState<"users" | "sales-agent" | null>(
+  const [createOpsUserOpen, setCreateOpsUserOpen] = useState(false);
+  const [profilesSubTab, setProfilesSubTab] = useState<"users" | "sales-agent" | "operations-users" | null>(
     activeTab === "profiles" ? "users" : null
   );
   const [accountingSubTab, setAccountingSubTab] = useState<"quotation" | "customer-invoice" | "inquiries" | null>(
@@ -266,6 +271,7 @@ export function AdminUserManager({
       | "import-packing-list"
       | "import-invoice"
       | "accounting"
+      | "inquiry-confirmation"
   ) {
     onTabChange(tab);
     onSidebarClose();
@@ -419,6 +425,15 @@ export function AdminUserManager({
             <Calculator className="h-4 w-4 shrink-0 sidebar-icon" />
             {!isSidebarCollapsed && <span className="sidebar-text">Accounting</span>}
           </Button>
+          <Button
+            variant={activeTab === "inquiry-confirmation" ? "default" : "outline"}
+            className="justify-start gap-2 sidebar-button"
+            onClick={() => handleTabSelect("inquiry-confirmation")}
+            title="Inquiry Confirmation"
+          >
+            <ClipboardCheck className="h-4 w-4 shrink-0 sidebar-icon" />
+            {!isSidebarCollapsed && <span className="sidebar-text">Inquiry Confirmation</span>}
+          </Button>
           </div>
         </div>
       </aside>
@@ -480,6 +495,8 @@ export function AdminUserManager({
               <OperationsLeadsInquiryPanel />
             )}
           </div>
+        ) : activeTab === "inquiry-confirmation" ? (
+          <InquiryConfirmationPanel />
         ) : activeTab === "import-packing-list" ? (
           <ImportPackingListPanel />
         ) : activeTab === "import-invoice" ? (
@@ -554,6 +571,15 @@ export function AdminUserManager({
                 <UserCog className="h-4 w-4 mr-2 sidebar-icon" />
                 <span className="sidebar-text">Create Sales Agent</span>
               </Button>
+              <Button
+                variant={createSubTab === "operations-user" ? "default" : "ghost"}
+                onClick={() => setCreateSubTab("operations-user")}
+                className="rounded-b-none shrink-0 sidebar-button"
+                data-variant={createSubTab === "operations-user" ? "default" : "outline"}
+              >
+                <Wrench className="h-4 w-4 mr-2 sidebar-icon" />
+                <span className="sidebar-text">Create Operations User</span>
+              </Button>
             </div>
 
             {/* Create User Sub-tab Content - Only show when this tab is selected */}
@@ -623,6 +649,39 @@ export function AdminUserManager({
               </>
             )}
 
+            {/* Create Operations User Sub-tab Content */}
+            {createSubTab === "operations-user" && (
+              <>
+                <Card className="bg-white border shadow-sm">
+                  <CardHeader>
+                    <CardTitle>Create Operations User</CardTitle>
+                    <CardDescription>
+                      Click the button below to open the Operations User creation form.
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    <Button
+                      onClick={() => {
+                        setCreateOpsUserOpen(true);
+                      }}
+                    >
+                      <Wrench className="h-4 w-4 mr-2" />
+                      Open Operations User Creation
+                    </Button>
+                  </CardContent>
+                </Card>
+
+                {createOpsUserOpen && (
+                  <div className="mt-6">
+                    <OperationsUserPanel
+                      initialCreateOpen
+                      onCreateOpenChange={setCreateOpsUserOpen}
+                    />
+                  </div>
+                )}
+              </>
+            )}
+
           </div>
         ) : activeTab === "profiles" ? (
           <div className="space-y-6">
@@ -645,6 +704,15 @@ export function AdminUserManager({
               >
                 <UserCog className="h-4 w-4 mr-2 sidebar-icon" />
                 <span className="sidebar-text">Sales Agent</span>
+              </Button>
+              <Button
+                variant={profilesSubTab === "operations-users" ? "default" : "ghost"}
+                onClick={() => setProfilesSubTab("operations-users")}
+                className="rounded-b-none shrink-0 sidebar-button"
+                data-variant={profilesSubTab === "operations-users" ? "default" : "outline"}
+              >
+                <Wrench className="h-4 w-4 mr-2 sidebar-icon" />
+                <span className="sidebar-text">Operations Users</span>
               </Button>
             </div>
 
@@ -733,6 +801,14 @@ export function AdminUserManager({
               <SalesAgentPanel
                 initialCreateOpen={createSalesAgentOpen}
                 onCreateOpenChange={setCreateSalesAgentOpen}
+              />
+            )}
+
+            {/* Operations Users Sub-tab Content */}
+            {profilesSubTab === "operations-users" && (
+              <OperationsUserPanel
+                initialCreateOpen={createOpsUserOpen}
+                onCreateOpenChange={setCreateOpsUserOpen}
               />
             )}
           </div>

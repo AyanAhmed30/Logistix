@@ -50,7 +50,25 @@ export async function login(formData: FormData) {
             redirect('/sales-agent/dashboard');
         }
 
-        // 3. Check Database Users
+        // 3. Check Operations Users
+        const { data: opsUser, error: opsError } = await supabase
+            .from('operations_users')
+            .select('username, password, name')
+            .eq('username', username)
+            .eq('password', password)
+            .maybeSingle();
+
+        if (opsError && !opsError.message.includes('does not exist') && !opsError.message.includes('relation')) {
+            return { error: opsError.message };
+        }
+
+        if (opsUser) {
+            const session = await encrypt({ username: opsUser.username, role: 'operations', expires: cookieOptions.expires });
+            (await cookies()).set('session', session, cookieOptions);
+            redirect('/operations/dashboard');
+        }
+
+        // 4. Check Database Users
         const { data: user, error } = await supabase
             .from('app_users')
             .select('username, password, role')

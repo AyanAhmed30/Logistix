@@ -30,12 +30,19 @@ export async function middleware(request: NextRequest) {
         return NextResponse.redirect(new URL('/login', request.url));
     }
 
-    // 6. If logged in and hitting login, redirect to dashboard
+    // 6. Protect Operations Routes
+    if (pathname.startsWith('/operations') && (!session || session.role !== 'operations')) {
+        return NextResponse.redirect(new URL('/login', request.url));
+    }
+
+    // 7. If logged in and hitting login, redirect to dashboard
     if (pathname === '/login' && session) {
         if (session.role === 'admin') {
             return NextResponse.redirect(new URL('/admin/dashboard', request.url));
         } else if (session.role === 'sales_agent') {
             return NextResponse.redirect(new URL('/sales-agent/dashboard', request.url));
+        } else if (session.role === 'operations') {
+            return NextResponse.redirect(new URL('/operations/dashboard', request.url));
         } else {
             return NextResponse.redirect(new URL('/user/dashboard', request.url));
         }

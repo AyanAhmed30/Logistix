@@ -4,11 +4,12 @@ import { useState, useMemo, useEffect } from "react";
 import { logout } from "@/app/actions/auth";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { LogOut, Menu, X, UserPlus, Users, FileText, ShoppingCart, TrendingUp, Truck, Bell, Package, Container, Settings, ClipboardList, Receipt, PlusCircle, UsersRound } from "lucide-react";
+import { LogOut, Menu, X, UserPlus, Users, FileText, ShoppingCart, TrendingUp, Truck, Bell, Package, Container, Settings, ClipboardList, Receipt, PlusCircle, UsersRound, ClipboardCheck } from "lucide-react";
 import Image from "next/image";
 import { LeadPanel } from "@/components/sales-agent/LeadPanel";
 import { PipelinePanel } from "@/components/sales-agent/PipelinePanel";
 import { CustomerListPanel } from "@/components/sales-agent/CustomerListPanel";
+import { InquiryTrackingPanel } from "@/components/sales-agent/InquiryTrackingPanel";
 import { OrderTrackingPanel } from "@/components/admin/OrderTrackingPanel";
 import { AdminNotificationsPanel } from "@/components/admin/AdminNotificationsPanel";
 import { OrderManagementPanel } from "@/components/admin/OrderManagementPanel";
@@ -24,7 +25,7 @@ type Props = {
   permissions: string[];
 };
 
-type TabKey = "lead" | "pipeline" | "customer-list" | "manage-request" | "create" | "profiles" | "dashboard" | "tracking" | "notifications" | "management" | "console" | "loading-instruction" | "operations" | "import-packing-list" | "import-invoice";
+type TabKey = "lead" | "pipeline" | "customer-list" | "manage-request" | "create" | "profiles" | "dashboard" | "tracking" | "notifications" | "management" | "console" | "loading-instruction" | "operations" | "import-packing-list" | "import-invoice" | "inquiry-tracking";
 
 // All tabs are now permission-based - no default tabs
 const permissionTabs: Record<string, { key: TabKey; label: string; icon: React.ReactNode }> = {
@@ -43,6 +44,14 @@ const permissionTabs: Record<string, { key: TabKey; label: string; icon: React.R
   "operations": { key: "operations", label: "Operations", icon: <Settings className="h-4 w-4" /> },
   "import-packing-list": { key: "import-packing-list", label: "Import Packing List", icon: <ClipboardList className="h-4 w-4" /> },
   "import-invoice": { key: "import-invoice", label: "Import Invoice", icon: <Receipt className="h-4 w-4" /> },
+  "inquiry-tracking": { key: "inquiry-tracking", label: "Inquiry Tracking", icon: <ClipboardCheck className="h-4 w-4" /> },
+};
+
+// "Inquiry Tracking" is always available to all sales agents (not permission-gated)
+const DEFAULT_TAB: { key: TabKey; label: string; icon: React.ReactNode } = {
+  key: "inquiry-tracking",
+  label: "Inquiry Tracking",
+  icon: <ClipboardCheck className="h-4 w-4" />,
 };
 
 export function SalesAgentDashboardShell({ username, permissions }: Props) {
@@ -52,13 +61,15 @@ export function SalesAgentDashboardShell({ username, permissions }: Props) {
   const initialTab = permissions.length > 0 ? (permissionTabs[permissions[0]]?.key || "") : "";
   const [activeTab, setActiveTab] = useState<TabKey>(initialTab as TabKey);
 
-  // Build tabs list: only permission-based tabs (no default tabs)
+  // Build tabs list: permission-based tabs + always-on default tab
   const tabs = useMemo(() => {
     const permissionTabsList = permissions
+      .filter((perm) => perm !== "inquiry-tracking") // Don't duplicate if assigned as permission
       .map((perm) => permissionTabs[perm])
       .filter((tab): tab is { key: TabKey; label: string; icon: React.ReactNode } => tab !== undefined);
     
-    return permissionTabsList;
+    // Always add Inquiry Tracking at the end
+    return [...permissionTabsList, DEFAULT_TAB];
   }, [permissions]);
 
   // Update active tab when permissions change (if current tab is no longer available)
@@ -194,6 +205,7 @@ export function SalesAgentDashboardShell({ username, permissions }: Props) {
         {activeTab === "operations" && <OperationsPanel />}
         {activeTab === "import-packing-list" && <ImportPackingListPanel />}
         {activeTab === "import-invoice" && <ImportInvoicePanel />}
+        {activeTab === "inquiry-tracking" && <InquiryTrackingPanel />}
         {activeTab === "create" && (
           <Card className="bg-white border shadow-sm">
             <CardHeader>

@@ -186,6 +186,7 @@ export function OperationsLeadsInquiryPanel() {
     if (!searchQuery.trim()) return true;
     const s = searchQuery.toLowerCase();
     return (
+      (inq.leads?.lead_id_formatted || "").toLowerCase().includes(s) ||
       (inq.leads?.name || "").toLowerCase().includes(s) ||
       (inq.leads?.number || "").toLowerCase().includes(s) ||
       (inq.leads?.source || "").toLowerCase().includes(s) ||
@@ -624,6 +625,12 @@ export function OperationsLeadsInquiryPanel() {
             {/* Lead Info Grid */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-3">
               <div>
+                <label className="text-xs text-slate-500 font-medium">Lead Number</label>
+                <div className="font-mono font-bold text-primary-accent mt-0.5">
+                  {inq.leads?.lead_id_formatted ? `#${inq.leads.lead_id_formatted}` : "-"}
+                </div>
+              </div>
+              <div>
                 <label className="text-xs text-slate-500 font-medium">Lead Name</label>
                 <div className="font-semibold text-slate-800 mt-0.5">
                   {inq.leads?.name || "-"}
@@ -1037,6 +1044,7 @@ export function OperationsLeadsInquiryPanel() {
               <Table>
                 <TableHeader>
                   <TableRow className="bg-slate-50">
+                    <TableHead className="font-semibold">Lead #</TableHead>
                     <TableHead className="font-semibold">Lead Name</TableHead>
                     <TableHead className="font-semibold">Product Name</TableHead>
                     <TableHead className="font-semibold">Total Weight</TableHead>
@@ -1055,6 +1063,9 @@ export function OperationsLeadsInquiryPanel() {
                       className="cursor-pointer hover:bg-slate-50 transition-colors"
                       onClick={() => openDetail(inquiry)}
                     >
+                      <TableCell className="font-mono text-xs font-semibold text-primary-accent">
+                        {inquiry.leads?.lead_id_formatted ? `#${inquiry.leads.lead_id_formatted}` : "-"}
+                      </TableCell>
                       <TableCell className="font-semibold text-teal-700">
                         {inquiry.leads?.name || "Unknown"}
                       </TableCell>

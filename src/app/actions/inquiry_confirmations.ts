@@ -251,6 +251,7 @@ export async function approveInquiryConfirmation(confirmationId: string) {
 
     revalidatePath('/admin/dashboard');
     revalidatePath('/operations/dashboard');
+    revalidatePath('/sales-agent/dashboard'); // Sales agent should see approved status
     return { success: true, confirmation: data as InquiryConfirmation };
   } catch (err) {
     return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };

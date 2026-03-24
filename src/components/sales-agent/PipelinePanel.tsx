@@ -41,7 +41,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { MessageSquare, Edit2, Trash2, Plus, UserPlus, Search, X, Send, FileText, ImageIcon, History, MoreVertical } from "lucide-react";
+import { MessageSquare, Edit2, Trash2, Plus, UserPlus, Search, X, Send, FileText, ImageIcon, History, MoreVertical, CheckCircle2, Clock, AlertCircle } from "lucide-react";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -55,8 +55,10 @@ import {
   sendInquiryToAccounting,
   getInquiryForLead,
   getQuotationsForLead,
+  getInquiryTrackingForSalesAgent,
   type LeadInquiry,
   type InquiryQuotation,
+  type InquiryTrackingInfo,
 } from "@/app/actions/inquiries";
 import jsPDF from "jspdf";
 
@@ -87,6 +89,7 @@ function LeadCard({
   onMoveToStatus,
   showConvertButton,
   showInquiryButton,
+  inquiryTracking,
 }: {
   lead: Lead;
   onOpenComments: (lead: Lead) => void;
@@ -95,6 +98,7 @@ function LeadCard({
   onMoveToStatus?: (lead: Lead, status: LeadStatus) => void;
   showConvertButton?: boolean;
   showInquiryButton?: boolean;
+  inquiryTracking?: InquiryTrackingInfo | null;
 }) {
   const {
     attributes,
@@ -209,6 +213,34 @@ function LeadCard({
                 Converted
               </div>
             )}
+            {/* Inquiry Tracking Badge */}
+            {inquiryTracking && (
+              <div className={`mt-1.5 px-1.5 py-0.5 rounded text-[10px] text-center flex items-center justify-center gap-1 ${
+                inquiryTracking.status === 'approved'
+                  ? 'bg-emerald-100 text-emerald-800'
+                  : inquiryTracking.status === 'sent'
+                  ? 'bg-blue-100 text-blue-800'
+                  : inquiryTracking.status === 'draft'
+                  ? 'bg-yellow-100 text-yellow-800'
+                  : ''
+              }`}>
+                {inquiryTracking.status === 'approved' && (
+                  <><CheckCircle2 className="h-3 w-3" /> Inquiry Approved</>
+                )}
+                {inquiryTracking.status === 'sent' && (
+                  <><Clock className="h-3 w-3" /> Inquiry Sent</>
+                )}
+                {inquiryTracking.status === 'draft' && (
+                  <><AlertCircle className="h-3 w-3" /> Inquiry Draft</>
+                )}
+              </div>
+            )}
+            {/* Show "No Inquiry" for leads in Inquiry Received that have no tracking */}
+            {showInquiryButton && !inquiryTracking && (
+              <div className="mt-1.5 px-1.5 py-0.5 bg-slate-100 text-slate-500 rounded text-[10px] text-center flex items-center justify-center gap-1">
+                <FileText className="h-3 w-3" /> No Inquiry Sent
+              </div>
+            )}
           </div>
         </CardContent>
       </Card>
@@ -224,6 +256,7 @@ function KanbanColumn({
   onOpenInquiry,
   onMoveToStatus,
   searchQuery,
+  inquiryTrackingMap,
 }: {
   status: LeadStatus;
   leads: Lead[];
@@ -232,6 +265,7 @@ function KanbanColumn({
   onOpenInquiry?: (lead: Lead) => void;
   onMoveToStatus?: (lead: Lead, status: LeadStatus) => void;
   searchQuery?: string;
+  inquiryTrackingMap?: Map<string, InquiryTrackingInfo>;
 }) {
   const { setNodeRef } = useDroppable({ id: status });
   const [columnSearchQuery, setColumnSearchQuery] = useState("");
@@ -309,6 +343,7 @@ function KanbanColumn({
                   onMoveToStatus={onMoveToStatus}
                   showConvertButton={showConvertButton}
                   showInquiryButton={showInquiryButton}
+                  inquiryTracking={inquiryTrackingMap?.get(lead.id) || null}
                 />
               ))
             )}
@@ -550,14 +585,16 @@ function InquiryDialog({
   const [showQuotationHistory, setShowQuotationHistory] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [confirmationStatus, setConfirmationStatus] = useState<'none' | 'approved'>('none');
 
   const fetchInquiryData = useCallback(async () => {
     if (!lead) return;
     setIsLoading(true);
     try {
-      const [inquiryResult, quotationsResult] = await Promise.all([
+      const [inquiryResult, quotationsResult, trackingResult] = await Promise.all([
         getInquiryForLead(lead.id),
         getQuotationsForLead(lead.id),
+        getInquiryTrackingForSalesAgent(),
       ]);
       if ("error" in inquiryResult) {
         // No inquiry yet, that's fine
@@ -572,6 +609,15 @@ function InquiryDialog({
       }
       if (!("error" in quotationsResult)) {
         setQuotations(quotationsResult.quotations || []);
+      }
+      // Check confirmation status - only show "approved" to sales agent
+      if (!("error" in trackingResult) && trackingResult.tracking) {
+        const thisTracking = trackingResult.tracking.find((t) => t.lead_id === lead.id);
+        if (thisTracking?.status === 'approved') {
+          setConfirmationStatus('approved');
+        } else {
+          setConfirmationStatus('none');
+        }
       }
     } catch {
       toast.error("Failed to load inquiry data");
@@ -594,6 +640,7 @@ function InquiryDialog({
       setOtherDetails("");
       setShowQuotationHistory(false);
       setIsDragging(false);
+      setConfirmationStatus('none');
     }
   }, [open, lead, fetchInquiryData]);
 
@@ -785,6 +832,17 @@ function InquiryDialog({
           <div className="py-8 text-center text-secondary-muted text-sm">Loading inquiry data...</div>
         ) : (
           <div className="space-y-4">
+            {/* Confirmation Status Banner */}
+            {confirmationStatus === 'approved' && (
+              <div className="flex items-center gap-2 p-3 bg-emerald-50 border border-emerald-200 rounded-lg">
+                <CheckCircle2 className="h-5 w-5 text-emerald-600 shrink-0" />
+                <div>
+                  <p className="text-sm font-semibold text-emerald-800">Inquiry Approved</p>
+                  <p className="text-xs text-emerald-600">This inquiry has been approved by the Admin. You may proceed with further work.</p>
+                </div>
+              </div>
+            )}
+
             {/* Status badges */}
             {inquiry?.sent_to_accounting && (
               <div className="flex items-center gap-2 flex-wrap">
@@ -1007,6 +1065,7 @@ export function PipelinePanel() {
   const [leadToConvert, setLeadToConvert] = useState<Lead | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [isPending, startTransition] = useTransition();
+  const [inquiryTrackingMap, setInquiryTrackingMap] = useState<Map<string, InquiryTrackingInfo>>(new Map());
 
   const sensors = useSensors(
     useSensor(PointerSensor, {
@@ -1018,6 +1077,7 @@ export function PipelinePanel() {
 
   useEffect(() => {
     fetchLeads();
+    fetchInquiryTracking();
   }, []);
 
   async function fetchLeads() {
@@ -1034,6 +1094,18 @@ export function PipelinePanel() {
       toast.error("An unexpected error occurred");
     } finally {
       setIsLoading(false);
+    }
+  }
+
+  async function fetchInquiryTracking() {
+    try {
+      const result = await getInquiryTrackingForSalesAgent();
+      if ("error" in result) return;
+      const map = new Map<string, InquiryTrackingInfo>();
+      (result.tracking || []).forEach((t) => map.set(t.lead_id, t));
+      setInquiryTrackingMap(map);
+    } catch {
+      // Silent fail - tracking is supplementary
     }
   }
 
@@ -1211,6 +1283,7 @@ export function PipelinePanel() {
                       onOpenInquiry={handleOpenInquiry}
                       onMoveToStatus={handleMoveToStatus}
                       searchQuery={searchQuery}
+                      inquiryTrackingMap={inquiryTrackingMap}
                     />
                   ))}
                 </div>
@@ -1226,6 +1299,7 @@ export function PipelinePanel() {
                       onOpenInquiry={handleOpenInquiry}
                       onMoveToStatus={handleMoveToStatus}
                       searchQuery={searchQuery}
+                      inquiryTrackingMap={inquiryTrackingMap}
                     />
                   ))}
                 </div>
@@ -1265,7 +1339,11 @@ export function PipelinePanel() {
         open={inquiryOpen}
         onOpenChange={(open) => {
           setInquiryOpen(open);
-          if (!open) setInquiryLead(null);
+          if (!open) {
+            setInquiryLead(null);
+            // Refresh tracking data when inquiry dialog closes
+            fetchInquiryTracking();
+          }
         }}
       />
 

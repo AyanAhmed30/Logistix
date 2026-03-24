@@ -31,7 +31,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { PlusCircle, Trash2, Edit, TrendingUp, Truck, Bell, Package, Container, FileText, Settings, ClipboardList, Receipt, UserPlus, Users, ShoppingCart, UsersRound } from "lucide-react";
+import { PlusCircle, Trash2, Edit, TrendingUp, Truck, Bell, Package, Container, FileText, Settings, ClipboardList, Receipt, UserPlus, Users, ShoppingCart, UsersRound, ClipboardCheck } from "lucide-react";
 
 
 // Available permissions that can be assigned to sales agents
@@ -51,6 +51,7 @@ const AVAILABLE_PERMISSIONS = [
   { key: "operations", label: "Operations", icon: Settings },
   { key: "import-packing-list", label: "Import Packing List", icon: ClipboardList },
   { key: "import-invoice", label: "Import Invoice", icon: Receipt },
+  { key: "inquiry-tracking", label: "Inquiry Tracking", icon: ClipboardCheck },
 ] as const;
 
 export type PermissionKey = typeof AVAILABLE_PERMISSIONS[number]["key"];

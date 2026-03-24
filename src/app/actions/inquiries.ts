@@ -27,6 +27,7 @@ export type LeadInquiry = {
 export type LeadInquiryWithLead = LeadInquiry & {
   leads: {
     id: string;
+    lead_id_formatted: string | null;
     name: string;
     number: string;
     source: string;
@@ -191,6 +192,182 @@ export async function sendInquiryToAccounting(leadId: string) {
   }
 }
 
+// ========== Sales Agent Inquiry Tracking ==========
+
+export type InquiryTrackingStatus = 'none' | 'draft' | 'sent' | 'approved';
+
+export type InquiryTrackingInfo = {
+  lead_id: string;
+  status: InquiryTrackingStatus;
+  sent_at: string | null;
+  approved_at: string | null;
+};
+
+/**
+ * Get inquiry tracking statuses for all leads belonging to the current sales agent.
+ * Used by the Pipeline view to show which leads have inquiries sent/approved.
+ * 
+ * Visibility rules:
+ * - "approved" is shown to sales agent so they know the inquiry is good to proceed
+ * - "rejected" is NOT shown to sales agent (only visible to operations)
+ */
+export async function getInquiryTrackingForSalesAgent() {
+  try {
+    const session = await getSession();
+    if (!session) return { error: 'Unauthorized' };
+
+    const supabase = await createAdminClient();
+
+    // Get sales agent by username
+    const { data: salesAgent, error: agentError } = await supabase
+      .from('sales_agents')
+      .select('id')
+      .eq('username', session.username)
+      .maybeSingle();
+
+    if (agentError || !salesAgent) {
+      return { tracking: [] as InquiryTrackingInfo[] };
+    }
+
+    // Get all leads for this agent
+    const { data: leads, error: leadsError } = await supabase
+      .from('leads')
+      .select('id')
+      .eq('sales_agent_id', salesAgent.id);
+
+    if (leadsError || !leads || leads.length === 0) {
+      return { tracking: [] as InquiryTrackingInfo[] };
+    }
+
+    const leadIds = leads.map((l: { id: string }) => l.id);
+
+    // Get all inquiries for these leads, including confirmations
+    const { data: inquiries, error: inquiryError } = await supabase
+      .from('lead_inquiries')
+      .select(`
+        id,
+        lead_id,
+        sent_to_accounting,
+        sent_at,
+        inquiry_confirmations (
+          id,
+          status,
+          created_at
+        )
+      `)
+      .in('lead_id', leadIds);
+
+    if (inquiryError) {
+      return { tracking: [] as InquiryTrackingInfo[] };
+    }
+
+    const tracking: InquiryTrackingInfo[] = (inquiries || []).map((inq: {
+      id: string;
+      lead_id: string;
+      sent_to_accounting: boolean;
+      sent_at: string | null;
+      inquiry_confirmations?: { id: string; status: string; created_at: string }[];
+    }) => {
+      // Check if any confirmation is approved (latest first)
+      const confirmations = inq.inquiry_confirmations || [];
+      const sorted = [...confirmations].sort(
+        (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+      );
+      const latestApproved = sorted.find((c) => c.status === 'approved');
+
+      let status: InquiryTrackingStatus = 'draft';
+      let approved_at: string | null = null;
+
+      if (latestApproved) {
+        status = 'approved';
+        approved_at = latestApproved.created_at;
+      } else if (inq.sent_to_accounting) {
+        status = 'sent';
+      }
+
+      return {
+        lead_id: inq.lead_id,
+        status,
+        sent_at: inq.sent_at,
+        approved_at,
+      };
+    });
+
+    return { tracking };
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };
+  }
+}
+
+/**
+ * Get all inquiries for the current sales agent with full lead and confirmation details.
+ * Used by the Inquiry Tracking tab in the Sales Agent Dashboard.
+ * Only shows "approved" confirmations (rejected is hidden from sales agent).
+ */
+export async function getAllInquiriesForSalesAgent() {
+  try {
+    const session = await getSession();
+    if (!session) return { error: 'Unauthorized' };
+
+    const supabase = await createAdminClient();
+
+    // Get sales agent by username
+    const { data: salesAgent, error: agentError } = await supabase
+      .from('sales_agents')
+      .select('id')
+      .eq('username', session.username)
+      .maybeSingle();
+
+    if (agentError || !salesAgent) {
+      return { inquiries: [] as LeadInquiryWithLead[] };
+    }
+
+    // Get all leads for this agent
+    const { data: leads, error: leadsError } = await supabase
+      .from('leads')
+      .select('id')
+      .eq('sales_agent_id', salesAgent.id);
+
+    if (leadsError || !leads || leads.length === 0) {
+      return { inquiries: [] as LeadInquiryWithLead[] };
+    }
+
+    const leadIds = leads.map((l: { id: string }) => l.id);
+
+    // Fetch all inquiries for the agent's leads (including drafts and sent ones)
+    const { data, error } = await supabase
+      .from('lead_inquiries')
+      .select(`
+        *,
+        leads (
+          id,
+          lead_id_formatted,
+          name,
+          number,
+          source,
+          sales_agent_id,
+          sales_agents (
+            id,
+            name,
+            username
+          )
+        ),
+        inquiry_confirmations (
+          id,
+          status,
+          created_at
+        )
+      `)
+      .in('lead_id', leadIds)
+      .order('created_at', { ascending: false });
+
+    if (error) return { error: error.message };
+    return { inquiries: (data || []) as LeadInquiryWithLead[] };
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };
+  }
+}
+
 export async function getInquiryForLead(leadId: string) {
   try {
     const session = await getSession();
@@ -248,6 +425,7 @@ export async function getAllInquiriesForAccounting() {
         *,
         leads (
           id,
+          lead_id_formatted,
           name,
           number,
           source,
@@ -289,6 +467,7 @@ export async function getAllInquiriesForOperations() {
         *,
         leads (
           id,
+          lead_id_formatted,
           name,
           number,
           source,

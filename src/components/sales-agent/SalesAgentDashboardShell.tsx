@@ -4,7 +4,7 @@ import { useState, useMemo, useEffect } from "react";
 import { logout } from "@/app/actions/auth";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { LogOut, Menu, X, UserPlus, Users, FileText, ShoppingCart, TrendingUp, Truck, Bell, Package, Container, Settings, ClipboardList, Receipt, PlusCircle, UsersRound, ClipboardCheck } from "lucide-react";
+import { LogOut, Menu, X, UserPlus, Users, FileText, ShoppingCart, TrendingUp, Truck, Bell, Package, Container, Settings, ClipboardList, Receipt, PlusCircle, UsersRound, ClipboardCheck, Calculator } from "lucide-react";
 import Image from "next/image";
 import { LeadPanel } from "@/components/sales-agent/LeadPanel";
 import { PipelinePanel } from "@/components/sales-agent/PipelinePanel";
@@ -19,13 +19,14 @@ import { OperationsPanel } from "@/components/admin/OperationsPanel";
 import { ImportPackingListPanel } from "@/components/admin/ImportPackingListPanel";
 import { ImportInvoicePanel } from "@/components/admin/ImportInvoicePanel";
 import { AdminDashboardOverview } from "@/components/admin/AdminDashboardOverview";
+import { SalesAgentAccountingPanel } from "@/components/sales-agent/SalesAgentAccountingPanel";
 
 type Props = {
   username: string;
   permissions: string[];
 };
 
-type TabKey = "lead" | "pipeline" | "customer-list" | "manage-request" | "create" | "profiles" | "dashboard" | "tracking" | "notifications" | "management" | "console" | "loading-instruction" | "operations" | "import-packing-list" | "import-invoice" | "inquiry-tracking";
+type TabKey = "lead" | "pipeline" | "customer-list" | "manage-request" | "create" | "profiles" | "dashboard" | "tracking" | "notifications" | "management" | "console" | "loading-instruction" | "operations" | "import-packing-list" | "import-invoice" | "inquiry-tracking" | "accounting";
 
 // All tabs are now permission-based - no default tabs
 const permissionTabs: Record<string, { key: TabKey; label: string; icon: React.ReactNode }> = {
@@ -47,12 +48,19 @@ const permissionTabs: Record<string, { key: TabKey; label: string; icon: React.R
   "inquiry-tracking": { key: "inquiry-tracking", label: "Inquiry Tracking", icon: <ClipboardCheck className="h-4 w-4" /> },
 };
 
-// "Inquiry Tracking" is always available to all sales agents (not permission-gated)
-const DEFAULT_TAB: { key: TabKey; label: string; icon: React.ReactNode } = {
-  key: "inquiry-tracking",
-  label: "Inquiry Tracking",
-  icon: <ClipboardCheck className="h-4 w-4" />,
-};
+// These tabs are always available to all sales agents (not permission-gated)
+const DEFAULT_TABS: { key: TabKey; label: string; icon: React.ReactNode }[] = [
+  {
+    key: "accounting",
+    label: "Accounting",
+    icon: <Calculator className="h-4 w-4" />,
+  },
+  {
+    key: "inquiry-tracking",
+    label: "Inquiry Tracking",
+    icon: <ClipboardCheck className="h-4 w-4" />,
+  },
+];
 
 export function SalesAgentDashboardShell({ username, permissions }: Props) {
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
@@ -61,15 +69,16 @@ export function SalesAgentDashboardShell({ username, permissions }: Props) {
   const initialTab = permissions.length > 0 ? (permissionTabs[permissions[0]]?.key || "") : "";
   const [activeTab, setActiveTab] = useState<TabKey>(initialTab as TabKey);
 
-  // Build tabs list: permission-based tabs + always-on default tab
+  // Build tabs list: permission-based tabs + always-on default tabs
   const tabs = useMemo(() => {
+    const defaultKeys = DEFAULT_TABS.map((t) => t.key);
     const permissionTabsList = permissions
-      .filter((perm) => perm !== "inquiry-tracking") // Don't duplicate if assigned as permission
+      .filter((perm) => !defaultKeys.includes(perm as TabKey)) // Don't duplicate default tabs
       .map((perm) => permissionTabs[perm])
       .filter((tab): tab is { key: TabKey; label: string; icon: React.ReactNode } => tab !== undefined);
     
-    // Always add Inquiry Tracking at the end
-    return [...permissionTabsList, DEFAULT_TAB];
+    // Always add default tabs at the end
+    return [...permissionTabsList, ...DEFAULT_TABS];
   }, [permissions]);
 
   // Update active tab when permissions change (if current tab is no longer available)
@@ -205,6 +214,7 @@ export function SalesAgentDashboardShell({ username, permissions }: Props) {
         {activeTab === "operations" && <OperationsPanel />}
         {activeTab === "import-packing-list" && <ImportPackingListPanel />}
         {activeTab === "import-invoice" && <ImportInvoicePanel />}
+        {activeTab === "accounting" && <SalesAgentAccountingPanel />}
         {activeTab === "inquiry-tracking" && <InquiryTrackingPanel />}
         {activeTab === "create" && (
           <Card className="bg-white border shadow-sm">

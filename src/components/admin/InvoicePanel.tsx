@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import { useRouter } from "next/navigation";
 import {
   getAllInvoices,
+  getAllInvoicesForSalesAgent,
   updateInvoice,
   deleteInvoice,
   confirmInvoice,
@@ -88,7 +89,7 @@ type InvoiceFormState = {
   invoice_date: string;
 };
 
-export function InvoicePanel() {
+export function InvoicePanel({ salesAgentMode = false }: { salesAgentMode?: boolean } = {}) {
   const router = useRouter();
   const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -116,7 +117,9 @@ export function InvoicePanel() {
   async function fetchInvoices() {
     setIsLoading(true);
     try {
-      const result = await getAllInvoices(activeTab);
+      const result = salesAgentMode
+        ? await getAllInvoicesForSalesAgent(activeTab)
+        : await getAllInvoices(activeTab);
       if ("error" in result) {
         toast.error(result.error || "Unable to load invoices");
         setInvoices([]);

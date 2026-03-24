@@ -3,7 +3,7 @@
 import { useEffect, useState, useTransition, useCallback } from "react";
 import { toast } from "sonner";
 import {
-  getAllInquiriesForAccounting,
+  getAllInquiriesForSalesAgent,
   updateInquiryForAccounting,
   getInquiryLogs,
   type LeadInquiryWithLead,
@@ -189,7 +189,7 @@ function InquiryLogEntry({ log }: { log: InquiryLog }) {
 
 type ViewMode = "list" | "detail";
 
-export function AccountingInquiriesPanel() {
+export function SalesAgentAccountingInquiriesPanel() {
   const [view, setView] = useState<ViewMode>("list");
   const [inquiries, setInquiries] = useState<LeadInquiryWithLead[]>([]);
   const [isLoading, setIsLoading] = useState(false);
@@ -215,7 +215,7 @@ export function AccountingInquiriesPanel() {
   const fetchInquiries = useCallback(async () => {
     setIsLoading(true);
     try {
-      const result = await getAllInquiriesForAccounting();
+      const result = await getAllInquiriesForSalesAgent();
       if ("error" in result) {
         toast.error(result.error || "Unable to load inquiries");
         setInquiries([]);
@@ -250,8 +250,7 @@ export function AccountingInquiriesPanel() {
     return (
       (inq.leads?.name || "").toLowerCase().includes(s) ||
       (inq.leads?.number || "").toLowerCase().includes(s) ||
-      (inq.leads?.source || "").toLowerCase().includes(s) ||
-      (inq.leads?.sales_agents?.name || "").toLowerCase().includes(s) ||
+      (inq.leads?.lead_id_formatted || "").toLowerCase().includes(s) ||
       (inq.product_name || "").toLowerCase().includes(s) ||
       (inq.description || "").toLowerCase().includes(s) ||
       getEffectiveStatus(inq).toLowerCase().includes(s)
@@ -346,7 +345,7 @@ export function AccountingInquiriesPanel() {
       setIsEditing(false);
 
       // Refresh the detail
-      const refreshed = await getAllInquiriesForAccounting();
+      const refreshed = await getAllInquiriesForSalesAgent();
       if (!("error" in refreshed)) {
         const updated = (refreshed.inquiries || []).find((i) => i.id === selectedInquiry.id);
         if (updated) setSelectedInquiry(updated);
@@ -420,20 +419,14 @@ export function AccountingInquiriesPanel() {
                     </div>
                   </div>
                   <div>
+                    <label className="text-xs text-slate-500 font-medium">Lead #</label>
+                    <div className="font-semibold text-teal-700 mt-0.5">
+                      #{inq.leads?.lead_id_formatted || "N/A"}
+                    </div>
+                  </div>
+                  <div>
                     <label className="text-xs text-slate-500 font-medium">Phone</label>
                     <div className="text-slate-700 mt-0.5">{inq.leads?.number || "-"}</div>
-                  </div>
-                  <div>
-                    <label className="text-xs text-slate-500 font-medium">Source</label>
-                    <div className="mt-0.5">
-                      <Badge variant="outline" className="text-xs">{inq.leads?.source || "-"}</Badge>
-                    </div>
-                  </div>
-                  <div>
-                    <label className="text-xs text-slate-500 font-medium">Sales Agent</label>
-                    <div className="text-slate-700 mt-0.5">
-                      {inq.leads?.sales_agents?.name || "-"}
-                    </div>
                   </div>
                   <div>
                     <label className="text-xs text-slate-500 font-medium">Sent At</label>
@@ -633,7 +626,7 @@ export function AccountingInquiriesPanel() {
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div className="flex items-center gap-3">
           <MessageSquare className="h-5 w-5 text-teal-600" />
-          <h1 className="text-xl font-bold text-slate-800">Inquiries from Sales Agents</h1>
+          <h1 className="text-xl font-bold text-slate-800">My Inquiries</h1>
         </div>
         <div className="flex items-center gap-3">
           <div className="relative">
@@ -664,19 +657,19 @@ export function AccountingInquiriesPanel() {
             <div className="py-16 text-center text-slate-400">
               {searchQuery
                 ? "No inquiries match your search."
-                : "No inquiries from sales agents yet."}
+                : "No inquiries found."}
             </div>
           ) : (
             <div className="overflow-x-auto">
               <Table>
                 <TableHeader>
                   <TableRow className="bg-slate-50">
+                    <TableHead className="font-semibold">Lead #</TableHead>
                     <TableHead className="font-semibold">Lead Name</TableHead>
                     <TableHead className="font-semibold">Product Name</TableHead>
                     <TableHead className="font-semibold">Weight</TableHead>
                     <TableHead className="font-semibold">CBM</TableHead>
                     <TableHead className="font-semibold">Qty</TableHead>
-                    <TableHead className="font-semibold">Sales Agent</TableHead>
                     <TableHead className="font-semibold">Status</TableHead>
                     <TableHead className="font-semibold">Sent At</TableHead>
                     <TableHead className="text-right font-semibold">Actions</TableHead>
@@ -690,6 +683,9 @@ export function AccountingInquiriesPanel() {
                       onClick={() => openDetail(inquiry)}
                     >
                       <TableCell className="font-semibold text-teal-700">
+                        #{inquiry.leads?.lead_id_formatted || "N/A"}
+                      </TableCell>
+                      <TableCell className="font-semibold text-slate-700">
                         {inquiry.leads?.name || "Unknown"}
                       </TableCell>
                       <TableCell className="text-slate-700 font-medium">
@@ -703,9 +699,6 @@ export function AccountingInquiriesPanel() {
                       </TableCell>
                       <TableCell className="text-slate-600">
                         {inquiry.quantity || "-"}
-                      </TableCell>
-                      <TableCell className="text-slate-600">
-                        {inquiry.leads?.sales_agents?.name || "-"}
                       </TableCell>
                       <TableCell>
                         <Badge variant="outline" className={`text-xs ${statusColor(getEffectiveStatus(inquiry))}`}>

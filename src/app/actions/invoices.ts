@@ -35,8 +35,8 @@ export type InvoiceLog = {
   details: Record<string, unknown> | null;
 };
 
-function ensureAdmin(session: { role: string } | null) {
-  if (!session || session.role !== 'admin') {
+function ensureAdminOrSalesAgent(session: { role: string } | null) {
+  if (!session || (session.role !== 'admin' && session.role !== 'sales_agent')) {
     throw new Error('Unauthorized');
   }
 }
@@ -90,7 +90,7 @@ async function logInvoiceAction(
 export async function createInvoiceFromSalesOrder(quotationId: string) {
   try {
     const session = await getSession();
-    ensureAdmin(session);
+    ensureAdminOrSalesAgent(session);
     if (!session) {
       return { error: 'Unauthorized' };
     }
@@ -173,6 +173,7 @@ export async function createInvoiceFromSalesOrder(quotationId: string) {
     );
 
     revalidatePath('/admin/dashboard');
+    revalidatePath('/sales-agent/dashboard');
     return { invoice: data as Invoice };
   } catch (err) {
     const message = err instanceof Error ? err.message : 'An unexpected error occurred';
@@ -183,7 +184,7 @@ export async function createInvoiceFromSalesOrder(quotationId: string) {
 export async function getAllInvoices(status?: InvoiceStatus) {
   try {
     const session = await getSession();
-    ensureAdmin(session);
+    ensureAdminOrSalesAgent(session);
     if (!session) {
       return { error: 'Unauthorized' };
     }
@@ -208,10 +209,44 @@ export async function getAllInvoices(status?: InvoiceStatus) {
   }
 }
 
+/**
+ * Get invoices created by the current sales agent only.
+ */
+export async function getAllInvoicesForSalesAgent(status?: InvoiceStatus) {
+  try {
+    const session = await getSession();
+    if (!session || session.role !== 'sales_agent') {
+      return { error: 'Unauthorized' };
+    }
+
+    const supabase = await createAdminClient();
+    let query = supabase
+      .from('invoices')
+      .select('*')
+      .eq('created_by', session.username)
+      .order('created_at', { ascending: false });
+
+    if (status) {
+      query = query.eq('invoice_status', status);
+    }
+
+    const { data, error } = await query;
+
+    if (error) {
+      return { error: error.message };
+    }
+
+    return { invoices: (data || []) as Invoice[] };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'An unexpected error occurred';
+    return { error: message };
+  }
+}
+
 export async function getInvoiceByQuotationId(quotationId: string) {
   try {
     const session = await getSession();
-    ensureAdmin(session);
+    ensureAdminOrSalesAgent(session);
     if (!session) {
       return { error: 'Unauthorized' };
     }
@@ -246,7 +281,7 @@ export async function getInvoiceByQuotationId(quotationId: string) {
 export async function updateInvoice(formData: FormData) {
   try {
     const session = await getSession();
-    ensureAdmin(session);
+    ensureAdminOrSalesAgent(session);
     if (!session) {
       return { error: 'Unauthorized' };
     }
@@ -332,6 +367,7 @@ export async function updateInvoice(formData: FormData) {
     );
 
     revalidatePath('/admin/dashboard');
+    revalidatePath('/sales-agent/dashboard');
     return { invoice: data as Invoice };
   } catch (err) {
     const message = err instanceof Error ? err.message : 'An unexpected error occurred';
@@ -342,7 +378,7 @@ export async function updateInvoice(formData: FormData) {
 export async function deleteInvoice(id: string) {
   try {
     const session = await getSession();
-    ensureAdmin(session);
+    ensureAdminOrSalesAgent(session);
     if (!session) {
       return { error: 'Unauthorized' };
     }
@@ -387,6 +423,7 @@ export async function deleteInvoice(id: string) {
     }
 
     revalidatePath('/admin/dashboard');
+    revalidatePath('/sales-agent/dashboard');
     return { success: true };
   } catch (err) {
     const message = err instanceof Error ? err.message : 'An unexpected error occurred';
@@ -397,7 +434,7 @@ export async function deleteInvoice(id: string) {
 export async function confirmInvoice(id: string) {
   try {
     const session = await getSession();
-    ensureAdmin(session);
+    ensureAdminOrSalesAgent(session);
     if (!session) {
       return { error: 'Unauthorized' };
     }
@@ -449,6 +486,7 @@ export async function confirmInvoice(id: string) {
     );
 
     revalidatePath('/admin/dashboard');
+    revalidatePath('/sales-agent/dashboard');
     return { invoice: data as Invoice };
   } catch (err) {
     const message = err instanceof Error ? err.message : 'An unexpected error occurred';
@@ -459,7 +497,7 @@ export async function confirmInvoice(id: string) {
 export async function registerPayment(id: string) {
   try {
     const session = await getSession();
-    ensureAdmin(session);
+    ensureAdminOrSalesAgent(session);
     if (!session) {
       return { error: 'Unauthorized' };
     }
@@ -515,6 +553,7 @@ export async function registerPayment(id: string) {
     );
 
     revalidatePath('/admin/dashboard');
+    revalidatePath('/sales-agent/dashboard');
     return { invoice: data as Invoice };
   } catch (err) {
     const message = err instanceof Error ? err.message : 'An unexpected error occurred';
@@ -525,7 +564,7 @@ export async function registerPayment(id: string) {
 export async function getInvoiceLogs(invoiceId: string) {
   try {
     const session = await getSession();
-    ensureAdmin(session);
+    ensureAdminOrSalesAgent(session);
     if (!session) {
       return { error: 'Unauthorized' };
     }
@@ -556,7 +595,7 @@ export async function getInvoiceLogs(invoiceId: string) {
 export async function logInvoicePrint(invoiceId: string) {
   try {
     const session = await getSession();
-    ensureAdmin(session);
+    ensureAdminOrSalesAgent(session);
     if (!session) {
       return { error: 'Unauthorized' };
     }

@@ -36,8 +36,8 @@ export type QuotationLog = {
   details: Record<string, unknown> | null;
 };
 
-function ensureAdmin(session: { role: string } | null) {
-  if (!session || session.role !== 'admin') {
+function ensureAdminOrSalesAgent(session: { role: string } | null) {
+  if (!session || (session.role !== 'admin' && session.role !== 'sales_agent')) {
     throw new Error('Unauthorized');
   }
 }
@@ -84,7 +84,7 @@ async function generateQuotationNumber(supabase: Awaited<ReturnType<typeof creat
 export async function createQuotation(formData: FormData) {
   try {
     const session = await getSession();
-    ensureAdmin(session);
+    ensureAdminOrSalesAgent(session);
     if (!session) {
       return { error: 'Unauthorized' };
     }
@@ -153,6 +153,7 @@ export async function createQuotation(formData: FormData) {
     );
 
     revalidatePath('/admin/dashboard');
+    revalidatePath('/sales-agent/dashboard');
     return { quotation: data as Quotation };
   } catch (err) {
     const message = err instanceof Error ? err.message : 'An unexpected error occurred';
@@ -163,7 +164,7 @@ export async function createQuotation(formData: FormData) {
 export async function getAllQuotations(status?: QuotationStatus) {
   try {
     const session = await getSession();
-    ensureAdmin(session);
+    ensureAdminOrSalesAgent(session);
     if (!session) {
       return { error: 'Unauthorized' };
     }
@@ -188,10 +189,44 @@ export async function getAllQuotations(status?: QuotationStatus) {
   }
 }
 
+/**
+ * Get quotations created by the current sales agent only.
+ */
+export async function getAllQuotationsForSalesAgent(status?: QuotationStatus) {
+  try {
+    const session = await getSession();
+    if (!session || session.role !== 'sales_agent') {
+      return { error: 'Unauthorized' };
+    }
+
+    const supabase = await createAdminClient();
+    let query = supabase
+      .from('quotations')
+      .select('*')
+      .eq('created_by', session.username)
+      .order('created_at', { ascending: false });
+
+    if (status) {
+      query = query.eq('status', status);
+    }
+
+    const { data, error } = await query;
+
+    if (error) {
+      return { error: error.message };
+    }
+
+    return { quotations: (data || []) as Quotation[] };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'An unexpected error occurred';
+    return { error: message };
+  }
+}
+
 export async function updateQuotation(formData: FormData) {
   try {
     const session = await getSession();
-    ensureAdmin(session);
+    ensureAdminOrSalesAgent(session);
     if (!session) {
       return { error: 'Unauthorized' };
     }
@@ -289,6 +324,7 @@ export async function updateQuotation(formData: FormData) {
     );
 
     revalidatePath('/admin/dashboard');
+    revalidatePath('/sales-agent/dashboard');
     return { quotation: data as Quotation };
   } catch (err) {
     const message = err instanceof Error ? err.message : 'An unexpected error occurred';
@@ -299,7 +335,7 @@ export async function updateQuotation(formData: FormData) {
 export async function deleteQuotation(id: string) {
   try {
     const session = await getSession();
-    ensureAdmin(session);
+    ensureAdminOrSalesAgent(session);
     if (!session) {
       return { error: 'Unauthorized' };
     }
@@ -343,6 +379,7 @@ export async function deleteQuotation(id: string) {
     }
 
     revalidatePath('/admin/dashboard');
+    revalidatePath('/sales-agent/dashboard');
     return { success: true };
   } catch (err) {
     const message = err instanceof Error ? err.message : 'An unexpected error occurred';
@@ -356,7 +393,7 @@ export async function sendQuotation(
 ) {
   try {
     const session = await getSession();
-    ensureAdmin(session);
+    ensureAdminOrSalesAgent(session);
     if (!session) {
       return { error: 'Unauthorized' };
     }
@@ -440,6 +477,7 @@ export async function sendQuotation(
     );
 
     revalidatePath('/admin/dashboard');
+    revalidatePath('/sales-agent/dashboard');
     return { quotation: updatedData as Quotation };
   } catch (err) {
     const message = err instanceof Error ? err.message : 'An unexpected error occurred';
@@ -450,7 +488,7 @@ export async function sendQuotation(
 export async function confirmOrder(id: string) {
   try {
     const session = await getSession();
-    ensureAdmin(session);
+    ensureAdminOrSalesAgent(session);
     if (!session) {
       return { error: 'Unauthorized' };
     }
@@ -502,6 +540,7 @@ export async function confirmOrder(id: string) {
     );
 
     revalidatePath('/admin/dashboard');
+    revalidatePath('/sales-agent/dashboard');
     return { quotation: data as Quotation };
   } catch (err) {
     const message = err instanceof Error ? err.message : 'An unexpected error occurred';
@@ -512,7 +551,7 @@ export async function confirmOrder(id: string) {
 export async function getQuotationLogs(quotationId: string) {
   try {
     const session = await getSession();
-    ensureAdmin(session);
+    ensureAdminOrSalesAgent(session);
     if (!session) {
       return { error: 'Unauthorized' };
     }
@@ -543,7 +582,7 @@ export async function getQuotationLogs(quotationId: string) {
 export async function logQuotationPrint(quotationId: string) {
   try {
     const session = await getSession();
-    ensureAdmin(session);
+    ensureAdminOrSalesAgent(session);
     if (!session) {
       return { error: 'Unauthorized' };
     }
@@ -589,7 +628,7 @@ export async function logQuotationPrint(quotationId: string) {
 export async function addQuotationLogNote(quotationId: string, note: string) {
   try {
     const session = await getSession();
-    ensureAdmin(session);
+    ensureAdminOrSalesAgent(session);
     if (!session) {
       return { error: 'Unauthorized' };
     }
@@ -622,6 +661,7 @@ export async function addQuotationLogNote(quotationId: string, note: string) {
     );
 
     revalidatePath('/admin/dashboard');
+    revalidatePath('/sales-agent/dashboard');
     return { success: true };
   } catch (err) {
     const message = err instanceof Error ? err.message : 'An unexpected error occurred';
@@ -636,7 +676,7 @@ export async function addQuotationActivity(
 ) {
   try {
     const session = await getSession();
-    ensureAdmin(session);
+    ensureAdminOrSalesAgent(session);
     if (!session) {
       return { error: 'Unauthorized' };
     }
@@ -672,6 +712,7 @@ export async function addQuotationActivity(
     );
 
     revalidatePath('/admin/dashboard');
+    revalidatePath('/sales-agent/dashboard');
     return { success: true };
   } catch (err) {
     const message = err instanceof Error ? err.message : 'An unexpected error occurred';

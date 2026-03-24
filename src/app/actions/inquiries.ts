@@ -435,6 +435,11 @@ export async function getAllInquiriesForAccounting() {
             name,
             username
           )
+        ),
+        inquiry_confirmations (
+          id,
+          status,
+          created_at
         )
       `)
       .eq('sent_to_accounting', true)
@@ -509,7 +514,7 @@ export async function updateInquiryForAccounting(
 ) {
   try {
     const session = await getSession();
-    if (!session || (session.role !== 'admin' && session.role !== 'operations')) {
+    if (!session || (session.role !== 'admin' && session.role !== 'operations' && session.role !== 'sales_agent')) {
       return { error: 'Unauthorized' };
     }
 

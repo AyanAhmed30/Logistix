@@ -7,6 +7,7 @@ import {
   createQuotation,
   deleteQuotation,
   getAllQuotations,
+  getAllQuotationsForSalesAgent,
   updateQuotation,
   sendQuotation,
   confirmOrder,
@@ -474,7 +475,7 @@ function generateQuotationPdf(q: Quotation) {
 
 // ─── Main Component ──────────────────────────────────────────────────
 
-export function QuotationPanel() {
+export function QuotationPanel({ salesAgentMode = false }: { salesAgentMode?: boolean } = {}) {
   const router = useRouter();
   const [view, setView] = useState<ViewMode>("list");
   const [quotations, setQuotations] = useState<Quotation[]>([]);
@@ -530,7 +531,9 @@ export function QuotationPanel() {
   const fetchQuotations = useCallback(async () => {
     setIsLoading(true);
     try {
-      const result = await getAllQuotations();
+      const result = salesAgentMode
+        ? await getAllQuotationsForSalesAgent()
+        : await getAllQuotations();
       if ("error" in result) {
         toast.error(result.error || "Unable to load quotations");
         setQuotations([]);
@@ -543,7 +546,7 @@ export function QuotationPanel() {
     } finally {
       setIsLoading(false);
     }
-  }, []);
+  }, [salesAgentMode]);
 
   const fetchLogs = useCallback(async (quotationId: string) => {
     const result = await getQuotationLogs(quotationId);

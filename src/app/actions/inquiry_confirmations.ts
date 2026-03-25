@@ -85,6 +85,8 @@ export async function getInquiryByLeadNumber(leadNumber: string) {
       .select('*')
       .eq('lead_id', lead.id)
       .eq('sent_to_accounting', true)
+      .order('created_at', { ascending: false })
+      .limit(1)
       .maybeSingle();
 
     if (inquiryError) return { error: inquiryError.message };

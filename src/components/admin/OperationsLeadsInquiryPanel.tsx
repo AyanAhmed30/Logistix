@@ -549,6 +549,9 @@ export function OperationsLeadsInquiryPanel() {
 
   if (view === "detail" && selectedInquiry) {
     const inq = selectedInquiry;
+    const leadInquiryHistory = inquiries
+      .filter((item) => item.lead_id === inq.lead_id)
+      .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
 
     return (
       <div className="space-y-4">
@@ -758,6 +761,42 @@ export function OperationsLeadsInquiryPanel() {
                 </div>
               )}
             </div>
+
+            {/* Inquiry History (same lead) */}
+            {leadInquiryHistory.length > 1 && (
+              <>
+                <div className="border-t" />
+                <div>
+                  <h3 className="text-sm font-semibold text-slate-700 mb-3">
+                    Inquiry History ({leadInquiryHistory.length})
+                  </h3>
+                  <div className="space-y-2 max-h-64 overflow-y-auto pr-1">
+                    {leadInquiryHistory.map((h, idx) => (
+                      <div key={h.id} className="border rounded-lg p-3 bg-slate-50">
+                        <div className="flex items-center justify-between mb-1.5">
+                          <Badge variant="outline" className={idx === 0 ? "bg-teal-50 text-teal-700 border-teal-300" : ""}>
+                            {idx === 0 ? "Current" : `Previous #${idx}`}
+                          </Badge>
+                          <span className="text-[11px] text-slate-500">
+                            {new Date(h.created_at).toLocaleString()}
+                          </span>
+                        </div>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-1 text-xs text-slate-600">
+                          <div>Product: <span className="text-slate-800">{h.product_name || "-"}</span></div>
+                          <div>Quantity: <span className="text-slate-800">{h.quantity || "-"}</span></div>
+                          <div>Weight: <span className="text-slate-800">{h.total_weight || "-"}</span></div>
+                          <div>CBM: <span className="text-slate-800">{h.cbm || "-"}</span></div>
+                          <div>Status: <span className="text-slate-800">{h.sent_to_accounting ? "Sent" : "Draft"}</span></div>
+                          {h.description && (
+                            <div className="md:col-span-2">Details: <span className="text-slate-800">{h.description}</span></div>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </>
+            )}
 
             {/* Separator */}
             <div className="border-t" />

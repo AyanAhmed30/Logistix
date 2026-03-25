@@ -54,6 +54,7 @@ import {
   saveInquiry,
   sendInquiryToAccounting,
   getInquiryForLead,
+  getInquiryHistoryForLead,
   getQuotationsForLead,
   getInquiryTrackingForSalesAgent,
   type LeadInquiry,
@@ -583,6 +584,7 @@ function InquiryDialog({
   const [isLoading, setIsLoading] = useState(false);
   const [isPending, startTransition] = useTransition();
   const [showQuotationHistory, setShowQuotationHistory] = useState(false);
+  const [inquiryHistory, setInquiryHistory] = useState<LeadInquiry[]>([]);
   const [isDragging, setIsDragging] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [confirmationStatus, setConfirmationStatus] = useState<'none' | 'approved'>('none');
@@ -591,8 +593,9 @@ function InquiryDialog({
     if (!lead) return;
     setIsLoading(true);
     try {
-      const [inquiryResult, quotationsResult, trackingResult] = await Promise.all([
+      const [inquiryResult, inquiryHistoryResult, quotationsResult, trackingResult] = await Promise.all([
         getInquiryForLead(lead.id),
+        getInquiryHistoryForLead(lead.id),
         getQuotationsForLead(lead.id),
         getInquiryTrackingForSalesAgent(),
       ]);
@@ -609,6 +612,9 @@ function InquiryDialog({
       }
       if (!("error" in quotationsResult)) {
         setQuotations(quotationsResult.quotations || []);
+      }
+      if (!("error" in inquiryHistoryResult)) {
+        setInquiryHistory(inquiryHistoryResult.inquiries || []);
       }
       // Check confirmation status - only show "approved" to sales agent
       if (!("error" in trackingResult) && trackingResult.tracking) {
@@ -639,6 +645,7 @@ function InquiryDialog({
       setImageData("");
       setOtherDetails("");
       setShowQuotationHistory(false);
+      setInquiryHistory([]);
       setIsDragging(false);
       setConfirmationStatus('none');
     }
@@ -762,6 +769,8 @@ function InquiryDialog({
       } else {
         toast.success("Inquiry sent to Accounting & Operations!");
         if (result.inquiry) setInquiry(result.inquiry);
+        // Close the modal after a successful send so the workflow can continue.
+        onOpenChange(false);
       }
     });
   }
@@ -981,6 +990,47 @@ function InquiryDialog({
                 {isPending ? "Sending..." : "Send Inquiry"}
               </Button>
             </div>
+
+            {/* Inquiry Version History */}
+            {inquiryHistory.length > 1 && (
+              <div className="border-t pt-4 space-y-3">
+                <h3 className="font-semibold text-sm flex items-center gap-1">
+                  <History className="h-4 w-4" />
+                  Inquiry History ({inquiryHistory.length})
+                </h3>
+                <div className="space-y-2 max-h-56 overflow-y-auto pr-1">
+                  {inquiryHistory.map((h, idx) => (
+                    <Card key={h.id} className="p-3">
+                      <div className="flex items-center justify-between mb-2">
+                        <Badge variant="outline" className={idx === 0 ? "bg-teal-50 text-teal-700 border-teal-300" : ""}>
+                          {idx === 0 ? "Current" : `Previous #${idx}`}
+                        </Badge>
+                        <span className="text-[11px] text-slate-500">
+                          {new Date(h.created_at).toLocaleString()}
+                        </span>
+                      </div>
+                      <div className="grid grid-cols-2 gap-1 text-xs text-secondary-muted">
+                        <div>Product: <span className="text-primary-dark">{h.product_name || "-"}</span></div>
+                        <div>Qty: <span className="text-primary-dark">{h.quantity || "-"}</span></div>
+                        <div>Weight: <span className="text-primary-dark">{h.total_weight || "-"}</span></div>
+                        <div>CBM: <span className="text-primary-dark">{h.cbm || "-"}</span></div>
+                        <div className="col-span-2">
+                          Status:{" "}
+                          <span className="text-primary-dark">
+                            {h.sent_to_accounting ? "Sent" : "Draft"}
+                          </span>
+                        </div>
+                        {h.description && (
+                          <div className="col-span-2">
+                            Note: <span className="text-primary-dark">{h.description}</span>
+                          </div>
+                        )}
+                      </div>
+                    </Card>
+                  ))}
+                </div>
+              </div>
+            )}
 
             {/* Quotations from Accounting */}
             {quotations.length > 0 && (

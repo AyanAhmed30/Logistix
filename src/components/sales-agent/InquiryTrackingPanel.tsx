@@ -6,6 +6,7 @@ import {
   getAllInquiriesForSalesAgent,
   type LeadInquiryWithLead,
 } from "@/app/actions/inquiries";
+import { getAllLeadsForSalesAgent, type Lead } from "@/app/actions/leads";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -94,13 +95,58 @@ export function InquiryTrackingPanel() {
   const fetchInquiries = useCallback(async () => {
     setIsLoading(true);
     try {
-      const result = await getAllInquiriesForSalesAgent();
-      if ("error" in result) {
-        toast.error(result.error || "Unable to load inquiries");
+      const [leadsResult, inquiriesResult] = await Promise.all([
+        getAllLeadsForSalesAgent(),
+        getAllInquiriesForSalesAgent(),
+      ]);
+
+      if ("error" in leadsResult) {
+        toast.error(leadsResult.error || "Unable to load leads");
         setInquiries([]);
-      } else {
-        setInquiries(result.inquiries || []);
+        return;
       }
+
+      // If inquiries fail, we still render lead placeholders (Draft / Not Sent).
+      const leads = (leadsResult.leads || []) as Lead[];
+      const inquiries: LeadInquiryWithLead[] = "inquiries" in inquiriesResult ? (inquiriesResult.inquiries || []) : [];
+
+      // Keep a placeholder row only for leads that truly have no inquiries yet.
+      const leadIdsWithInquiry = new Set(inquiries.map((i) => i.lead_id));
+      const placeholders: LeadInquiryWithLead[] = leads
+        .filter((lead) => !leadIdsWithInquiry.has(lead.id))
+        .map((lead) => ({
+          id: `placeholder-${lead.id}`,
+          lead_id: lead.id,
+          product_name: "",
+          total_weight: "",
+          cbm: "",
+          quantity: "",
+          description: "",
+          image_url: null,
+          link_url: null,
+          status: "pending",
+          sent_to_accounting: false,
+          sent_to_operations: false,
+          sent_at: null,
+          created_at: lead.created_at,
+          updated_at: lead.updated_at,
+          leads: {
+            id: lead.id,
+            lead_id_formatted: lead.lead_id_formatted,
+            name: lead.name,
+            number: lead.number,
+            source: lead.source,
+            sales_agent_id: lead.sales_agent_id,
+            sales_agents: null,
+          },
+          inquiry_confirmations: [],
+        }));
+
+      const merged = [...inquiries, ...placeholders].sort((a, b) => {
+        return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+      });
+
+      setInquiries(merged);
     } catch {
       toast.error("An unexpected error occurred");
     } finally {

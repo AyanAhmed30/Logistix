@@ -95,11 +95,15 @@ export async function saveInquiry(
 
     const supabase = await createAdminClient();
 
-    // Check if inquiry already exists for this lead
-    const { data: existing } = await supabase
+    // Always work with the latest inquiry for this lead.
+    // If the latest inquiry was already sent to Accounting, we create a new inquiry row
+    // to avoid overwriting history when the agent sends again for the same lead.
+    const { data: latest } = await supabase
       .from('lead_inquiries')
-      .select('id')
+      .select('id, sent_to_accounting')
       .eq('lead_id', leadId)
+      .order('created_at', { ascending: false })
+      .limit(1)
       .maybeSingle();
 
     const inquiryData = {
@@ -112,19 +116,72 @@ export async function saveInquiry(
       updated_at: new Date().toISOString(),
     };
 
-    if (existing) {
-      // Update existing inquiry
+    if (latest && !latest.sent_to_accounting) {
+      // Load current values to compute diffs for inquiry logs.
+      const { data: current, error: currentError } = await supabase
+        .from('lead_inquiries')
+        .select('*')
+        .eq('id', latest.id)
+        .single();
+
+      if (currentError || !current) {
+        return { error: 'Inquiry not found for update' };
+      }
+
+      // Update the latest draft inquiry
       const { data: result, error } = await supabase
         .from('lead_inquiries')
         .update(inquiryData)
-        .eq('id', existing.id)
+        .eq('id', latest.id)
         .select()
         .single();
 
       if (error) return { error: error.message };
+
+      // Log only when there are actual field changes.
+      const previousValues: Record<string, unknown> = {};
+      const newValues: Record<string, unknown> = {};
+
+      if (inquiryData.description !== (current.description || '')) {
+        previousValues.description = current.description;
+        newValues.description = inquiryData.description;
+      }
+      if (inquiryData.image_url !== (current.image_url || null)) {
+        previousValues.image_url = current.image_url ? 'Attached' : 'None';
+        newValues.image_url = inquiryData.image_url ? 'Attached' : 'Removed';
+      }
+      if ((inquiryData.product_name || '') !== (current.product_name || '')) {
+        previousValues.product_name = current.product_name;
+        newValues.product_name = inquiryData.product_name;
+      }
+      if ((inquiryData.total_weight || '') !== (current.total_weight || '')) {
+        previousValues.total_weight = current.total_weight;
+        newValues.total_weight = inquiryData.total_weight;
+      }
+      if ((inquiryData.cbm || '') !== (current.cbm || '')) {
+        previousValues.cbm = current.cbm;
+        newValues.cbm = inquiryData.cbm;
+      }
+      if ((inquiryData.quantity || '') !== (current.quantity || '')) {
+        previousValues.quantity = current.quantity;
+        newValues.quantity = inquiryData.quantity;
+      }
+
+      if (Object.keys(newValues).length > 0) {
+        await supabase.from('inquiry_logs').insert([
+          {
+            inquiry_id: latest.id,
+            action: 'updated',
+            previous_values: previousValues,
+            new_values: newValues,
+            performed_by: session.username || 'sales-agent',
+          },
+        ]);
+      }
+
       return { success: true, inquiry: result as LeadInquiry };
     } else {
-      // Create new inquiry
+      // Create a new inquiry (either first ever, or latest was already sent)
       const { data: result, error } = await supabase
         .from('lead_inquiries')
         .insert([{
@@ -138,6 +195,25 @@ export async function saveInquiry(
         .single();
 
       if (error) return { error: error.message };
+
+      // Log the creation so UI history/activity can show the version.
+      await supabase.from('inquiry_logs').insert([
+        {
+          inquiry_id: result.id,
+          action: 'created',
+          previous_values: null,
+          new_values: {
+            product_name: inquiryData.product_name,
+            total_weight: inquiryData.total_weight,
+            cbm: inquiryData.cbm,
+            quantity: inquiryData.quantity,
+            description: inquiryData.description,
+            image_url: inquiryData.image_url ? 'Attached' : 'None',
+          },
+          performed_by: session.username || 'sales-agent',
+        },
+      ]);
+
       return { success: true, inquiry: result as LeadInquiry };
     }
   } catch (err) {
@@ -152,11 +228,15 @@ export async function sendInquiryToAccounting(leadId: string) {
 
     const supabase = await createAdminClient();
 
-    // Get inquiry for this lead
+    // Get the latest unsent inquiry draft for this lead.
+    // This avoids overwriting an already-sent inquiry when the sales agent sends again.
     const { data: inquiry, error: inquiryError } = await supabase
       .from('lead_inquiries')
       .select('*')
       .eq('lead_id', leadId)
+      .eq('sent_to_accounting', false)
+      .order('created_at', { ascending: false })
+      .limit(1)
       .maybeSingle();
 
     if (inquiryError || !inquiry) {
@@ -184,8 +264,23 @@ export async function sendInquiryToAccounting(leadId: string) {
 
     if (error) return { error: error.message };
 
+    // Add status change log so the activity/history UI shows the "send" event.
+    await supabase.from('inquiry_logs').insert([
+      {
+        inquiry_id: inquiry.id,
+        action: 'status_changed',
+        previous_values: { sent_to_accounting: false },
+        new_values: {
+          sent_to_accounting: true,
+          sent_at: updatePayload.sent_at,
+        },
+        performed_by: session.username || 'sales-agent',
+      },
+    ]);
+
     revalidatePath('/sales-agent/dashboard');
     revalidatePath('/admin/dashboard');
+    revalidatePath('/operations/dashboard');
     return { success: true, inquiry: data as LeadInquiry };
   } catch (err) {
     return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };
@@ -247,6 +342,7 @@ export async function getInquiryTrackingForSalesAgent() {
       .select(`
         id,
         lead_id,
+        created_at,
         sent_to_accounting,
         sent_at,
         inquiry_confirmations (
@@ -261,13 +357,27 @@ export async function getInquiryTrackingForSalesAgent() {
       return { tracking: [] as InquiryTrackingInfo[] };
     }
 
-    const tracking: InquiryTrackingInfo[] = (inquiries || []).map((inq: {
+    // If multiple inquiries exist for the same lead, pick the newest one only.
+    const tracking: InquiryTrackingInfo[] = [];
+    const seenLeadIds = new Set<string>();
+
+    // Ensure newest inquiries come first so we keep the first record per lead_id.
+    const sortedInquiries = [...(inquiries || [])].sort((a: any, b: any) => {
+      const aCreated = a.created_at ? new Date(a.created_at).getTime() : 0;
+      const bCreated = b.created_at ? new Date(b.created_at).getTime() : 0;
+      return bCreated - aCreated;
+    });
+
+    for (const inq of sortedInquiries as Array<{
       id: string;
       lead_id: string;
       sent_to_accounting: boolean;
       sent_at: string | null;
       inquiry_confirmations?: { id: string; status: string; created_at: string }[];
-    }) => {
+    }>) {
+      if (seenLeadIds.has(inq.lead_id)) continue;
+      seenLeadIds.add(inq.lead_id);
+
       // Check if any confirmation is approved (latest first)
       const confirmations = inq.inquiry_confirmations || [];
       const sorted = [...confirmations].sort(
@@ -285,13 +395,13 @@ export async function getInquiryTrackingForSalesAgent() {
         status = 'sent';
       }
 
-      return {
+      tracking.push({
         lead_id: inq.lead_id,
         status,
         sent_at: inq.sent_at,
         approved_at,
-      };
-    });
+      });
+    }
 
     return { tracking };
   } catch (err) {
@@ -379,10 +489,59 @@ export async function getInquiryForLead(leadId: string) {
       .from('lead_inquiries')
       .select('*')
       .eq('lead_id', leadId)
+      .order('created_at', { ascending: false })
+      .limit(1)
       .maybeSingle();
 
     if (error) return { error: error.message };
     return { inquiry: (data as LeadInquiry) || null };
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };
+  }
+}
+
+/**
+ * Get all inquiry versions for a lead (newest first).
+ * Used to show inquiry history in Sales Agent and Operations UI.
+ */
+export async function getInquiryHistoryForLead(leadId: string) {
+  try {
+    const session = await getSession();
+    if (!session) return { error: 'Unauthorized' };
+
+    const supabase = await createAdminClient();
+
+    // Role-based guard for sales agents: allow only their own lead.
+    if (session.role === 'sales_agent') {
+      const { data: salesAgent } = await supabase
+        .from('sales_agents')
+        .select('id')
+        .eq('username', session.username)
+        .maybeSingle();
+
+      if (!salesAgent) return { error: 'Unauthorized' };
+
+      const { data: lead } = await supabase
+        .from('leads')
+        .select('id, sales_agent_id')
+        .eq('id', leadId)
+        .maybeSingle();
+
+      if (!lead || lead.sales_agent_id !== salesAgent.id) {
+        return { error: 'Unauthorized' };
+      }
+    } else if (session.role !== 'admin' && session.role !== 'operations') {
+      return { error: 'Unauthorized' };
+    }
+
+    const { data, error } = await supabase
+      .from('lead_inquiries')
+      .select('*')
+      .eq('lead_id', leadId)
+      .order('created_at', { ascending: false });
+
+    if (error) return { error: error.message };
+    return { inquiries: (data || []) as LeadInquiry[] };
   } catch (err) {
     return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };
   }

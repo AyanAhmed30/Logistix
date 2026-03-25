@@ -161,6 +161,22 @@ export function OperationsLeadsInquiryPanel() {
   const [deleteTarget, setDeleteTarget] = useState<LeadInquiryWithLead | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
 
+  // Duty calculator state (Operations detail view)
+  const [calcInvValue, setCalcInvValue] = useState("");
+  const [calcExchangeRate, setCalcExchangeRate] = useState("2254.13");
+  const [calcCustomDutyRate, setCalcCustomDutyRate] = useState("0");
+  const [calcAddCdRate, setCalcAddCdRate] = useState("0");
+  const [calcGstRate, setCalcGstRate] = useState("18");
+  const [calcAddGstRate, setCalcAddGstRate] = useState("0");
+  const [calcIncomeTaxRate, setCalcIncomeTaxRate] = useState("12");
+  const [calcExciseRate, setCalcExciseRate] = useState("1.8");
+  const [calcRegularDutyRate, setCalcRegularDutyRate] = useState("30");
+  const [calcStampDutyRate, setCalcStampDutyRate] = useState("0");
+  const [calcInvFine, setCalcInvFine] = useState("0");
+  const [calcFreight, setCalcFreight] = useState("0");
+  const [calcShippingLineCharges, setCalcShippingLineCharges] = useState("0");
+  const [calcClearanceExpense, setCalcClearanceExpense] = useState("0");
+
   const fetchInquiries = useCallback(async () => {
     setIsLoading(true);
     try {
@@ -202,6 +218,21 @@ export function OperationsLeadsInquiryPanel() {
     setView("detail");
     setShowForm(false);
     resetForm();
+    // Prefill calculator with inquiry values; user can adjust freely.
+    setCalcInvValue(inquiry.quantity || "");
+    setCalcExchangeRate("2254.13");
+    setCalcCustomDutyRate("0");
+    setCalcAddCdRate("0");
+    setCalcGstRate("18");
+    setCalcAddGstRate("0");
+    setCalcIncomeTaxRate("12");
+    setCalcExciseRate("1.8");
+    setCalcRegularDutyRate("30");
+    setCalcStampDutyRate("0");
+    setCalcInvFine("0");
+    setCalcFreight("0");
+    setCalcShippingLineCharges("0");
+    setCalcClearanceExpense("0");
     // Load full confirmation history from server (always fresh)
     try {
       const result = await getConfirmationsForInquiry(inquiry.id);
@@ -553,6 +584,82 @@ export function OperationsLeadsInquiryPanel() {
       .filter((item) => item.lead_id === inq.lead_id)
       .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
 
+    const toNum = (v: string | null | undefined) => {
+      const n = parseFloat(String(v ?? "").replace(/,/g, ""));
+      return Number.isFinite(n) ? n : 0;
+    };
+    const fmtMoney = (n: number) =>
+      Number.isFinite(n)
+        ? n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+        : "-";
+    const fmtRate = (v: string) => `${toNum(v).toFixed(2)}%`;
+
+    const weightKg = toNum(isEditing ? editWeight : inq.total_weight);
+
+    const invValue = toNum(calcInvValue);
+    const exchangeRate = toNum(calcExchangeRate);
+    const customDutyRate = toNum(calcCustomDutyRate);
+    const addCdRate = toNum(calcAddCdRate);
+    const gstRate = toNum(calcGstRate);
+    const addGstRate = toNum(calcAddGstRate);
+    const incomeTaxRate = toNum(calcIncomeTaxRate);
+    const exciseRate = toNum(calcExciseRate);
+    const regularDutyRate = toNum(calcRegularDutyRate);
+    const stampDutyRate = toNum(calcStampDutyRate);
+    const invFine = toNum(calcInvFine);
+    const freight = toNum(calcFreight);
+    const shippingLineCharges = toNum(calcShippingLineCharges);
+    const clearanceExpense = toNum(calcClearanceExpense);
+
+    const pkrValue = invValue * exchangeRate;
+    const assessedValue = pkrValue;
+
+    const customDuty = (assessedValue * customDutyRate) / 100;
+    const addCd = (assessedValue * addCdRate) / 100;
+    const gst = (assessedValue * gstRate) / 100;
+    const addGst = (assessedValue * addGstRate) / 100;
+    const incomeTax = (assessedValue * incomeTaxRate) / 100;
+    const excise = (assessedValue * exciseRate) / 100;
+    const regularDuty = (assessedValue * regularDutyRate) / 100;
+    const stampDuty = (assessedValue * stampDutyRate) / 100;
+
+    const totalDutyCost =
+      assessedValue +
+      customDuty +
+      addCd +
+      gst +
+      addGst +
+      incomeTax +
+      excise +
+      regularDuty +
+      stampDuty +
+      invFine +
+      freight +
+      shippingLineCharges +
+      clearanceExpense;
+
+    const costPerWeight = weightKg > 0 ? totalDutyCost / weightKg : 0;
+
+    const calc = {
+      invValue,
+      pkrValue,
+      assessedValue,
+      customDuty,
+      addCd,
+      gst,
+      addGst,
+      incomeTax,
+      excise,
+      regularDuty,
+      stampDuty,
+      invFine,
+      freight,
+      shippingLineCharges,
+      clearanceExpense,
+      totalDutyCost,
+      costPerWeight,
+    };
+
     return (
       <div className="space-y-4">
         {/* Breadcrumb */}
@@ -797,6 +904,96 @@ export function OperationsLeadsInquiryPanel() {
                 </div>
               </>
             )}
+
+            {/* Additional Calculator */}
+            <div className="border-t pt-4">
+              <h3 className="text-sm font-semibold text-slate-700 mb-3">Calculation on Actual</h3>
+              <div className="border rounded-lg overflow-hidden">
+                <div className="grid grid-cols-12 bg-slate-50 border-b text-xs font-semibold text-slate-600">
+                  <div className="col-span-5 px-3 py-2 border-r">Item</div>
+                  <div className="col-span-3 px-3 py-2 border-r">Rate / Input</div>
+                  <div className="col-span-4 px-3 py-2 text-right">Amount</div>
+                </div>
+
+                <div className="grid grid-cols-12 border-b">
+                  <div className="col-span-5 px-3 py-2 border-r text-sm font-medium">INV Value</div>
+                  <div className="col-span-3 px-2 py-1.5 border-r">
+                    <Input value={calcInvValue} onChange={(e) => setCalcInvValue(e.target.value)} className="h-8 text-xs" />
+                  </div>
+                  <div className="col-span-4 px-3 py-2 text-right text-sm font-semibold">{calc.invValue || "-"}</div>
+                </div>
+
+                <div className="grid grid-cols-12 border-b">
+                  <div className="col-span-5 px-3 py-2 border-r text-sm font-medium">@ (Exchange Rate)</div>
+                  <div className="col-span-3 px-2 py-1.5 border-r">
+                    <Input value={calcExchangeRate} onChange={(e) => setCalcExchangeRate(e.target.value)} className="h-8 text-xs" />
+                  </div>
+                  <div className="col-span-4 px-3 py-2 text-right text-sm font-semibold">{calcExchangeRate || "-"}</div>
+                </div>
+
+                <div className="grid grid-cols-12 border-b">
+                  <div className="col-span-8 px-3 py-2 border-r text-sm font-medium">PKR Value</div>
+                  <div className="col-span-4 px-3 py-2 text-right text-sm font-semibold">{fmtMoney(calc.pkrValue)}</div>
+                </div>
+                <div className="grid grid-cols-12 border-b">
+                  <div className="col-span-8 px-3 py-2 border-r text-sm font-medium">Assessed Value</div>
+                  <div className="col-span-4 px-3 py-2 text-right text-sm font-semibold">{fmtMoney(calc.assessedValue)}</div>
+                </div>
+
+                {[
+                  { label: "Custom Duty", rate: calcCustomDutyRate, setRate: setCalcCustomDutyRate, amount: calc.customDuty },
+                  { label: "Add CD", rate: calcAddCdRate, setRate: setCalcAddCdRate, amount: calc.addCd },
+                  { label: "GST", rate: calcGstRate, setRate: setCalcGstRate, amount: calc.gst },
+                  { label: "Add GST", rate: calcAddGstRate, setRate: setCalcAddGstRate, amount: calc.addGst },
+                  { label: "Income Tax", rate: calcIncomeTaxRate, setRate: setCalcIncomeTaxRate, amount: calc.incomeTax },
+                  { label: "Excise", rate: calcExciseRate, setRate: setCalcExciseRate, amount: calc.excise },
+                  { label: "Regular Duty", rate: calcRegularDutyRate, setRate: setCalcRegularDutyRate, amount: calc.regularDuty },
+                  { label: "Stamp Duty", rate: calcStampDutyRate, setRate: setCalcStampDutyRate, amount: calc.stampDuty },
+                ].map((row) => (
+                  <div key={row.label} className="grid grid-cols-12 border-b">
+                    <div className="col-span-5 px-3 py-2 border-r text-sm">{row.label}</div>
+                    <div className="col-span-3 px-2 py-1.5 border-r">
+                      <Input value={row.rate} onChange={(e) => row.setRate(e.target.value)} className="h-8 text-xs" />
+                      <div className="text-[10px] text-slate-500 mt-0.5">{fmtRate(row.rate)}</div>
+                    </div>
+                    <div className="col-span-4 px-3 py-2 text-right text-sm font-semibold">{fmtMoney(row.amount)}</div>
+                  </div>
+                ))}
+
+                {[
+                  { label: "INV Fine", value: calcInvFine, setValue: setCalcInvFine, amount: calc.invFine },
+                  { label: "Freight", value: calcFreight, setValue: setCalcFreight, amount: calc.freight },
+                  { label: "Shipping Line Charges", value: calcShippingLineCharges, setValue: setCalcShippingLineCharges, amount: calc.shippingLineCharges },
+                  { label: "Clearance Expense", value: calcClearanceExpense, setValue: setCalcClearanceExpense, amount: calc.clearanceExpense },
+                ].map((row) => (
+                  <div key={row.label} className="grid grid-cols-12 border-b">
+                    <div className="col-span-5 px-3 py-2 border-r text-sm">{row.label}</div>
+                    <div className="col-span-3 px-2 py-1.5 border-r">
+                      <Input value={row.value} onChange={(e) => row.setValue(e.target.value)} className="h-8 text-xs" />
+                    </div>
+                    <div className="col-span-4 px-3 py-2 text-right text-sm font-semibold">{fmtMoney(row.amount)}</div>
+                  </div>
+                ))}
+
+                <div className="grid grid-cols-12 bg-yellow-50">
+                  <div className="col-span-8 px-3 py-2 border-r text-sm font-bold text-slate-800">Total Duty Cost</div>
+                  <div className="col-span-4 px-3 py-2 text-right text-sm font-bold text-slate-900">{fmtMoney(calc.totalDutyCost)}</div>
+                </div>
+              </div>
+
+              <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-2">
+                <div>
+                  <div className="text-xs text-slate-500 font-medium">Weight</div>
+                  <div className="text-sm font-semibold text-slate-800 mt-0.5">{weightKg || "-"}</div>
+                </div>
+                <div>
+                  <div className="text-xs text-slate-500 font-medium">Cost per Weight</div>
+                  <div className="text-sm font-semibold text-slate-800 mt-0.5">
+                    {weightKg > 0 ? calc.costPerWeight.toFixed(6) : "-"}
+                  </div>
+                </div>
+              </div>
+            </div>
 
             {/* Separator */}
             <div className="border-t" />

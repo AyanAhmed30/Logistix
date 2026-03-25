@@ -357,24 +357,27 @@ export async function getInquiryTrackingForSalesAgent() {
       return { tracking: [] as InquiryTrackingInfo[] };
     }
 
+    type TrackingInquiryRow = {
+      id: string;
+      lead_id: string;
+      created_at: string | null;
+      sent_to_accounting: boolean;
+      sent_at: string | null;
+      inquiry_confirmations?: { id: string; status: string; created_at: string }[];
+    };
+
     // If multiple inquiries exist for the same lead, pick the newest one only.
     const tracking: InquiryTrackingInfo[] = [];
     const seenLeadIds = new Set<string>();
 
     // Ensure newest inquiries come first so we keep the first record per lead_id.
-    const sortedInquiries = [...(inquiries || [])].sort((a: any, b: any) => {
+    const sortedInquiries = ([...(inquiries || [])] as TrackingInquiryRow[]).sort((a, b) => {
       const aCreated = a.created_at ? new Date(a.created_at).getTime() : 0;
       const bCreated = b.created_at ? new Date(b.created_at).getTime() : 0;
       return bCreated - aCreated;
     });
 
-    for (const inq of sortedInquiries as Array<{
-      id: string;
-      lead_id: string;
-      sent_to_accounting: boolean;
-      sent_at: string | null;
-      inquiry_confirmations?: { id: string; status: string; created_at: string }[];
-    }>) {
+    for (const inq of sortedInquiries) {
       if (seenLeadIds.has(inq.lead_id)) continue;
       seenLeadIds.add(inq.lead_id);
 

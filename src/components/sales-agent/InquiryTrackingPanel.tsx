@@ -108,6 +108,10 @@ export function InquiryTrackingPanel() {
 
       // If inquiries fail, we still render lead placeholders (Draft / Not Sent).
       const leads = (leadsResult.leads || []) as Lead[];
+      if ("error" in inquiriesResult) {
+        toast.error(inquiriesResult.error || "Unable to load inquiry records");
+      }
+
       const inquiries: LeadInquiryWithLead[] = "inquiries" in inquiriesResult ? (inquiriesResult.inquiries || []) : [];
 
       // Keep a placeholder row only for leads that truly have no inquiries yet.

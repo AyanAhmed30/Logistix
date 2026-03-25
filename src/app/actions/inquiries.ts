@@ -324,19 +324,8 @@ export async function getInquiryTrackingForSalesAgent() {
       return { tracking: [] as InquiryTrackingInfo[] };
     }
 
-    // Get all leads for this agent
-    const { data: leads, error: leadsError } = await supabase
-      .from('leads')
-      .select('id')
-      .eq('sales_agent_id', salesAgent.id);
-
-    if (leadsError || !leads || leads.length === 0) {
-      return { tracking: [] as InquiryTrackingInfo[] };
-    }
-
-    const leadIds = leads.map((l: { id: string }) => l.id);
-
-    // Get all inquiries for these leads, including confirmations
+    // Get all inquiries for this agent using relational filter
+    // (avoids huge `.in(...)` lists for agents with many leads).
     const { data: inquiries, error: inquiryError } = await supabase
       .from('lead_inquiries')
       .select(`
@@ -345,13 +334,17 @@ export async function getInquiryTrackingForSalesAgent() {
         created_at,
         sent_to_accounting,
         sent_at,
+        leads!inner (
+          id,
+          sales_agent_id
+        ),
         inquiry_confirmations (
           id,
           status,
           created_at
         )
       `)
-      .in('lead_id', leadIds);
+      .eq('leads.sales_agent_id', salesAgent.id);
 
     if (inquiryError) {
       return { tracking: [] as InquiryTrackingInfo[] };
@@ -435,24 +428,13 @@ export async function getAllInquiriesForSalesAgent() {
       return { inquiries: [] as LeadInquiryWithLead[] };
     }
 
-    // Get all leads for this agent
-    const { data: leads, error: leadsError } = await supabase
-      .from('leads')
-      .select('id')
-      .eq('sales_agent_id', salesAgent.id);
-
-    if (leadsError || !leads || leads.length === 0) {
-      return { inquiries: [] as LeadInquiryWithLead[] };
-    }
-
-    const leadIds = leads.map((l: { id: string }) => l.id);
-
     // Fetch all inquiries for the agent's leads (including drafts and sent ones)
+    // using relational filter to avoid very large `.in(...)` payloads.
     const { data, error } = await supabase
       .from('lead_inquiries')
       .select(`
         *,
-        leads (
+        leads!inner (
           id,
           lead_id_formatted,
           name,
@@ -471,7 +453,7 @@ export async function getAllInquiriesForSalesAgent() {
           created_at
         )
       `)
-      .in('lead_id', leadIds)
+      .eq('leads.sales_agent_id', salesAgent.id)
       .order('created_at', { ascending: false });
 
     if (error) return { error: error.message };

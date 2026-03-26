@@ -6,10 +6,13 @@ import {
   getAllInquiriesForOperations,
   updateInquiryForAccounting,
   deleteInquiry,
+  getInquiryLogsForLead,
+  addInquiryLogNote,
+  addInquiryActivity,
   type LeadInquiryWithLead,
+  type InquiryLog,
 } from "@/app/actions/inquiries";
 import {
-  getInquiryByLeadNumber,
   submitInquiryForConfirmation,
   getConfirmationsForInquiry,
   type InquiryConfirmation,
@@ -50,6 +53,7 @@ import {
   CheckCircle2,
   XCircle,
   Clock,
+  CalendarClock,
   Pencil,
   Trash2,
   Save,
@@ -117,19 +121,6 @@ export function OperationsLeadsInquiryPanel() {
 
   // Lead Management Form state
   const [showForm, setShowForm] = useState(false);
-  const [leadNumber, setLeadNumber] = useState("");
-  const [isFetching, setIsFetching] = useState(false);
-  const [fetchedData, setFetchedData] = useState<{
-    lead: { id: string; name: string };
-    inquiry: {
-      id: string;
-      product_name: string;
-      total_weight: string;
-      cbm: string;
-      quantity: string;
-      image_url: string | null;
-    };
-  } | null>(null);
   const [formProductName, setFormProductName] = useState("");
   const [formWeight, setFormWeight] = useState("");
   const [formCbm, setFormCbm] = useState("");
@@ -160,6 +151,13 @@ export function OperationsLeadsInquiryPanel() {
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<LeadInquiryWithLead | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [inquiryLogs, setInquiryLogs] = useState<InquiryLog[]>([]);
+  const [activeRightTab, setActiveRightTab] = useState<"send_message" | "log_note" | "activity">("send_message");
+  const [logNoteText, setLogNoteText] = useState("");
+  const [isAddingLogNote, setIsAddingLogNote] = useState(false);
+  const [activitySummary, setActivitySummary] = useState("");
+  const [activityDueDate, setActivityDueDate] = useState("");
+  const [isAddingActivity, setIsAddingActivity] = useState(false);
 
   // Duty calculator state (Operations detail view)
   const [calcInvValue, setCalcInvValue] = useState("");
@@ -213,6 +211,27 @@ export function OperationsLeadsInquiryPanel() {
     );
   });
 
+  // Show each lead only once in the list (latest inquiry row per lead).
+  const dedupedFilteredInquiries = (() => {
+    const latestByLead = new Map<string, LeadInquiryWithLead>();
+    for (const inq of filteredInquiries) {
+      const leadKey = inq.lead_id || inq.leads?.id || inq.id;
+      const existing = latestByLead.get(leadKey);
+      if (!existing) {
+        latestByLead.set(leadKey, inq);
+        continue;
+      }
+      const existingTime = new Date(existing.created_at).getTime();
+      const currentTime = new Date(inq.created_at).getTime();
+      if (currentTime > existingTime) {
+        latestByLead.set(leadKey, inq);
+      }
+    }
+    return Array.from(latestByLead.values()).sort(
+      (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+    );
+  })();
+
   async function openDetail(inquiry: LeadInquiryWithLead) {
     setSelectedInquiry(inquiry);
     setView("detail");
@@ -244,6 +263,18 @@ export function OperationsLeadsInquiryPanel() {
     } catch {
       setConfirmations([]);
     }
+    try {
+      const logsResult = await getInquiryLogsForLead(inquiry.lead_id);
+      if ("error" in logsResult) {
+        setInquiryLogs([]);
+      } else {
+        setInquiryLogs(logsResult.logs || []);
+      }
+    } catch {
+      setInquiryLogs([]);
+    }
+    setActiveRightTab("send_message");
+    setLogNoteText("");
     // Also re-fetch all inquiries in background so list data stays fresh
     fetchInquiries();
   }
@@ -252,13 +283,82 @@ export function OperationsLeadsInquiryPanel() {
     setView("list");
     setSelectedInquiry(null);
     setShowForm(false);
+    setInquiryLogs([]);
+    setActiveRightTab("send_message");
+    setLogNoteText("");
     resetForm();
     fetchInquiries();
   }
 
+  function openLeadManagementForm() {
+    if (!selectedInquiry) return;
+    setFormProductName(selectedInquiry.product_name || "");
+    setFormWeight(selectedInquiry.total_weight || "");
+    setFormCbm(selectedInquiry.cbm || "");
+    setFormQuantity(selectedInquiry.quantity || "");
+    setShowForm(true);
+  }
+
+  async function handleAddInquiryLogNote() {
+    if (!selectedInquiry) return;
+    if (!logNoteText.trim()) {
+      toast.error("Please enter a note.");
+      return;
+    }
+    setIsAddingLogNote(true);
+    try {
+      const result = await addInquiryLogNote(selectedInquiry.id, logNoteText);
+      if ("error" in result) {
+        toast.error(result.error || "Failed to add note.");
+        return;
+      }
+      toast.success("Note added.");
+      setLogNoteText("");
+      setActiveRightTab("send_message");
+      const logsResult = await getInquiryLogsForLead(selectedInquiry.lead_id);
+      if (!("error" in logsResult)) {
+        setInquiryLogs(logsResult.logs || []);
+      }
+    } catch {
+      toast.error("Failed to add note.");
+    } finally {
+      setIsAddingLogNote(false);
+    }
+  }
+
+  async function handleAddInquiryActivity() {
+    if (!selectedInquiry) return;
+    if (!activitySummary.trim()) {
+      toast.error("Please enter an activity or reminder.");
+      return;
+    }
+    setIsAddingActivity(true);
+    try {
+      const result = await addInquiryActivity(
+        selectedInquiry.id,
+        activitySummary,
+        activityDueDate || null
+      );
+      if ("error" in result) {
+        toast.error(result.error || "Failed to add activity.");
+        return;
+      }
+      toast.success("Activity added.");
+      setActivitySummary("");
+      setActivityDueDate("");
+      setActiveRightTab("send_message");
+      const logsResult = await getInquiryLogsForLead(selectedInquiry.lead_id);
+      if (!("error" in logsResult)) {
+        setInquiryLogs(logsResult.logs || []);
+      }
+    } catch {
+      toast.error("Failed to add activity.");
+    } finally {
+      setIsAddingActivity(false);
+    }
+  }
+
   function resetForm() {
-    setLeadNumber("");
-    setFetchedData(null);
     setFormProductName("");
     setFormWeight("");
     setFormCbm("");
@@ -354,35 +454,6 @@ export function OperationsLeadsInquiryPanel() {
     }
   }
 
-  // ─── Fetch inquiry by lead number ─────────────────────────────────
-
-  async function handleFetchByLeadNumber() {
-    if (leadNumber.trim().length !== 6) {
-      toast.error("Please enter a valid 6-digit lead number.");
-      return;
-    }
-    setIsFetching(true);
-    try {
-      const result = await getInquiryByLeadNumber(leadNumber.trim());
-      if ("error" in result) {
-        toast.error(result.error);
-        setFetchedData(null);
-      } else {
-        setFetchedData(result as typeof fetchedData);
-        // Auto-populate the form
-        setFormProductName(result.inquiry?.product_name || "");
-        setFormWeight(result.inquiry?.total_weight || "");
-        setFormCbm(result.inquiry?.cbm || "");
-        setFormQuantity(result.inquiry?.quantity || "");
-        toast.success("Lead data fetched successfully!");
-      }
-    } catch {
-      toast.error("Failed to fetch lead data.");
-    } finally {
-      setIsFetching(false);
-    }
-  }
-
   // ─── Image handling helpers ───────────────────────────────────────
 
   function handleImageFile(file: File, slot: 1 | 2) {
@@ -455,8 +526,8 @@ export function OperationsLeadsInquiryPanel() {
   // ─── Submit form ──────────────────────────────────────────────────
 
   async function handleSendForConfirmation() {
-    if (!fetchedData) {
-      toast.error("Please fetch lead data first.");
+    if (!selectedInquiry || !selectedInquiry.leads) {
+      toast.error("Lead data is not available.");
       return;
     }
     if (!formProductName.trim()) {
@@ -478,14 +549,14 @@ export function OperationsLeadsInquiryPanel() {
       }
 
       const result = await submitInquiryForConfirmation({
-        inquiry_id: fetchedData.inquiry.id,
-        lead_id: fetchedData.lead.id,
-        lead_number: leadNumber.trim(),
+        inquiry_id: selectedInquiry.id,
+        lead_id: selectedInquiry.lead_id,
+        lead_number: selectedInquiry.leads.lead_id_formatted || "",
         product_name: formProductName,
         total_weight: formWeight,
         cbm: formCbm,
         quantity: formQuantity,
-        original_image_url: fetchedData.inquiry.image_url,
+        original_image_url: selectedInquiry.image_url,
         additional_image_1_url: img1Url,
         additional_image_2_url: img2Url,
       });
@@ -582,7 +653,7 @@ export function OperationsLeadsInquiryPanel() {
     const inq = selectedInquiry;
     const leadInquiryHistory = inquiries
       .filter((item) => item.lead_id === inq.lead_id)
-      .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+      .sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
 
     const toNum = (v: string | null | undefined) => {
       const n = parseFloat(String(v ?? "").replace(/,/g, ""));
@@ -708,7 +779,7 @@ export function OperationsLeadsInquiryPanel() {
                   <Trash2 className="h-3.5 w-3.5" />
                   Delete
                 </Button>
-                <Button size="sm" onClick={() => setShowForm(true)} className="gap-1">
+                <Button size="sm" onClick={openLeadManagementForm} className="gap-1">
                   <FileText className="h-3.5 w-3.5" />
                   Lead Management Form
                 </Button>
@@ -729,9 +800,11 @@ export function OperationsLeadsInquiryPanel() {
           </div>
         </div>
 
-        {/* Main Content */}
-        <Card className="border shadow-sm">
-          <CardContent className="p-6 space-y-5">
+        {/* Main Content + Right-side Inquiry History */}
+        <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
+          <div className="xl:col-span-2">
+            <Card className="border shadow-sm">
+              <CardContent className="p-6 space-y-5">
             {/* Lead Info Grid */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-3">
               <div>
@@ -869,42 +942,6 @@ export function OperationsLeadsInquiryPanel() {
               )}
             </div>
 
-            {/* Inquiry History (same lead) */}
-            {leadInquiryHistory.length > 1 && (
-              <>
-                <div className="border-t" />
-                <div>
-                  <h3 className="text-sm font-semibold text-slate-700 mb-3">
-                    Inquiry History ({leadInquiryHistory.length})
-                  </h3>
-                  <div className="space-y-2 max-h-64 overflow-y-auto pr-1">
-                    {leadInquiryHistory.map((h, idx) => (
-                      <div key={h.id} className="border rounded-lg p-3 bg-slate-50">
-                        <div className="flex items-center justify-between mb-1.5">
-                          <Badge variant="outline" className={idx === 0 ? "bg-teal-50 text-teal-700 border-teal-300" : ""}>
-                            {idx === 0 ? "Current" : `Previous #${idx}`}
-                          </Badge>
-                          <span className="text-[11px] text-slate-500">
-                            {new Date(h.created_at).toLocaleString()}
-                          </span>
-                        </div>
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-1 text-xs text-slate-600">
-                          <div>Product: <span className="text-slate-800">{h.product_name || "-"}</span></div>
-                          <div>Quantity: <span className="text-slate-800">{h.quantity || "-"}</span></div>
-                          <div>Weight: <span className="text-slate-800">{h.total_weight || "-"}</span></div>
-                          <div>CBM: <span className="text-slate-800">{h.cbm || "-"}</span></div>
-                          <div>Status: <span className="text-slate-800">{h.sent_to_accounting ? "Sent" : "Draft"}</span></div>
-                          {h.description && (
-                            <div className="md:col-span-2">Details: <span className="text-slate-800">{h.description}</span></div>
-                          )}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              </>
-            )}
-
             {/* Additional Calculator */}
             <div className="border-t pt-4">
               <h3 className="text-sm font-semibold text-slate-700 mb-3">Calculation on Actual</h3>
@@ -1023,166 +1060,407 @@ export function OperationsLeadsInquiryPanel() {
                 </div>
               </div>
             )}
-          </CardContent>
-        </Card>
+              </CardContent>
+            </Card>
+          </div>
 
-        {/* ═══════════════════════════════════════════════════════════ */}
-        {/*  LEAD MANAGEMENT FORM                                      */}
-        {/* ═══════════════════════════════════════════════════════════ */}
-
-        {showForm && (
-          <Card className="border-2 border-teal-200 shadow-md">
-            <CardContent className="p-6 space-y-5">
-              <div className="flex items-center justify-between">
-                <h3 className="text-base font-bold text-slate-800 flex items-center gap-2">
-                  <ClipboardList className="h-5 w-5 text-teal-600" />
-                  Lead Management Form
-                </h3>
-                <Button size="sm" variant="ghost" onClick={() => { setShowForm(false); resetForm(); }}>
-                  <X className="h-4 w-4" />
-                </Button>
-              </div>
-
-              {/* Lead Number Input */}
-              <div className="space-y-2">
-                <label className="text-sm font-medium text-slate-700">
-                  Lead Number <span className="text-red-500">*</span>
-                </label>
-                <div className="flex gap-2">
-                  <Input
-                    value={leadNumber}
-                    onChange={(e) => {
-                      const val = e.target.value.replace(/\D/g, "").slice(0, 6);
-                      setLeadNumber(val);
-                    }}
-                    placeholder="Enter 6-digit lead number"
-                    maxLength={6}
-                    className="max-w-xs font-mono text-lg tracking-widest"
-                  />
+          <div className="xl:col-span-1">
+            <Card className="border shadow-sm">
+              <CardContent className="p-4">
+                <div className="flex gap-1 flex-wrap mb-4">
                   <Button
-                    onClick={handleFetchByLeadNumber}
-                    disabled={leadNumber.length !== 6 || isFetching}
                     size="sm"
+                    className={`text-xs h-7 px-3 ${
+                      activeRightTab === "send_message" ? "bg-orange-500 hover:bg-orange-600 text-white" : ""
+                    }`}
+                    variant={activeRightTab === "send_message" ? "default" : "outline"}
+                    onClick={() => setActiveRightTab("send_message")}
                   >
-                    {isFetching ? (
-                      <Loader2 className="h-4 w-4 animate-spin mr-1" />
-                    ) : (
-                      <Search className="h-4 w-4 mr-1" />
-                    )}
-                    Fetch
+                    Send message
+                  </Button>
+                  <Button
+                    size="sm"
+                    className={`text-xs h-7 px-3 ${
+                      activeRightTab === "log_note" ? "bg-amber-500 hover:bg-amber-600 text-white" : ""
+                    }`}
+                    variant={activeRightTab === "log_note" ? "default" : "outline"}
+                    onClick={() => setActiveRightTab("log_note")}
+                  >
+                    Log note
+                  </Button>
+                  <Button
+                    size="sm"
+                    className={`text-xs h-7 px-3 ${
+                      activeRightTab === "activity" ? "bg-blue-500 hover:bg-blue-600 text-white" : ""
+                    }`}
+                    variant={activeRightTab === "activity" ? "default" : "outline"}
+                    onClick={() => setActiveRightTab("activity")}
+                  >
+                    Activity
                   </Button>
                 </div>
-                <p className="text-xs text-slate-400">
-                  Enter the 6-digit Lead ID to auto-populate product details.
-                </p>
+
+                {activeRightTab === "log_note" && (
+                  <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 space-y-2 mb-4">
+                    <div className="text-xs font-semibold text-amber-700">Add Internal Note</div>
+                    <Textarea
+                      value={logNoteText}
+                      onChange={(e) => setLogNoteText(e.target.value)}
+                      placeholder='e.g. "Customer asked for a 5% discount."'
+                      rows={3}
+                      className="bg-white text-sm resize-none"
+                    />
+                    <div className="flex gap-2 justify-end">
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="text-xs h-7"
+                        onClick={() => {
+                          setLogNoteText("");
+                          setActiveRightTab("send_message");
+                        }}
+                      >
+                        Cancel
+                      </Button>
+                      <Button
+                        size="sm"
+                        className="bg-amber-500 hover:bg-amber-600 text-white text-xs h-7"
+                        onClick={handleAddInquiryLogNote}
+                        disabled={isAddingLogNote || !logNoteText.trim()}
+                      >
+                        {isAddingLogNote ? "Adding..." : "Add Note"}
+                      </Button>
+                    </div>
+                  </div>
+                )}
+
+                {activeRightTab === "activity" && (
+                  <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 space-y-2 mb-4">
+                    <div className="flex items-center gap-1.5">
+                      <CalendarClock className="h-4 w-4 text-blue-600" />
+                      <span className="text-xs font-semibold text-blue-700">Schedule Activity / Reminder</span>
+                    </div>
+                    <Textarea
+                      value={activitySummary}
+                      onChange={(e) => setActivitySummary(e.target.value)}
+                      placeholder='e.g. "Call the customer tomorrow."'
+                      rows={2}
+                      className="bg-white text-sm resize-none"
+                    />
+                    <div className="flex items-center gap-2">
+                      <Clock className="h-3.5 w-3.5 text-blue-500" />
+                      <label className="text-xs text-blue-600">Due Date</label>
+                      <Input
+                        type="date"
+                        value={activityDueDate}
+                        onChange={(e) => setActivityDueDate(e.target.value)}
+                        className="bg-white text-sm h-8 flex-1"
+                      />
+                    </div>
+                    <div className="flex gap-2 justify-end">
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="text-xs h-7"
+                        onClick={() => {
+                          setActivitySummary("");
+                          setActivityDueDate("");
+                          setActiveRightTab("send_message");
+                        }}
+                      >
+                        Cancel
+                      </Button>
+                      <Button
+                        size="sm"
+                        className="bg-blue-500 hover:bg-blue-600 text-white text-xs h-7"
+                        onClick={handleAddInquiryActivity}
+                        disabled={isAddingActivity || !activitySummary.trim()}
+                      >
+                        {isAddingActivity ? "Adding..." : "Schedule"}
+                      </Button>
+                    </div>
+                  </div>
+                )}
+
+                <h3 className="text-xs text-slate-400 font-semibold uppercase tracking-wider mb-4">
+                  Inquiry History
+                </h3>
+                <div className="space-y-4 max-h-[70vh] overflow-y-auto pr-1">
+                  {(() => {
+                    // Keep history stable/readable:
+                    // - Always show value-diff timeline from inquiry versions
+                    // - Only inject explicit "log_note" entries from inquiry_logs
+                    const extraLogs = inquiryLogs.filter((log) => {
+                      const next = (log.new_values || {}) as Record<string, unknown>;
+                      const hasNote =
+                        log.action === "log_note" &&
+                        typeof next.note === "string" &&
+                        String(next.note).trim().length > 0;
+                      const hasActivity =
+                        log.action === "activity" &&
+                        typeof next.summary === "string" &&
+                        String(next.summary).trim().length > 0;
+                      return hasNote || hasActivity;
+                    });
+
+                    const extraLogNodes = extraLogs.map((log) => {
+                        const next = (log.new_values || {}) as Record<string, unknown>;
+                        const note = typeof next.note === "string" ? next.note : "";
+                        const summary = typeof next.summary === "string" ? next.summary : "";
+                        const dueDate =
+                          typeof next.due_date === "string" && next.due_date
+                            ? new Date(next.due_date)
+                            : null;
+                        const isPast = dueDate ? dueDate < new Date() : false;
+                        return (
+                          <div key={log.id} className="flex gap-3">
+                            <div className={`h-8 w-8 rounded-full flex items-center justify-center font-semibold text-xs shrink-0 mt-0.5 ${
+                              log.action === "activity" ? "bg-blue-100 text-blue-800" : "bg-amber-100 text-amber-800"
+                            }`}>
+                              {(log.performed_by || "U").charAt(0).toUpperCase()}
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-baseline gap-2 flex-wrap">
+                                <span className="font-semibold text-sm text-slate-700">{log.performed_by}</span>
+                                <span className="text-xs text-slate-400">
+                                  {new Date(log.performed_at).toLocaleTimeString([], {
+                                    hour: "2-digit",
+                                    minute: "2-digit",
+                                  })}
+                                  {" · "}
+                                  {new Date(log.performed_at).toLocaleDateString([], {
+                                    month: "short",
+                                    day: "numeric",
+                                  })}
+                                </span>
+                              </div>
+                              {log.action === "activity" ? (
+                                <div className={`border rounded-lg p-2.5 mt-1 ${isPast ? "bg-red-50 border-red-200" : "bg-blue-50 border-blue-200"}`}>
+                                  <div className="flex items-center gap-1.5 mb-1">
+                                    <CalendarClock className={`h-3.5 w-3.5 ${isPast ? "text-red-600" : "text-blue-600"}`} />
+                                    <span className={`text-xs font-semibold ${isPast ? "text-red-700" : "text-blue-700"}`}>
+                                      Reminder / Task
+                                    </span>
+                                    {dueDate && (
+                                      <span className={`text-xs ml-auto ${isPast ? "text-red-500" : "text-blue-500"}`}>
+                                        Due: {dueDate.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
+                                      </span>
+                                    )}
+                                  </div>
+                                  <p className="text-sm text-slate-700 whitespace-pre-wrap">{summary}</p>
+                                </div>
+                              ) : (
+                                <div className="bg-amber-50 border border-amber-200 rounded-lg p-2.5 mt-1 text-sm text-slate-700 whitespace-pre-wrap">
+                                  {note}
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      });
+
+                    if (leadInquiryHistory.length === 0 && extraLogNodes.length === 0) {
+                      return <p className="text-sm text-slate-400 text-center py-8">No activity yet.</p>;
+                    }
+
+                    const timelineNodes = leadInquiryHistory.map((h, idx) => {
+                      const prev = idx > 0 ? leadInquiryHistory[idx - 1] : null;
+                      const actor = h.leads?.sales_agents?.name || h.leads?.name || "User";
+                      const changes: { field: string; oldVal: string; newVal: string }[] = [];
+                      if (prev) {
+                        if ((prev.product_name || "") !== (h.product_name || "")) {
+                          changes.push({ field: "Product", oldVal: prev.product_name || "-", newVal: h.product_name || "-" });
+                        }
+                        if ((prev.quantity || "") !== (h.quantity || "")) {
+                          changes.push({ field: "Quantity", oldVal: prev.quantity || "-", newVal: h.quantity || "-" });
+                        }
+                        if ((prev.total_weight || "") !== (h.total_weight || "")) {
+                          changes.push({ field: "Weight", oldVal: prev.total_weight || "-", newVal: h.total_weight || "-" });
+                        }
+                        if ((prev.cbm || "") !== (h.cbm || "")) {
+                          changes.push({ field: "CBM", oldVal: prev.cbm || "-", newVal: h.cbm || "-" });
+                        }
+                        if ((prev.description || "") !== (h.description || "")) {
+                          changes.push({ field: "Details", oldVal: prev.description || "-", newVal: h.description || "-" });
+                        }
+                      }
+                      return (
+                        <div key={h.id} className="flex gap-3">
+                          <div className="h-8 w-8 rounded-full flex items-center justify-center font-semibold text-xs shrink-0 mt-0.5 bg-teal-100 text-teal-800">
+                            {(actor || "U").charAt(0).toUpperCase()}
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-baseline gap-2 flex-wrap">
+                              <span className="font-semibold text-sm text-slate-700">{actor}</span>
+                              <span className="text-xs text-slate-400">
+                                {new Date(h.created_at).toLocaleTimeString([], {
+                                  hour: "2-digit",
+                                  minute: "2-digit",
+                                })}
+                                {" · "}
+                                {new Date(h.created_at).toLocaleDateString([], {
+                                  month: "short",
+                                  day: "numeric",
+                                })}
+                              </span>
+                            </div>
+                            {prev ? (
+                              <div className="space-y-1 mt-1">
+                                {changes.length > 0 ? (
+                                  changes.map((c) => (
+                                    <div key={`${h.id}-${c.field}`} className="text-sm text-slate-700">
+                                      <span className="text-slate-600 font-medium">{c.field}:</span>
+                                      <span className="ml-1 text-slate-500">Old: {c.oldVal}</span>
+                                      <span className="mx-1 text-slate-400">→</span>
+                                      <span className="font-semibold text-teal-700">New: {c.newVal}</span>
+                                    </div>
+                                  ))
+                                ) : (
+                                  <div className="text-sm text-slate-500">No field change in this version.</div>
+                                )}
+                              </div>
+                            ) : (
+                              <div className="text-sm text-slate-500 mt-1">
+                                Creating a new record...
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    });
+
+                    return (
+                      <>
+                        {extraLogNodes}
+                        {timelineNodes}
+                      </>
+                    );
+                  })()}
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+        </div>
+
+        <Dialog
+          open={showForm}
+          onOpenChange={(open) => {
+            setShowForm(open);
+            if (!open) resetForm();
+          }}
+        >
+          <DialogContent className="sm:max-w-4xl max-h-[90vh] overflow-y-auto">
+            <DialogHeader>
+              <DialogTitle className="text-base font-bold text-slate-800 flex items-center gap-2">
+                <ClipboardList className="h-5 w-5 text-teal-600" />
+                Lead Management Form
+              </DialogTitle>
+            </DialogHeader>
+
+            <div className="space-y-5">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="space-y-1.5">
+                  <label className="text-sm font-medium text-slate-700">
+                    Product Name <span className="text-red-500">*</span>
+                  </label>
+                  <Input
+                    value={formProductName}
+                    onChange={(e) => setFormProductName(e.target.value)}
+                    placeholder="Product Name"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <label className="text-sm font-medium text-slate-700">Total Weight</label>
+                  <Input
+                    value={formWeight}
+                    onChange={(e) => setFormWeight(e.target.value)}
+                    placeholder="e.g. 500 kg"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <label className="text-sm font-medium text-slate-700">CBM</label>
+                  <Input
+                    value={formCbm}
+                    onChange={(e) => setFormCbm(e.target.value)}
+                    placeholder="e.g. 2.5"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <label className="text-sm font-medium text-slate-700">Quantity</label>
+                  <Input
+                    value={formQuantity}
+                    onChange={(e) => setFormQuantity(e.target.value)}
+                    placeholder="e.g. 100"
+                  />
+                </div>
               </div>
 
-              {/* Auto-populated fields */}
-              {fetchedData && (
-                <>
-                  <div className="border-t pt-4" />
+              <div className="border-t pt-4" />
+              <h4 className="text-sm font-semibold text-slate-700">Images</h4>
 
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div className="space-y-1.5">
-                      <label className="text-sm font-medium text-slate-700">
-                        Product Name <span className="text-red-500">*</span>
-                      </label>
-                      <Input
-                        value={formProductName}
-                        onChange={(e) => setFormProductName(e.target.value)}
-                        placeholder="Product Name"
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div className="space-y-2">
+                  <label className="text-xs font-medium text-slate-600">
+                    Original Inquiry Image
+                  </label>
+                  {selectedInquiry?.image_url ? (
+                    <div className="border rounded-lg p-2">
+                      <img
+                        src={selectedInquiry.image_url}
+                        alt="Original inquiry"
+                        className="max-h-40 rounded object-contain w-full"
                       />
+                      <p className="text-[10px] text-slate-400 mt-1 text-center">Read-only</p>
                     </div>
-                    <div className="space-y-1.5">
-                      <label className="text-sm font-medium text-slate-700">Total Weight</label>
-                      <Input
-                        value={formWeight}
-                        onChange={(e) => setFormWeight(e.target.value)}
-                        placeholder="e.g. 500 kg"
-                      />
+                  ) : (
+                    <div className="border-2 border-dashed border-slate-200 rounded-lg p-6 text-center">
+                      <ImageIcon className="h-8 w-8 mx-auto text-slate-300 mb-2" />
+                      <p className="text-xs text-slate-400">No image attached</p>
                     </div>
-                    <div className="space-y-1.5">
-                      <label className="text-sm font-medium text-slate-700">CBM</label>
-                      <Input
-                        value={formCbm}
-                        onChange={(e) => setFormCbm(e.target.value)}
-                        placeholder="e.g. 2.5"
-                      />
-                    </div>
-                    <div className="space-y-1.5">
-                      <label className="text-sm font-medium text-slate-700">Quantity</label>
-                      <Input
-                        value={formQuantity}
-                        onChange={(e) => setFormQuantity(e.target.value)}
-                        placeholder="e.g. 100"
-                      />
-                    </div>
-                  </div>
+                  )}
+                </div>
 
-                  {/* 3 Image Sections */}
-                  <div className="border-t pt-4" />
-                  <h4 className="text-sm font-semibold text-slate-700">Images</h4>
+                <ImageUploadSection
+                  slot={1}
+                  preview={additionalImage1Preview}
+                  dropRef={dropZone1Ref}
+                  inputRef={img1Ref}
+                />
 
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                    {/* Section 1: Original Inquiry Image (read-only) */}
-                    <div className="space-y-2">
-                      <label className="text-xs font-medium text-slate-600">
-                        Original Inquiry Image
-                      </label>
-                      {fetchedData.inquiry.image_url ? (
-                        <div className="border rounded-lg p-2">
-                          <img
-                            src={fetchedData.inquiry.image_url}
-                            alt="Original inquiry"
-                            className="max-h-40 rounded object-contain w-full"
-                          />
-                          <p className="text-[10px] text-slate-400 mt-1 text-center">Read-only</p>
-                        </div>
-                      ) : (
-                        <div className="border-2 border-dashed border-slate-200 rounded-lg p-6 text-center">
-                          <ImageIcon className="h-8 w-8 mx-auto text-slate-300 mb-2" />
-                          <p className="text-xs text-slate-400">No image attached</p>
-                        </div>
-                      )}
-                    </div>
+                <ImageUploadSection
+                  slot={2}
+                  preview={additionalImage2Preview}
+                  dropRef={dropZone2Ref}
+                  inputRef={img2Ref}
+                />
+              </div>
+            </div>
 
-                    {/* Section 2: Additional Image 1 */}
-                    <ImageUploadSection
-                      slot={1}
-                      preview={additionalImage1Preview}
-                      dropRef={dropZone1Ref}
-                      inputRef={img1Ref}
-                    />
-
-                    {/* Section 3: Additional Image 2 */}
-                    <ImageUploadSection
-                      slot={2}
-                      preview={additionalImage2Preview}
-                      dropRef={dropZone2Ref}
-                      inputRef={img2Ref}
-                    />
-                  </div>
-
-                  {/* Submit Button */}
-                  <div className="border-t pt-4 flex justify-end">
-                    <Button
-                      onClick={handleSendForConfirmation}
-                      disabled={isSubmitting || !formProductName.trim()}
-                      className="gap-2 bg-teal-600 hover:bg-teal-700"
-                    >
-                      {isSubmitting ? (
-                        <Loader2 className="h-4 w-4 animate-spin" />
-                      ) : (
-                        <Send className="h-4 w-4" />
-                      )}
-                      Send for Confirmation
-                    </Button>
-                  </div>
-                </>
-              )}
-            </CardContent>
-          </Card>
-        )}
+            <DialogFooter>
+              <Button
+                variant="outline"
+                onClick={() => {
+                  setShowForm(false);
+                  resetForm();
+                }}
+              >
+                Cancel
+              </Button>
+              <Button
+                onClick={handleSendForConfirmation}
+                disabled={isSubmitting || !formProductName.trim()}
+                className="gap-2 bg-teal-600 hover:bg-teal-700"
+              >
+                {isSubmitting ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <Send className="h-4 w-4" />
+                )}
+                Send for Confirmation
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
 
         {/* ═══════════════════════════════════════════════════════════ */}
         {/*  CONFIRMATION HISTORY                                      */}
@@ -1259,7 +1537,7 @@ export function OperationsLeadsInquiryPanel() {
             Refresh
           </Button>
           <span className="text-sm text-slate-500">
-            {filteredInquiries.length} record{filteredInquiries.length !== 1 ? "s" : ""}
+            {dedupedFilteredInquiries.length} record{dedupedFilteredInquiries.length !== 1 ? "s" : ""}
           </span>
         </div>
       </div>
@@ -1269,7 +1547,7 @@ export function OperationsLeadsInquiryPanel() {
         <CardContent className="p-0">
           {isLoading ? (
             <div className="py-16 text-center text-slate-400">Loading inquiries...</div>
-          ) : filteredInquiries.length === 0 ? (
+          ) : dedupedFilteredInquiries.length === 0 ? (
             <div className="py-16 text-center text-slate-400">
               {searchQuery
                 ? "No inquiries match your search."
@@ -1293,7 +1571,7 @@ export function OperationsLeadsInquiryPanel() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {filteredInquiries.map((inquiry) => (
+                  {dedupedFilteredInquiries.map((inquiry) => (
                     <TableRow
                       key={inquiry.id}
                       className="cursor-pointer hover:bg-slate-50 transition-colors"

@@ -811,6 +811,113 @@ export async function getInquiryLogs(inquiryId: string) {
   }
 }
 
+export async function getInquiryLogsForLead(leadId: string) {
+  try {
+    const session = await getSession();
+    if (!session || (session.role !== 'admin' && session.role !== 'operations')) {
+      return { error: 'Unauthorized' };
+    }
+
+    if (!leadId) return { error: 'Lead id is required' };
+
+    const supabase = await createAdminClient();
+
+    const { data: inquiryRows, error: inquiryErr } = await supabase
+      .from('lead_inquiries')
+      .select('id')
+      .eq('lead_id', leadId);
+
+    if (inquiryErr) return { error: inquiryErr.message };
+
+    const inquiryIds = (inquiryRows || []).map((r) => r.id);
+    if (inquiryIds.length === 0) return { logs: [] as InquiryLog[] };
+
+    const { data, error } = await supabase
+      .from('inquiry_logs')
+      .select('*')
+      .in('inquiry_id', inquiryIds)
+      .order('performed_at', { ascending: true });
+
+    if (error) return { error: error.message };
+    return { logs: (data || []) as InquiryLog[] };
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };
+  }
+}
+
+export async function addInquiryLogNote(inquiryId: string, note: string) {
+  try {
+    const session = await getSession();
+    if (!session || (session.role !== 'admin' && session.role !== 'operations')) {
+      return { error: 'Unauthorized' };
+    }
+
+    if (!inquiryId || !note.trim()) {
+      return { error: 'Inquiry id and note are required' };
+    }
+
+    const supabase = await createAdminClient();
+
+    const { error } = await supabase
+      .from('inquiry_logs')
+      .insert([{
+        inquiry_id: inquiryId,
+        action: 'log_note',
+        previous_values: null,
+        new_values: { note: note.trim() },
+        performed_by: session.username || 'operations',
+      }]);
+
+    if (error) return { error: error.message };
+
+    revalidatePath('/admin/dashboard');
+    revalidatePath('/operations/dashboard');
+    return { success: true };
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };
+  }
+}
+
+export async function addInquiryActivity(
+  inquiryId: string,
+  summary: string,
+  dueDate: string | null
+) {
+  try {
+    const session = await getSession();
+    if (!session || (session.role !== 'admin' && session.role !== 'operations')) {
+      return { error: 'Unauthorized' };
+    }
+
+    if (!inquiryId || !summary.trim()) {
+      return { error: 'Inquiry id and activity summary are required' };
+    }
+
+    const supabase = await createAdminClient();
+
+    const { error } = await supabase
+      .from('inquiry_logs')
+      .insert([{
+        inquiry_id: inquiryId,
+        action: 'activity',
+        previous_values: null,
+        new_values: {
+          summary: summary.trim(),
+          due_date: dueDate || null,
+        },
+        performed_by: session.username || 'operations',
+      }]);
+
+    if (error) return { error: error.message };
+
+    revalidatePath('/admin/dashboard');
+    revalidatePath('/operations/dashboard');
+    return { success: true };
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };
+  }
+}
+
 export async function createInquiryQuotation(
   inquiryId: string,
   leadId: string,

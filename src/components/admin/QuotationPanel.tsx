@@ -346,10 +346,10 @@ function renderLogContent(log: QuotationLog) {
           <div className="space-y-1 mt-1">
             {changes.map((c, i) => (
               <div key={i} className="text-sm">
-                <span className="text-slate-400">{c.oldVal}</span>
+                <span className="text-slate-600 font-medium">{c.field}:</span>
+                <span className="ml-1 text-slate-500">Old: {c.oldVal}</span>
                 <span className="mx-1.5 text-slate-400">→</span>
-                <span className="font-semibold text-teal-700">{c.newVal}</span>
-                <span className="text-xs text-slate-400 ml-1.5">({c.field})</span>
+                <span className="font-semibold text-teal-700">New: {c.newVal}</span>
               </div>
             ))}
           </div>

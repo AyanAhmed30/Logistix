@@ -57,9 +57,12 @@ import {
   getInquiryHistoryForLead,
   getQuotationsForLead,
   getInquiryTrackingForSalesAgent,
+  getLeadChatMessages,
+  sendLeadChatMessage,
   type LeadInquiry,
   type InquiryQuotation,
   type InquiryTrackingInfo,
+  type LeadChatMessage,
 } from "@/app/actions/inquiries";
 import jsPDF from "jspdf";
 
@@ -588,6 +591,9 @@ function InquiryDialog({
   const [isDragging, setIsDragging] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [confirmationStatus, setConfirmationStatus] = useState<'none' | 'approved'>('none');
+  const [chatMessages, setChatMessages] = useState<LeadChatMessage[]>([]);
+  const [chatInput, setChatInput] = useState("");
+  const [isSendingChat, setIsSendingChat] = useState(false);
 
   const fetchInquiryData = useCallback(async () => {
     if (!lead) return;
@@ -615,6 +621,10 @@ function InquiryDialog({
       }
       if (!("error" in inquiryHistoryResult)) {
         setInquiryHistory(inquiryHistoryResult.inquiries || []);
+      }
+      const chatResult = await getLeadChatMessages(lead.id);
+      if (!("error" in chatResult)) {
+        setChatMessages(chatResult.messages || []);
       }
       // Check confirmation status - only show "approved" to sales agent
       if (!("error" in trackingResult) && trackingResult.tracking) {
@@ -648,8 +658,21 @@ function InquiryDialog({
       setInquiryHistory([]);
       setIsDragging(false);
       setConfirmationStatus('none');
+      setChatMessages([]);
+      setChatInput("");
     }
   }, [open, lead, fetchInquiryData]);
+
+  useEffect(() => {
+    if (!open || !lead) return;
+    const timer = setInterval(async () => {
+      const chatResult = await getLeadChatMessages(lead.id);
+      if (!("error" in chatResult)) {
+        setChatMessages(chatResult.messages || []);
+      }
+    }, 5000);
+    return () => clearInterval(timer);
+  }, [open, lead]);
 
   // Handle image file (from drop, paste, or file input)
   const handleImageFile = useCallback((file: File) => {
@@ -772,6 +795,24 @@ function InquiryDialog({
         // Close the modal after a successful send so the workflow can continue.
         onOpenChange(false);
       }
+    });
+  }
+
+  function handleSendChat() {
+    if (!lead || !chatInput.trim()) return;
+    setIsSendingChat(true);
+    startTransition(async () => {
+      const result = await sendLeadChatMessage(lead.id, chatInput);
+      if ("error" in result) {
+        toast.error(result.error || "Failed to send message");
+      } else {
+        setChatInput("");
+        const chatResult = await getLeadChatMessages(lead.id);
+        if (!("error" in chatResult)) {
+          setChatMessages(chatResult.messages || []);
+        }
+      }
+      setIsSendingChat(false);
     });
   }
 
@@ -991,6 +1032,59 @@ function InquiryDialog({
               </Button>
             </div>
 
+            {/* Sales <> Operations Chat (Lead-specific thread) */}
+            <div className="border-t pt-4 space-y-3">
+              <h3 className="font-semibold text-sm">Sales & Operations Chat</h3>
+              <div className="max-h-56 overflow-y-auto pr-1 space-y-2">
+                {chatMessages.length === 0 ? (
+                  <p className="text-xs text-secondary-muted text-center py-4">No messages yet.</p>
+                ) : (
+                  chatMessages.map((m) => (
+                    <Card key={m.id} className={`p-2.5 ${
+                      m.sender_role === "sales_agent"
+                        ? "bg-orange-50 border-orange-200"
+                        : m.sender_role === "operations"
+                          ? "bg-blue-50 border-blue-200"
+                          : "bg-slate-50"
+                    }`}>
+                      <div className="flex items-center justify-between gap-2 mb-1">
+                        <span className="text-xs font-semibold text-primary-dark">
+                          {m.sender_role === "sales_agent" ? "Sales" : m.sender_role === "operations" ? "Operations" : "Admin"} · {m.sender_username}
+                        </span>
+                        <span className="text-[10px] text-secondary-muted">
+                          {new Date(m.created_at).toLocaleString([], {
+                            month: "short",
+                            day: "numeric",
+                            hour: "2-digit",
+                            minute: "2-digit",
+                          })}
+                        </span>
+                      </div>
+                      <p className="text-sm text-primary-dark whitespace-pre-wrap">{m.message}</p>
+                    </Card>
+                  ))
+                )}
+              </div>
+              <div className="space-y-2">
+                <Textarea
+                  value={chatInput}
+                  onChange={(e) => setChatInput(e.target.value)}
+                  placeholder="Ask Operations for updates or provide more details..."
+                  rows={2}
+                  className="resize-none"
+                />
+                <div className="flex justify-end">
+                  <Button
+                    onClick={handleSendChat}
+                    disabled={isPending || isSendingChat || !chatInput.trim()}
+                    className="bg-orange-600 hover:bg-orange-700 text-white"
+                  >
+                    {isSendingChat ? "Sending..." : "Send Message"}
+                  </Button>
+                </div>
+              </div>
+            </div>
+
             {/* Inquiry Version History */}
             {inquiryHistory.length > 1 && (
               <div className="border-t pt-4 space-y-3">
@@ -1103,7 +1197,13 @@ function InquiryDialog({
   );
 }
 
-export function PipelinePanel() {
+export function PipelinePanel({
+  focusLeadId,
+  onFocusHandled,
+}: {
+  focusLeadId?: string | null;
+  onFocusHandled?: () => void;
+} = {}) {
   const [leads, setLeads] = useState<Lead[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [activeId, setActiveId] = useState<string | null>(null);
@@ -1129,6 +1229,16 @@ export function PipelinePanel() {
     fetchLeads();
     fetchInquiryTracking();
   }, []);
+
+  useEffect(() => {
+    if (!focusLeadId || leads.length === 0) return;
+    const target = leads.find((l) => l.id === focusLeadId);
+    if (target) {
+      setInquiryLead(target);
+      setInquiryOpen(true);
+    }
+    onFocusHandled?.();
+  }, [focusLeadId, leads, onFocusHandled]);
 
   async function fetchLeads() {
     setIsLoading(true);

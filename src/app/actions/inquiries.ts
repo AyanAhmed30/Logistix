@@ -76,6 +76,64 @@ export type InquiryLog = {
   performed_at: string;
 };
 
+export type LeadChatMessage = {
+  id: string;
+  lead_id: string;
+  message: string;
+  sender_role: 'sales_agent' | 'operations' | 'admin';
+  sender_username: string;
+  created_at: string;
+};
+
+export type LeadChatNotification = {
+  id: string;
+  chat_message_id: string;
+  lead_id: string;
+  sender_role: 'sales_agent' | 'operations' | 'admin';
+  sender_username: string;
+  recipient_role: 'sales_agent' | 'operations' | 'admin';
+  recipient_username: string;
+  is_read: boolean;
+  created_at: string;
+  leads?: {
+    lead_id_formatted: string | null;
+  } | null;
+};
+
+async function canAccessLeadChat(
+  supabase: Awaited<ReturnType<typeof createAdminClient>>,
+  session: Awaited<ReturnType<typeof getSession>>,
+  leadId: string
+): Promise<{ allowed: boolean; error?: string }> {
+  if (!session) return { allowed: false, error: 'Unauthorized' };
+  if (!leadId) return { allowed: false, error: 'Lead id is required' };
+
+  if (session.role === 'admin' || session.role === 'operations') {
+    return { allowed: true };
+  }
+
+  if (session.role === 'sales_agent') {
+    const { data: salesAgent } = await supabase
+      .from('sales_agents')
+      .select('id')
+      .eq('username', session.username)
+      .maybeSingle();
+
+    if (!salesAgent) return { allowed: false, error: 'Unauthorized' };
+
+    const { data: lead } = await supabase
+      .from('leads')
+      .select('id')
+      .eq('id', leadId)
+      .eq('sales_agent_id', salesAgent.id)
+      .maybeSingle();
+
+    return { allowed: !!lead, error: lead ? undefined : 'Unauthorized' };
+  }
+
+  return { allowed: false, error: 'Unauthorized' };
+}
+
 // ========== Sales Agent Actions ==========
 
 export async function saveInquiry(
@@ -912,6 +970,198 @@ export async function addInquiryActivity(
 
     revalidatePath('/admin/dashboard');
     revalidatePath('/operations/dashboard');
+    return { success: true };
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };
+  }
+}
+
+export async function getLeadChatMessages(leadId: string) {
+  try {
+    const session = await getSession();
+    const supabase = await createAdminClient();
+    const access = await canAccessLeadChat(supabase, session, leadId);
+    if (!access.allowed) return { error: access.error || 'Unauthorized' };
+
+    const { data, error } = await supabase
+      .from('lead_chat_messages')
+      .select('*')
+      .eq('lead_id', leadId)
+      .order('created_at', { ascending: true });
+
+    if (error) return { error: error.message };
+    return { messages: (data || []) as LeadChatMessage[] };
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };
+  }
+}
+
+export async function sendLeadChatMessage(leadId: string, message: string) {
+  try {
+    const session = await getSession();
+    const supabase = await createAdminClient();
+    const access = await canAccessLeadChat(supabase, session, leadId);
+    if (!access.allowed) return { error: access.error || 'Unauthorized' };
+
+    const clean = message.trim();
+    if (!clean) return { error: 'Message is required' };
+
+    const senderRole =
+      session?.role === 'sales_agent'
+        ? 'sales_agent'
+        : session?.role === 'operations'
+          ? 'operations'
+          : 'admin';
+
+    const { data, error } = await supabase
+      .from('lead_chat_messages')
+      .insert([
+        {
+          lead_id: leadId,
+          message: clean,
+          sender_role: senderRole,
+          sender_username: session?.username || 'user',
+        },
+      ])
+      .select()
+      .single();
+
+    if (error || !data) return { error: error?.message || 'Failed to send message' };
+
+    // Create recipient notifications based on sender role.
+    if (senderRole === 'sales_agent') {
+      const { data: operationsUsers } = await supabase
+        .from('operations_users')
+        .select('username');
+
+      const recipients = (operationsUsers || [])
+        .map((u) => u.username)
+        .filter((u): u is string => !!u && u !== (session?.username || ''));
+
+      if (recipients.length > 0) {
+        const { error: notifInsertError } = await supabase.from('lead_chat_notifications').insert(
+          recipients.map((username) => ({
+            chat_message_id: data.id,
+            lead_id: leadId,
+            sender_role: senderRole,
+            sender_username: session?.username || 'user',
+            recipient_role: 'operations',
+            recipient_username: username,
+          }))
+        );
+        if (notifInsertError) {
+          console.error('[sendLeadChatMessage] notification insert failed:', notifInsertError.message);
+        }
+      }
+    } else if (senderRole === 'operations' || senderRole === 'admin') {
+      const { data: lead } = await supabase
+        .from('leads')
+        .select('sales_agent_id')
+        .eq('id', leadId)
+        .maybeSingle();
+
+      if (lead?.sales_agent_id) {
+        const { data: salesAgent } = await supabase
+          .from('sales_agents')
+          .select('username')
+          .eq('id', lead.sales_agent_id)
+          .maybeSingle();
+
+        if (salesAgent?.username && salesAgent.username !== (session?.username || '')) {
+          const { error: notifInsertError } = await supabase.from('lead_chat_notifications').insert([
+            {
+              chat_message_id: data.id,
+              lead_id: leadId,
+              sender_role: senderRole,
+              sender_username: session?.username || 'user',
+              recipient_role: 'sales_agent',
+              recipient_username: salesAgent.username,
+            },
+          ]);
+          if (notifInsertError) {
+            console.error('[sendLeadChatMessage] notification insert failed:', notifInsertError.message);
+          }
+        }
+      }
+    }
+
+    revalidatePath('/sales-agent/dashboard');
+    revalidatePath('/operations/dashboard');
+    return { message: data as LeadChatMessage };
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };
+  }
+}
+
+export async function getMyLeadChatNotifications(limit = 20) {
+  try {
+    const session = await getSession();
+    if (!session) return { error: 'Unauthorized' };
+
+    const recipientRole =
+      session.role === 'sales_agent'
+        ? 'sales_agent'
+        : session.role === 'operations'
+          ? 'operations'
+          : session.role === 'admin'
+            ? 'admin'
+            : null;
+
+    if (!recipientRole) return { error: 'Unauthorized' };
+
+    const supabase = await createAdminClient();
+
+    const { data, error } = await supabase
+      .from('lead_chat_notifications')
+      .select(`
+        *,
+        leads (
+          lead_id_formatted
+        )
+      `)
+      .eq('recipient_role', recipientRole)
+      .eq('recipient_username', session.username)
+      .order('created_at', { ascending: false })
+      .limit(limit);
+
+    if (error) return { error: error.message };
+
+    const unreadCount = (data || []).filter((n) => !n.is_read).length;
+
+    return {
+      notifications: (data || []) as LeadChatNotification[],
+      unreadCount,
+    };
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };
+  }
+}
+
+export async function markLeadChatNotificationRead(notificationId: string) {
+  try {
+    const session = await getSession();
+    if (!session) return { error: 'Unauthorized' };
+    if (!notificationId) return { error: 'Notification id is required' };
+
+    const recipientRole =
+      session.role === 'sales_agent'
+        ? 'sales_agent'
+        : session.role === 'operations'
+          ? 'operations'
+          : session.role === 'admin'
+            ? 'admin'
+            : null;
+    if (!recipientRole) return { error: 'Unauthorized' };
+
+    const supabase = await createAdminClient();
+    const { error } = await supabase
+      .from('lead_chat_notifications')
+      .update({ is_read: true })
+      .eq('id', notificationId)
+      .eq('recipient_role', recipientRole)
+      .eq('recipient_username', session.username);
+
+    if (error) return { error: error.message };
     return { success: true };
   } catch (err) {
     return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };

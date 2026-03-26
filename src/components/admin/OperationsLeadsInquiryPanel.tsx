@@ -9,8 +9,11 @@ import {
   getInquiryLogsForLead,
   addInquiryLogNote,
   addInquiryActivity,
+  getLeadChatMessages,
+  sendLeadChatMessage,
   type LeadInquiryWithLead,
   type InquiryLog,
+  type LeadChatMessage,
 } from "@/app/actions/inquiries";
 import {
   submitInquiryForConfirmation,
@@ -112,7 +115,13 @@ function getLatestConfirmationStatus(inquiry: LeadInquiryWithLead): string | nul
 
 type ViewMode = "list" | "detail";
 
-export function OperationsLeadsInquiryPanel() {
+export function OperationsLeadsInquiryPanel({
+  focusLeadId,
+  onFocusHandled,
+}: {
+  focusLeadId?: string | null;
+  onFocusHandled?: () => void;
+} = {}) {
   const [view, setView] = useState<ViewMode>("list");
   const [inquiries, setInquiries] = useState<LeadInquiryWithLead[]>([]);
   const [isLoading, setIsLoading] = useState(false);
@@ -158,6 +167,9 @@ export function OperationsLeadsInquiryPanel() {
   const [activitySummary, setActivitySummary] = useState("");
   const [activityDueDate, setActivityDueDate] = useState("");
   const [isAddingActivity, setIsAddingActivity] = useState(false);
+  const [chatMessages, setChatMessages] = useState<LeadChatMessage[]>([]);
+  const [chatInput, setChatInput] = useState("");
+  const [isSendingChat, setIsSendingChat] = useState(false);
 
   // Duty calculator state (Operations detail view)
   const [calcInvValue, setCalcInvValue] = useState("");
@@ -195,6 +207,34 @@ export function OperationsLeadsInquiryPanel() {
   useEffect(() => {
     fetchInquiries();
   }, [fetchInquiries]);
+
+  useEffect(() => {
+    if (!focusLeadId || view !== "list" || inquiries.length === 0) return;
+    const target = inquiries
+      .filter((i) => i.lead_id === focusLeadId)
+      .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())[0];
+    if (target) {
+      openDetail(target);
+    }
+    onFocusHandled?.();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focusLeadId, inquiries, view]);
+
+  const fetchLeadChat = useCallback(async (leadId: string) => {
+    const result = await getLeadChatMessages(leadId);
+    if (!("error" in result)) {
+      setChatMessages(result.messages || []);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (view !== "detail" || !selectedInquiry) return;
+    fetchLeadChat(selectedInquiry.lead_id);
+    const timer = setInterval(() => {
+      fetchLeadChat(selectedInquiry.lead_id);
+    }, 5000);
+    return () => clearInterval(timer);
+  }, [view, selectedInquiry, fetchLeadChat]);
 
   const filteredInquiries = inquiries.filter((inq) => {
     if (!searchQuery.trim()) return true;
@@ -275,6 +315,8 @@ export function OperationsLeadsInquiryPanel() {
     }
     setActiveRightTab("send_message");
     setLogNoteText("");
+    setChatInput("");
+    setChatMessages([]);
     // Also re-fetch all inquiries in background so list data stays fresh
     fetchInquiries();
   }
@@ -286,8 +328,29 @@ export function OperationsLeadsInquiryPanel() {
     setInquiryLogs([]);
     setActiveRightTab("send_message");
     setLogNoteText("");
+    setChatInput("");
+    setChatMessages([]);
     resetForm();
     fetchInquiries();
+  }
+
+  async function handleSendChatMessage() {
+    if (!selectedInquiry) return;
+    if (!chatInput.trim()) return;
+    setIsSendingChat(true);
+    try {
+      const result = await sendLeadChatMessage(selectedInquiry.lead_id, chatInput);
+      if ("error" in result) {
+        toast.error(result.error || "Failed to send message.");
+        return;
+      }
+      setChatInput("");
+      await fetchLeadChat(selectedInquiry.lead_id);
+    } catch {
+      toast.error("Failed to send message.");
+    } finally {
+      setIsSendingChat(false);
+    }
   }
 
   function openLeadManagementForm() {
@@ -1130,6 +1193,58 @@ export function OperationsLeadsInquiryPanel() {
                       >
                         {isAddingLogNote ? "Adding..." : "Add Note"}
                       </Button>
+                    </div>
+                  </div>
+                )}
+
+                {activeRightTab === "send_message" && (
+                  <div className="border rounded-lg p-3 space-y-3 mb-4 bg-slate-50">
+                    <div className="max-h-48 overflow-y-auto pr-1 space-y-2">
+                      {chatMessages.length === 0 ? (
+                        <p className="text-xs text-slate-400 text-center py-3">No messages yet.</p>
+                      ) : (
+                        chatMessages.map((m) => (
+                          <div key={m.id} className={`rounded-lg p-2.5 text-sm ${
+                            m.sender_role === "operations"
+                              ? "bg-blue-50 border border-blue-200"
+                              : "bg-white border border-slate-200"
+                          }`}>
+                            <div className="flex items-center justify-between gap-2 mb-1">
+                              <span className="text-xs font-semibold text-slate-700">
+                                {m.sender_role === "sales_agent" ? "Sales" : m.sender_role === "operations" ? "Operations" : "Admin"} · {m.sender_username}
+                              </span>
+                              <span className="text-[10px] text-slate-400">
+                                {new Date(m.created_at).toLocaleString([], {
+                                  month: "short",
+                                  day: "numeric",
+                                  hour: "2-digit",
+                                  minute: "2-digit",
+                                })}
+                              </span>
+                            </div>
+                            <p className="text-slate-700 whitespace-pre-wrap">{m.message}</p>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                    <div className="space-y-2">
+                      <Textarea
+                        value={chatInput}
+                        onChange={(e) => setChatInput(e.target.value)}
+                        placeholder="Type a message for Sales..."
+                        rows={2}
+                        className="bg-white text-sm resize-none"
+                      />
+                      <div className="flex justify-end">
+                        <Button
+                          size="sm"
+                          className="bg-orange-500 hover:bg-orange-600 text-white text-xs h-7"
+                          onClick={handleSendChatMessage}
+                          disabled={isSendingChat || !chatInput.trim()}
+                        >
+                          {isSendingChat ? "Sending..." : "Send"}
+                        </Button>
+                      </div>
                     </div>
                   </div>
                 )}

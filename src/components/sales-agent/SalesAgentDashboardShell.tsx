@@ -20,6 +20,19 @@ import { ImportPackingListPanel } from "@/components/admin/ImportPackingListPane
 import { ImportInvoicePanel } from "@/components/admin/ImportInvoicePanel";
 import { AdminDashboardOverview } from "@/components/admin/AdminDashboardOverview";
 import { SalesAgentAccountingPanel } from "@/components/sales-agent/SalesAgentAccountingPanel";
+import {
+  getMyLeadChatNotifications,
+  markLeadChatNotificationRead,
+  type LeadChatNotification,
+} from "@/app/actions/inquiries";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 
 type Props = {
   username: string;
@@ -64,6 +77,10 @@ const DEFAULT_TABS: { key: TabKey; label: string; icon: React.ReactNode }[] = [
 
 export function SalesAgentDashboardShell({ username, permissions }: Props) {
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+  const [notifications, setNotifications] = useState<LeadChatNotification[]>([]);
+  const [unreadCount, setUnreadCount] = useState(0);
+  const [focusLeadId, setFocusLeadId] = useState<string | null>(null);
+  const [notificationsError, setNotificationsError] = useState<string | null>(null);
   
   // Set initial tab to first available permission, or empty string if none
   const initialTab = permissions.length > 0 ? (permissionTabs[permissions[0]]?.key || "") : "";
@@ -100,6 +117,36 @@ export function SalesAgentDashboardShell({ username, permissions }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [permissions]);
 
+  useEffect(() => {
+    async function fetchNotifications() {
+      const result = await getMyLeadChatNotifications(30);
+      if ("error" in result) {
+        setNotificationsError(result.error || "Failed to load notifications");
+        setNotifications([]);
+        setUnreadCount(0);
+      } else {
+        setNotificationsError(null);
+        setNotifications(result.notifications || []);
+        setUnreadCount(result.unreadCount || 0);
+      }
+    }
+    fetchNotifications();
+    const timer = setInterval(fetchNotifications, 5000);
+    return () => clearInterval(timer);
+  }, []);
+
+  async function handleNotificationClick(notification: LeadChatNotification) {
+    if (!notification.is_read) {
+      await markLeadChatNotificationRead(notification.id);
+      setNotifications((prev) =>
+        prev.map((n) => (n.id === notification.id ? { ...n, is_read: true } : n))
+      );
+      setUnreadCount((prev) => Math.max(0, prev - 1));
+    }
+    setActiveTab("pipeline");
+    setFocusLeadId(notification.lead_id);
+  }
+
   return (
     <div className="min-h-screen bg-white">
       <header className="fixed top-0 inset-x-0 h-16 bg-white border-b z-50">
@@ -121,6 +168,58 @@ export function SalesAgentDashboardShell({ username, permissions }: Props) {
           </div>
 
           <div className="flex items-center gap-4 md:gap-6">
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  variant="outline"
+                  className="relative h-9 w-9 p-0 border-slate-200 bg-white hover:bg-slate-50"
+                  aria-label="Notifications"
+                >
+                  <Bell className="h-4 w-4" />
+                  {unreadCount > 0 && (
+                    <span className="absolute -top-1 -right-1 min-w-4 h-4 px-1 rounded-full bg-red-500 text-white text-[10px] leading-4 text-center">
+                      {unreadCount > 9 ? "9+" : unreadCount}
+                    </span>
+                  )}
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-[360px] z-[90]">
+                <DropdownMenuLabel>Notifications</DropdownMenuLabel>
+                <DropdownMenuSeparator />
+                {notificationsError ? (
+                  <DropdownMenuItem disabled className="text-xs text-red-600">
+                    {notificationsError}
+                  </DropdownMenuItem>
+                ) : notifications.length === 0 ? (
+                  <DropdownMenuItem disabled className="text-sm text-slate-500">
+                    No notifications
+                  </DropdownMenuItem>
+                ) : (
+                  notifications.map((n) => (
+                    <DropdownMenuItem
+                      key={n.id}
+                      className={`items-start whitespace-normal cursor-pointer ${!n.is_read ? "bg-blue-50" : ""}`}
+                      onClick={() => handleNotificationClick(n)}
+                    >
+                      <div className="text-sm leading-snug">
+                        <div>
+                          <span className="font-semibold">{n.sender_username}</span>{" "}
+                          ({n.sender_role === "sales_agent" ? "Sales Agent" : n.sender_role === "operations" ? "Operations" : "Admin"}) sent you a message regarding{" "}
+                          Lead #{n.leads?.lead_id_formatted || "N/A"} at{" "}
+                          {new Date(n.created_at).toLocaleString([], {
+                            hour: "2-digit",
+                            minute: "2-digit",
+                            month: "short",
+                            day: "numeric",
+                            year: "numeric",
+                          })}
+                        </div>
+                      </div>
+                    </DropdownMenuItem>
+                  ))
+                )}
+              </DropdownMenuContent>
+            </DropdownMenu>
             <div className="hidden md:flex flex-col items-end mr-2">
               <span className="text-xs font-bold text-secondary-muted uppercase tracking-tighter">Signed In</span>
               <span className="text-sm font-black text-primary-dark">{username}</span>
@@ -188,7 +287,12 @@ export function SalesAgentDashboardShell({ username, permissions }: Props) {
       <main className="pt-20 md:pl-72 px-6 md:px-10 pb-10 space-y-6">
         {/* All tabs are permission-based */}
         {activeTab === "lead" && <LeadPanel />}
-        {activeTab === "pipeline" && <PipelinePanel />}
+        {activeTab === "pipeline" && (
+          <PipelinePanel
+            focusLeadId={focusLeadId}
+            onFocusHandled={() => setFocusLeadId(null)}
+          />
+        )}
         {activeTab === "customer-list" && <CustomerListPanel />}
         {activeTab === "manage-request" && (
           <Card className="bg-white border shadow-sm">

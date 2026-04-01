@@ -9,6 +9,9 @@ import {
   getInquiryLogsForLead,
   addInquiryLogNote,
   addInquiryActivity,
+  addInquiryCalculatorFieldLog,
+  saveInquiryCalculatorField,
+  getSharedInquiryCalculatorValues,
   getLeadChatMessages,
   sendLeadChatMessage,
   type LeadInquiryWithLead,
@@ -17,6 +20,7 @@ import {
 } from "@/app/actions/inquiries";
 import {
   submitInquiryForConfirmation,
+  uploadConfirmationImage,
   getConfirmationsForInquiry,
   type InquiryConfirmation,
 } from "@/app/actions/inquiry_confirmations";
@@ -118,9 +122,11 @@ type ViewMode = "list" | "detail";
 export function OperationsLeadsInquiryPanel({
   focusLeadId,
   onFocusHandled,
+  adminCalculatorMode = false,
 }: {
   focusLeadId?: string | null;
   onFocusHandled?: () => void;
+  adminCalculatorMode?: boolean;
 } = {}) {
   const [view, setView] = useState<ViewMode>("list");
   const [inquiries, setInquiries] = useState<LeadInquiryWithLead[]>([]);
@@ -131,6 +137,7 @@ export function OperationsLeadsInquiryPanel({
   // Lead Management Form state
   const [showForm, setShowForm] = useState(false);
   const [formProductName, setFormProductName] = useState("");
+  const [formHsCode, setFormHsCode] = useState("");
   const [formWeight, setFormWeight] = useState("");
   const [formCbm, setFormCbm] = useState("");
   const [formQuantity, setFormQuantity] = useState("");
@@ -139,6 +146,7 @@ export function OperationsLeadsInquiryPanel({
   const [additionalImage2, setAdditionalImage2] = useState<File | null>(null);
   const [additionalImage2Preview, setAdditionalImage2Preview] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [activeUploadSlot, setActiveUploadSlot] = useState<1 | 2>(1);
   const img1Ref = useRef<HTMLInputElement>(null);
   const img2Ref = useRef<HTMLInputElement>(null);
   const dropZone1Ref = useRef<HTMLDivElement>(null);
@@ -170,6 +178,7 @@ export function OperationsLeadsInquiryPanel({
   const [chatMessages, setChatMessages] = useState<LeadChatMessage[]>([]);
   const [chatInput, setChatInput] = useState("");
   const [isSendingChat, setIsSendingChat] = useState(false);
+  const [imagePreview, setImagePreview] = useState<{ url: string; title: string } | null>(null);
 
   // Duty calculator state (Operations detail view)
   const [calcInvValue, setCalcInvValue] = useState("");
@@ -186,6 +195,82 @@ export function OperationsLeadsInquiryPanel({
   const [calcFreight, setCalcFreight] = useState("0");
   const [calcShippingLineCharges, setCalcShippingLineCharges] = useState("0");
   const [calcClearanceExpense, setCalcClearanceExpense] = useState("0");
+  const [lastCalcSnapshot, setLastCalcSnapshot] = useState<Record<string, string>>({});
+
+  const getDefaultCalculatorValues = useCallback(() => ({
+    inv_value: "",
+    exchange_rate: "2254.13",
+    custom_duty_rate: "0",
+    add_cd_rate: "0",
+    gst_rate: "18",
+    add_gst_rate: "0",
+    income_tax_rate: "12",
+    excise_rate: "1.8",
+    regular_duty_rate: "30",
+    stamp_duty_rate: "0",
+    inv_fine: "0",
+    freight: "0",
+    shipping_line_charges: "0",
+    clearance_expense: "0",
+  }), []);
+
+  const applyCalculatorValues = useCallback((values: Record<string, string>) => {
+    setCalcInvValue(values.inv_value ?? "");
+    setCalcExchangeRate(values.exchange_rate ?? "2254.13");
+    setCalcCustomDutyRate(values.custom_duty_rate ?? "0");
+    setCalcAddCdRate(values.add_cd_rate ?? "0");
+    setCalcGstRate(values.gst_rate ?? "18");
+    setCalcAddGstRate(values.add_gst_rate ?? "0");
+    setCalcIncomeTaxRate(values.income_tax_rate ?? "12");
+    setCalcExciseRate(values.excise_rate ?? "1.8");
+    setCalcRegularDutyRate(values.regular_duty_rate ?? "30");
+    setCalcStampDutyRate(values.stamp_duty_rate ?? "0");
+    setCalcInvFine(values.inv_fine ?? "0");
+    setCalcFreight(values.freight ?? "0");
+    setCalcShippingLineCharges(values.shipping_line_charges ?? "0");
+    setCalcClearanceExpense(values.clearance_expense ?? "0");
+  }, []);
+
+  const refreshInquiryLogs = useCallback(async (leadId: string) => {
+    try {
+      const logsResult = await getInquiryLogsForLead(leadId);
+      if ("error" in logsResult) {
+        setInquiryLogs([]);
+      } else {
+        setInquiryLogs(logsResult.logs || []);
+      }
+    } catch {
+      setInquiryLogs([]);
+    }
+  }, []);
+
+  const logCalculatorFieldChange = useCallback(
+    async (field: string, currentValue: string) => {
+      if (!selectedInquiry) return;
+      const previousValue = lastCalcSnapshot[field] ?? "";
+      if (previousValue === currentValue) return;
+      const saveResult = await saveInquiryCalculatorField(
+        selectedInquiry.id,
+        field,
+        currentValue
+      );
+      if ("error" in saveResult) {
+        toast.error(saveResult.error || "Failed to save calculator value.");
+        return;
+      }
+
+      await addInquiryCalculatorFieldLog(
+        selectedInquiry.id,
+        field,
+        previousValue,
+        currentValue
+      );
+
+      setLastCalcSnapshot((prev) => ({ ...prev, [field]: currentValue }));
+      await refreshInquiryLogs(selectedInquiry.lead_id);
+    },
+    [lastCalcSnapshot, refreshInquiryLogs, selectedInquiry]
+  );
 
   const fetchInquiries = useCallback(async () => {
     setIsLoading(true);
@@ -221,9 +306,13 @@ export function OperationsLeadsInquiryPanel({
   }, [focusLeadId, inquiries, view]);
 
   const fetchLeadChat = useCallback(async (leadId: string) => {
-    const result = await getLeadChatMessages(leadId);
-    if (!("error" in result)) {
-      setChatMessages(result.messages || []);
+    try {
+      const result = await getLeadChatMessages(leadId);
+      if (!("error" in result)) {
+        setChatMessages(result.messages || []);
+      }
+    } catch {
+      // Polling failures should not break the page.
     }
   }, []);
 
@@ -277,21 +366,15 @@ export function OperationsLeadsInquiryPanel({
     setView("detail");
     setShowForm(false);
     resetForm();
-    // Prefill calculator with inquiry values; user can adjust freely.
-    setCalcInvValue(inquiry.quantity || "");
-    setCalcExchangeRate("2254.13");
-    setCalcCustomDutyRate("0");
-    setCalcAddCdRate("0");
-    setCalcGstRate("18");
-    setCalcAddGstRate("0");
-    setCalcIncomeTaxRate("12");
-    setCalcExciseRate("1.8");
-    setCalcRegularDutyRate("30");
-    setCalcStampDutyRate("0");
-    setCalcInvFine("0");
-    setCalcFreight("0");
-    setCalcShippingLineCharges("0");
-    setCalcClearanceExpense("0");
+    // Prefill calculator from persisted inquiry config with safe defaults fallback.
+    const defaults = getDefaultCalculatorValues();
+    const sharedResult = await getSharedInquiryCalculatorValues();
+    const sharedValues =
+      !("error" in sharedResult) && sharedResult.values && typeof sharedResult.values === "object"
+        ? sharedResult.values
+        : {};
+    const resolvedValues = { ...defaults, ...sharedValues };
+    applyCalculatorValues(resolvedValues);
     // Load full confirmation history from server (always fresh)
     try {
       const result = await getConfirmationsForInquiry(inquiry.id);
@@ -303,16 +386,8 @@ export function OperationsLeadsInquiryPanel({
     } catch {
       setConfirmations([]);
     }
-    try {
-      const logsResult = await getInquiryLogsForLead(inquiry.lead_id);
-      if ("error" in logsResult) {
-        setInquiryLogs([]);
-      } else {
-        setInquiryLogs(logsResult.logs || []);
-      }
-    } catch {
-      setInquiryLogs([]);
-    }
+    await refreshInquiryLogs(inquiry.lead_id);
+    setLastCalcSnapshot(resolvedValues);
     setActiveRightTab("send_message");
     setLogNoteText("");
     setChatInput("");
@@ -356,6 +431,7 @@ export function OperationsLeadsInquiryPanel({
   function openLeadManagementForm() {
     if (!selectedInquiry) return;
     setFormProductName(selectedInquiry.product_name || "");
+    setFormHsCode("");
     setFormWeight(selectedInquiry.total_weight || "");
     setFormCbm(selectedInquiry.cbm || "");
     setFormQuantity(selectedInquiry.quantity || "");
@@ -378,10 +454,7 @@ export function OperationsLeadsInquiryPanel({
       toast.success("Note added.");
       setLogNoteText("");
       setActiveRightTab("send_message");
-      const logsResult = await getInquiryLogsForLead(selectedInquiry.lead_id);
-      if (!("error" in logsResult)) {
-        setInquiryLogs(logsResult.logs || []);
-      }
+      await refreshInquiryLogs(selectedInquiry.lead_id);
     } catch {
       toast.error("Failed to add note.");
     } finally {
@@ -410,10 +483,7 @@ export function OperationsLeadsInquiryPanel({
       setActivitySummary("");
       setActivityDueDate("");
       setActiveRightTab("send_message");
-      const logsResult = await getInquiryLogsForLead(selectedInquiry.lead_id);
-      if (!("error" in logsResult)) {
-        setInquiryLogs(logsResult.logs || []);
-      }
+      await refreshInquiryLogs(selectedInquiry.lead_id);
     } catch {
       toast.error("Failed to add activity.");
     } finally {
@@ -423,6 +493,7 @@ export function OperationsLeadsInquiryPanel({
 
   function resetForm() {
     setFormProductName("");
+    setFormHsCode("");
     setFormWeight("");
     setFormCbm("");
     setFormQuantity("");
@@ -467,15 +538,17 @@ export function OperationsLeadsInquiryPanel({
       } else {
         toast.success("Inquiry updated successfully!");
         // Update the local selected inquiry
-        setSelectedInquiry({
+        const updatedInquiry = {
           ...selectedInquiry,
           product_name: editProductName.trim(),
           total_weight: editWeight.trim(),
           cbm: editCbm.trim(),
           quantity: editQuantity.trim(),
           description: editDescription.trim(),
-        });
+        };
+        setSelectedInquiry(updatedInquiry);
         setIsEditing(false);
+        await refreshInquiryLogs(selectedInquiry.lead_id);
         fetchInquiries();
       }
     } catch {
@@ -519,34 +592,90 @@ export function OperationsLeadsInquiryPanel({
 
   // ─── Image handling helpers ───────────────────────────────────────
 
-  function handleImageFile(file: File, slot: 1 | 2) {
-    if (!file.type.startsWith("image/")) {
+  function extractImageFileFromFileList(files: FileList | null | undefined) {
+    if (!files || files.length === 0) return null;
+    const imageExts = new Set([
+      "jpg",
+      "jpeg",
+      "png",
+      "gif",
+      "webp",
+      "bmp",
+      "svg",
+      "heic",
+      "heif",
+      "avif",
+    ]);
+    const isImageLikeFile = (file: File) => {
+      if (file.type?.startsWith("image/")) return true;
+      const ext = (file.name.split(".").pop() || "").toLowerCase();
+      return imageExts.has(ext);
+    };
+    for (let i = 0; i < files.length; i++) {
+      if (isImageLikeFile(files[i])) return files[i];
+    }
+    return null;
+  }
+
+  function extractImageFileFromItems(items: DataTransferItemList | null | undefined) {
+    if (!items) return null;
+    for (let i = 0; i < items.length; i++) {
+      if (items[i].type.startsWith("image/")) {
+        return items[i].getAsFile();
+      }
+    }
+    return null;
+  }
+
+  function extractImageFileFromClipboardData(data: DataTransfer | null | undefined) {
+    if (!data) return null;
+    const fromFiles = extractImageFileFromFileList(data.files);
+    if (fromFiles) return fromFiles;
+    return extractImageFileFromItems(data.items);
+  }
+
+  function processImageUpload(file: File | null, slot: 1 | 2) {
+    if (!file) return false;
+    const ext = (file.name.split(".").pop() || "").toLowerCase();
+    const allowedExts = new Set(["jpg", "jpeg", "png", "gif", "webp", "bmp", "svg", "heic", "heif", "avif"]);
+    const isImageLike = file.type?.startsWith("image/") || allowedExts.has(ext);
+    if (!isImageLike) {
       toast.error("Please select an image file.");
-      return;
+      return false;
     }
     if (file.size > 5 * 1024 * 1024) {
       toast.error("Image must be less than 5 MB.");
-      return;
+      return false;
+    }
+
+    // Keep the selected file immediately so submit does not depend on FileReader timing.
+    if (slot === 1) {
+      setAdditionalImage1(file);
+    } else {
+      setAdditionalImage2(file);
     }
     const reader = new FileReader();
     reader.onload = (e) => {
       const url = e.target?.result as string;
       if (slot === 1) {
-        setAdditionalImage1(file);
         setAdditionalImage1Preview(url);
       } else {
-        setAdditionalImage2(file);
         setAdditionalImage2Preview(url);
       }
     };
+    reader.onerror = () => {
+      toast.error("Unable to read selected image. Please try another file.");
+    };
     reader.readAsDataURL(file);
+    return true;
   }
 
   function handleDrop(e: React.DragEvent, slot: 1 | 2) {
     e.preventDefault();
     e.stopPropagation();
-    const file = e.dataTransfer.files?.[0];
-    if (file) handleImageFile(file, slot);
+    setActiveUploadSlot(slot);
+    const file = extractImageFileFromFileList(e.dataTransfer.files);
+    processImageUpload(file, slot);
   }
 
   function handleDragOver(e: React.DragEvent) {
@@ -554,24 +683,62 @@ export function OperationsLeadsInquiryPanel({
     e.stopPropagation();
   }
 
-  function handlePaste(e: React.ClipboardEvent, slot: 1 | 2) {
-    const items = e.clipboardData?.items;
-    if (!items) return;
-    for (let i = 0; i < items.length; i++) {
-      if (items[i].type.startsWith("image/")) {
-        const file = items[i].getAsFile();
-        if (file) {
-          e.preventDefault();
-          handleImageFile(file, slot);
-          return;
-        }
+  useEffect(() => {
+    if (!showForm) return;
+
+    function handleGlobalPaste(e: ClipboardEvent) {
+      const file = extractImageFileFromClipboardData(e.clipboardData);
+      if (!file) return;
+
+      e.preventDefault();
+
+      const activeEl = document.activeElement as Node | null;
+      const isInSlot1 =
+        !!activeEl &&
+        !!dropZone1Ref.current &&
+        (activeEl === dropZone1Ref.current || dropZone1Ref.current.contains(activeEl));
+      const isInSlot2 =
+        !!activeEl &&
+        !!dropZone2Ref.current &&
+        (activeEl === dropZone2Ref.current || dropZone2Ref.current.contains(activeEl));
+
+      let targetSlot: 1 | 2 = activeUploadSlot;
+      if (isInSlot1) {
+        targetSlot = 1;
+      } else if (isInSlot2) {
+        targetSlot = 2;
+      } else if (!additionalImage1) {
+        targetSlot = 1;
+      } else if (!additionalImage2) {
+        targetSlot = 2;
       }
+
+      setActiveUploadSlot(targetSlot);
+      processImageUpload(file, targetSlot);
     }
+
+    // Capture phase helps when focused controls stop bubbling paste events.
+    document.addEventListener("paste", handleGlobalPaste, true);
+    return () => document.removeEventListener("paste", handleGlobalPaste, true);
+  }, [showForm, additionalImage1, additionalImage2, activeUploadSlot]);
+
+  function handleZonePaste(e: React.ClipboardEvent, slot: 1 | 2) {
+    const file = extractImageFileFromClipboardData(e.clipboardData);
+    if (!file) return;
+    e.preventDefault();
+    setActiveUploadSlot(slot);
+    processImageUpload(file, slot);
   }
 
   function handleFileInputChange(e: React.ChangeEvent<HTMLInputElement>, slot: 1 | 2) {
-    const file = e.target.files?.[0];
-    if (file) handleImageFile(file, slot);
+    setActiveUploadSlot(slot);
+    const file = extractImageFileFromFileList(e.target.files);
+    if (!file && e.target.files && e.target.files.length > 0) {
+      toast.error("Selected file is not a supported image format.");
+    } else {
+      processImageUpload(file, slot);
+    }
+    e.target.value = "";
   }
 
   function removeImage(slot: 1 | 2) {
@@ -584,6 +751,20 @@ export function OperationsLeadsInquiryPanel({
       setAdditionalImage2Preview(null);
       if (img2Ref.current) img2Ref.current.value = "";
     }
+  }
+
+  function openImagePreview(url: string, title: string) {
+    if (!url) return;
+    setImagePreview({ url, title });
+  }
+
+  function fileToDataUrl(file: File): Promise<string> {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result || ""));
+      reader.onerror = () => reject(new Error("Failed to read image"));
+      reader.readAsDataURL(file);
+    });
   }
 
   // ─── Submit form ──────────────────────────────────────────────────
@@ -600,15 +781,25 @@ export function OperationsLeadsInquiryPanel({
 
     setIsSubmitting(true);
     try {
-      // Upload additional images if present (convert to base64 data URLs as fallback)
+      // Upload additional images to storage and keep only URLs in DB/logs.
       let img1Url: string | null = null;
       let img2Url: string | null = null;
 
       if (additionalImage1) {
-        img1Url = additionalImage1Preview; // base64 data URL
+        const upload1 = await uploadConfirmationImage(additionalImage1, "additional_1");
+        if ("error" in upload1) {
+          img1Url = additionalImage1Preview || await fileToDataUrl(additionalImage1);
+        } else {
+          img1Url = upload1.url || null;
+        }
       }
       if (additionalImage2) {
-        img2Url = additionalImage2Preview; // base64 data URL
+        const upload2 = await uploadConfirmationImage(additionalImage2, "additional_2");
+        if ("error" in upload2) {
+          img2Url = additionalImage2Preview || await fileToDataUrl(additionalImage2);
+        } else {
+          img2Url = upload2.url || null;
+        }
       }
 
       const result = await submitInquiryForConfirmation({
@@ -619,6 +810,23 @@ export function OperationsLeadsInquiryPanel({
         total_weight: formWeight,
         cbm: formCbm,
         quantity: formQuantity,
+        hs_code: formHsCode,
+        calculator_values: {
+          inv_value: calcInvValue,
+          exchange_rate: calcExchangeRate,
+          custom_duty_rate: calcCustomDutyRate,
+          add_cd_rate: calcAddCdRate,
+          gst_rate: calcGstRate,
+          add_gst_rate: calcAddGstRate,
+          income_tax_rate: calcIncomeTaxRate,
+          excise_rate: calcExciseRate,
+          regular_duty_rate: calcRegularDutyRate,
+          stamp_duty_rate: calcStampDutyRate,
+          inv_fine: calcInvFine,
+          freight: calcFreight,
+          shipping_line_charges: calcShippingLineCharges,
+          clearance_expense: calcClearanceExpense,
+        },
         original_image_url: selectedInquiry.image_url,
         additional_image_1_url: img1Url,
         additional_image_2_url: img2Url,
@@ -636,6 +844,7 @@ export function OperationsLeadsInquiryPanel({
           if (!("error" in confResult)) {
             setConfirmations(confResult.confirmations || []);
           }
+          await refreshInquiryLogs(selectedInquiry.lead_id);
         }
       }
     } catch {
@@ -654,40 +863,92 @@ export function OperationsLeadsInquiryPanel({
     preview,
     dropRef,
     inputRef,
+    onPreviewClick,
   }: {
     slot: 1 | 2;
     preview: string | null;
     dropRef: React.RefObject<HTMLDivElement | null>;
     inputRef: React.RefObject<HTMLInputElement | null>;
+    onPreviewClick: (url: string) => void;
   }) {
+    const inputId = `lead-management-image-${slot}`;
+    const openSystemPicker = () => {
+      setActiveUploadSlot(slot);
+      const input = inputRef.current as (HTMLInputElement & { showPicker?: () => void }) | null;
+      if (!input) return;
+      try {
+        if (typeof input.showPicker === "function") {
+          input.showPicker();
+          return;
+        }
+        input.click();
+      } catch {
+        // Some browsers throw on showPicker for hidden inputs; fallback keeps file picker reliable.
+        input.click();
+      }
+    };
     return (
       <div className="space-y-2">
         <label className="text-xs font-medium text-slate-600">
           Additional Image {slot}
         </label>
         {preview ? (
-          <div className="relative border rounded-lg p-2 inline-block">
-            <img
-              src={preview}
-              alt={`Additional ${slot}`}
-              className="max-h-40 rounded object-contain"
-            />
-            <button
-              type="button"
-              onClick={() => removeImage(slot)}
-              className="absolute -top-2 -right-2 bg-red-500 text-white rounded-full p-0.5 hover:bg-red-600"
-            >
-              <X className="h-3.5 w-3.5" />
-            </button>
+          <div
+            ref={dropRef}
+            onDrop={(e) => handleDrop(e, slot)}
+            onDragOver={handleDragOver}
+            onPaste={(e) => handleZonePaste(e, slot)}
+            onFocus={() => setActiveUploadSlot(slot)}
+            onClick={() => setActiveUploadSlot(slot)}
+            tabIndex={0}
+            className="border rounded-lg p-2 space-y-2 focus:outline-none focus:ring-2 focus:ring-teal-500/30"
+          >
+            <div className="relative inline-block">
+              <img
+                src={preview}
+                alt={`Additional ${slot}`}
+                className="max-h-40 rounded object-contain cursor-zoom-in"
+                onClick={() => onPreviewClick(preview)}
+              />
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  removeImage(slot);
+                }}
+                className="absolute -top-2 -right-2 bg-red-500 text-white rounded-full p-0.5 hover:bg-red-600"
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            </div>
+            <div className="flex items-center gap-2">
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                className="h-7 text-xs"
+                onClick={openSystemPicker}
+              >
+                Change Image
+              </Button>
+              <span className="text-[11px] text-slate-400">You can also paste (Ctrl+V) to replace.</span>
+            </div>
           </div>
         ) : (
           <div
             ref={dropRef}
             onDrop={(e) => handleDrop(e, slot)}
             onDragOver={handleDragOver}
-            onPaste={(e) => handlePaste(e, slot)}
+            onPaste={(e) => handleZonePaste(e, slot)}
+            onFocus={() => setActiveUploadSlot(slot)}
+            onClick={openSystemPicker}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                openSystemPicker();
+              }
+            }}
             tabIndex={0}
-            onClick={() => inputRef.current?.click()}
             className="border-2 border-dashed border-slate-300 rounded-lg p-6 text-center cursor-pointer hover:border-teal-400 hover:bg-teal-50/30 transition-colors focus:outline-none focus:border-teal-500"
           >
             <Upload className="h-8 w-8 mx-auto text-slate-400 mb-2" />
@@ -698,10 +959,11 @@ export function OperationsLeadsInquiryPanel({
           </div>
         )}
         <input
+          id={inputId}
           ref={inputRef}
           type="file"
           accept="image/*"
-          className="hidden"
+          className="sr-only"
           onChange={(e) => handleFileInputChange(e, slot)}
         />
       </div>
@@ -714,9 +976,12 @@ export function OperationsLeadsInquiryPanel({
 
   if (view === "detail" && selectedInquiry) {
     const inq = selectedInquiry;
-    const leadInquiryHistory = inquiries
-      .filter((item) => item.lead_id === inq.lead_id)
-      .sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
+    const salesInquiryImages = [
+      ...(inq.image_url ? [inq.image_url] : []),
+      ...((Array.isArray(inq.additional_image_urls) ? inq.additional_image_urls : []).filter(
+        (url): url is string => typeof url === "string" && url.trim().length > 0
+      )),
+    ];
 
     const toNum = (v: string | null | undefined) => {
       const n = parseFloat(String(v ?? "").replace(/,/g, ""));
@@ -792,6 +1057,77 @@ export function OperationsLeadsInquiryPanel({
       clearanceExpense,
       totalDutyCost,
       costPerWeight,
+    };
+
+    const calculatorFieldsForForm = [
+      { label: "INV Value", value: calc.invValue, format: "money" as const },
+      { label: "Exchange Rate", value: exchangeRate, format: "number" as const },
+      { label: "PKR Value", value: calc.pkrValue, format: "money" as const },
+      { label: "Assessed Value", value: calc.assessedValue, format: "money" as const },
+      { label: "Custom Duty %", value: customDutyRate, format: "percent" as const },
+      { label: "Custom Duty Amount", value: calc.customDuty, format: "money" as const },
+      { label: "Add CD %", value: addCdRate, format: "percent" as const },
+      { label: "Add CD Amount", value: calc.addCd, format: "money" as const },
+      { label: "GST %", value: gstRate, format: "percent" as const },
+      { label: "GST Amount", value: calc.gst, format: "money" as const },
+      { label: "Add GST %", value: addGstRate, format: "percent" as const },
+      { label: "Add GST Amount", value: calc.addGst, format: "money" as const },
+      { label: "Income Tax %", value: incomeTaxRate, format: "percent" as const },
+      { label: "Income Tax Amount", value: calc.incomeTax, format: "money" as const },
+      { label: "Excise %", value: exciseRate, format: "percent" as const },
+      { label: "Excise Amount", value: calc.excise, format: "money" as const },
+      { label: "Regular Duty %", value: regularDutyRate, format: "percent" as const },
+      { label: "Regular Duty Amount", value: calc.regularDuty, format: "money" as const },
+      { label: "Stamp Duty %", value: stampDutyRate, format: "percent" as const },
+      { label: "Stamp Duty Amount", value: calc.stampDuty, format: "money" as const },
+      { label: "INV Fine", value: calc.invFine, format: "money" as const },
+      { label: "Freight", value: calc.freight, format: "money" as const },
+      { label: "Shipping Line Charges", value: calc.shippingLineCharges, format: "money" as const },
+      { label: "Clearance Expense", value: calc.clearanceExpense, format: "money" as const },
+      { label: "Total Duty Cost", value: calc.totalDutyCost, format: "money" as const },
+      { label: "Cost per Weight", value: calc.costPerWeight, format: "number" as const },
+    ].filter((item) => Math.abs(item.value) > 0);
+
+    const fieldLabels: Record<string, string> = {
+      product_name: "Product",
+      total_weight: "Weight",
+      cbm: "CBM",
+      quantity: "Quantity",
+      description: "Details",
+      image_url: "Image",
+      link_url: "Link",
+      sent_to_accounting: "Sent to Accounting",
+      sent_at: "Sent At",
+      inv_value: "INV Value",
+      exchange_rate: "Exchange Rate",
+      custom_duty_rate: "Custom Duty %",
+      add_cd_rate: "Add CD %",
+      gst_rate: "GST %",
+      add_gst_rate: "Add GST %",
+      income_tax_rate: "Income Tax %",
+      excise_rate: "Excise %",
+      regular_duty_rate: "Regular Duty %",
+      stamp_duty_rate: "Stamp Duty %",
+      inv_fine: "INV Fine",
+      freight: "Freight",
+      shipping_line_charges: "Shipping Line Charges",
+      clearance_expense: "Clearance Expense",
+      additional_image_1: "Additional Image 1",
+      additional_image_2: "Additional Image 2",
+      status: "Status",
+    };
+
+    const formatLogValue = (value: unknown) => {
+      if (value === null || value === undefined || value === "") return "-";
+      if (typeof value === "boolean") return value ? "Yes" : "No";
+      if (typeof value === "number") return value.toString();
+      if (typeof value === "string") {
+        if (value.includes("T") && !Number.isNaN(new Date(value).getTime())) {
+          return new Date(value).toLocaleString();
+        }
+        return value;
+      }
+      return String(value);
     };
 
     return (
@@ -1018,7 +1354,12 @@ export function OperationsLeadsInquiryPanel({
                 <div className="grid grid-cols-12 border-b">
                   <div className="col-span-5 px-3 py-2 border-r text-sm font-medium">INV Value</div>
                   <div className="col-span-3 px-2 py-1.5 border-r">
-                    <Input value={calcInvValue} onChange={(e) => setCalcInvValue(e.target.value)} className="h-8 text-xs" />
+                    <Input
+                      value={calcInvValue}
+                      onChange={(e) => setCalcInvValue(e.target.value)}
+                      onBlur={() => void logCalculatorFieldChange("inv_value", calcInvValue)}
+                      className="h-8 text-xs"
+                    />
                   </div>
                   <div className="col-span-4 px-3 py-2 text-right text-sm font-semibold">{calc.invValue || "-"}</div>
                 </div>
@@ -1026,34 +1367,48 @@ export function OperationsLeadsInquiryPanel({
                 <div className="grid grid-cols-12 border-b">
                   <div className="col-span-5 px-3 py-2 border-r text-sm font-medium">@ (Exchange Rate)</div>
                   <div className="col-span-3 px-2 py-1.5 border-r">
-                    <Input value={calcExchangeRate} onChange={(e) => setCalcExchangeRate(e.target.value)} className="h-8 text-xs" />
+                    <Input
+                      value={calcExchangeRate}
+                      onChange={(e) => setCalcExchangeRate(e.target.value)}
+                      onBlur={() => void logCalculatorFieldChange("exchange_rate", calcExchangeRate)}
+                      className="h-8 text-xs"
+                    />
                   </div>
                   <div className="col-span-4 px-3 py-2 text-right text-sm font-semibold">{calcExchangeRate || "-"}</div>
                 </div>
 
-                <div className="grid grid-cols-12 border-b">
-                  <div className="col-span-8 px-3 py-2 border-r text-sm font-medium">PKR Value</div>
-                  <div className="col-span-4 px-3 py-2 text-right text-sm font-semibold">{fmtMoney(calc.pkrValue)}</div>
-                </div>
-                <div className="grid grid-cols-12 border-b">
-                  <div className="col-span-8 px-3 py-2 border-r text-sm font-medium">Assessed Value</div>
-                  <div className="col-span-4 px-3 py-2 text-right text-sm font-semibold">{fmtMoney(calc.assessedValue)}</div>
-                </div>
+                {(!adminCalculatorMode || calc.pkrValue !== 0) && (
+                  <div className="grid grid-cols-12 border-b">
+                    <div className="col-span-8 px-3 py-2 border-r text-sm font-medium">PKR Value</div>
+                    <div className="col-span-4 px-3 py-2 text-right text-sm font-semibold">{fmtMoney(calc.pkrValue)}</div>
+                  </div>
+                )}
+                {(!adminCalculatorMode || calc.assessedValue !== 0) && (
+                  <div className="grid grid-cols-12 border-b">
+                    <div className="col-span-8 px-3 py-2 border-r text-sm font-medium">Assessed Value</div>
+                    <div className="col-span-4 px-3 py-2 text-right text-sm font-semibold">{fmtMoney(calc.assessedValue)}</div>
+                  </div>
+                )}
 
                 {[
-                  { label: "Custom Duty", rate: calcCustomDutyRate, setRate: setCalcCustomDutyRate, amount: calc.customDuty },
-                  { label: "Add CD", rate: calcAddCdRate, setRate: setCalcAddCdRate, amount: calc.addCd },
-                  { label: "GST", rate: calcGstRate, setRate: setCalcGstRate, amount: calc.gst },
-                  { label: "Add GST", rate: calcAddGstRate, setRate: setCalcAddGstRate, amount: calc.addGst },
-                  { label: "Income Tax", rate: calcIncomeTaxRate, setRate: setCalcIncomeTaxRate, amount: calc.incomeTax },
-                  { label: "Excise", rate: calcExciseRate, setRate: setCalcExciseRate, amount: calc.excise },
-                  { label: "Regular Duty", rate: calcRegularDutyRate, setRate: setCalcRegularDutyRate, amount: calc.regularDuty },
-                  { label: "Stamp Duty", rate: calcStampDutyRate, setRate: setCalcStampDutyRate, amount: calc.stampDuty },
+                  { field: "custom_duty_rate", label: "Custom Duty", rate: calcCustomDutyRate, setRate: setCalcCustomDutyRate, amount: calc.customDuty },
+                  { field: "add_cd_rate", label: "Add CD", rate: calcAddCdRate, setRate: setCalcAddCdRate, amount: calc.addCd },
+                  { field: "gst_rate", label: "GST", rate: calcGstRate, setRate: setCalcGstRate, amount: calc.gst },
+                  { field: "add_gst_rate", label: "Add GST", rate: calcAddGstRate, setRate: setCalcAddGstRate, amount: calc.addGst },
+                  { field: "income_tax_rate", label: "Income Tax", rate: calcIncomeTaxRate, setRate: setCalcIncomeTaxRate, amount: calc.incomeTax },
+                  { field: "excise_rate", label: "Excise", rate: calcExciseRate, setRate: setCalcExciseRate, amount: calc.excise },
+                  { field: "regular_duty_rate", label: "Regular Duty", rate: calcRegularDutyRate, setRate: setCalcRegularDutyRate, amount: calc.regularDuty },
+                  { field: "stamp_duty_rate", label: "Stamp Duty", rate: calcStampDutyRate, setRate: setCalcStampDutyRate, amount: calc.stampDuty },
                 ].map((row) => (
                   <div key={row.label} className="grid grid-cols-12 border-b">
                     <div className="col-span-5 px-3 py-2 border-r text-sm">{row.label}</div>
                     <div className="col-span-3 px-2 py-1.5 border-r">
-                      <Input value={row.rate} onChange={(e) => row.setRate(e.target.value)} className="h-8 text-xs" />
+                      <Input
+                        value={row.rate}
+                        onChange={(e) => row.setRate(e.target.value)}
+                        onBlur={() => void logCalculatorFieldChange(row.field, row.rate)}
+                        className="h-8 text-xs"
+                      />
                       <div className="text-[10px] text-slate-500 mt-0.5">{fmtRate(row.rate)}</div>
                     </div>
                     <div className="col-span-4 px-3 py-2 text-right text-sm font-semibold">{fmtMoney(row.amount)}</div>
@@ -1061,55 +1416,71 @@ export function OperationsLeadsInquiryPanel({
                 ))}
 
                 {[
-                  { label: "INV Fine", value: calcInvFine, setValue: setCalcInvFine, amount: calc.invFine },
-                  { label: "Freight", value: calcFreight, setValue: setCalcFreight, amount: calc.freight },
-                  { label: "Shipping Line Charges", value: calcShippingLineCharges, setValue: setCalcShippingLineCharges, amount: calc.shippingLineCharges },
-                  { label: "Clearance Expense", value: calcClearanceExpense, setValue: setCalcClearanceExpense, amount: calc.clearanceExpense },
+                  { field: "inv_fine", label: "INV Fine", value: calcInvFine, setValue: setCalcInvFine, amount: calc.invFine },
+                  { field: "freight", label: "Freight", value: calcFreight, setValue: setCalcFreight, amount: calc.freight },
+                  { field: "shipping_line_charges", label: "Shipping Line Charges", value: calcShippingLineCharges, setValue: setCalcShippingLineCharges, amount: calc.shippingLineCharges },
+                  { field: "clearance_expense", label: "Clearance Expense", value: calcClearanceExpense, setValue: setCalcClearanceExpense, amount: calc.clearanceExpense },
                 ].map((row) => (
                   <div key={row.label} className="grid grid-cols-12 border-b">
                     <div className="col-span-5 px-3 py-2 border-r text-sm">{row.label}</div>
                     <div className="col-span-3 px-2 py-1.5 border-r">
-                      <Input value={row.value} onChange={(e) => row.setValue(e.target.value)} className="h-8 text-xs" />
+                      <Input
+                        value={row.value}
+                        onChange={(e) => row.setValue(e.target.value)}
+                        onBlur={() => void logCalculatorFieldChange(row.field, row.value)}
+                        className="h-8 text-xs"
+                      />
                     </div>
                     <div className="col-span-4 px-3 py-2 text-right text-sm font-semibold">{fmtMoney(row.amount)}</div>
                   </div>
                 ))}
 
-                <div className="grid grid-cols-12 bg-yellow-50">
-                  <div className="col-span-8 px-3 py-2 border-r text-sm font-bold text-slate-800">Total Duty Cost</div>
-                  <div className="col-span-4 px-3 py-2 text-right text-sm font-bold text-slate-900">{fmtMoney(calc.totalDutyCost)}</div>
-                </div>
+                {(!adminCalculatorMode || calc.totalDutyCost !== 0) && (
+                  <div className="grid grid-cols-12 bg-yellow-50">
+                    <div className="col-span-8 px-3 py-2 border-r text-sm font-bold text-slate-800">Total Duty Cost</div>
+                    <div className="col-span-4 px-3 py-2 text-right text-sm font-bold text-slate-900">{fmtMoney(calc.totalDutyCost)}</div>
+                  </div>
+                )}
               </div>
 
               <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-2">
-                <div>
-                  <div className="text-xs text-slate-500 font-medium">Weight</div>
-                  <div className="text-sm font-semibold text-slate-800 mt-0.5">{weightKg || "-"}</div>
-                </div>
-                <div>
-                  <div className="text-xs text-slate-500 font-medium">Cost per Weight</div>
-                  <div className="text-sm font-semibold text-slate-800 mt-0.5">
-                    {weightKg > 0 ? calc.costPerWeight.toFixed(6) : "-"}
+                {(!adminCalculatorMode || weightKg !== 0) && (
+                  <div>
+                    <div className="text-xs text-slate-500 font-medium">Weight</div>
+                    <div className="text-sm font-semibold text-slate-800 mt-0.5">{weightKg || "-"}</div>
                   </div>
-                </div>
+                )}
+                {(!adminCalculatorMode || calc.costPerWeight !== 0) && (
+                  <div>
+                    <div className="text-xs text-slate-500 font-medium">Cost per Weight</div>
+                    <div className="text-sm font-semibold text-slate-800 mt-0.5">
+                      {weightKg > 0 ? calc.costPerWeight.toFixed(6) : "-"}
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
 
             {/* Separator */}
             <div className="border-t" />
 
-            {/* Image */}
-            {inq.image_url && (
+            {/* Images */}
+            {salesInquiryImages.length > 0 && (
               <div>
                 <label className="text-xs text-slate-500 font-medium flex items-center gap-1">
-                  <ImageIcon className="h-3.5 w-3.5" /> Attached Image
+                  <ImageIcon className="h-3.5 w-3.5" /> Attached Image{salesInquiryImages.length > 1 ? "s" : ""}
                 </label>
-                <div className="mt-1 border rounded-lg p-2 inline-block">
-                  <img
-                    src={inq.image_url}
-                    alt="Inquiry attachment"
-                    className="max-h-56 rounded object-contain"
-                  />
+                <div className="mt-2 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                  {salesInquiryImages.map((img, idx) => (
+                    <div key={`${img.slice(0, 32)}-${idx}`} className="border rounded-lg p-2">
+                      <img
+                        src={img}
+                        alt={`Inquiry attachment ${idx + 1}`}
+                        className="max-h-56 w-full rounded object-contain cursor-zoom-in"
+                        onClick={() => openImagePreview(img, `Inquiry Image ${idx + 1}`)}
+                      />
+                    </div>
+                  ))}
                 </div>
               </div>
             )}
@@ -1302,154 +1673,105 @@ export function OperationsLeadsInquiryPanel({
                 </h3>
                 <div className="space-y-4 max-h-[70vh] overflow-y-auto pr-1">
                   {(() => {
-                    // Keep history stable/readable:
-                    // - Always show value-diff timeline from inquiry versions
-                    // - Only inject explicit "log_note" entries from inquiry_logs
-                    const extraLogs = inquiryLogs.filter((log) => {
-                      const next = (log.new_values || {}) as Record<string, unknown>;
-                      const hasNote =
-                        log.action === "log_note" &&
-                        typeof next.note === "string" &&
-                        String(next.note).trim().length > 0;
-                      const hasActivity =
-                        log.action === "activity" &&
-                        typeof next.summary === "string" &&
-                        String(next.summary).trim().length > 0;
-                      return hasNote || hasActivity;
-                    });
+                    const sortedLogs = [...inquiryLogs].sort(
+                      (a, b) =>
+                        new Date(a.performed_at).getTime() - new Date(b.performed_at).getTime()
+                    );
 
-                    const extraLogNodes = extraLogs.map((log) => {
-                        const next = (log.new_values || {}) as Record<string, unknown>;
-                        const note = typeof next.note === "string" ? next.note : "";
-                        const summary = typeof next.summary === "string" ? next.summary : "";
-                        const dueDate =
-                          typeof next.due_date === "string" && next.due_date
-                            ? new Date(next.due_date)
-                            : null;
-                        const isPast = dueDate ? dueDate < new Date() : false;
-                        return (
-                          <div key={log.id} className="flex gap-3">
-                            <div className={`h-8 w-8 rounded-full flex items-center justify-center font-semibold text-xs shrink-0 mt-0.5 ${
-                              log.action === "activity" ? "bg-blue-100 text-blue-800" : "bg-amber-100 text-amber-800"
-                            }`}>
-                              {(log.performed_by || "U").charAt(0).toUpperCase()}
-                            </div>
-                            <div className="flex-1 min-w-0">
-                              <div className="flex items-baseline gap-2 flex-wrap">
-                                <span className="font-semibold text-sm text-slate-700">{log.performed_by}</span>
-                                <span className="text-xs text-slate-400">
-                                  {new Date(log.performed_at).toLocaleTimeString([], {
-                                    hour: "2-digit",
-                                    minute: "2-digit",
-                                  })}
-                                  {" · "}
-                                  {new Date(log.performed_at).toLocaleDateString([], {
-                                    month: "short",
-                                    day: "numeric",
-                                  })}
-                                </span>
-                              </div>
-                              {log.action === "activity" ? (
-                                <div className={`border rounded-lg p-2.5 mt-1 ${isPast ? "bg-red-50 border-red-200" : "bg-blue-50 border-blue-200"}`}>
-                                  <div className="flex items-center gap-1.5 mb-1">
-                                    <CalendarClock className={`h-3.5 w-3.5 ${isPast ? "text-red-600" : "text-blue-600"}`} />
-                                    <span className={`text-xs font-semibold ${isPast ? "text-red-700" : "text-blue-700"}`}>
-                                      Reminder / Task
-                                    </span>
-                                    {dueDate && (
-                                      <span className={`text-xs ml-auto ${isPast ? "text-red-500" : "text-blue-500"}`}>
-                                        Due: {dueDate.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
-                                      </span>
-                                    )}
-                                  </div>
-                                  <p className="text-sm text-slate-700 whitespace-pre-wrap">{summary}</p>
-                                </div>
-                              ) : (
-                                <div className="bg-amber-50 border border-amber-200 rounded-lg p-2.5 mt-1 text-sm text-slate-700 whitespace-pre-wrap">
-                                  {note}
-                                </div>
-                              )}
-                            </div>
-                          </div>
-                        );
-                      });
-
-                    if (leadInquiryHistory.length === 0 && extraLogNodes.length === 0) {
+                    if (sortedLogs.length === 0) {
                       return <p className="text-sm text-slate-400 text-center py-8">No activity yet.</p>;
                     }
 
-                    const timelineNodes = leadInquiryHistory.map((h, idx) => {
-                      const prev = idx > 0 ? leadInquiryHistory[idx - 1] : null;
-                      const actor = h.leads?.sales_agents?.name || h.leads?.name || "User";
-                      const changes: { field: string; oldVal: string; newVal: string }[] = [];
-                      if (prev) {
-                        if ((prev.product_name || "") !== (h.product_name || "")) {
-                          changes.push({ field: "Product", oldVal: prev.product_name || "-", newVal: h.product_name || "-" });
-                        }
-                        if ((prev.quantity || "") !== (h.quantity || "")) {
-                          changes.push({ field: "Quantity", oldVal: prev.quantity || "-", newVal: h.quantity || "-" });
-                        }
-                        if ((prev.total_weight || "") !== (h.total_weight || "")) {
-                          changes.push({ field: "Weight", oldVal: prev.total_weight || "-", newVal: h.total_weight || "-" });
-                        }
-                        if ((prev.cbm || "") !== (h.cbm || "")) {
-                          changes.push({ field: "CBM", oldVal: prev.cbm || "-", newVal: h.cbm || "-" });
-                        }
-                        if ((prev.description || "") !== (h.description || "")) {
-                          changes.push({ field: "Details", oldVal: prev.description || "-", newVal: h.description || "-" });
-                        }
-                      }
+                    return sortedLogs.map((log) => {
+                      const prev = (log.previous_values || {}) as Record<string, unknown>;
+                      const next = (log.new_values || {}) as Record<string, unknown>;
+                      const actor = log.performed_by || "User";
+                      const dueDate =
+                        typeof next.due_date === "string" && next.due_date
+                          ? new Date(next.due_date)
+                          : null;
+                      const isPast = dueDate ? dueDate < new Date() : false;
+                      const changedFields = Array.from(
+                        new Set([...Object.keys(prev), ...Object.keys(next)])
+                      );
+                      const headerLabel =
+                        log.action === "log_note"
+                          ? "Log Note"
+                          : log.action === "activity"
+                            ? "Activity"
+                            : log.action === "send_for_confirmation"
+                              ? "Sent for Confirmation"
+                              : log.action === "image_uploaded"
+                                ? "Image Upload"
+                                : log.action === "calculator_updated"
+                                  ? "Calculator Update"
+                                  : log.action === "lead_management_form_updated"
+                                    ? "Lead Management Update"
+                                    : log.action === "status_changed"
+                                      ? "Status Update"
+                                      : log.action === "created"
+                                        ? "Inquiry Created"
+                                        : "Inquiry Update";
+
                       return (
-                        <div key={h.id} className="flex gap-3">
+                        <div key={log.id} className="flex gap-3">
                           <div className="h-8 w-8 rounded-full flex items-center justify-center font-semibold text-xs shrink-0 mt-0.5 bg-teal-100 text-teal-800">
                             {(actor || "U").charAt(0).toUpperCase()}
                           </div>
                           <div className="flex-1 min-w-0">
                             <div className="flex items-baseline gap-2 flex-wrap">
                               <span className="font-semibold text-sm text-slate-700">{actor}</span>
+                              <span className="text-[11px] text-slate-500 font-medium">{headerLabel}</span>
                               <span className="text-xs text-slate-400">
-                                {new Date(h.created_at).toLocaleTimeString([], {
+                                {new Date(log.performed_at).toLocaleTimeString([], {
                                   hour: "2-digit",
                                   minute: "2-digit",
                                 })}
                                 {" · "}
-                                {new Date(h.created_at).toLocaleDateString([], {
+                                {new Date(log.performed_at).toLocaleDateString([], {
                                   month: "short",
                                   day: "numeric",
                                 })}
                               </span>
                             </div>
-                            {prev ? (
+
+                            {log.action === "log_note" ? (
+                              <div className="bg-amber-50 border border-amber-200 rounded-lg p-2.5 mt-1 text-sm text-slate-700 whitespace-pre-wrap">
+                                {String(next.note || "")}
+                              </div>
+                            ) : log.action === "activity" ? (
+                              <div className={`border rounded-lg p-2.5 mt-1 ${isPast ? "bg-red-50 border-red-200" : "bg-blue-50 border-blue-200"}`}>
+                                <div className="flex items-center gap-1.5 mb-1">
+                                  <CalendarClock className={`h-3.5 w-3.5 ${isPast ? "text-red-600" : "text-blue-600"}`} />
+                                  <span className={`text-xs font-semibold ${isPast ? "text-red-700" : "text-blue-700"}`}>
+                                    Reminder / Task
+                                  </span>
+                                  {dueDate && (
+                                    <span className={`text-xs ml-auto ${isPast ? "text-red-500" : "text-blue-500"}`}>
+                                      Due: {dueDate.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
+                                    </span>
+                                  )}
+                                </div>
+                                <p className="text-sm text-slate-700 whitespace-pre-wrap">{String(next.summary || "")}</p>
+                              </div>
+                            ) : changedFields.length > 0 ? (
                               <div className="space-y-1 mt-1">
-                                {changes.length > 0 ? (
-                                  changes.map((c) => (
-                                    <div key={`${h.id}-${c.field}`} className="text-sm text-slate-700">
-                                      <span className="text-slate-600 font-medium">{c.field}:</span>
-                                      <span className="ml-1 text-slate-500">Old: {c.oldVal}</span>
-                                      <span className="mx-1 text-slate-400">→</span>
-                                      <span className="font-semibold text-teal-700">New: {c.newVal}</span>
-                                    </div>
-                                  ))
-                                ) : (
-                                  <div className="text-sm text-slate-500">No field change in this version.</div>
-                                )}
+                                {changedFields.map((key) => (
+                                  <div key={`${log.id}-${key}`} className="text-sm text-slate-700">
+                                    <span className="text-slate-600 font-medium">{fieldLabels[key] || key}:</span>
+                                    <span className="ml-1 text-slate-500">Old: {formatLogValue(prev[key])}</span>
+                                    <span className="mx-1 text-slate-400">→</span>
+                                    <span className="font-semibold text-teal-700">New: {formatLogValue(next[key])}</span>
+                                  </div>
+                                ))}
                               </div>
                             ) : (
-                              <div className="text-sm text-slate-500 mt-1">
-                                Creating a new record...
-                              </div>
+                              <div className="text-sm text-slate-500 mt-1">Action recorded.</div>
                             )}
                           </div>
                         </div>
                       );
                     });
-
-                    return (
-                      <>
-                        {extraLogNodes}
-                        {timelineNodes}
-                      </>
-                    );
                   })()}
                 </div>
               </CardContent>
@@ -1485,6 +1807,14 @@ export function OperationsLeadsInquiryPanel({
                   />
                 </div>
                 <div className="space-y-1.5">
+                  <label className="text-sm font-medium text-slate-700">HS Code</label>
+                  <Input
+                    value={formHsCode}
+                    onChange={(e) => setFormHsCode(e.target.value)}
+                    placeholder="e.g. 3923.10"
+                  />
+                </div>
+                <div className="space-y-1.5">
                   <label className="text-sm font-medium text-slate-700">Total Weight</label>
                   <Input
                     value={formWeight}
@@ -1511,6 +1841,32 @@ export function OperationsLeadsInquiryPanel({
               </div>
 
               <div className="border-t pt-4" />
+              <h4 className="text-sm font-semibold text-slate-700">Calculator Fields (Non-Zero)</h4>
+              {calculatorFieldsForForm.length > 0 ? (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                  {calculatorFieldsForForm.map((row) => (
+                    <div
+                      key={row.label}
+                      className="flex items-center justify-between rounded border bg-slate-50 px-3 py-2 text-sm"
+                    >
+                      <span className="text-slate-600">{row.label}</span>
+                      <span className="font-semibold text-slate-800">
+                        {row.format === "percent"
+                          ? `${row.value.toFixed(2)}%`
+                          : row.format === "number"
+                            ? row.value.toLocaleString(undefined, { maximumFractionDigits: 6 })
+                            : fmtMoney(row.value)}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="rounded border border-dashed text-sm text-slate-400 px-3 py-2">
+                  All calculator fields are currently zero.
+                </div>
+              )}
+
+              <div className="border-t pt-4" />
               <h4 className="text-sm font-semibold text-slate-700">Images</h4>
 
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -1518,13 +1874,20 @@ export function OperationsLeadsInquiryPanel({
                   <label className="text-xs font-medium text-slate-600">
                     Original Inquiry Image
                   </label>
-                  {selectedInquiry?.image_url ? (
-                    <div className="border rounded-lg p-2">
-                      <img
-                        src={selectedInquiry.image_url}
-                        alt="Original inquiry"
-                        className="max-h-40 rounded object-contain w-full"
-                      />
+                  {salesInquiryImages.length > 0 ? (
+                    <div className="space-y-2">
+                      <div className="grid grid-cols-1 gap-2">
+                        {salesInquiryImages.map((img, idx) => (
+                          <div key={`${img.slice(0, 32)}-form-${idx}`} className="border rounded-lg p-2">
+                            <img
+                              src={img}
+                              alt={`Original inquiry ${idx + 1}`}
+                              className="max-h-40 rounded object-contain w-full cursor-zoom-in"
+                              onClick={() => openImagePreview(img, `Original Inquiry Image ${idx + 1}`)}
+                            />
+                          </div>
+                        ))}
+                      </div>
                       <p className="text-[10px] text-slate-400 mt-1 text-center">Read-only</p>
                     </div>
                   ) : (
@@ -1540,6 +1903,7 @@ export function OperationsLeadsInquiryPanel({
                   preview={additionalImage1Preview}
                   dropRef={dropZone1Ref}
                   inputRef={img1Ref}
+                  onPreviewClick={(url) => openImagePreview(url, "Additional Image 1")}
                 />
 
                 <ImageUploadSection
@@ -1547,6 +1911,7 @@ export function OperationsLeadsInquiryPanel({
                   preview={additionalImage2Preview}
                   dropRef={dropZone2Ref}
                   inputRef={img2Ref}
+                  onPreviewClick={(url) => openImagePreview(url, "Additional Image 2")}
                 />
               </div>
             </div>
@@ -1574,6 +1939,28 @@ export function OperationsLeadsInquiryPanel({
                 Send for Confirmation
               </Button>
             </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        <Dialog
+          open={!!imagePreview}
+          onOpenChange={(open) => {
+            if (!open) setImagePreview(null);
+          }}
+        >
+          <DialogContent className="sm:max-w-5xl w-[95vw] max-h-[95vh] p-4">
+            <DialogHeader>
+              <DialogTitle className="text-sm">{imagePreview?.title || "Image Preview"}</DialogTitle>
+            </DialogHeader>
+            {imagePreview?.url ? (
+              <div className="overflow-auto max-h-[80vh]">
+                <img
+                  src={imagePreview.url}
+                  alt={imagePreview.title}
+                  className="w-full h-auto object-contain"
+                />
+              </div>
+            ) : null}
           </DialogContent>
         </Dialog>
 

@@ -132,6 +132,7 @@ export function InquiryTrackingPanel() {
           sent_to_accounting: false,
           sent_to_operations: false,
           sent_at: null,
+          calculator_values: null,
           created_at: lead.created_at,
           updated_at: lead.updated_at,
           leads: {

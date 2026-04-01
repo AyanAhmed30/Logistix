@@ -203,9 +203,20 @@ export function SalesAgentDashboardShell({ username, permissions }: Props) {
                     >
                       <div className="text-sm leading-snug">
                         <div>
-                          <span className="font-semibold">{n.sender_username}</span>{" "}
-                          ({n.sender_role === "sales_agent" ? "Sales Agent" : n.sender_role === "operations" ? "Operations" : "Admin"}) sent you a message regarding{" "}
-                          Lead #{n.leads?.lead_id_formatted || "N/A"} at{" "}
+                          {n.notification_type === "lifecycle" ? (
+                            <>
+                              <span className="font-semibold">{n.sender_username}</span>{" "}
+                              ({n.sender_role === "sales_agent" ? "Sales Agent" : n.sender_role === "operations" ? "Operations" : "Admin"}){" "}
+                              {n.message || "updated an inquiry status."}
+                            </>
+                          ) : (
+                            <>
+                              <span className="font-semibold">{n.sender_username}</span>{" "}
+                              ({n.sender_role === "sales_agent" ? "Sales Agent" : n.sender_role === "operations" ? "Operations" : "Admin"}) sent you a message regarding{" "}
+                              Lead #{n.leads?.lead_id_formatted || "N/A"}
+                            </>
+                          )}{" "}
+                          at{" "}
                           {new Date(n.created_at).toLocaleString([], {
                             hour: "2-digit",
                             minute: "2-digit",

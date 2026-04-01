@@ -576,13 +576,14 @@ function InquiryDialog({
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
+  const inquiryImageInputId = "sales-inquiry-image-input";
   const [inquiry, setInquiry] = useState<LeadInquiry | null>(null);
   const [quotations, setQuotations] = useState<InquiryQuotation[]>([]);
   const [productName, setProductName] = useState("");
   const [totalWeight, setTotalWeight] = useState("");
   const [cbm, setCbm] = useState("");
   const [quantity, setQuantity] = useState("");
-  const [imageData, setImageData] = useState("");
+  const [imageDataList, setImageDataList] = useState<string[]>([]);
   const [otherDetails, setOtherDetails] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [isPending, startTransition] = useTransition();
@@ -613,7 +614,11 @@ function InquiryDialog({
         setTotalWeight(inquiryResult.inquiry.total_weight || "");
         setCbm(inquiryResult.inquiry.cbm || "");
         setQuantity(inquiryResult.inquiry.quantity || "");
-        setImageData(inquiryResult.inquiry.image_url || "");
+        const primaryImage = inquiryResult.inquiry.image_url || "";
+        const additionalImages = Array.isArray(inquiryResult.inquiry.additional_image_urls)
+          ? inquiryResult.inquiry.additional_image_urls.filter((url) => typeof url === "string" && url.trim().length > 0)
+          : [];
+        setImageDataList(primaryImage ? [primaryImage, ...additionalImages] : additionalImages);
         setOtherDetails(inquiryResult.inquiry.description || "");
       }
       if (!("error" in quotationsResult)) {
@@ -652,7 +657,7 @@ function InquiryDialog({
       setTotalWeight("");
       setCbm("");
       setQuantity("");
-      setImageData("");
+      setImageDataList([]);
       setOtherDetails("");
       setShowQuotationHistory(false);
       setInquiryHistory([]);
@@ -674,22 +679,36 @@ function InquiryDialog({
     return () => clearInterval(timer);
   }, [open, lead]);
 
-  // Handle image file (from drop, paste, or file input)
-  const handleImageFile = useCallback((file: File) => {
-    if (file.size > 5 * 1024 * 1024) {
-      toast.error("Image must be less than 5MB");
-      return;
-    }
-    if (!file.type.startsWith("image/")) {
-      toast.error("Please upload an image file");
-      return;
-    }
-    const reader = new FileReader();
-    reader.onload = () => {
-      setImageData(reader.result as string);
-    };
-    reader.readAsDataURL(file);
+  const readImageAsDataUrl = useCallback((file: File) => {
+    return new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result || ""));
+      reader.onerror = () => reject(new Error("Failed to read image"));
+      reader.readAsDataURL(file);
+    });
   }, []);
+
+  // Handle image files (from drop, paste, or file input)
+  const handleImageFiles = useCallback(async (files: File[]) => {
+    const validFiles = files.filter((file) => {
+      if (file.size > 5 * 1024 * 1024) {
+        toast.error(`"${file.name}" is larger than 5MB`);
+        return false;
+      }
+      if (!file.type.startsWith("image/")) {
+        toast.error(`"${file.name}" is not an image file`);
+        return false;
+      }
+      return true;
+    });
+    if (validFiles.length === 0) return;
+    try {
+      const urls = await Promise.all(validFiles.map((file) => readImageAsDataUrl(file)));
+      setImageDataList((prev) => [...prev, ...urls.filter((u) => u.length > 0)]);
+    } catch {
+      toast.error("Failed to process selected image(s)");
+    }
+  }, [readImageAsDataUrl]);
 
   // Global paste handler for Ctrl+V image paste
   useEffect(() => {
@@ -701,14 +720,16 @@ function InquiryDialog({
         if (item.type.startsWith("image/")) {
           e.preventDefault();
           const file = item.getAsFile();
-          if (file) handleImageFile(file);
+          if (file) {
+            void handleImageFiles([file]);
+          }
           break;
         }
       }
     }
     document.addEventListener("paste", handlePaste);
     return () => document.removeEventListener("paste", handlePaste);
-  }, [open, handleImageFile]);
+  }, [open, handleImageFiles]);
 
   function handleDragOver(e: React.DragEvent) {
     e.preventDefault();
@@ -728,21 +749,21 @@ function InquiryDialog({
     setIsDragging(false);
     const files = e.dataTransfer.files;
     if (files.length > 0) {
-      handleImageFile(files[0]);
+      void handleImageFiles(Array.from(files));
     }
   }
 
   function handleFileSelect(e: React.ChangeEvent<HTMLInputElement>) {
     const files = e.target.files;
     if (files && files.length > 0) {
-      handleImageFile(files[0]);
+      void handleImageFiles(Array.from(files));
     }
     // Reset input so the same file can be selected again
     if (fileInputRef.current) fileInputRef.current.value = "";
   }
 
-  function removeImage() {
-    setImageData("");
+  function removeImage(index: number) {
+    setImageDataList((prev) => prev.filter((_, i) => i !== index));
   }
 
   function handleSaveInquiry() {
@@ -753,7 +774,8 @@ function InquiryDialog({
         total_weight: totalWeight,
         cbm,
         quantity,
-        image_url: imageData || null,
+        image_url: imageDataList[0] || null,
+        additional_image_urls: imageDataList.slice(1),
         description: otherDetails,
       });
       if ("error" in result) {
@@ -778,7 +800,8 @@ function InquiryDialog({
         total_weight: totalWeight,
         cbm,
         quantity,
-        image_url: imageData || null,
+        image_url: imageDataList[0] || null,
+        additional_image_urls: imageDataList.slice(1),
         description: otherDetails,
       });
       if ("error" in saveResult) {
@@ -955,54 +978,72 @@ function InquiryDialog({
             {/* Image Upload - Drag & Drop + Paste */}
             <div className="space-y-1.5">
               <label className="text-sm font-medium flex items-center gap-1">
-                <ImageIcon className="h-4 w-4" /> Image
+                <ImageIcon className="h-4 w-4" /> Images
               </label>
-              {imageData ? (
-                <div className="relative border rounded-lg p-3 bg-slate-50">
-                  <img
-                    src={imageData}
-                    alt="Inquiry attachment"
-                    className="max-h-56 rounded object-contain mx-auto"
-                  />
-                  <Button
-                    variant="destructive"
-                    size="sm"
-                    className="absolute top-2 right-2 h-7 w-7 p-0"
-                    onClick={removeImage}
-                    type="button"
-                  >
-                    <X className="h-3.5 w-3.5" />
-                  </Button>
-                </div>
-              ) : (
-                <div
-                  className={`border-2 border-dashed rounded-lg p-6 text-center cursor-pointer transition-colors ${
-                    isDragging
-                      ? "border-orange-500 bg-orange-50"
-                      : "border-slate-300 hover:border-orange-400 hover:bg-orange-50/50"
-                  }`}
-                  onDragOver={handleDragOver}
-                  onDragLeave={handleDragLeave}
-                  onDrop={handleDrop}
-                  onClick={() => fileInputRef.current?.click()}
-                >
-                  <input
-                    ref={fileInputRef}
-                    type="file"
-                    accept="image/*"
-                    className="hidden"
-                    onChange={handleFileSelect}
-                  />
-                  <ImageIcon className="h-8 w-8 mx-auto text-slate-400 mb-2" />
-                  <p className="text-sm text-slate-600 font-medium">
-                    {isDragging ? "Drop image here..." : "Drag & drop an image here"}
-                  </p>
-                  <p className="text-xs text-slate-400 mt-1">
-                    or click to browse &bull; Paste with <kbd className="px-1 py-0.5 bg-slate-200 rounded text-[10px] font-mono">Ctrl+V</kbd>
-                  </p>
-                  <p className="text-[10px] text-slate-400 mt-1">Max 5MB &bull; JPG, PNG, GIF, WebP</p>
-                </div>
-              )}
+              <div
+                className={`border-2 border-dashed rounded-lg p-4 transition-colors ${
+                  isDragging
+                    ? "border-orange-500 bg-orange-50"
+                    : "border-slate-300 hover:border-orange-400 hover:bg-orange-50/50"
+                }`}
+                onDragOver={handleDragOver}
+                onDragLeave={handleDragLeave}
+                onDrop={handleDrop}
+              >
+                {imageDataList.length === 0 ? (
+                  <label htmlFor={inquiryImageInputId} className="block cursor-pointer text-center">
+                    <ImageIcon className="h-8 w-8 mx-auto text-slate-400 mb-2" />
+                    <p className="text-sm text-slate-600 font-medium">
+                      {isDragging ? "Drop image(s) here..." : "Drag & drop image(s) here"}
+                    </p>
+                    <p className="text-xs text-slate-400 mt-1">
+                      or click to browse &bull; Paste with <kbd className="px-1 py-0.5 bg-slate-200 rounded text-[10px] font-mono">Ctrl+V</kbd>
+                    </p>
+                    <p className="text-[10px] text-slate-400 mt-1">Max 5MB each &bull; JPG, PNG, GIF, WebP</p>
+                  </label>
+                ) : (
+                  <div className="space-y-3">
+                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                      {imageDataList.map((img, idx) => (
+                        <div key={`${img.slice(0, 30)}-${idx}`} className="relative border rounded-md p-1.5 bg-white">
+                          <img
+                            src={img}
+                            alt={`Inquiry attachment ${idx + 1}`}
+                            className="h-28 w-full rounded object-contain bg-slate-50"
+                          />
+                          <Button
+                            variant="destructive"
+                            size="sm"
+                            className="absolute top-1 right-1 h-6 w-6 p-0"
+                            onClick={() => removeImage(idx)}
+                            type="button"
+                          >
+                            <X className="h-3 w-3" />
+                          </Button>
+                        </div>
+                      ))}
+                      <label
+                        htmlFor={inquiryImageInputId}
+                        className="h-28 border rounded-md border-dashed bg-white hover:bg-slate-50 transition-colors cursor-pointer flex flex-col items-center justify-center text-slate-500"
+                        title="Add more images"
+                      >
+                        <Plus className="h-5 w-5 mb-1" />
+                        <span className="text-xs font-medium">Add</span>
+                      </label>
+                    </div>
+                    <p className="text-[10px] text-slate-400">You can also drag-drop or paste (Ctrl+V) to add more images.</p>
+                  </div>
+                )}
+                <input
+                  id={inquiryImageInputId}
+                  ref={fileInputRef}
+                  type="file"
+                  accept="image/*"
+                  multiple
+                  className="sr-only"
+                  onChange={handleFileSelect}
+                />
+              </div>
             </div>
 
             {/* Other Details */}

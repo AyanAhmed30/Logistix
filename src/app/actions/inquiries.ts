@@ -11,6 +11,7 @@ export type LeadInquiry = {
   lead_id: string;
   description: string;
   image_url: string | null;
+  additional_image_urls?: string[] | null;
   link_url: string | null;
   product_name: string;
   total_weight: string;
@@ -20,6 +21,7 @@ export type LeadInquiry = {
   sent_to_accounting: boolean;
   sent_to_operations: boolean;
   sent_at: string | null;
+  calculator_values: Record<string, string> | null;
   created_at: string;
   updated_at: string;
 };
@@ -95,6 +97,9 @@ export type LeadChatNotification = {
   recipient_username: string;
   is_read: boolean;
   created_at: string;
+  notification_type?: 'chat' | 'lifecycle';
+  event_type?: 'inquiry_sent' | 'sent_for_admin_approval' | 'approved' | 'rejected';
+  message?: string;
   leads?: {
     lead_id_formatted: string | null;
   } | null;
@@ -144,6 +149,7 @@ export async function saveInquiry(
     cbm: string;
     quantity: string;
     image_url: string | null;
+    additional_image_urls?: string[] | null;
     description: string;
   }
 ) {
@@ -171,6 +177,7 @@ export async function saveInquiry(
       quantity: data.quantity.trim(),
       description: data.description.trim(),
       image_url: data.image_url || null,
+      additional_image_urls: Array.isArray(data.additional_image_urls) ? data.additional_image_urls : [],
       updated_at: new Date().toISOString(),
     };
 
@@ -335,6 +342,37 @@ export async function sendInquiryToAccounting(leadId: string) {
         performed_by: session.username || 'sales-agent',
       },
     ]);
+
+    // Notify Operations users that a new inquiry has been sent by Sales Agent.
+    const { data: leadForNotification } = await supabase
+      .from('leads')
+      .select('lead_id_formatted')
+      .eq('id', leadId)
+      .maybeSingle();
+    const leadNumber = leadForNotification?.lead_id_formatted || 'N/A';
+
+    const { data: operationsUsers } = await supabase
+      .from('operations_users')
+      .select('username');
+    const recipients = (operationsUsers || [])
+      .map((u) => u.username)
+      .filter((u): u is string => !!u);
+
+    if (recipients.length > 0) {
+      await supabase.from('inquiry_lifecycle_notifications').insert(
+        recipients.map((username) => ({
+          lead_id: leadId,
+          inquiry_id: inquiry.id,
+          confirmation_id: null,
+          sender_role: 'sales_agent',
+          sender_username: session.username || 'sales-agent',
+          recipient_role: 'operations',
+          recipient_username: username,
+          event_type: 'inquiry_sent',
+          message: `Inquiry sent by Sales Agent for Lead #${leadNumber}.`,
+        }))
+      );
+    }
 
     revalidatePath('/sales-agent/dashboard');
     revalidatePath('/admin/dashboard');
@@ -976,6 +1014,127 @@ export async function addInquiryActivity(
   }
 }
 
+export async function addInquiryCalculatorFieldLog(
+  inquiryId: string,
+  field: string,
+  previousValue: string,
+  newValue: string
+) {
+  try {
+    const session = await getSession();
+    if (!session || (session.role !== 'admin' && session.role !== 'operations')) {
+      return { error: 'Unauthorized' };
+    }
+
+    if (!inquiryId || !field.trim()) {
+      return { error: 'Inquiry id and field are required' };
+    }
+
+    const prev = previousValue ?? '';
+    const next = newValue ?? '';
+    if (prev === next) return { success: true };
+
+    const supabase = await createAdminClient();
+    const { error } = await supabase
+      .from('inquiry_logs')
+      .insert([{
+        inquiry_id: inquiryId,
+        action: 'calculator_updated',
+        previous_values: { [field]: prev },
+        new_values: { [field]: next },
+        performed_by: session.username || 'operations',
+      }]);
+
+    if (error) return { error: error.message };
+
+    revalidatePath('/admin/dashboard');
+    revalidatePath('/operations/dashboard');
+    return { success: true };
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };
+  }
+}
+
+export async function saveInquiryCalculatorField(
+  _inquiryId: string,
+  field: string,
+  value: string
+) {
+  try {
+    const session = await getSession();
+    if (!session || (session.role !== 'admin' && session.role !== 'operations')) {
+      return { error: 'Unauthorized' };
+    }
+
+    if (!field.trim()) {
+      return { error: 'Field is required' };
+    }
+
+    const supabase = await createAdminClient();
+
+    const { data: configRow, error: fetchError } = await supabase
+      .from('inquiry_calculator_config')
+      .select('values')
+      .eq('id', 'shared')
+      .maybeSingle();
+
+    if (fetchError) {
+      return { error: fetchError.message };
+    }
+
+    const currentValues =
+      configRow?.values && typeof configRow.values === 'object'
+        ? configRow.values as Record<string, string>
+        : {};
+
+    const nextValues: Record<string, string> = {
+      ...currentValues,
+      [field]: value ?? '',
+    };
+
+    const { error: updateError } = await supabase
+      .from('inquiry_calculator_config')
+      .upsert({
+        id: 'shared',
+        values: nextValues,
+        updated_at: new Date().toISOString(),
+      }, { onConflict: 'id' });
+
+    if (updateError) return { error: updateError.message };
+
+    revalidatePath('/admin/dashboard');
+    revalidatePath('/operations/dashboard');
+    return { success: true, calculatorValues: nextValues };
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };
+  }
+}
+
+export async function getSharedInquiryCalculatorValues() {
+  try {
+    const session = await getSession();
+    if (!session || (session.role !== 'admin' && session.role !== 'operations')) {
+      return { error: 'Unauthorized' };
+    }
+
+    const supabase = await createAdminClient();
+    const { data, error } = await supabase
+      .from('inquiry_calculator_config')
+      .select('values')
+      .eq('id', 'shared')
+      .maybeSingle();
+
+    if (error) return { error: error.message };
+    const values =
+      data?.values && typeof data.values === 'object'
+        ? data.values as Record<string, string>
+        : {};
+    return { values };
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };
+  }
+}
+
 export async function getLeadChatMessages(leadId: string) {
   try {
     const session = await getSession();
@@ -1126,10 +1285,35 @@ export async function getMyLeadChatNotifications(limit = 20) {
 
     if (error) return { error: error.message };
 
-    const unreadCount = (data || []).filter((n) => !n.is_read).length;
+    const { data: lifecycleData, error: lifecycleError } = await supabase
+      .from('inquiry_lifecycle_notifications')
+      .select(`
+        *,
+        leads (
+          lead_id_formatted
+        )
+      `)
+      .eq('recipient_role', recipientRole)
+      .eq('recipient_username', session.username)
+      .order('created_at', { ascending: false })
+      .limit(limit);
+
+    const chatNotifications = ((data || []) as LeadChatNotification[]).map((n) => ({
+      ...n,
+      notification_type: 'chat' as const,
+    }));
+    const lifecycleNotifications = ((lifecycleError ? [] : (lifecycleData || [])) as LeadChatNotification[]).map((n) => ({
+      ...n,
+      notification_type: 'lifecycle' as const,
+    }));
+
+    const notifications = [...chatNotifications, ...lifecycleNotifications]
+      .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+      .slice(0, limit);
+    const unreadCount = notifications.filter((n) => !n.is_read).length;
 
     return {
-      notifications: (data || []) as LeadChatNotification[],
+      notifications,
       unreadCount,
     };
   } catch (err) {
@@ -1162,6 +1346,16 @@ export async function markLeadChatNotificationRead(notificationId: string) {
       .eq('recipient_username', session.username);
 
     if (error) return { error: error.message };
+
+    // Also mark inquiry lifecycle notification as read if the id belongs there.
+    const { error: lifecycleError } = await supabase
+      .from('inquiry_lifecycle_notifications')
+      .update({ is_read: true })
+      .eq('id', notificationId)
+      .eq('recipient_role', recipientRole)
+      .eq('recipient_username', session.username);
+
+    // Ignore "no rows updated" style outcomes; only fail on hard DB errors.
     return { success: true };
   } catch (err) {
     return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };

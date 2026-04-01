@@ -21,6 +21,12 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
   ClipboardCheck,
   Search,
   ArrowLeft,
@@ -73,6 +79,7 @@ export function InquiryConfirmationPanel() {
   const [selected, setSelected] = useState<InquiryConfirmationWithLead | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [isActioning, setIsActioning] = useState(false);
+  const [imagePreview, setImagePreview] = useState<{ url: string; title: string } | null>(null);
 
   const fetchConfirmations = useCallback(async () => {
     setIsLoading(true);
@@ -163,6 +170,58 @@ export function InquiryConfirmationPanel() {
 
   if (view === "detail" && selected) {
     const c = selected;
+    const toNum = (v: string | null | undefined) => {
+      const n = parseFloat(String(v ?? "").replace(/,/g, ""));
+      return Number.isFinite(n) ? n : 0;
+    };
+    const fmtMoney = (n: number) =>
+      Number.isFinite(n)
+        ? n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+        : "-";
+    const calculatorValues =
+      c.calculator_values && typeof c.calculator_values === "object"
+        ? (c.calculator_values as Record<string, string>)
+        : {};
+    const invValue = toNum(calculatorValues.inv_value);
+    const exchangeRate = toNum(calculatorValues.exchange_rate);
+    const customDutyRate = toNum(calculatorValues.custom_duty_rate);
+    const addCdRate = toNum(calculatorValues.add_cd_rate);
+    const gstRate = toNum(calculatorValues.gst_rate);
+    const addGstRate = toNum(calculatorValues.add_gst_rate);
+    const incomeTaxRate = toNum(calculatorValues.income_tax_rate);
+    const exciseRate = toNum(calculatorValues.excise_rate);
+    const regularDutyRate = toNum(calculatorValues.regular_duty_rate);
+    const stampDutyRate = toNum(calculatorValues.stamp_duty_rate);
+    const invFine = toNum(calculatorValues.inv_fine);
+    const freight = toNum(calculatorValues.freight);
+    const shippingLineCharges = toNum(calculatorValues.shipping_line_charges);
+    const clearanceExpense = toNum(calculatorValues.clearance_expense);
+    const weightKg = toNum(c.total_weight);
+    const pkrValue = invValue * exchangeRate;
+    const assessedValue = pkrValue;
+    const customDuty = (assessedValue * customDutyRate) / 100;
+    const addCd = (assessedValue * addCdRate) / 100;
+    const gst = (assessedValue * gstRate) / 100;
+    const addGst = (assessedValue * addGstRate) / 100;
+    const incomeTax = (assessedValue * incomeTaxRate) / 100;
+    const excise = (assessedValue * exciseRate) / 100;
+    const regularDuty = (assessedValue * regularDutyRate) / 100;
+    const stampDuty = (assessedValue * stampDutyRate) / 100;
+    const totalDutyCost =
+      assessedValue +
+      customDuty +
+      addCd +
+      gst +
+      addGst +
+      incomeTax +
+      excise +
+      regularDuty +
+      stampDuty +
+      invFine +
+      freight +
+      shippingLineCharges +
+      clearanceExpense;
+    const costPerWeight = weightKg > 0 ? totalDutyCost / weightKg : 0;
 
     return (
       <div className="space-y-4">
@@ -232,6 +291,37 @@ export function InquiryConfirmationPanel() {
                   <label className="text-xs text-slate-500 font-medium">Quantity</label>
                   <div className="text-slate-700 mt-0.5">{c.quantity || "-"}</div>
                 </div>
+                <div>
+                  <label className="text-xs text-slate-500 font-medium">HS Code</label>
+                  <div className="text-slate-700 mt-0.5">{c.hs_code || "-"}</div>
+                </div>
+              </div>
+            </div>
+
+            <div className="border-t" />
+
+            {/* Calculator Details */}
+            <div>
+              <h3 className="text-sm font-semibold text-slate-700 mb-3">Calculator Values</h3>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-2 text-sm">
+                <div>INV Value: <span className="font-semibold">{invValue || "-"}</span></div>
+                <div>Exchange Rate: <span className="font-semibold">{exchangeRate || "-"}</span></div>
+                <div>PKR Value: <span className="font-semibold">{fmtMoney(pkrValue)}</span></div>
+                <div>Assessed Value: <span className="font-semibold">{fmtMoney(assessedValue)}</span></div>
+                <div>Custom Duty ({customDutyRate}%): <span className="font-semibold">{fmtMoney(customDuty)}</span></div>
+                <div>Add CD ({addCdRate}%): <span className="font-semibold">{fmtMoney(addCd)}</span></div>
+                <div>GST ({gstRate}%): <span className="font-semibold">{fmtMoney(gst)}</span></div>
+                <div>Add GST ({addGstRate}%): <span className="font-semibold">{fmtMoney(addGst)}</span></div>
+                <div>Income Tax ({incomeTaxRate}%): <span className="font-semibold">{fmtMoney(incomeTax)}</span></div>
+                <div>Excise ({exciseRate}%): <span className="font-semibold">{fmtMoney(excise)}</span></div>
+                <div>Regular Duty ({regularDutyRate}%): <span className="font-semibold">{fmtMoney(regularDuty)}</span></div>
+                <div>Stamp Duty ({stampDutyRate}%): <span className="font-semibold">{fmtMoney(stampDuty)}</span></div>
+                <div>INV Fine: <span className="font-semibold">{fmtMoney(invFine)}</span></div>
+                <div>Freight: <span className="font-semibold">{fmtMoney(freight)}</span></div>
+                <div>Shipping Line Charges: <span className="font-semibold">{fmtMoney(shippingLineCharges)}</span></div>
+                <div>Clearance Expense: <span className="font-semibold">{fmtMoney(clearanceExpense)}</span></div>
+                <div>Total Duty Cost: <span className="font-semibold">{fmtMoney(totalDutyCost)}</span></div>
+                <div>Cost per Weight: <span className="font-semibold">{weightKg > 0 ? costPerWeight.toFixed(6) : "-"}</span></div>
               </div>
             </div>
 
@@ -251,7 +341,8 @@ export function InquiryConfirmationPanel() {
                       <img
                         src={c.original_image_url}
                         alt="Original inquiry"
-                        className="max-h-48 rounded object-contain w-full"
+                        className="max-h-48 rounded object-contain w-full cursor-zoom-in"
+                        onClick={() => setImagePreview({ url: c.original_image_url || "", title: "Original Inquiry Image" })}
                       />
                     </div>
                   ) : (
@@ -270,7 +361,8 @@ export function InquiryConfirmationPanel() {
                       <img
                         src={c.additional_image_1_url}
                         alt="Additional 1"
-                        className="max-h-48 rounded object-contain w-full"
+                        className="max-h-48 rounded object-contain w-full cursor-zoom-in"
+                        onClick={() => setImagePreview({ url: c.additional_image_1_url || "", title: "Additional Image 1" })}
                       />
                     </div>
                   ) : (
@@ -289,7 +381,8 @@ export function InquiryConfirmationPanel() {
                       <img
                         src={c.additional_image_2_url}
                         alt="Additional 2"
-                        className="max-h-48 rounded object-contain w-full"
+                        className="max-h-48 rounded object-contain w-full cursor-zoom-in"
+                        onClick={() => setImagePreview({ url: c.additional_image_2_url || "", title: "Additional Image 2" })}
                       />
                     </div>
                   ) : (
@@ -361,6 +454,18 @@ export function InquiryConfirmationPanel() {
             )}
           </CardContent>
         </Card>
+        <Dialog open={!!imagePreview} onOpenChange={(open) => { if (!open) setImagePreview(null); }}>
+          <DialogContent className="sm:max-w-5xl w-[95vw] max-h-[95vh] p-4">
+            <DialogHeader>
+              <DialogTitle className="text-sm">{imagePreview?.title || "Image Preview"}</DialogTitle>
+            </DialogHeader>
+            {imagePreview?.url ? (
+              <div className="overflow-auto max-h-[80vh]">
+                <img src={imagePreview.url} alt={imagePreview.title} className="w-full h-auto object-contain" />
+              </div>
+            ) : null}
+          </DialogContent>
+        </Dialog>
       </div>
     );
   }

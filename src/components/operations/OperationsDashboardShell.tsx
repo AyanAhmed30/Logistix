@@ -30,22 +30,31 @@ type SubTab = "operations" | "leads-inquiry";
 export function OperationsDashboardShell({ username }: Props) {
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [activeSubTab, setActiveSubTab] = useState<SubTab>("operations");
+  const [isClientMounted, setIsClientMounted] = useState(false);
   const [notifications, setNotifications] = useState<LeadChatNotification[]>([]);
   const [unreadCount, setUnreadCount] = useState(0);
   const [focusLeadId, setFocusLeadId] = useState<string | null>(null);
   const [notificationsError, setNotificationsError] = useState<string | null>(null);
 
   useEffect(() => {
+    setIsClientMounted(true);
+  }, []);
+
+  useEffect(() => {
     async function fetchNotifications() {
-      const result = await getMyLeadChatNotifications(30);
-      if ("error" in result) {
-        setNotificationsError(result.error || "Failed to load notifications");
-        setNotifications([]);
-        setUnreadCount(0);
-      } else {
-        setNotificationsError(null);
-        setNotifications(result.notifications || []);
-        setUnreadCount(result.unreadCount || 0);
+      try {
+        const result = await getMyLeadChatNotifications(30);
+        if ("error" in result) {
+          setNotificationsError(result.error || "Failed to load notifications");
+          setNotifications([]);
+          setUnreadCount(0);
+        } else {
+          setNotificationsError(null);
+          setNotifications(result.notifications || []);
+          setUnreadCount(result.unreadCount || 0);
+        }
+      } catch {
+        setNotificationsError("Failed to load notifications");
       }
     }
     fetchNotifications();
@@ -55,11 +64,15 @@ export function OperationsDashboardShell({ username }: Props) {
 
   async function handleNotificationClick(notification: LeadChatNotification) {
     if (!notification.is_read) {
-      await markLeadChatNotificationRead(notification.id);
-      setNotifications((prev) =>
-        prev.map((n) => (n.id === notification.id ? { ...n, is_read: true } : n))
-      );
-      setUnreadCount((prev) => Math.max(0, prev - 1));
+      try {
+        await markLeadChatNotificationRead(notification.id);
+        setNotifications((prev) =>
+          prev.map((n) => (n.id === notification.id ? { ...n, is_read: true } : n))
+        );
+        setUnreadCount((prev) => Math.max(0, prev - 1));
+      } catch {
+        // Keep navigation flow even if read-status update fails transiently.
+      }
     }
     setActiveSubTab("leads-inquiry");
     setFocusLeadId(notification.lead_id);
@@ -87,58 +100,80 @@ export function OperationsDashboardShell({ username }: Props) {
           </div>
 
           <div className="flex items-center gap-4 md:gap-6">
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button
-                  variant="outline"
-                  className="relative h-9 w-9 p-0 border-slate-200 bg-white hover:bg-slate-50"
-                  aria-label="Notifications"
-                >
-                  <Bell className="h-4 w-4" />
-                  {unreadCount > 0 && (
-                    <span className="absolute -top-1 -right-1 min-w-4 h-4 px-1 rounded-full bg-red-500 text-white text-[10px] leading-4 text-center">
-                      {unreadCount > 9 ? "9+" : unreadCount}
-                    </span>
-                  )}
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="w-[360px] z-[90]">
-                <DropdownMenuLabel>Notifications</DropdownMenuLabel>
-                <DropdownMenuSeparator />
-                {notificationsError ? (
-                  <DropdownMenuItem disabled className="text-xs text-red-600">
-                    {notificationsError}
-                  </DropdownMenuItem>
-                ) : notifications.length === 0 ? (
-                  <DropdownMenuItem disabled className="text-sm text-slate-500">
-                    No notifications
-                  </DropdownMenuItem>
-                ) : (
-                  notifications.map((n) => (
-                    <DropdownMenuItem
-                      key={n.id}
-                      className={`items-start whitespace-normal cursor-pointer ${!n.is_read ? "bg-blue-50" : ""}`}
-                      onClick={() => handleNotificationClick(n)}
-                    >
-                      <div className="text-sm leading-snug">
-                        <div>
-                          <span className="font-semibold">{n.sender_username}</span>{" "}
-                          ({n.sender_role === "sales_agent" ? "Sales Agent" : n.sender_role === "operations" ? "Operations" : "Admin"}) sent you a message regarding{" "}
-                          Lead #{n.leads?.lead_id_formatted || "N/A"} at{" "}
-                          {new Date(n.created_at).toLocaleString([], {
-                            hour: "2-digit",
-                            minute: "2-digit",
-                            month: "short",
-                            day: "numeric",
-                            year: "numeric",
-                          })}
-                        </div>
-                      </div>
+            {isClientMounted ? (
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    variant="outline"
+                    className="relative h-9 w-9 p-0 border-slate-200 bg-white hover:bg-slate-50"
+                    aria-label="Notifications"
+                  >
+                    <Bell className="h-4 w-4" />
+                    {unreadCount > 0 && (
+                      <span className="absolute -top-1 -right-1 min-w-4 h-4 px-1 rounded-full bg-red-500 text-white text-[10px] leading-4 text-center">
+                        {unreadCount > 9 ? "9+" : unreadCount}
+                      </span>
+                    )}
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="w-[360px] z-[90]">
+                  <DropdownMenuLabel>Notifications</DropdownMenuLabel>
+                  <DropdownMenuSeparator />
+                  {notificationsError ? (
+                    <DropdownMenuItem disabled className="text-xs text-red-600">
+                      {notificationsError}
                     </DropdownMenuItem>
-                  ))
-                )}
-              </DropdownMenuContent>
-            </DropdownMenu>
+                  ) : notifications.length === 0 ? (
+                    <DropdownMenuItem disabled className="text-sm text-slate-500">
+                      No notifications
+                    </DropdownMenuItem>
+                  ) : (
+                    notifications.map((n) => (
+                      <DropdownMenuItem
+                        key={n.id}
+                        className={`items-start whitespace-normal cursor-pointer ${!n.is_read ? "bg-blue-50" : ""}`}
+                        onClick={() => handleNotificationClick(n)}
+                      >
+                        <div className="text-sm leading-snug">
+                          <div>
+                            {n.notification_type === "lifecycle" ? (
+                              <>
+                                <span className="font-semibold">{n.sender_username}</span>{" "}
+                                ({n.sender_role === "sales_agent" ? "Sales Agent" : n.sender_role === "operations" ? "Operations" : "Admin"}){" "}
+                                {n.message || "updated an inquiry status."}
+                              </>
+                            ) : (
+                              <>
+                                <span className="font-semibold">{n.sender_username}</span>{" "}
+                                ({n.sender_role === "sales_agent" ? "Sales Agent" : n.sender_role === "operations" ? "Operations" : "Admin"}) sent you a message regarding{" "}
+                                Lead #{n.leads?.lead_id_formatted || "N/A"}
+                              </>
+                            )}{" "}
+                            at{" "}
+                            {new Date(n.created_at).toLocaleString([], {
+                              hour: "2-digit",
+                              minute: "2-digit",
+                              month: "short",
+                              day: "numeric",
+                              year: "numeric",
+                            })}
+                          </div>
+                        </div>
+                      </DropdownMenuItem>
+                    ))
+                  )}
+                </DropdownMenuContent>
+              </DropdownMenu>
+            ) : (
+              <Button
+                variant="outline"
+                className="relative h-9 w-9 p-0 border-slate-200 bg-white hover:bg-slate-50"
+                aria-label="Notifications"
+                type="button"
+              >
+                <Bell className="h-4 w-4" />
+              </Button>
+            )}
             <span className="hidden md:block text-sm text-secondary-muted">
               Logged in as <span className="font-semibold text-primary-dark">{username}</span>
             </span>

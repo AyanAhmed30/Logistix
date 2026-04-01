@@ -15,6 +15,8 @@ export type InquiryConfirmation = {
   total_weight: string;
   cbm: string;
   quantity: string;
+  hs_code: string;
+  calculator_values: Record<string, string> | null;
   original_image_url: string | null;
   additional_image_1_url: string | null;
   additional_image_2_url: string | null;
@@ -119,6 +121,8 @@ export async function submitInquiryForConfirmation(data: {
   total_weight: string;
   cbm: string;
   quantity: string;
+  hs_code: string;
+  calculator_values: Record<string, string>;
   original_image_url: string | null;
   additional_image_1_url: string | null;
   additional_image_2_url: string | null;
@@ -134,6 +138,11 @@ export async function submitInquiryForConfirmation(data: {
     }
 
     const supabase = await createAdminClient();
+    const { data: currentInquiry } = await supabase
+      .from('lead_inquiries')
+      .select('product_name, total_weight, cbm, quantity')
+      .eq('id', data.inquiry_id)
+      .maybeSingle();
 
     const { data: result, error } = await supabase
       .from('inquiry_confirmations')
@@ -145,6 +154,8 @@ export async function submitInquiryForConfirmation(data: {
         total_weight: data.total_weight.trim(),
         cbm: data.cbm.trim(),
         quantity: data.quantity.trim(),
+        hs_code: (data.hs_code || '').trim(),
+        calculator_values: data.calculator_values || {},
         original_image_url: data.original_image_url || null,
         additional_image_1_url: data.additional_image_1_url || null,
         additional_image_2_url: data.additional_image_2_url || null,
@@ -155,6 +166,96 @@ export async function submitInquiryForConfirmation(data: {
       .single();
 
     if (error) return { error: error.message };
+
+    const previousValues: Record<string, unknown> = {};
+    const newValues: Record<string, unknown> = {};
+    if (currentInquiry) {
+      if ((currentInquiry.product_name || '') !== (data.product_name || '').trim()) {
+        previousValues.product_name = currentInquiry.product_name || '';
+        newValues.product_name = data.product_name.trim();
+      }
+      if ((currentInquiry.total_weight || '') !== (data.total_weight || '').trim()) {
+        previousValues.total_weight = currentInquiry.total_weight || '';
+        newValues.total_weight = data.total_weight.trim();
+      }
+      if ((currentInquiry.cbm || '') !== (data.cbm || '').trim()) {
+        previousValues.cbm = currentInquiry.cbm || '';
+        newValues.cbm = data.cbm.trim();
+      }
+      if ((currentInquiry.quantity || '') !== (data.quantity || '').trim()) {
+        previousValues.quantity = currentInquiry.quantity || '';
+        newValues.quantity = data.quantity.trim();
+      }
+    }
+
+    if ((data.hs_code || '').trim().length > 0) {
+      newValues.hs_code = data.hs_code.trim();
+    }
+    if (data.calculator_values && Object.keys(data.calculator_values).length > 0) {
+      newValues.calculator_values = data.calculator_values;
+    }
+
+    if (Object.keys(newValues).length > 0) {
+      await supabase.from('inquiry_logs').insert([{
+        inquiry_id: data.inquiry_id,
+        action: 'lead_management_form_updated',
+        previous_values: previousValues,
+        new_values: newValues,
+        performed_by: session.username || 'operations',
+      }]);
+    }
+
+    const hasAdditionalImages = !!data.additional_image_1_url || !!data.additional_image_2_url;
+    if (hasAdditionalImages) {
+      await supabase.from('inquiry_logs').insert([{
+        inquiry_id: data.inquiry_id,
+        action: 'image_uploaded',
+        previous_values: null,
+        new_values: {
+          additional_image_1: data.additional_image_1_url ? 'Attached' : 'None',
+          additional_image_2: data.additional_image_2_url ? 'Attached' : 'None',
+        },
+        performed_by: session.username || 'operations',
+      }]);
+    }
+
+    await supabase.from('inquiry_logs').insert([{
+      inquiry_id: data.inquiry_id,
+      action: 'send_for_confirmation',
+      previous_values: null,
+      new_values: {
+        confirmation_id: result.id,
+        status: 'pending',
+      },
+      performed_by: session.username || 'operations',
+    }]);
+
+    // Notify the Sales Agent that inquiry was forwarded to Admin for approval.
+    const { data: lead } = await supabase
+      .from('leads')
+      .select('lead_id_formatted, sales_agent_id')
+      .eq('id', data.lead_id)
+      .maybeSingle();
+    if (lead?.sales_agent_id) {
+      const { data: salesAgent } = await supabase
+        .from('sales_agents')
+        .select('username')
+        .eq('id', lead.sales_agent_id)
+        .maybeSingle();
+      if (salesAgent?.username) {
+        await supabase.from('inquiry_lifecycle_notifications').insert([{
+          lead_id: data.lead_id,
+          inquiry_id: data.inquiry_id,
+          confirmation_id: result.id,
+          sender_role: 'operations',
+          sender_username: session.username || 'operations',
+          recipient_role: 'sales_agent',
+          recipient_username: salesAgent.username,
+          event_type: 'sent_for_admin_approval',
+          message: `Inquiry for Lead #${lead.lead_id_formatted || data.lead_number} was forwarded to Admin for approval.`,
+        }]);
+      }
+    }
 
     revalidatePath('/admin/dashboard');
     revalidatePath('/operations/dashboard');
@@ -251,6 +352,45 @@ export async function approveInquiryConfirmation(confirmationId: string) {
 
     if (error) return { error: error.message };
 
+    // Notify Sales Agent + Operations submitter about approval.
+    const { data: lead } = await supabase
+      .from('leads')
+      .select('lead_id_formatted, sales_agent_id')
+      .eq('id', data.lead_id)
+      .maybeSingle();
+    const recipients: Array<{ role: 'sales_agent' | 'operations'; username: string }> = [];
+    if (lead?.sales_agent_id) {
+      const { data: salesAgent } = await supabase
+        .from('sales_agents')
+        .select('username')
+        .eq('id', lead.sales_agent_id)
+        .maybeSingle();
+      if (salesAgent?.username) {
+        recipients.push({ role: 'sales_agent', username: salesAgent.username });
+      }
+    }
+    if (data.submitted_by) {
+      recipients.push({ role: 'operations', username: data.submitted_by });
+    }
+    const uniqueRecipients = recipients.filter(
+      (r, idx, arr) => arr.findIndex((x) => x.role === r.role && x.username === r.username) === idx
+    );
+    if (uniqueRecipients.length > 0) {
+      await supabase.from('inquiry_lifecycle_notifications').insert(
+        uniqueRecipients.map((r) => ({
+          lead_id: data.lead_id,
+          inquiry_id: data.inquiry_id,
+          confirmation_id: data.id,
+          sender_role: 'admin',
+          sender_username: session.username || 'admin',
+          recipient_role: r.role,
+          recipient_username: r.username,
+          event_type: 'approved',
+          message: `Inquiry for Lead #${lead?.lead_id_formatted || data.lead_number} was approved by Admin.`,
+        }))
+      );
+    }
+
     revalidatePath('/admin/dashboard');
     revalidatePath('/operations/dashboard');
     revalidatePath('/sales-agent/dashboard'); // Sales agent should see approved status
@@ -284,6 +424,26 @@ export async function rejectInquiryConfirmation(confirmationId: string) {
       .single();
 
     if (error) return { error: error.message };
+
+    // Notify only the Operations submitter about rejection.
+    const { data: lead } = await supabase
+      .from('leads')
+      .select('lead_id_formatted')
+      .eq('id', data.lead_id)
+      .maybeSingle();
+    if (data.submitted_by) {
+      await supabase.from('inquiry_lifecycle_notifications').insert([{
+        lead_id: data.lead_id,
+        inquiry_id: data.inquiry_id,
+        confirmation_id: data.id,
+        sender_role: 'admin',
+        sender_username: session.username || 'admin',
+        recipient_role: 'operations',
+        recipient_username: data.submitted_by,
+        event_type: 'rejected',
+        message: `Inquiry for Lead #${lead?.lead_id_formatted || data.lead_number} was rejected by Admin.`,
+      }]);
+    }
 
     revalidatePath('/admin/dashboard');
     revalidatePath('/operations/dashboard');

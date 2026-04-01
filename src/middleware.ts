@@ -1,8 +1,24 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getSession } from '@/lib/auth/session';
+import { decrypt } from '@/lib/auth/session';
+
+type Session = {
+    username: string;
+    role: 'admin' | 'user' | 'sales_agent' | 'operations';
+};
+
+async function getSessionFromRequest(request: NextRequest): Promise<Session | null> {
+    const token = request.cookies.get('session')?.value;
+    if (!token) return null;
+
+    try {
+        return (await decrypt(token)) as Session;
+    } catch {
+        return null;
+    }
+}
 
 export async function middleware(request: NextRequest) {
-    const session = await getSession();
+    const session = await getSessionFromRequest(request);
     const { pathname } = request.nextUrl;
 
     // 1. Allow public access to carton scan/details pages (for barcode scanning)

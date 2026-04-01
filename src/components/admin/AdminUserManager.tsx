@@ -42,6 +42,7 @@ import { InvoicePanel } from "@/components/admin/InvoicePanel";
 import { AccountingInquiriesPanel } from "@/components/admin/AccountingInquiriesPanel";
 import { InquiryConfirmationPanel } from "@/components/admin/InquiryConfirmationPanel";
 import { OperationsUserPanel } from "@/components/admin/OperationsUserPanel";
+import { AdminCalculatorPanel } from "@/components/admin/AdminCalculatorPanel";
 
 type AppUser = {
   id: string;
@@ -70,7 +71,8 @@ type Props = {
     | "import-packing-list"
     | "import-invoice"
     | "accounting"
-    | "inquiry-confirmation";
+    | "inquiry-confirmation"
+    | "calculator-config";
   onTabChange: (
     tab:
       | "dashboard"
@@ -87,6 +89,7 @@ type Props = {
       | "import-invoice"
       | "accounting"
       | "inquiry-confirmation"
+      | "calculator-config"
   ) => void;
 };
 
@@ -272,6 +275,7 @@ export function AdminUserManager({
       | "import-invoice"
       | "accounting"
       | "inquiry-confirmation"
+      | "calculator-config"
   ) {
     onTabChange(tab);
     onSidebarClose();
@@ -434,6 +438,15 @@ export function AdminUserManager({
             <ClipboardCheck className="h-4 w-4 shrink-0 sidebar-icon" />
             {!isSidebarCollapsed && <span className="sidebar-text">Inquiry Confirmation</span>}
           </Button>
+          <Button
+            variant={activeTab === "calculator-config" ? "default" : "outline"}
+            className="justify-start gap-2 sidebar-button"
+            onClick={() => handleTabSelect("calculator-config")}
+            title="Calculator Configuration"
+          >
+            <Calculator className="h-4 w-4 shrink-0 sidebar-icon" />
+            {!isSidebarCollapsed && <span className="sidebar-text">Calculator Config</span>}
+          </Button>
           </div>
         </div>
       </aside>
@@ -492,11 +505,13 @@ export function AdminUserManager({
 
             {/* Leads Inquiry Sub-tab Content */}
             {operationsSubTab === "leads-inquiry" && (
-              <OperationsLeadsInquiryPanel />
+              <OperationsLeadsInquiryPanel adminCalculatorMode />
             )}
           </div>
         ) : activeTab === "inquiry-confirmation" ? (
           <InquiryConfirmationPanel />
+        ) : activeTab === "calculator-config" ? (
+          <AdminCalculatorPanel />
         ) : activeTab === "import-packing-list" ? (
           <ImportPackingListPanel />
         ) : activeTab === "import-invoice" ? (

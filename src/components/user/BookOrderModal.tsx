@@ -306,6 +306,8 @@ export function BookOrderModal({ open, onOpenChange, onOrderSaved }: Props) {
     return printable;
   }
 
+  // Reserved for future combined PDF export flow.
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   async function appendOrderToPdf(orderIndex: number, pdf: InstanceType<typeof jsPDF>) {
     const order = orders[orderIndex];
     if (!order) return false;

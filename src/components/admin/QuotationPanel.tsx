@@ -45,7 +45,6 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import {
-  PlusCircle,
   Trash2,
   Edit2,
   Send,
@@ -54,7 +53,6 @@ import {
   ExternalLink,
   Printer,
   ArrowLeft,
-  X,
   ChevronLeft,
   ChevronRight,
   Search,

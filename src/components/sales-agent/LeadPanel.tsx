@@ -109,7 +109,6 @@ export function LeadPanel() {
   function handleEditSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!editLead) return;
-    const form = event.currentTarget;
     const formData = new FormData(event.currentTarget);
     formData.set("id", editLead.id);
     const number = String(formData.get("number") || "").trim();

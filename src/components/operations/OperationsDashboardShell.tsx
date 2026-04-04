@@ -37,7 +37,10 @@ export function OperationsDashboardShell({ username }: Props) {
   const [notificationsError, setNotificationsError] = useState<string | null>(null);
 
   useEffect(() => {
-    setIsClientMounted(true);
+    const frame = window.requestAnimationFrame(() => {
+      setIsClientMounted(true);
+    });
+    return () => window.cancelAnimationFrame(frame);
   }, []);
 
   useEffect(() => {

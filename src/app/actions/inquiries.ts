@@ -1348,7 +1348,7 @@ export async function markLeadChatNotificationRead(notificationId: string) {
     if (error) return { error: error.message };
 
     // Also mark inquiry lifecycle notification as read if the id belongs there.
-    const { error: lifecycleError } = await supabase
+    await supabase
       .from('inquiry_lifecycle_notifications')
       .update({ is_read: true })
       .eq('id', notificationId)

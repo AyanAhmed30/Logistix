@@ -1,4 +1,5 @@
 "use client";
+/* eslint-disable @next/next/no-img-element */
 
 import { useEffect, useState, useCallback, useRef } from "react";
 import { toast } from "sonner";
@@ -592,7 +593,7 @@ export function OperationsLeadsInquiryPanel({
 
   // ─── Image handling helpers ───────────────────────────────────────
 
-  function extractImageFileFromFileList(files: FileList | null | undefined) {
+  const extractImageFileFromFileList = useCallback((files: FileList | null | undefined) => {
     if (!files || files.length === 0) return null;
     const imageExts = new Set([
       "jpg",
@@ -615,9 +616,9 @@ export function OperationsLeadsInquiryPanel({
       if (isImageLikeFile(files[i])) return files[i];
     }
     return null;
-  }
+  }, []);
 
-  function extractImageFileFromItems(items: DataTransferItemList | null | undefined) {
+  const extractImageFileFromItems = useCallback((items: DataTransferItemList | null | undefined) => {
     if (!items) return null;
     for (let i = 0; i < items.length; i++) {
       if (items[i].type.startsWith("image/")) {
@@ -625,14 +626,14 @@ export function OperationsLeadsInquiryPanel({
       }
     }
     return null;
-  }
+  }, []);
 
-  function extractImageFileFromClipboardData(data: DataTransfer | null | undefined) {
+  const extractImageFileFromClipboardData = useCallback((data: DataTransfer | null | undefined) => {
     if (!data) return null;
     const fromFiles = extractImageFileFromFileList(data.files);
     if (fromFiles) return fromFiles;
     return extractImageFileFromItems(data.items);
-  }
+  }, [extractImageFileFromFileList, extractImageFileFromItems]);
 
   function processImageUpload(file: File | null, slot: 1 | 2) {
     if (!file) return false;
@@ -720,7 +721,7 @@ export function OperationsLeadsInquiryPanel({
     // Capture phase helps when focused controls stop bubbling paste events.
     document.addEventListener("paste", handleGlobalPaste, true);
     return () => document.removeEventListener("paste", handleGlobalPaste, true);
-  }, [showForm, additionalImage1, additionalImage2, activeUploadSlot]);
+  }, [showForm, additionalImage1, additionalImage2, activeUploadSlot, extractImageFileFromClipboardData]);
 
   function handleZonePaste(e: React.ClipboardEvent, slot: 1 | 2) {
     const file = extractImageFileFromClipboardData(e.clipboardData);

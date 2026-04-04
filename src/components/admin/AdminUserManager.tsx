@@ -24,7 +24,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { PlusCircle, UsersRound, X, Truck, Bell, Package, Container, FileText, TrendingUp, ShoppingCart, Settings, ClipboardList, Receipt, UserCog, Calculator, MessageSquare, ClipboardCheck, Wrench } from "lucide-react";
+import { PlusCircle, UsersRound, X, Truck, Bell, Package, Container, FileText, TrendingUp, ShoppingCart, Settings, ClipboardList, Receipt, UserCog, Calculator, MessageSquare, ClipboardCheck, Wrench, FolderTree, BookOpen, BookText } from "lucide-react";
 import { OrderTrackingPanel } from "@/components/admin/OrderTrackingPanel";
 import { AdminNotificationsPanel } from "@/components/admin/AdminNotificationsPanel";
 import { OrderManagementPanel } from "@/components/admin/OrderManagementPanel";
@@ -43,6 +43,9 @@ import { AccountingInquiriesPanel } from "@/components/admin/AccountingInquiries
 import { InquiryConfirmationPanel } from "@/components/admin/InquiryConfirmationPanel";
 import { OperationsUserPanel } from "@/components/admin/OperationsUserPanel";
 import { AdminCalculatorPanel } from "@/components/admin/AdminCalculatorPanel";
+import { ChartOfAccountsPanel } from "@/components/admin/ChartOfAccountsPanel";
+import { JournalsPanel } from "@/components/admin/JournalsPanel";
+import { JournalEntriesPanel } from "@/components/admin/JournalEntriesPanel";
 
 type AppUser = {
   id: string;
@@ -112,7 +115,7 @@ export function AdminUserManager({
   const [profilesSubTab, setProfilesSubTab] = useState<"users" | "sales-agent" | "operations-users" | null>(
     activeTab === "profiles" ? "users" : null
   );
-  const [accountingSubTab, setAccountingSubTab] = useState<"quotation" | "customer-invoice" | "inquiries" | null>(
+  const [accountingSubTab, setAccountingSubTab] = useState<"quotation" | "customer-invoice" | "inquiries" | "chart-of-accounts" | "journals" | "journal-entries" | null>(
     activeTab === "accounting" ? "inquiries" : null
   );
   const [operationsSubTab, setOperationsSubTab] = useState<"operations" | "leads-inquiry" | null>(
@@ -539,6 +542,33 @@ export function AdminUserManager({
                 <span className="sidebar-text">Quotation</span>
               </Button>
               <Button
+                variant={accountingSubTab === "chart-of-accounts" ? "default" : "ghost"}
+                onClick={() => setAccountingSubTab("chart-of-accounts")}
+                className="rounded-b-none shrink-0 sidebar-button"
+                data-variant={accountingSubTab === "chart-of-accounts" ? "default" : "outline"}
+              >
+                <FolderTree className="h-4 w-4 mr-2 sidebar-icon" />
+                <span className="sidebar-text">Chart of Accounts</span>
+              </Button>
+              <Button
+                variant={accountingSubTab === "journals" ? "default" : "ghost"}
+                onClick={() => setAccountingSubTab("journals")}
+                className="rounded-b-none shrink-0 sidebar-button"
+                data-variant={accountingSubTab === "journals" ? "default" : "outline"}
+              >
+                <BookOpen className="h-4 w-4 mr-2 sidebar-icon" />
+                <span className="sidebar-text">Journals</span>
+              </Button>
+              <Button
+                variant={accountingSubTab === "journal-entries" ? "default" : "ghost"}
+                onClick={() => setAccountingSubTab("journal-entries")}
+                className="rounded-b-none shrink-0 sidebar-button"
+                data-variant={accountingSubTab === "journal-entries" ? "default" : "outline"}
+              >
+                <BookText className="h-4 w-4 mr-2 sidebar-icon" />
+                <span className="sidebar-text">Journal Entries</span>
+              </Button>
+              <Button
                 variant={accountingSubTab === "customer-invoice" ? "default" : "ghost"}
                 onClick={() => setAccountingSubTab("customer-invoice")}
                 className="rounded-b-none shrink-0 sidebar-button"
@@ -557,6 +587,18 @@ export function AdminUserManager({
             {/* Quotation Sub-tab Content */}
             {accountingSubTab === "quotation" && (
               <QuotationPanel />
+            )}
+
+            {accountingSubTab === "chart-of-accounts" && (
+              <ChartOfAccountsPanel />
+            )}
+
+            {accountingSubTab === "journals" && (
+              <JournalsPanel />
+            )}
+
+            {accountingSubTab === "journal-entries" && (
+              <JournalEntriesPanel />
             )}
 
             {/* Customer Invoice Sub-tab Content */}

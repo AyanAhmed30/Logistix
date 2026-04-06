@@ -29,12 +29,10 @@ import {
   deleteLeadComment,
   getTransferableSalesAgents,
   transferLeadToSalesAgent,
-  getLeadTransferHistoryForCurrentSalesAgent,
   type Lead,
   type LeadStatus,
   type LeadComment,
   type TransferableSalesAgent,
-  type LeadTransferRecord,
 } from "@/app/actions/leads";
 import { convertLeadToCustomer } from "@/app/actions/customer_conversion";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -47,7 +45,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { MessageSquare, Edit2, Trash2, Plus, UserPlus, Search, X, Send, FileText, ImageIcon, History, MoreVertical, CheckCircle2, Clock, AlertCircle, ArrowRightLeft } from "lucide-react";
+import { MessageSquare, Edit2, Trash2, Plus, UserPlus, Search, X, Send, FileText, ImageIcon, History, MoreVertical, CheckCircle2, Clock, AlertCircle } from "lucide-react";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -57,7 +55,6 @@ import {
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import {
   saveInquiry,
   sendInquiryToAccounting,
@@ -290,6 +287,7 @@ function KanbanColumn({
   onOpenInquiry,
   onMoveToStatus,
   onOpenTransferDialog,
+  highlightedLeadId,
   searchQuery,
   inquiryTrackingMap,
 }: {
@@ -300,6 +298,7 @@ function KanbanColumn({
   onOpenInquiry?: (lead: Lead) => void;
   onMoveToStatus?: (lead: Lead, status: LeadStatus) => void;
   onOpenTransferDialog?: (lead: Lead) => void;
+  highlightedLeadId?: string | null;
   searchQuery?: string;
   inquiryTrackingMap?: Map<string, InquiryTrackingInfo>;
 }) {
@@ -370,18 +369,23 @@ function KanbanColumn({
               </div>
             ) : (
               filteredLeads.map((lead) => (
-                <LeadCard 
-                  key={lead.id} 
-                  lead={lead} 
-                  onOpenComments={onOpenComments}
-                  onConvert={onConvert}
-                  onOpenInquiry={onOpenInquiry}
-                  onMoveToStatus={onMoveToStatus}
-                  onOpenTransferDialog={onOpenTransferDialog}
-                  showConvertButton={showConvertButton}
-                  showInquiryButton={showInquiryButton}
-                  inquiryTracking={inquiryTrackingMap?.get(lead.id) || null}
-                />
+                <div
+                  key={lead.id}
+                  id={`pipeline-lead-${lead.id}`}
+                  className={highlightedLeadId === lead.id ? "rounded-md ring-2 ring-orange-400 ring-offset-2" : ""}
+                >
+                  <LeadCard
+                    lead={lead}
+                    onOpenComments={onOpenComments}
+                    onConvert={onConvert}
+                    onOpenInquiry={onOpenInquiry}
+                    onMoveToStatus={onMoveToStatus}
+                    onOpenTransferDialog={onOpenTransferDialog}
+                    showConvertButton={showConvertButton}
+                    showInquiryButton={showInquiryButton}
+                    inquiryTracking={inquiryTrackingMap?.get(lead.id) || null}
+                  />
+                </div>
               ))
             )}
           </SortableContext>
@@ -1291,9 +1295,7 @@ export function PipelinePanel({
   const [transferDialogOpen, setTransferDialogOpen] = useState(false);
   const [selectedTransferAgentId, setSelectedTransferAgentId] = useState<string>("");
   const [transferableAgents, setTransferableAgents] = useState<TransferableSalesAgent[]>([]);
-  const [sentTransfers, setSentTransfers] = useState<LeadTransferRecord[]>([]);
-  const [receivedTransfers, setReceivedTransfers] = useState<LeadTransferRecord[]>([]);
-  const [isLoadingTransferHistory, setIsLoadingTransferHistory] = useState(false);
+  const [highlightedLeadId, setHighlightedLeadId] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [isPending, startTransition] = useTransition();
   const [inquiryTrackingMap, setInquiryTrackingMap] = useState<Map<string, InquiryTrackingInfo>>(new Map());
@@ -1309,15 +1311,19 @@ export function PipelinePanel({
   useEffect(() => {
     fetchLeads();
     fetchInquiryTracking();
-    fetchTransferSetupData();
+    fetchTransferableSalesAgents();
   }, []);
 
   useEffect(() => {
     if (!focusLeadId || leads.length === 0) return;
     const target = leads.find((l) => l.id === focusLeadId);
     if (target) {
-      setInquiryLead(target);
-      setInquiryOpen(true);
+      setHighlightedLeadId(target.id);
+      setTimeout(() => {
+        const el = document.getElementById(`pipeline-lead-${target.id}`);
+        el?.scrollIntoView({ behavior: "smooth", block: "center", inline: "nearest" });
+      }, 100);
+      setTimeout(() => setHighlightedLeadId(null), 2500);
     }
     onFocusHandled?.();
   }, [focusLeadId, leads, onFocusHandled]);
@@ -1351,26 +1357,14 @@ export function PipelinePanel({
     }
   }
 
-  async function fetchTransferSetupData() {
-    setIsLoadingTransferHistory(true);
+  async function fetchTransferableSalesAgents() {
     try {
-      const [agentsResult, historyResult] = await Promise.all([
-        getTransferableSalesAgents(),
-        getLeadTransferHistoryForCurrentSalesAgent(),
-      ]);
-
+      const agentsResult = await getTransferableSalesAgents();
       if (!("error" in agentsResult)) {
         setTransferableAgents(agentsResult.salesAgents || []);
       }
-
-      if (!("error" in historyResult)) {
-        setSentTransfers(historyResult.sentTransfers || []);
-        setReceivedTransfers(historyResult.receivedTransfers || []);
-      }
     } catch {
-      // Keep pipeline usable even if transfer metadata fails.
-    } finally {
-      setIsLoadingTransferHistory(false);
+      // Keep pipeline usable even if transfer agents fail.
     }
   }
 
@@ -1490,7 +1484,7 @@ export function PipelinePanel({
       setTransferDialogOpen(false);
       setLeadToTransfer(null);
       setSelectedTransferAgentId("");
-      await Promise.all([fetchLeads(), fetchTransferSetupData()]);
+      await fetchLeads();
     });
   }
 
@@ -1575,6 +1569,7 @@ export function PipelinePanel({
                       onOpenInquiry={handleOpenInquiry}
                       onMoveToStatus={handleMoveToStatus}
                       onOpenTransferDialog={handleOpenTransferDialog}
+                      highlightedLeadId={highlightedLeadId}
                       searchQuery={searchQuery}
                       inquiryTrackingMap={inquiryTrackingMap}
                     />
@@ -1592,6 +1587,7 @@ export function PipelinePanel({
                       onOpenInquiry={handleOpenInquiry}
                       onMoveToStatus={handleMoveToStatus}
                       onOpenTransferDialog={handleOpenTransferDialog}
+                      highlightedLeadId={highlightedLeadId}
                       searchQuery={searchQuery}
                       inquiryTrackingMap={inquiryTrackingMap}
                     />
@@ -1618,105 +1614,6 @@ export function PipelinePanel({
                 ) : null}
               </DragOverlay>
             </DndContext>
-          )}
-        </CardContent>
-      </Card>
-
-      <Card className="bg-white border shadow-sm">
-        <CardHeader className="pb-2">
-          <CardTitle className="text-base md:text-lg flex items-center gap-2">
-            <ArrowRightLeft className="h-4 w-4 text-orange-600" />
-            Lead Transfer Tracking
-          </CardTitle>
-          <CardDescription className="text-xs md:text-sm">
-            Track leads you sent to other sales agents and leads received from them.
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-5">
-          {isLoadingTransferHistory ? (
-            <div className="text-sm text-secondary-muted py-4">Loading transfer history...</div>
-          ) : (
-            <>
-              <div className="space-y-2">
-                <h3 className="text-sm font-semibold text-primary-dark">Sent Leads</h3>
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Lead</TableHead>
-                      <TableHead>Sent To</TableHead>
-                      <TableHead>Status at Send</TableHead>
-                      <TableHead>Sent At</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {sentTransfers.length === 0 ? (
-                      <TableRow>
-                        <TableCell colSpan={4} className="text-center text-xs text-secondary-muted py-4">
-                          No leads sent yet.
-                        </TableCell>
-                      </TableRow>
-                    ) : (
-                      sentTransfers.map((transfer) => (
-                        <TableRow key={transfer.id}>
-                          <TableCell className="text-xs">
-                            <div className="font-medium text-primary-dark">
-                              #{transfer.lead_id_formatted_snapshot || "N/A"} - {transfer.lead_name_snapshot}
-                            </div>
-                            <div className="text-secondary-muted">{transfer.lead_number_snapshot}</div>
-                          </TableCell>
-                          <TableCell className="text-xs">
-                            {transfer.to_sales_agent_name}
-                            {transfer.to_sales_agent_username ? ` (${transfer.to_sales_agent_username})` : ""}
-                          </TableCell>
-                          <TableCell className="text-xs">{transfer.status_before_transfer}</TableCell>
-                          <TableCell className="text-xs">{new Date(transfer.transferred_at).toLocaleString()}</TableCell>
-                        </TableRow>
-                      ))
-                    )}
-                  </TableBody>
-                </Table>
-              </div>
-
-              <div className="space-y-2">
-                <h3 className="text-sm font-semibold text-primary-dark">Received Leads</h3>
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Lead</TableHead>
-                      <TableHead>Received From</TableHead>
-                      <TableHead>Status at Receive</TableHead>
-                      <TableHead>Received At</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {receivedTransfers.length === 0 ? (
-                      <TableRow>
-                        <TableCell colSpan={4} className="text-center text-xs text-secondary-muted py-4">
-                          No leads received yet.
-                        </TableCell>
-                      </TableRow>
-                    ) : (
-                      receivedTransfers.map((transfer) => (
-                        <TableRow key={transfer.id}>
-                          <TableCell className="text-xs">
-                            <div className="font-medium text-primary-dark">
-                              #{transfer.lead_id_formatted_snapshot || "N/A"} - {transfer.lead_name_snapshot}
-                            </div>
-                            <div className="text-secondary-muted">{transfer.lead_number_snapshot}</div>
-                          </TableCell>
-                          <TableCell className="text-xs">
-                            {transfer.from_sales_agent_name}
-                            {transfer.from_sales_agent_username ? ` (${transfer.from_sales_agent_username})` : ""}
-                          </TableCell>
-                          <TableCell className="text-xs">{transfer.status_before_transfer}</TableCell>
-                          <TableCell className="text-xs">{new Date(transfer.transferred_at).toLocaleString()}</TableCell>
-                        </TableRow>
-                      ))
-                    )}
-                  </TableBody>
-                </Table>
-              </div>
-            </>
           )}
         </CardContent>
       </Card>

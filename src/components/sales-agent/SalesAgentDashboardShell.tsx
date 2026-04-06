@@ -4,7 +4,7 @@ import { useState, useMemo, useEffect } from "react";
 import { logout } from "@/app/actions/auth";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { LogOut, Menu, X, UserPlus, Users, FileText, ShoppingCart, TrendingUp, Truck, Bell, Package, Container, Settings, ClipboardList, Receipt, PlusCircle, UsersRound, ClipboardCheck, Calculator } from "lucide-react";
+import { LogOut, Menu, X, UserPlus, Users, FileText, ShoppingCart, TrendingUp, Truck, Bell, Package, Container, Settings, ClipboardList, Receipt, PlusCircle, UsersRound, ClipboardCheck, Calculator, ArrowRightLeft } from "lucide-react";
 import Image from "next/image";
 import { LeadPanel } from "@/components/sales-agent/LeadPanel";
 import { PipelinePanel } from "@/components/sales-agent/PipelinePanel";
@@ -20,6 +20,7 @@ import { ImportPackingListPanel } from "@/components/admin/ImportPackingListPane
 import { ImportInvoicePanel } from "@/components/admin/ImportInvoicePanel";
 import { AdminDashboardOverview } from "@/components/admin/AdminDashboardOverview";
 import { SalesAgentAccountingPanel } from "@/components/sales-agent/SalesAgentAccountingPanel";
+import { LeadTransferTrackingPanel } from "@/components/sales-agent/LeadTransferTrackingPanel";
 import {
   getMyLeadChatNotifications,
   markLeadChatNotificationRead,
@@ -39,7 +40,7 @@ type Props = {
   permissions: string[];
 };
 
-type TabKey = "lead" | "pipeline" | "customer-list" | "manage-request" | "create" | "profiles" | "dashboard" | "tracking" | "notifications" | "management" | "console" | "loading-instruction" | "operations" | "import-packing-list" | "import-invoice" | "inquiry-tracking" | "accounting";
+type TabKey = "lead" | "pipeline" | "customer-list" | "manage-request" | "create" | "profiles" | "dashboard" | "tracking" | "notifications" | "management" | "console" | "loading-instruction" | "operations" | "import-packing-list" | "import-invoice" | "inquiry-tracking" | "accounting" | "lead-transfer-tracking";
 
 // All tabs are now permission-based - no default tabs
 const permissionTabs: Record<string, { key: TabKey; label: string; icon: React.ReactNode }> = {
@@ -63,6 +64,11 @@ const permissionTabs: Record<string, { key: TabKey; label: string; icon: React.R
 
 // These tabs are always available to all sales agents (not permission-gated)
 const DEFAULT_TABS: { key: TabKey; label: string; icon: React.ReactNode }[] = [
+  {
+    key: "lead-transfer-tracking",
+    label: "Lead Transfer Tracking",
+    icon: <ArrowRightLeft className="h-4 w-4" />,
+  },
   {
     key: "accounting",
     label: "Accounting",
@@ -331,6 +337,7 @@ export function SalesAgentDashboardShell({ username, permissions }: Props) {
         {activeTab === "import-invoice" && <ImportInvoicePanel />}
         {activeTab === "accounting" && <SalesAgentAccountingPanel />}
         {activeTab === "inquiry-tracking" && <InquiryTrackingPanel />}
+        {activeTab === "lead-transfer-tracking" && <LeadTransferTrackingPanel />}
         {activeTab === "create" && (
           <Card className="bg-white border shadow-sm">
             <CardHeader>

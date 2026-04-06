@@ -27,9 +27,14 @@ import {
   createLeadComment,
   updateLeadComment,
   deleteLeadComment,
+  getTransferableSalesAgents,
+  transferLeadToSalesAgent,
+  getLeadTransferHistoryForCurrentSalesAgent,
   type Lead,
   type LeadStatus,
   type LeadComment,
+  type TransferableSalesAgent,
+  type LeadTransferRecord,
 } from "@/app/actions/leads";
 import { convertLeadToCustomer } from "@/app/actions/customer_conversion";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -42,7 +47,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { MessageSquare, Edit2, Trash2, Plus, UserPlus, Search, X, Send, FileText, ImageIcon, History, MoreVertical, CheckCircle2, Clock, AlertCircle } from "lucide-react";
+import { MessageSquare, Edit2, Trash2, Plus, UserPlus, Search, X, Send, FileText, ImageIcon, History, MoreVertical, CheckCircle2, Clock, AlertCircle, ArrowRightLeft } from "lucide-react";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -51,6 +56,8 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import {
   saveInquiry,
   sendInquiryToAccounting,
@@ -92,6 +99,7 @@ function LeadCard({
   onConvert,
   onOpenInquiry,
   onMoveToStatus,
+  onOpenTransferDialog,
   showConvertButton,
   showInquiryButton,
   inquiryTracking,
@@ -101,6 +109,7 @@ function LeadCard({
   onConvert?: (lead: Lead) => void;
   onOpenInquiry?: (lead: Lead) => void;
   onMoveToStatus?: (lead: Lead, status: LeadStatus) => void;
+  onOpenTransferDialog?: (lead: Lead) => void;
   showConvertButton?: boolean;
   showInquiryButton?: boolean;
   inquiryTracking?: InquiryTrackingInfo | null;
@@ -164,13 +173,33 @@ function LeadCard({
                       {status}
                     </DropdownMenuItem>
                   ))}
+                  <DropdownMenuItem
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onOpenTransferDialog?.(lead);
+                    }}
+                    onPointerDown={(e) => e.stopPropagation()}
+                    className="text-xs cursor-pointer text-orange-700"
+                  >
+                    Send Lead to Other Sales Agent
+                  </DropdownMenuItem>
                 </DropdownMenuContent>
               </DropdownMenu>
             </div>
             <div className="flex items-center justify-between gap-1">
-              <span className="px-1.5 py-0.5 bg-blue-100 text-blue-800 rounded text-[10px] truncate flex-1 min-w-0">
-                {lead.source}
-              </span>
+              <div className="flex flex-wrap items-center gap-1 flex-1 min-w-0">
+                <span className="px-1.5 py-0.5 bg-blue-100 text-blue-800 rounded text-[10px] truncate">
+                  {lead.source}
+                </span>
+                <Badge
+                  variant="outline"
+                  className={lead.created_by_sales_agent_id === lead.sales_agent_id
+                    ? "h-5 text-[10px] px-1.5 bg-emerald-50 text-emerald-700 border-emerald-200"
+                    : "h-5 text-[10px] px-1.5 bg-violet-50 text-violet-700 border-violet-200"}
+                >
+                  {lead.created_by_sales_agent_id === lead.sales_agent_id ? "Own Lead" : "Received Lead"}
+                </Badge>
+              </div>
               <div className="flex gap-0.5 flex-shrink-0">
                 {showInquiryButton && onOpenInquiry && (
                   <Button
@@ -260,6 +289,7 @@ function KanbanColumn({
   onConvert,
   onOpenInquiry,
   onMoveToStatus,
+  onOpenTransferDialog,
   searchQuery,
   inquiryTrackingMap,
 }: {
@@ -269,6 +299,7 @@ function KanbanColumn({
   onConvert?: (lead: Lead) => void;
   onOpenInquiry?: (lead: Lead) => void;
   onMoveToStatus?: (lead: Lead, status: LeadStatus) => void;
+  onOpenTransferDialog?: (lead: Lead) => void;
   searchQuery?: string;
   inquiryTrackingMap?: Map<string, InquiryTrackingInfo>;
 }) {
@@ -346,6 +377,7 @@ function KanbanColumn({
                   onConvert={onConvert}
                   onOpenInquiry={onOpenInquiry}
                   onMoveToStatus={onMoveToStatus}
+                  onOpenTransferDialog={onOpenTransferDialog}
                   showConvertButton={showConvertButton}
                   showInquiryButton={showInquiryButton}
                   inquiryTracking={inquiryTrackingMap?.get(lead.id) || null}
@@ -1255,6 +1287,13 @@ export function PipelinePanel({
   const [inquiryOpen, setInquiryOpen] = useState(false);
   const [convertDialogOpen, setConvertDialogOpen] = useState(false);
   const [leadToConvert, setLeadToConvert] = useState<Lead | null>(null);
+  const [leadToTransfer, setLeadToTransfer] = useState<Lead | null>(null);
+  const [transferDialogOpen, setTransferDialogOpen] = useState(false);
+  const [selectedTransferAgentId, setSelectedTransferAgentId] = useState<string>("");
+  const [transferableAgents, setTransferableAgents] = useState<TransferableSalesAgent[]>([]);
+  const [sentTransfers, setSentTransfers] = useState<LeadTransferRecord[]>([]);
+  const [receivedTransfers, setReceivedTransfers] = useState<LeadTransferRecord[]>([]);
+  const [isLoadingTransferHistory, setIsLoadingTransferHistory] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [isPending, startTransition] = useTransition();
   const [inquiryTrackingMap, setInquiryTrackingMap] = useState<Map<string, InquiryTrackingInfo>>(new Map());
@@ -1270,6 +1309,7 @@ export function PipelinePanel({
   useEffect(() => {
     fetchLeads();
     fetchInquiryTracking();
+    fetchTransferSetupData();
   }, []);
 
   useEffect(() => {
@@ -1308,6 +1348,29 @@ export function PipelinePanel({
       setInquiryTrackingMap(map);
     } catch {
       // Silent fail - tracking is supplementary
+    }
+  }
+
+  async function fetchTransferSetupData() {
+    setIsLoadingTransferHistory(true);
+    try {
+      const [agentsResult, historyResult] = await Promise.all([
+        getTransferableSalesAgents(),
+        getLeadTransferHistoryForCurrentSalesAgent(),
+      ]);
+
+      if (!("error" in agentsResult)) {
+        setTransferableAgents(agentsResult.salesAgents || []);
+      }
+
+      if (!("error" in historyResult)) {
+        setSentTransfers(historyResult.sentTransfers || []);
+        setReceivedTransfers(historyResult.receivedTransfers || []);
+      }
+    } catch {
+      // Keep pipeline usable even if transfer metadata fails.
+    } finally {
+      setIsLoadingTransferHistory(false);
     }
   }
 
@@ -1404,6 +1467,33 @@ export function PipelinePanel({
     setConvertDialogOpen(true);
   }
 
+  function handleOpenTransferDialog(lead: Lead) {
+    setLeadToTransfer(lead);
+    setSelectedTransferAgentId("");
+    setTransferDialogOpen(true);
+  }
+
+  function handleTransferLead() {
+    if (!leadToTransfer || !selectedTransferAgentId) {
+      toast.error("Please select one sales agent");
+      return;
+    }
+
+    startTransition(async () => {
+      const result = await transferLeadToSalesAgent(leadToTransfer.id, selectedTransferAgentId);
+      if ("error" in result) {
+        toast.error(result.error);
+        return;
+      }
+
+      toast.success("Lead sent successfully");
+      setTransferDialogOpen(false);
+      setLeadToTransfer(null);
+      setSelectedTransferAgentId("");
+      await Promise.all([fetchLeads(), fetchTransferSetupData()]);
+    });
+  }
+
   function handleConfirmConvert() {
     if (!leadToConvert) return;
 
@@ -1484,6 +1574,7 @@ export function PipelinePanel({
                       onConvert={handleConvertLead}
                       onOpenInquiry={handleOpenInquiry}
                       onMoveToStatus={handleMoveToStatus}
+                      onOpenTransferDialog={handleOpenTransferDialog}
                       searchQuery={searchQuery}
                       inquiryTrackingMap={inquiryTrackingMap}
                     />
@@ -1500,6 +1591,7 @@ export function PipelinePanel({
                       onConvert={handleConvertLead}
                       onOpenInquiry={handleOpenInquiry}
                       onMoveToStatus={handleMoveToStatus}
+                      onOpenTransferDialog={handleOpenTransferDialog}
                       searchQuery={searchQuery}
                       inquiryTrackingMap={inquiryTrackingMap}
                     />
@@ -1530,6 +1622,105 @@ export function PipelinePanel({
         </CardContent>
       </Card>
 
+      <Card className="bg-white border shadow-sm">
+        <CardHeader className="pb-2">
+          <CardTitle className="text-base md:text-lg flex items-center gap-2">
+            <ArrowRightLeft className="h-4 w-4 text-orange-600" />
+            Lead Transfer Tracking
+          </CardTitle>
+          <CardDescription className="text-xs md:text-sm">
+            Track leads you sent to other sales agents and leads received from them.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-5">
+          {isLoadingTransferHistory ? (
+            <div className="text-sm text-secondary-muted py-4">Loading transfer history...</div>
+          ) : (
+            <>
+              <div className="space-y-2">
+                <h3 className="text-sm font-semibold text-primary-dark">Sent Leads</h3>
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Lead</TableHead>
+                      <TableHead>Sent To</TableHead>
+                      <TableHead>Status at Send</TableHead>
+                      <TableHead>Sent At</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {sentTransfers.length === 0 ? (
+                      <TableRow>
+                        <TableCell colSpan={4} className="text-center text-xs text-secondary-muted py-4">
+                          No leads sent yet.
+                        </TableCell>
+                      </TableRow>
+                    ) : (
+                      sentTransfers.map((transfer) => (
+                        <TableRow key={transfer.id}>
+                          <TableCell className="text-xs">
+                            <div className="font-medium text-primary-dark">
+                              #{transfer.lead_id_formatted_snapshot || "N/A"} - {transfer.lead_name_snapshot}
+                            </div>
+                            <div className="text-secondary-muted">{transfer.lead_number_snapshot}</div>
+                          </TableCell>
+                          <TableCell className="text-xs">
+                            {transfer.to_sales_agent_name}
+                            {transfer.to_sales_agent_username ? ` (${transfer.to_sales_agent_username})` : ""}
+                          </TableCell>
+                          <TableCell className="text-xs">{transfer.status_before_transfer}</TableCell>
+                          <TableCell className="text-xs">{new Date(transfer.transferred_at).toLocaleString()}</TableCell>
+                        </TableRow>
+                      ))
+                    )}
+                  </TableBody>
+                </Table>
+              </div>
+
+              <div className="space-y-2">
+                <h3 className="text-sm font-semibold text-primary-dark">Received Leads</h3>
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Lead</TableHead>
+                      <TableHead>Received From</TableHead>
+                      <TableHead>Status at Receive</TableHead>
+                      <TableHead>Received At</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {receivedTransfers.length === 0 ? (
+                      <TableRow>
+                        <TableCell colSpan={4} className="text-center text-xs text-secondary-muted py-4">
+                          No leads received yet.
+                        </TableCell>
+                      </TableRow>
+                    ) : (
+                      receivedTransfers.map((transfer) => (
+                        <TableRow key={transfer.id}>
+                          <TableCell className="text-xs">
+                            <div className="font-medium text-primary-dark">
+                              #{transfer.lead_id_formatted_snapshot || "N/A"} - {transfer.lead_name_snapshot}
+                            </div>
+                            <div className="text-secondary-muted">{transfer.lead_number_snapshot}</div>
+                          </TableCell>
+                          <TableCell className="text-xs">
+                            {transfer.from_sales_agent_name}
+                            {transfer.from_sales_agent_username ? ` (${transfer.from_sales_agent_username})` : ""}
+                          </TableCell>
+                          <TableCell className="text-xs">{transfer.status_before_transfer}</TableCell>
+                          <TableCell className="text-xs">{new Date(transfer.transferred_at).toLocaleString()}</TableCell>
+                        </TableRow>
+                      ))
+                    )}
+                  </TableBody>
+                </Table>
+              </div>
+            </>
+          )}
+        </CardContent>
+      </Card>
+
       <CommentsDialog
         lead={selectedLead}
         open={commentsOpen}
@@ -1548,6 +1739,73 @@ export function PipelinePanel({
           }
         }}
       />
+
+      <Dialog
+        open={transferDialogOpen}
+        onOpenChange={(open) => {
+          setTransferDialogOpen(open);
+          if (!open) {
+            setLeadToTransfer(null);
+            setSelectedTransferAgentId("");
+          }
+        }}
+      >
+        <DialogContent className="sm:max-w-[520px]">
+          <DialogHeader>
+            <DialogTitle>Send Lead to Other Sales Agent</DialogTitle>
+            <DialogDescription>
+              Select exactly one sales agent to transfer this lead. The selected agent will receive it in their pipeline.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="rounded-md border p-3 bg-slate-50">
+              <div className="text-sm font-medium text-primary-dark">
+                #{leadToTransfer?.lead_id_formatted || "N/A"} - {leadToTransfer?.name || "Lead"}
+              </div>
+              <div className="text-xs text-secondary-muted">{leadToTransfer?.number || "-"}</div>
+            </div>
+
+            <div className="space-y-1.5">
+              <label className="text-sm font-medium">Select Sales Agent</label>
+              <Select
+                value={selectedTransferAgentId}
+                onValueChange={setSelectedTransferAgentId}
+              >
+                <SelectTrigger className="w-full">
+                  <SelectValue placeholder="Choose one sales agent" />
+                </SelectTrigger>
+                <SelectContent>
+                  {transferableAgents.map((agent) => (
+                    <SelectItem key={agent.id} value={agent.id}>
+                      {agent.name} {agent.username ? `(${agent.username})` : ""}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+          <div className="flex justify-end gap-2">
+            <Button
+              variant="outline"
+              onClick={() => {
+                setTransferDialogOpen(false);
+                setLeadToTransfer(null);
+                setSelectedTransferAgentId("");
+              }}
+              disabled={isPending}
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={handleTransferLead}
+              disabled={isPending || !selectedTransferAgentId}
+              className="bg-orange-600 hover:bg-orange-700 text-white"
+            >
+              {isPending ? "Sending..." : "Send Lead"}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
 
       {/* Convert to Customer Dialog */}
       <Dialog 

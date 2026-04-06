@@ -98,7 +98,7 @@ export type LeadChatNotification = {
   is_read: boolean;
   created_at: string;
   notification_type?: 'chat' | 'lifecycle';
-  event_type?: 'inquiry_sent' | 'sent_for_admin_approval' | 'approved' | 'rejected';
+  event_type?: 'inquiry_sent' | 'sent_for_admin_approval' | 'approved' | 'rejected' | 'lead_transferred';
   message?: string;
   leads?: {
     lead_id_formatted: string | null;

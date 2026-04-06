@@ -14,6 +14,9 @@ export type Lead = {
   source: 'Meta' | 'LinkedIn' | 'WhatsApp' | 'Others';
   status: LeadStatus;
   sales_agent_id: string;
+  created_by_sales_agent_id?: string | null;
+  transferred_from_sales_agent_id?: string | null;
+  transferred_at?: string | null;
   converted: boolean;
   created_at: string;
   updated_at: string;
@@ -25,6 +28,29 @@ export type LeadComment = {
   comment: string;
   created_at: string;
   updated_at: string;
+};
+
+export type TransferableSalesAgent = {
+  id: string;
+  name: string;
+  username: string | null;
+};
+
+export type LeadTransferRecord = {
+  id: string;
+  lead_id: string;
+  transferred_at: string;
+  status_before_transfer: LeadStatus;
+  lead_id_formatted_snapshot: string | null;
+  lead_name_snapshot: string;
+  lead_number_snapshot: string;
+  lead_source_snapshot: 'Meta' | 'LinkedIn' | 'WhatsApp' | 'Others';
+  from_sales_agent_id: string;
+  to_sales_agent_id: string;
+  from_sales_agent_name: string;
+  from_sales_agent_username: string | null;
+  to_sales_agent_name: string;
+  to_sales_agent_username: string | null;
 };
 
 export type LeadWithSalesAgent = Lead & {
@@ -114,12 +140,38 @@ export async function createLead(formData: FormData) {
         source: source as 'Meta' | 'LinkedIn' | 'WhatsApp' | 'Others',
         status: 'Leads',
         sales_agent_id: salesAgent.id,
+        created_by_sales_agent_id: salesAgent.id,
         lead_id_formatted: leadIdFormatted,
       }])
       .select()
       .single();
 
     if (error) {
+      if (error.message.includes('created_by_sales_agent_id') || error.message.includes('column "created_by_sales_agent_id"')) {
+        const { data: retryData, error: retryError } = await supabase
+          .from('leads')
+          .insert([{
+            name: safeName,
+            number: number.trim(),
+            source: source as 'Meta' | 'LinkedIn' | 'WhatsApp' | 'Others',
+            status: 'Leads',
+            sales_agent_id: salesAgent.id,
+            lead_id_formatted: leadIdFormatted,
+          }])
+          .select()
+          .single();
+
+        if (retryError) {
+          if (retryError.message.includes('does not exist') || retryError.message.includes('relation') || retryError.code === '42P01') {
+            return { error: 'Leads table does not exist. Please run the SQL migration in Supabase.' };
+          }
+          return { error: retryError.message };
+        }
+
+        revalidatePath('/sales-agent/dashboard');
+        revalidatePath('/admin/dashboard');
+        return { success: true, lead: retryData as Lead };
+      }
       if (error.message.includes('does not exist') || error.message.includes('relation') || error.code === '42P01') {
         return { error: 'Leads table does not exist. Please run the SQL migration in Supabase.' };
       }
@@ -762,6 +814,270 @@ export async function deleteLead(leadId: string) {
     revalidatePath('/sales-agent/dashboard');
     revalidatePath('/admin/dashboard');
     return { success: true };
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };
+  }
+}
+
+export async function getTransferableSalesAgents() {
+  try {
+    const session = await getSession();
+    if (!session || session.role !== 'sales_agent') {
+      return { error: 'Unauthorized' };
+    }
+
+    const { hasPermission } = await import('@/lib/auth/permissions');
+    const hasAccess = await hasPermission('pipeline');
+    if (!hasAccess) {
+      return { error: 'Unauthorized' };
+    }
+
+    const supabase = await createAdminClient();
+    const { data: currentAgent, error: currentAgentError } = await supabase
+      .from('sales_agents')
+      .select('id')
+      .eq('username', session.username)
+      .single();
+
+    if (currentAgentError || !currentAgent) {
+      return { error: 'Sales agent not found' };
+    }
+
+    const { data, error } = await supabase
+      .from('sales_agents')
+      .select('id, name, username')
+      .neq('id', currentAgent.id)
+      .order('name', { ascending: true });
+
+    if (error) {
+      return { error: error.message };
+    }
+
+    return {
+      salesAgents: (data || []) as TransferableSalesAgent[],
+    };
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };
+  }
+}
+
+export async function transferLeadToSalesAgent(leadId: string, targetSalesAgentId: string) {
+  try {
+    const session = await getSession();
+    if (!session || session.role !== 'sales_agent') {
+      return { error: 'Unauthorized' };
+    }
+
+    const { hasPermission } = await import('@/lib/auth/permissions');
+    const hasAccess = await hasPermission('pipeline');
+    if (!hasAccess) {
+      return { error: 'Unauthorized' };
+    }
+
+    if (!leadId || !targetSalesAgentId) {
+      return { error: 'Lead and target sales agent are required' };
+    }
+
+    const supabase = await createAdminClient();
+
+    const { data: senderAgent, error: senderError } = await supabase
+      .from('sales_agents')
+      .select('id, name, username')
+      .eq('username', session.username)
+      .single();
+
+    if (senderError || !senderAgent) {
+      return { error: 'Sales agent not found' };
+    }
+
+    if (senderAgent.id === targetSalesAgentId) {
+      return { error: 'You cannot transfer a lead to yourself' };
+    }
+
+    const { data: recipientAgent, error: recipientError } = await supabase
+      .from('sales_agents')
+      .select('id, name, username')
+      .eq('id', targetSalesAgentId)
+      .single();
+
+    if (recipientError || !recipientAgent) {
+      return { error: 'Target sales agent not found' };
+    }
+
+    const { data: lead, error: leadError } = await supabase
+      .from('leads')
+      .select('id, lead_id_formatted, name, number, source, status, sales_agent_id')
+      .eq('id', leadId)
+      .single();
+
+    if (leadError || !lead) {
+      return { error: 'Lead not found' };
+    }
+
+    if (lead.sales_agent_id !== senderAgent.id) {
+      return { error: 'Lead not found or unauthorized' };
+    }
+
+    const nowIso = new Date().toISOString();
+
+    const { data: updatedLead, error: updateError } = await supabase
+      .from('leads')
+      .update({
+        sales_agent_id: recipientAgent.id,
+        transferred_from_sales_agent_id: senderAgent.id,
+        transferred_at: nowIso,
+        updated_at: nowIso,
+      })
+      .eq('id', leadId)
+      .select()
+      .single();
+
+    if (updateError) {
+      return { error: updateError.message };
+    }
+
+    const { error: transferInsertError } = await supabase
+      .from('lead_transfers')
+      .insert([{
+        lead_id: lead.id,
+        from_sales_agent_id: senderAgent.id,
+        to_sales_agent_id: recipientAgent.id,
+        status_before_transfer: lead.status,
+        lead_id_formatted_snapshot: lead.lead_id_formatted || null,
+        lead_name_snapshot: lead.name || '',
+        lead_number_snapshot: lead.number || '',
+        lead_source_snapshot: lead.source,
+      }]);
+
+    if (transferInsertError) {
+      return { error: transferInsertError.message };
+    }
+
+    if (recipientAgent.username) {
+      const leadRef = lead.lead_id_formatted || lead.id.slice(0, 8);
+      const { error: notificationError } = await supabase
+        .from('inquiry_lifecycle_notifications')
+        .insert([{
+          lead_id: lead.id,
+          inquiry_id: null,
+          confirmation_id: null,
+          sender_role: 'sales_agent',
+          sender_username: session.username || senderAgent.username || senderAgent.name,
+          recipient_role: 'sales_agent',
+          recipient_username: recipientAgent.username,
+          event_type: 'lead_transferred',
+          message: `${senderAgent.name} sent Lead #${leadRef} (${lead.name || 'N/A'}) to you.`,
+        }]);
+
+      if (notificationError) {
+        return { error: notificationError.message };
+      }
+    }
+
+    revalidatePath('/sales-agent/dashboard');
+    revalidatePath('/admin/dashboard');
+    return { success: true, lead: updatedLead as Lead };
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };
+  }
+}
+
+export async function getLeadTransferHistoryForCurrentSalesAgent() {
+  try {
+    const session = await getSession();
+    if (!session || session.role !== 'sales_agent') {
+      return { error: 'Unauthorized' };
+    }
+
+    const { hasPermission } = await import('@/lib/auth/permissions');
+    const hasAccess = await hasPermission('pipeline');
+    if (!hasAccess) {
+      return { error: 'Unauthorized' };
+    }
+
+    const supabase = await createAdminClient();
+    const { data: currentAgent, error: currentAgentError } = await supabase
+      .from('sales_agents')
+      .select('id')
+      .eq('username', session.username)
+      .single();
+
+    if (currentAgentError || !currentAgent) {
+      return { error: 'Sales agent not found' };
+    }
+
+    const { data: transferRows, error: transferError } = await supabase
+      .from('lead_transfers')
+      .select(`
+        id,
+        lead_id,
+        transferred_at,
+        status_before_transfer,
+        lead_id_formatted_snapshot,
+        lead_name_snapshot,
+        lead_number_snapshot,
+        lead_source_snapshot,
+        from_sales_agent_id,
+        to_sales_agent_id
+      `)
+      .or(`from_sales_agent_id.eq.${currentAgent.id},to_sales_agent_id.eq.${currentAgent.id}`)
+      .order('transferred_at', { ascending: false });
+
+    if (transferError) {
+      return { error: transferError.message };
+    }
+
+    const transfers = transferRows || [];
+    if (transfers.length === 0) {
+      return {
+        sentTransfers: [] as LeadTransferRecord[],
+        receivedTransfers: [] as LeadTransferRecord[],
+      };
+    }
+
+    const salesAgentIds = Array.from(
+      new Set(
+        transfers.flatMap((row) => [row.from_sales_agent_id, row.to_sales_agent_id]).filter(Boolean)
+      )
+    );
+
+    const { data: salesAgents, error: salesAgentsError } = await supabase
+      .from('sales_agents')
+      .select('id, name, username')
+      .in('id', salesAgentIds);
+
+    if (salesAgentsError) {
+      return { error: salesAgentsError.message };
+    }
+
+    const byId = new Map(
+      (salesAgents || []).map((agent) => [
+        agent.id,
+        { name: agent.name || 'Unknown', username: agent.username || null },
+      ])
+    );
+
+    const records: LeadTransferRecord[] = transfers.map((row) => ({
+      id: row.id,
+      lead_id: row.lead_id,
+      transferred_at: row.transferred_at,
+      status_before_transfer: row.status_before_transfer as LeadStatus,
+      lead_id_formatted_snapshot: row.lead_id_formatted_snapshot || null,
+      lead_name_snapshot: row.lead_name_snapshot,
+      lead_number_snapshot: row.lead_number_snapshot,
+      lead_source_snapshot: row.lead_source_snapshot as 'Meta' | 'LinkedIn' | 'WhatsApp' | 'Others',
+      from_sales_agent_id: row.from_sales_agent_id,
+      to_sales_agent_id: row.to_sales_agent_id,
+      from_sales_agent_name: byId.get(row.from_sales_agent_id)?.name || 'Unknown',
+      from_sales_agent_username: byId.get(row.from_sales_agent_id)?.username || null,
+      to_sales_agent_name: byId.get(row.to_sales_agent_id)?.name || 'Unknown',
+      to_sales_agent_username: byId.get(row.to_sales_agent_id)?.username || null,
+    }));
+
+    return {
+      sentTransfers: records.filter((record) => record.from_sales_agent_id === currentAgent.id),
+      receivedTransfers: records.filter((record) => record.to_sales_agent_id === currentAgent.id),
+    };
   } catch (err) {
     return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };
   }

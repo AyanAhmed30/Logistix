@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   TrendingUp,
   Users,
@@ -106,11 +106,7 @@ export function SalesAgentDashboardOverview() {
   const [stats, setStats] = useState<SalesAgentDashboardStats | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    void loadStats();
-  }, []);
-
-  async function loadStats() {
+  const loadStats = useCallback(async () => {
     setIsLoading(true);
     const result = await getSalesAgentDashboardStats();
     if ("error" in result) {
@@ -121,7 +117,15 @@ export function SalesAgentDashboardOverview() {
       setStats(result.stats);
     }
     setIsLoading(false);
-  }
+  }, []);
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      void loadStats();
+    }, 0);
+
+    return () => clearTimeout(timer);
+  }, [loadStats]);
 
   const maxStatus = useMemo(() => {
     if (!stats || stats.statusBreakdown.length === 0) return 1;

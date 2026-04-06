@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo, useEffect, useSyncExternalStore } from "react";
 import { logout } from "@/app/actions/auth";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -81,9 +81,17 @@ const DEFAULT_TABS: { key: TabKey; label: string; icon: React.ReactNode }[] = [
   },
 ];
 
+function useIsHydrated() {
+  return useSyncExternalStore(
+    () => () => {},
+    () => true,
+    () => false
+  );
+}
+
 export function SalesAgentDashboardShell({ username, permissions }: Props) {
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
-  const [mounted, setMounted] = useState(false);
+  const mounted = useIsHydrated();
   const [notifications, setNotifications] = useState<LeadChatNotification[]>([]);
   const [unreadCount, setUnreadCount] = useState(0);
   const [focusLeadId, setFocusLeadId] = useState<string | null>(null);
@@ -104,17 +112,16 @@ export function SalesAgentDashboardShell({ username, permissions }: Props) {
     return [...permissionTabsList, ...DEFAULT_TABS];
   }, [permissions]);
 
-  // Update active tab when permissions change (if current tab is no longer available)
-  useEffect(() => {
+  const resolvedActiveTab = useMemo<TabKey>(() => {
     const availableTabKeys = new Set(tabs.map((t) => t.key));
-    if (!availableTabKeys.has(activeTab) && tabs.length > 0) {
-      setActiveTab("dashboard");
+    if (availableTabKeys.has(activeTab)) {
+      return activeTab;
     }
+    if (availableTabKeys.has("dashboard")) {
+      return "dashboard";
+    }
+    return tabs[0]?.key ?? "dashboard";
   }, [tabs, activeTab]);
-
-  useEffect(() => {
-    setMounted(true);
-  }, []);
 
   useEffect(() => {
     async function fetchNotifications() {
@@ -283,7 +290,7 @@ export function SalesAgentDashboardShell({ username, permissions }: Props) {
           {tabs.map((tab) => (
             <Button
               key={tab.key}
-              variant={activeTab === tab.key ? "default" : "outline"}
+              variant={resolvedActiveTab === tab.key ? "default" : "outline"}
               className="justify-start gap-2"
               onClick={() => {
                 setActiveTab(tab.key);
@@ -307,15 +314,15 @@ export function SalesAgentDashboardShell({ username, permissions }: Props) {
 
       <main className="pt-20 md:pl-72 px-6 md:px-10 pb-10 space-y-6">
         {/* All tabs are permission-based */}
-        {activeTab === "lead" && <LeadPanel />}
-        {activeTab === "pipeline" && (
+        {resolvedActiveTab === "lead" && <LeadPanel />}
+        {resolvedActiveTab === "pipeline" && (
           <PipelinePanel
             focusLeadId={focusLeadId}
             onFocusHandled={() => setFocusLeadId(null)}
           />
         )}
-        {activeTab === "customer-list" && <CustomerListPanel />}
-        {activeTab === "manage-request" && (
+        {resolvedActiveTab === "customer-list" && <CustomerListPanel />}
+        {resolvedActiveTab === "manage-request" && (
           <Card className="bg-white border shadow-sm">
             <CardHeader>
               <CardTitle>Manage Request</CardTitle>
@@ -330,19 +337,19 @@ export function SalesAgentDashboardShell({ username, permissions }: Props) {
             </CardContent>
           </Card>
         )}
-        {activeTab === "dashboard" && <SalesAgentDashboardOverview />}
-        {activeTab === "tracking" && <OrderTrackingPanel />}
-        {activeTab === "notifications" && <AdminNotificationsPanel />}
-        {activeTab === "management" && <OrderManagementPanel />}
-        {activeTab === "console" && <ConsolePanel />}
-        {activeTab === "loading-instruction" && <LoadingInstructionPanel />}
-        {activeTab === "operations" && <OperationsPanel />}
-        {activeTab === "import-packing-list" && <ImportPackingListPanel />}
-        {activeTab === "import-invoice" && <ImportInvoicePanel />}
-        {activeTab === "accounting" && <SalesAgentAccountingPanel />}
-        {activeTab === "inquiry-tracking" && <InquiryTrackingPanel />}
-        {activeTab === "lead-transfer-tracking" && <LeadTransferTrackingPanel />}
-        {activeTab === "create" && (
+        {resolvedActiveTab === "dashboard" && <SalesAgentDashboardOverview />}
+        {resolvedActiveTab === "tracking" && <OrderTrackingPanel />}
+        {resolvedActiveTab === "notifications" && <AdminNotificationsPanel />}
+        {resolvedActiveTab === "management" && <OrderManagementPanel />}
+        {resolvedActiveTab === "console" && <ConsolePanel />}
+        {resolvedActiveTab === "loading-instruction" && <LoadingInstructionPanel />}
+        {resolvedActiveTab === "operations" && <OperationsPanel />}
+        {resolvedActiveTab === "import-packing-list" && <ImportPackingListPanel />}
+        {resolvedActiveTab === "import-invoice" && <ImportInvoicePanel />}
+        {resolvedActiveTab === "accounting" && <SalesAgentAccountingPanel />}
+        {resolvedActiveTab === "inquiry-tracking" && <InquiryTrackingPanel />}
+        {resolvedActiveTab === "lead-transfer-tracking" && <LeadTransferTrackingPanel />}
+        {resolvedActiveTab === "create" && (
           <Card className="bg-white border shadow-sm">
             <CardHeader>
               <CardTitle>Create New User</CardTitle>
@@ -357,7 +364,7 @@ export function SalesAgentDashboardShell({ username, permissions }: Props) {
             </CardContent>
           </Card>
         )}
-        {activeTab === "profiles" && (
+        {resolvedActiveTab === "profiles" && (
           <Card className="bg-white border shadow-sm">
             <CardHeader>
               <CardTitle>User Profiles</CardTitle>

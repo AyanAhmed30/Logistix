@@ -69,7 +69,7 @@ export async function getInquiryByLeadNumber(leadNumber: string) {
         lead_id_formatted,
         source,
         sales_agent_id,
-        sales_agents (
+        sales_agents!leads_sales_agent_id_fkey (
           id,
           name,
           username
@@ -287,7 +287,7 @@ export async function getAllInquiryConfirmations() {
           lead_id_formatted,
           source,
           sales_agent_id,
-          sales_agents (
+          sales_agents!leads_sales_agent_id_fkey (
             id,
             name,
             username

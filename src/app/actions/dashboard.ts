@@ -127,3 +127,120 @@ export async function getDashboardStats() {
     return { error: 'Unable to load dashboard statistics' };
   }
 }
+
+export type SalesAgentDashboardStats = {
+  totalLeads: number;
+  totalCustomers: number;
+  ownLeads: number;
+  receivedLeads: number;
+  wonLeads: number;
+  followUpLeads: number;
+  conversionRate: number;
+  statusBreakdown: Array<{ status: string; count: number }>;
+  monthlyLeads: Array<{ month: string; count: number }>;
+};
+
+export async function getSalesAgentDashboardStats() {
+  try {
+    const session = await getSession();
+    if (!session || session.role !== 'sales_agent') {
+      return { error: 'Unauthorized' };
+    }
+
+    const supabase = await createAdminClient();
+    const { data: salesAgent, error: agentError } = await supabase
+      .from('sales_agents')
+      .select('id')
+      .eq('username', session.username)
+      .maybeSingle();
+
+    if (agentError || !salesAgent) {
+      return { error: 'Sales agent not found' };
+    }
+
+    const { data: leadsData, error: leadsError } = await supabase
+      .from('leads')
+      .select('id, status, created_at, created_by_sales_agent_id, transferred_from_sales_agent_id')
+      .eq('sales_agent_id', salesAgent.id);
+
+    if (leadsError) {
+      return { error: leadsError.message };
+    }
+
+    const { count: customersCount, error: customersError } = await supabase
+      .from('customers')
+      .select('*', { count: 'exact', head: true })
+      .eq('sales_agent_id', salesAgent.id)
+      .not('lead_id', 'is', null);
+
+    if (customersError) {
+      return { error: customersError.message };
+    }
+
+    const leads = leadsData || [];
+    const totalLeads = leads.length;
+    const totalCustomers = customersCount || 0;
+
+    const ownLeads = leads.filter((lead) =>
+      lead.created_by_sales_agent_id
+        ? lead.created_by_sales_agent_id === salesAgent.id
+        : !lead.transferred_from_sales_agent_id
+    ).length;
+    const receivedLeads = totalLeads - ownLeads;
+
+    const wonLeads = leads.filter((lead) => lead.status === 'Win').length;
+    const followUpLeads = leads.filter((lead) => lead.status === 'Follow up').length;
+    const conversionRate = totalLeads > 0 ? Number(((totalCustomers / totalLeads) * 100).toFixed(1)) : 0;
+
+    const statuses = ['Leads', 'Inquiry Received', 'Quotation Sent', 'Negotiation', 'Win', 'Follow up', 'Lose'];
+    const statusBreakdown = statuses.map((status) => ({
+      status,
+      count: leads.filter((lead) => lead.status === status).length,
+    }));
+
+    const now = new Date();
+    const monthLabels: string[] = [];
+    const monthKeys: string[] = [];
+    for (let i = 5; i >= 0; i--) {
+      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+      monthKeys.push(key);
+      monthLabels.push(
+        d.toLocaleString('en-US', {
+          month: 'short',
+        })
+      );
+    }
+
+    const monthlyMap = new Map<string, number>(monthKeys.map((key) => [key, 0]));
+    leads.forEach((lead) => {
+      const d = new Date(lead.created_at);
+      if (Number.isNaN(d.getTime())) return;
+      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+      if (monthlyMap.has(key)) {
+        monthlyMap.set(key, (monthlyMap.get(key) || 0) + 1);
+      }
+    });
+
+    const monthlyLeads = monthKeys.map((key, idx) => ({
+      month: monthLabels[idx],
+      count: monthlyMap.get(key) || 0,
+    }));
+
+    const stats: SalesAgentDashboardStats = {
+      totalLeads,
+      totalCustomers,
+      ownLeads,
+      receivedLeads,
+      wonLeads,
+      followUpLeads,
+      conversionRate,
+      statusBreakdown,
+      monthlyLeads,
+    };
+
+    return { stats };
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : 'Unable to load sales dashboard statistics' };
+  }
+}

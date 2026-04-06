@@ -537,7 +537,7 @@ export async function getAllInquiriesForSalesAgent() {
           number,
           source,
           sales_agent_id,
-          sales_agents (
+          sales_agents!leads_sales_agent_id_fkey (
             id,
             name,
             username
@@ -670,7 +670,7 @@ export async function getAllInquiriesForAccounting() {
           number,
           source,
           sales_agent_id,
-          sales_agents (
+          sales_agents!leads_sales_agent_id_fkey (
             id,
             name,
             username
@@ -717,7 +717,7 @@ export async function getAllInquiriesForOperations() {
           number,
           source,
           sales_agent_id,
-          sales_agents (
+          sales_agents!leads_sales_agent_id_fkey (
             id,
             name,
             username

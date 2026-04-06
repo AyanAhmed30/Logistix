@@ -18,9 +18,9 @@ import { LoadingInstructionPanel } from "@/components/admin/LoadingInstructionPa
 import { OperationsPanel } from "@/components/admin/OperationsPanel";
 import { ImportPackingListPanel } from "@/components/admin/ImportPackingListPanel";
 import { ImportInvoicePanel } from "@/components/admin/ImportInvoicePanel";
-import { AdminDashboardOverview } from "@/components/admin/AdminDashboardOverview";
 import { SalesAgentAccountingPanel } from "@/components/sales-agent/SalesAgentAccountingPanel";
 import { LeadTransferTrackingPanel } from "@/components/sales-agent/LeadTransferTrackingPanel";
+import { SalesAgentDashboardOverview } from "@/components/sales-agent/SalesAgentDashboardOverview";
 import {
   getMyLeadChatNotifications,
   markLeadChatNotificationRead,
@@ -89,9 +89,8 @@ export function SalesAgentDashboardShell({ username, permissions }: Props) {
   const [focusLeadId, setFocusLeadId] = useState<string | null>(null);
   const [notificationsError, setNotificationsError] = useState<string | null>(null);
   
-  // Set initial tab to first available permission, or empty string if none
-  const initialTab = permissions.length > 0 ? (permissionTabs[permissions[0]]?.key || "") : "";
-  const [activeTab, setActiveTab] = useState<TabKey>(initialTab as TabKey);
+  // Default landing is always dashboard for sales agents.
+  const [activeTab, setActiveTab] = useState<TabKey>("dashboard");
 
   // Build tabs list: permission-based tabs + always-on default tabs
   const tabs = useMemo(() => {
@@ -107,22 +106,11 @@ export function SalesAgentDashboardShell({ username, permissions }: Props) {
 
   // Update active tab when permissions change (if current tab is no longer available)
   useEffect(() => {
-    // Only update if permissions changed, not when activeTab changes
-    if (permissions.length > 0) {
-      const currentTabKey = activeTab as string;
-      if (!permissions.includes(currentTabKey)) {
-        // Current tab is no longer available, switch to first available
-        const firstAvailable = permissionTabs[permissions[0]]?.key;
-        if (firstAvailable) {
-          setActiveTab(firstAvailable);
-        }
-      }
-    } else if (permissions.length === 0 && activeTab) {
-      // No permissions, clear active tab
-      setActiveTab("" as TabKey);
+    const availableTabKeys = new Set(tabs.map((t) => t.key));
+    if (!availableTabKeys.has(activeTab) && tabs.length > 0) {
+      setActiveTab("dashboard");
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [permissions]);
+  }, [tabs, activeTab]);
 
   useEffect(() => {
     setMounted(true);
@@ -342,7 +330,7 @@ export function SalesAgentDashboardShell({ username, permissions }: Props) {
             </CardContent>
           </Card>
         )}
-        {activeTab === "dashboard" && <AdminDashboardOverview />}
+        {activeTab === "dashboard" && <SalesAgentDashboardOverview />}
         {activeTab === "tracking" && <OrderTrackingPanel />}
         {activeTab === "notifications" && <AdminNotificationsPanel />}
         {activeTab === "management" && <OrderManagementPanel />}

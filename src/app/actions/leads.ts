@@ -109,6 +109,28 @@ export async function createLead(formData: FormData) {
 
     // Normalize name: allow it to be empty; NOT NULL constraint is satisfied by using empty string instead of null
     const safeName = (name ?? '').trim();
+    const safeNumber = number.trim();
+
+    // Prevent duplicate lead creation by phone number (existing duplicates remain untouched).
+    const { data: duplicateLeadRows, error: duplicateLeadError } = await supabase
+      .from('leads')
+      .select('name, lead_id_formatted')
+      .eq('number', safeNumber)
+      .order('created_at', { ascending: true })
+      .limit(1);
+
+    if (duplicateLeadError) {
+      return { error: duplicateLeadError.message };
+    }
+
+    const duplicateLead = (duplicateLeadRows || [])[0];
+    if (duplicateLead) {
+      const existingLeadName = (duplicateLead.name || 'Unknown').trim() || 'Unknown';
+      const existingLeadId = duplicateLead.lead_id_formatted ? ` (#${duplicateLead.lead_id_formatted})` : '';
+      return {
+        error: `A lead with this number already exists under the name: ${existingLeadName}${existingLeadId}. This number already has a lead created.`,
+      };
+    }
 
     // Generate a unique random 6-digit Lead ID
     let leadIdFormatted: string | null = null;
@@ -136,7 +158,7 @@ export async function createLead(formData: FormData) {
       .from('leads')
       .insert([{
         name: safeName,
-        number: number.trim(),
+        number: safeNumber,
         source: source as 'Meta' | 'LinkedIn' | 'WhatsApp' | 'Others',
         status: 'Leads',
         sales_agent_id: salesAgent.id,
@@ -152,7 +174,7 @@ export async function createLead(formData: FormData) {
           .from('leads')
           .insert([{
             name: safeName,
-            number: number.trim(),
+            number: safeNumber,
             source: source as 'Meta' | 'LinkedIn' | 'WhatsApp' | 'Others',
             status: 'Leads',
             sales_agent_id: salesAgent.id,
@@ -263,7 +285,7 @@ export async function getAllLeadsForAdmin() {
       .from('leads')
       .select(`
         *,
-        sales_agents (
+        sales_agents!leads_sales_agent_id_fkey (
           id,
           name,
           username

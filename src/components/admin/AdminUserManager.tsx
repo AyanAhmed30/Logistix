@@ -24,7 +24,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { PlusCircle, UsersRound, X, Truck, Bell, Package, Container, FileText, TrendingUp, ShoppingCart, Settings, ClipboardList, Receipt, UserCog, Calculator, MessageSquare, ClipboardCheck, Wrench, FolderTree, BookOpen, BookText } from "lucide-react";
+import { PlusCircle, UsersRound, X, Truck, Bell, Package, Container, FileText, TrendingUp, ShoppingCart, Settings, ClipboardList, Receipt, UserCog, Calculator, MessageSquare, ClipboardCheck, Wrench, FolderTree, BookOpen, BookText, DollarSign } from "lucide-react";
 import { OrderTrackingPanel } from "@/components/admin/OrderTrackingPanel";
 import { AdminNotificationsPanel } from "@/components/admin/AdminNotificationsPanel";
 import { OrderManagementPanel } from "@/components/admin/OrderManagementPanel";
@@ -46,6 +46,10 @@ import { AdminCalculatorPanel } from "@/components/admin/AdminCalculatorPanel";
 import { ChartOfAccountsPanel } from "@/components/admin/ChartOfAccountsPanel";
 import { JournalsPanel } from "@/components/admin/JournalsPanel";
 import { JournalEntriesPanel } from "@/components/admin/JournalEntriesPanel";
+import { PartnersPanel } from "@/components/admin/PartnersPanel";
+import { VendorBillsPanel } from "@/components/admin/VendorBillsPanel";
+import { PaymentsPanel } from "@/components/admin/PaymentsPanel";
+import { ReconciliationPanel } from "@/components/admin/ReconciliationPanel";
 
 type AppUser = {
   id: string;
@@ -115,7 +119,7 @@ export function AdminUserManager({
   const [profilesSubTab, setProfilesSubTab] = useState<"users" | "sales-agent" | "operations-users" | null>(
     activeTab === "profiles" ? "users" : null
   );
-  const [accountingSubTab, setAccountingSubTab] = useState<"quotation" | "customer-invoice" | "inquiries" | "chart-of-accounts" | "journals" | "journal-entries" | null>(
+  const [accountingSubTab, setAccountingSubTab] = useState<"quotation" | "customer-invoice" | "vendor-bills" | "payments" | "reconciliation" | "inquiries" | "chart-of-accounts" | "journals" | "journal-entries" | "partners" | null>(
     activeTab === "accounting" ? "inquiries" : null
   );
   const [operationsSubTab, setOperationsSubTab] = useState<"operations" | "leads-inquiry" | null>(
@@ -569,6 +573,15 @@ export function AdminUserManager({
                 <span className="sidebar-text">Journal Entries</span>
               </Button>
               <Button
+                variant={accountingSubTab === "partners" ? "default" : "ghost"}
+                onClick={() => setAccountingSubTab("partners")}
+                className="rounded-b-none shrink-0 sidebar-button"
+                data-variant={accountingSubTab === "partners" ? "default" : "outline"}
+              >
+                <UsersRound className="h-4 w-4 mr-2 sidebar-icon" />
+                <span className="sidebar-text">Partners</span>
+              </Button>
+              <Button
                 variant={accountingSubTab === "customer-invoice" ? "default" : "ghost"}
                 onClick={() => setAccountingSubTab("customer-invoice")}
                 className="rounded-b-none shrink-0 sidebar-button"
@@ -576,6 +589,33 @@ export function AdminUserManager({
               >
                 <Receipt className="h-4 w-4 mr-2 sidebar-icon" />
                 <span className="sidebar-text">Customer Invoice</span>
+              </Button>
+              <Button
+                variant={accountingSubTab === "vendor-bills" ? "default" : "ghost"}
+                onClick={() => setAccountingSubTab("vendor-bills")}
+                className="rounded-b-none shrink-0 sidebar-button"
+                data-variant={accountingSubTab === "vendor-bills" ? "default" : "outline"}
+              >
+                <Receipt className="h-4 w-4 mr-2 sidebar-icon" />
+                <span className="sidebar-text">Vendor Bills</span>
+              </Button>
+              <Button
+                variant={accountingSubTab === "payments" ? "default" : "ghost"}
+                onClick={() => setAccountingSubTab("payments")}
+                className="rounded-b-none shrink-0 sidebar-button"
+                data-variant={accountingSubTab === "payments" ? "default" : "outline"}
+              >
+                <DollarSign className="h-4 w-4 mr-2 sidebar-icon" />
+                <span className="sidebar-text">Payments</span>
+              </Button>
+              <Button
+                variant={accountingSubTab === "reconciliation" ? "default" : "ghost"}
+                onClick={() => setAccountingSubTab("reconciliation")}
+                className="rounded-b-none shrink-0 sidebar-button"
+                data-variant={accountingSubTab === "reconciliation" ? "default" : "outline"}
+              >
+                <ClipboardCheck className="h-4 w-4 mr-2 sidebar-icon" />
+                <span className="sidebar-text">Reconciliation</span>
               </Button>
             </div>
 
@@ -601,9 +641,25 @@ export function AdminUserManager({
               <JournalEntriesPanel />
             )}
 
+            {accountingSubTab === "partners" && (
+              <PartnersPanel />
+            )}
+
             {/* Customer Invoice Sub-tab Content */}
             {accountingSubTab === "customer-invoice" && (
               <InvoicePanel />
+            )}
+
+            {accountingSubTab === "vendor-bills" && (
+              <VendorBillsPanel />
+            )}
+
+            {accountingSubTab === "payments" && (
+              <PaymentsPanel />
+            )}
+
+            {accountingSubTab === "reconciliation" && (
+              <ReconciliationPanel />
             )}
           </div>
         ) : activeTab === "create" ? (

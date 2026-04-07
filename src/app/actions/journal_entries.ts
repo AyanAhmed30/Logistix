@@ -88,6 +88,14 @@ type AccountLookup = {
   code: string;
   type: ChartOfAccountType;
   is_active: boolean;
+  allow_reconciliation: boolean;
+};
+
+type PartnerLookup = {
+  id: string;
+  name: string;
+  partner_type: 'customer' | 'vendor' | 'agent' | 'both';
+  status: 'active' | 'inactive';
 };
 
 type NormalizedLine = {
@@ -135,38 +143,36 @@ function isValidDateInput(value: string) {
   return !Number.isNaN(parsed.getTime());
 }
 
-async function getJournalEntryData() {
+async function getJournalEntryData(options?: { status?: JournalEntryStatus | 'all' }) {
   const supabase = await createAdminClient();
+  const normalizedStatus = options?.status && options.status !== 'all' ? options.status : null;
 
-  const [
-    { data: entriesData, error: entriesError },
-    { data: linesData, error: linesError },
-    { data: journalsData, error: journalsError },
-    { data: accountsData, error: accountsError },
-  ] = await Promise.all([
-    supabase
-      .from('journal_entries')
-      .select('*')
-      .order('entry_date', { ascending: false })
-      .order('created_at', { ascending: false }),
-    supabase
-      .from('journal_entry_lines')
-      .select('*')
-      .order('journal_entry_id', { ascending: true })
-      .order('line_order', { ascending: true }),
-    supabase.from('journals').select('id, name, code, type, is_active').order('name', {
-      ascending: true,
-    }),
-    supabase.from('chart_of_accounts').select('id, name, code, type, is_active').order('code', {
-      ascending: true,
-    }),
-  ]);
+  let entriesQuery = supabase
+    .from('journal_entries')
+    .select('*')
+    .order('entry_date', { ascending: false })
+    .order('created_at', { ascending: false });
+
+  if (normalizedStatus) {
+    entriesQuery = entriesQuery.eq('status', normalizedStatus);
+  }
+
+  const [{ data: entriesData, error: entriesError }, { data: journalsData, error: journalsError }, { data: accountsData, error: accountsError }] =
+    await Promise.all([
+      entriesQuery,
+      supabase.from('journals').select('id, name, code, type, is_active').order('name', {
+        ascending: true,
+      }),
+      supabase
+        .from('chart_of_accounts')
+        .select('id, name, code, type, is_active, allow_reconciliation')
+        .order('code', {
+          ascending: true,
+        }),
+    ]);
 
   if (entriesError) {
     throw new Error(entriesError.message);
-  }
-  if (linesError) {
-    throw new Error(linesError.message);
   }
   if (journalsError) {
     throw new Error(journalsError.message);
@@ -175,12 +181,37 @@ async function getJournalEntryData() {
     throw new Error(accountsError.message);
   }
 
+  const { data: partnersData, error: partnersError } = await supabase
+    .from('partners')
+    .select('id, name, partner_type, status');
+
+  if (partnersError) {
+    throw new Error(partnersError.message);
+  }
+
+  const entryIds = ((entriesData || []) as JournalEntryRow[]).map((entry) => entry.id);
+  let linesData: JournalEntryLineRow[] = [];
+  if (entryIds.length > 0) {
+    const { data, error } = await supabase
+      .from('journal_entry_lines')
+      .select('*')
+      .in('journal_entry_id', entryIds)
+      .order('journal_entry_id', { ascending: true })
+      .order('line_order', { ascending: true });
+
+    if (error) {
+      throw new Error(error.message);
+    }
+    linesData = (data || []) as JournalEntryLineRow[];
+  }
+
   return {
     supabase,
     entries: (entriesData || []) as JournalEntryRow[],
-    lines: (linesData || []) as JournalEntryLineRow[],
+    lines: linesData,
     journals: (journalsData || []) as JournalLookup[],
     accounts: (accountsData || []) as AccountLookup[],
+    partners: (partnersData || []) as PartnerLookup[],
   };
 }
 
@@ -239,7 +270,8 @@ function formatJournalEntries(
 
 function validateJournalEntryLines(
   lines: JournalEntryLineInput[],
-  accounts: AccountLookup[]
+  accounts: AccountLookup[],
+  partners: PartnerLookup[]
 ): { lines: NormalizedLine[]; totalDebit: number; totalCredit: number } | { error: string } {
   if (!Array.isArray(lines) || lines.length < 2) {
     return { error: 'At least 2 lines are required.' };
@@ -281,9 +313,79 @@ function validateJournalEntryLines(
       return { error: `Line ${index + 1}: either debit or credit must be greater than zero.` };
     }
 
+    const partnerReference = String(line.partner_reference || '').trim() || null;
+    const expectedPartnerType =
+      account.allow_reconciliation && account.type === 'asset'
+        ? 'customer'
+        : account.allow_reconciliation && account.type === 'liability'
+          ? 'vendor'
+          : null;
+    const normalizedPartnerRef = partnerReference?.toLowerCase() ?? '';
+    const detectedPartnerType = normalizedPartnerRef.startsWith('customer:')
+      ? 'customer'
+      : normalizedPartnerRef.startsWith('vendor:')
+        ? 'vendor'
+        : normalizedPartnerRef.startsWith('agent:')
+          ? 'agent'
+          : null;
+
+    if (expectedPartnerType && !partnerReference) {
+      return {
+        error: `Line ${index + 1}: ${expectedPartnerType} partner is required for ${
+          expectedPartnerType === 'customer' ? 'receivable' : 'payable'
+        } account ${account.code} - ${account.name}.`,
+      };
+    }
+
+    if (expectedPartnerType && partnerReference) {
+      if (!detectedPartnerType) {
+        return {
+          error: `Line ${index + 1}: partner reference must start with "${expectedPartnerType}:" for account ${account.code} - ${account.name}.`,
+        };
+      }
+
+      if (detectedPartnerType !== expectedPartnerType) {
+        return {
+          error: `Line ${index + 1}: partner type mismatch. Account ${account.code} - ${account.name} requires ${expectedPartnerType} partner.`,
+        };
+      }
+    }
+
+    if (!expectedPartnerType && detectedPartnerType) {
+      return {
+        error: `Line ${index + 1}: ${detectedPartnerType} partner is only allowed for reconciliation receivable/payable accounts.`,
+      };
+    }
+
+    if (detectedPartnerType && partnerReference) {
+      const partnerName = partnerReference.split(':').slice(1).join(':').trim();
+      if (!partnerName) {
+        return {
+          error: `Line ${index + 1}: partner reference must include name after "${detectedPartnerType}:".`,
+        };
+      }
+
+      const matchingPartner = partners.find((partner) => {
+        if (partner.status !== 'active') return false;
+        const typeMatches =
+          detectedPartnerType === 'customer'
+            ? partner.partner_type === 'customer' || partner.partner_type === 'both'
+            : detectedPartnerType === 'vendor'
+              ? partner.partner_type === 'vendor' || partner.partner_type === 'both'
+              : partner.partner_type === 'agent';
+        return typeMatches && partner.name.toLowerCase() === partnerName.toLowerCase();
+      });
+
+      if (!matchingPartner) {
+        return {
+          error: `Line ${index + 1}: active ${detectedPartnerType} partner "${partnerName}" was not found.`,
+        };
+      }
+    }
+
     normalizedLines.push({
       account_id: accountId,
-      partner_reference: String(line.partner_reference || '').trim() || null,
+      partner_reference: partnerReference,
       description: String(line.description || '').trim(),
       debit_amount: debit,
       credit_amount: credit,
@@ -315,7 +417,8 @@ function validateJournalEntryLines(
 function validateJournalEntryInput(
   input: UpsertJournalEntryInput,
   journals: JournalLookup[],
-  accounts: AccountLookup[]
+  accounts: AccountLookup[],
+  partners: PartnerLookup[]
 ):
   | {
       values: {
@@ -349,7 +452,7 @@ function validateJournalEntryInput(
     return { error: 'Journal must be active.' };
   }
 
-  const linesValidation = validateJournalEntryLines(input.lines, accounts);
+  const linesValidation = validateJournalEntryLines(input.lines, accounts, partners);
   if ('error' in linesValidation) {
     return linesValidation;
   }
@@ -402,14 +505,12 @@ export async function getJournalEntries(status?: JournalEntryStatus | 'all') {
     const session = await getSession();
     ensureAdmin(session);
 
-    const { entries, lines, journals, accounts } = await getJournalEntryData();
-    const normalizedStatus = status && status !== 'all' ? status : null;
-    const filteredEntries = normalizedStatus
-      ? entries.filter((entry) => entry.status === normalizedStatus)
-      : entries;
+    const { entries, lines, journals, accounts } = await getJournalEntryData({
+      status: status || 'all',
+    });
 
     return {
-      entries: formatJournalEntries(filteredEntries, lines, journals, accounts),
+      entries: formatJournalEntries(entries, lines, journals, accounts),
       journals,
       accounts,
     };
@@ -425,8 +526,8 @@ export async function createJournalEntry(input: UpsertJournalEntryInput) {
     const session = await getSession();
     ensureAdmin(session);
 
-    const { supabase, journals, accounts } = await getJournalEntryData();
-    const validation = validateJournalEntryInput(input, journals, accounts);
+    const { supabase, journals, accounts, partners } = await getJournalEntryData();
+    const validation = validateJournalEntryInput(input, journals, accounts, partners);
     if ('error' in validation) {
       return validation;
     }
@@ -447,7 +548,17 @@ export async function createJournalEntry(input: UpsertJournalEntryInput) {
       return { error: error?.message || 'Failed to create journal entry.' };
     }
 
-    await replaceJournalEntryLines(supabase, data.id, validation.lines);
+    try {
+      await replaceJournalEntryLines(supabase, data.id, validation.lines);
+    } catch (lineErr) {
+      await supabase.from('journal_entries').delete().eq('id', data.id);
+      return {
+        error:
+          lineErr instanceof Error
+            ? `Failed to create journal entry lines: ${lineErr.message}`
+            : 'Failed to create journal entry lines.',
+      };
+    }
 
     revalidateAccountingPaths();
     return { entry: data as JournalEntryRow };
@@ -468,20 +579,31 @@ export async function updateJournalEntry(input: UpsertJournalEntryInput) {
       return { error: 'Journal entry id is required.' };
     }
 
-    const { supabase, entries, journals, accounts } = await getJournalEntryData();
+    const { supabase, entries, lines, journals, accounts, partners } = await getJournalEntryData();
     const existing = entries.find((entry) => entry.id === entryId) ?? null;
     if (!existing) {
       return { error: 'Journal entry not found.' };
     }
 
-    if (existing.status === 'posted') {
-      return { error: 'Posted entries cannot be modified.' };
+    if (existing.status !== 'draft') {
+      return { error: 'Only draft entries can be modified.' };
     }
 
-    const validation = validateJournalEntryInput(input, journals, accounts);
+    const validation = validateJournalEntryInput(input, journals, accounts, partners);
     if ('error' in validation) {
       return validation;
     }
+
+    const previousLines = lines
+      .filter((line) => line.journal_entry_id === entryId)
+      .map((line) => ({
+        account_id: line.account_id,
+        partner_reference: line.partner_reference,
+        description: line.description,
+        debit_amount: toAmount(line.debit_amount),
+        credit_amount: toAmount(line.credit_amount),
+        line_order: line.line_order,
+      }));
 
     const { data, error } = await supabase
       .from('journal_entries')
@@ -497,7 +619,41 @@ export async function updateJournalEntry(input: UpsertJournalEntryInput) {
       return { error: error?.message || 'Failed to update journal entry.' };
     }
 
-    await replaceJournalEntryLines(supabase, entryId, validation.lines);
+    try {
+      await replaceJournalEntryLines(supabase, entryId, validation.lines);
+    } catch (lineErr) {
+      // Best-effort rollback to keep draft entry consistent.
+      await supabase
+        .from('journal_entries')
+        .update({
+          reference: existing.reference,
+          entry_date: existing.entry_date,
+          journal_id: existing.journal_id,
+          total_debit: toAmount(existing.total_debit),
+          total_credit: toAmount(existing.total_credit),
+          status: existing.status,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', entryId);
+
+      try {
+        await replaceJournalEntryLines(supabase, entryId, previousLines);
+      } catch {
+        return {
+          error:
+            lineErr instanceof Error
+              ? `Failed to update journal entry lines and rollback could not fully restore previous lines: ${lineErr.message}`
+              : 'Failed to update journal entry lines and rollback could not fully restore previous lines.',
+        };
+      }
+
+      return {
+        error:
+          lineErr instanceof Error
+            ? `Failed to update journal entry lines: ${lineErr.message}`
+            : 'Failed to update journal entry lines.',
+      };
+    }
 
     revalidateAccountingPaths();
     return { entry: data as JournalEntryRow };
@@ -518,7 +674,7 @@ export async function postJournalEntry(entryId: string) {
       return { error: 'Journal entry id is required.' };
     }
 
-    const { supabase, entries, lines, journals, accounts } = await getJournalEntryData();
+    const { supabase, entries, lines, journals, accounts, partners } = await getJournalEntryData();
     const existing = entries.find((entry) => entry.id === normalizedId) ?? null;
     if (!existing) {
       return { error: 'Journal entry not found.' };
@@ -533,7 +689,7 @@ export async function postJournalEntry(entryId: string) {
     }
 
     const mappedEntry = formatJournalEntries([existing], lines, journals, accounts)[0];
-    const validation = validateJournalEntryLines(mappedEntry.lines, accounts);
+    const validation = validateJournalEntryLines(mappedEntry.lines, accounts, partners);
     if ('error' in validation) {
       return validation;
     }

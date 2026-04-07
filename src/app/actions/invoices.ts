@@ -3,13 +3,18 @@
 import { createAdminClient } from '@/utils/supabase/server';
 import { getSession } from '@/lib/auth/session';
 import { revalidatePath } from 'next/cache';
+import {
+  buildInvoicePosting,
+  createAndPostJournalEntry,
+} from '@/app/actions/accounting_posting';
 
-export type InvoiceStatus = 'draft' | 'posted' | 'paid';
+export type InvoiceStatus = 'draft' | 'confirmed' | 'posted' | 'paid' | 'cancelled';
 export type PaymentStatus = 'unpaid' | 'paid' | 'partial';
 
 export type Invoice = {
   id: string;
   quotation_id: string;
+  partner_id: string | null;
   invoice_number: string;
   customer_name: string;
   product_service: string;
@@ -17,8 +22,12 @@ export type Invoice = {
   unit_price: number;
   total_amount: number;
   invoice_date: string;
+  due_date: string | null;
   payment_status: PaymentStatus;
   invoice_status: InvoiceStatus;
+  paid_amount: number;
+  outstanding_amount: number;
+  posted_journal_entry_id: string | null;
   created_by: string;
   created_at: string;
   updated_at: string;
@@ -64,6 +73,15 @@ async function generateInvoiceNumber(supabase: Awaited<ReturnType<typeof createA
   }
 
   return `${prefix}${nextSequence.toString().padStart(4, '0')}`;
+}
+
+function canPartnerBeCustomer(partnerType: string) {
+  return partnerType === 'customer' || partnerType === 'both';
+}
+
+function parseAmount(value: unknown) {
+  const parsed = Number(value || 0);
+  return Number.isFinite(parsed) ? parsed : 0;
 }
 
 async function logInvoiceAction(
@@ -128,6 +146,26 @@ export async function createInvoiceFromSalesOrder(quotationId: string) {
     const invoiceDate = new Date();
     const year = invoiceDate.getFullYear();
     const invoiceNumber = await generateInvoiceNumber(supabase, year);
+    const invoiceDateString = invoiceDate.toISOString().split('T')[0];
+    const dueDateString = invoiceDateString;
+
+    const { data: partnerRows, error: partnerError } = await supabase
+      .from('partners')
+      .select('id, name, partner_type, status')
+      .ilike('name', quotation.customer_name)
+      .eq('status', 'active')
+      .limit(5);
+
+    if (partnerError) {
+      return { error: partnerError.message };
+    }
+
+    const customerPartner = (partnerRows || []).find((row) => canPartnerBeCustomer(row.partner_type));
+    if (!customerPartner) {
+      return {
+        error: `Active customer partner "${quotation.customer_name}" not found. Create partner first.`,
+      };
+    }
 
     // Create invoice
     const { data, error } = await supabase
@@ -135,15 +173,19 @@ export async function createInvoiceFromSalesOrder(quotationId: string) {
       .insert([
         {
           quotation_id: quotationId,
+          partner_id: customerPartner.id,
           invoice_number: invoiceNumber,
           customer_name: quotation.customer_name,
           product_service: quotation.product_service,
           quantity: quotation.quantity,
           unit_price: quotation.unit_price,
           total_amount: quotation.total_amount,
-          invoice_date: invoiceDate.toISOString().split('T')[0],
+          invoice_date: invoiceDateString,
+          due_date: dueDateString,
           payment_status: 'unpaid',
           invoice_status: 'draft',
+          paid_amount: 0,
+          outstanding_amount: quotation.total_amount,
           created_by: session.username,
         },
       ])
@@ -164,6 +206,7 @@ export async function createInvoiceFromSalesOrder(quotationId: string) {
       'draft',
       {
         quotation_id: quotationId,
+        partner_id: customerPartner.id,
         customer_name: quotation.customer_name,
         product_service: quotation.product_service,
         quantity: quotation.quantity,
@@ -297,6 +340,7 @@ export async function updateInvoice(formData: FormData) {
     const unit_price = parseFloat(String(formData.get('unit_price') || '0'));
     const total_amount = parseFloat(String(formData.get('total_amount') || '0'));
     const invoice_date = String(formData.get('invoice_date') || '').trim();
+    const due_date = String(formData.get('due_date') || '').trim() || null;
 
     if (!customer_name || !product_service || !invoice_date) {
       return { error: 'Customer name, product/service, and invoice date are required' };
@@ -319,6 +363,10 @@ export async function updateInvoice(formData: FormData) {
       return { error: 'Invoice not found' };
     }
 
+    if (currentInvoice.invoice_status === 'posted' || currentInvoice.invoice_status === 'paid') {
+      return { error: 'Posted/Paid invoices cannot be modified.' };
+    }
+
     const { data, error } = await supabase
       .from('invoices')
       .update({
@@ -328,6 +376,8 @@ export async function updateInvoice(formData: FormData) {
         unit_price,
         total_amount,
         invoice_date,
+        due_date,
+        outstanding_amount: Math.max(total_amount - parseAmount(currentInvoice.paid_amount), 0),
         updated_at: new Date().toISOString(),
       })
       .eq('id', id)
@@ -396,6 +446,10 @@ export async function deleteInvoice(id: string) {
       .eq('id', id)
       .single();
 
+    if (invoice && (invoice.invoice_status === 'posted' || invoice.invoice_status === 'paid')) {
+      return { error: 'Posted/Paid invoices cannot be deleted.' };
+    }
+
     const { error } = await supabase.from('invoices').delete().eq('id', id);
 
     if (error) {
@@ -463,7 +517,7 @@ export async function confirmInvoice(id: string) {
     const { data, error } = await supabase
       .from('invoices')
       .update({
-        invoice_status: 'posted',
+        invoice_status: 'confirmed',
         updated_at: new Date().toISOString(),
       })
       .eq('id', id)
@@ -481,7 +535,7 @@ export async function confirmInvoice(id: string) {
       'status_changed',
       session.username,
       'draft',
-      'posted',
+      'confirmed',
       { action: 'Confirm Invoice' }
     );
 
@@ -494,7 +548,7 @@ export async function confirmInvoice(id: string) {
   }
 }
 
-export async function registerPayment(id: string) {
+export async function postInvoice(id: string) {
   try {
     const session = await getSession();
     ensureAdminOrSalesAgent(session);
@@ -519,15 +573,38 @@ export async function registerPayment(id: string) {
       return { error: fetchError?.message || 'Invoice not found' };
     }
 
-    if (currentInvoice.invoice_status !== 'posted') {
-      return { error: 'Only invoices with status "Posted" can have payments registered' };
+    if (currentInvoice.invoice_status !== 'confirmed') {
+      return { error: 'Only confirmed invoices can be posted' };
     }
+
+    if (!currentInvoice.partner_id) {
+      return { error: 'Customer partner is required before posting.' };
+    }
+
+    if (parseAmount(currentInvoice.total_amount) <= 0) {
+      return { error: 'Invoice total amount must be greater than zero.' };
+    }
+
+    const posting = await buildInvoicePosting({
+      amount: parseAmount(currentInvoice.total_amount),
+      partnerId: currentInvoice.partner_id,
+      invoiceNumber: currentInvoice.invoice_number,
+      entryDate: currentInvoice.invoice_date,
+    });
+
+    const journalEntryId = await createAndPostJournalEntry({
+      reference: `INV-${currentInvoice.invoice_number}`,
+      entryDate: currentInvoice.invoice_date,
+      journalId: posting.journalId,
+      lines: posting.lines,
+    });
 
     const { data, error } = await supabase
       .from('invoices')
       .update({
-        invoice_status: 'paid',
-        payment_status: 'paid',
+        invoice_status: 'posted',
+        payment_status: parseAmount(currentInvoice.total_amount) > 0 ? 'unpaid' : 'paid',
+        posted_journal_entry_id: journalEntryId,
         updated_at: new Date().toISOString(),
       })
       .eq('id', id)
@@ -535,21 +612,84 @@ export async function registerPayment(id: string) {
       .single();
 
     if (error || !data) {
-      return { error: error?.message || 'Failed to register payment' };
+      return { error: error?.message || 'Failed to post invoice' };
     }
 
-    // Log the payment registration
+    // Log the posting
     await logInvoiceAction(
       supabase,
       id,
-      'payment_registered',
+      'status_changed',
       session.username,
+      'confirmed',
       'posted',
-      'paid',
       {
-        action: 'Register Payment',
-        payment_status: 'paid',
-      }
+        action: 'Post Invoice',
+        posted_journal_entry_id: journalEntryId,
+      },
+    );
+
+    revalidatePath('/admin/dashboard');
+    revalidatePath('/sales-agent/dashboard');
+    return { invoice: data as Invoice, postedJournalEntryId: journalEntryId };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'An unexpected error occurred';
+    return { error: message };
+  }
+}
+
+export async function registerPayment(id: string) {
+  return { error: 'Use Payments + Reconciliation module to register payments.' };
+}
+
+export async function cancelInvoice(id: string) {
+  try {
+    const session = await getSession();
+    ensureAdminOrSalesAgent(session);
+    if (!session) {
+      return { error: 'Unauthorized' };
+    }
+    if (!id) {
+      return { error: 'Invoice id is required' };
+    }
+
+    const supabase = await createAdminClient();
+    const { data: invoice, error: fetchError } = await supabase
+      .from('invoices')
+      .select('*')
+      .eq('id', id)
+      .single();
+    if (fetchError || !invoice) {
+      return { error: fetchError?.message || 'Invoice not found' };
+    }
+    if (invoice.invoice_status === 'posted' || invoice.invoice_status === 'paid') {
+      return { error: 'Posted/Paid invoices cannot be cancelled directly.' };
+    }
+    if (invoice.invoice_status === 'cancelled') {
+      return { error: 'Invoice is already cancelled.' };
+    }
+
+    const { data, error } = await supabase
+      .from('invoices')
+      .update({
+        invoice_status: 'cancelled',
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', id)
+      .select('*')
+      .single();
+    if (error || !data) {
+      return { error: error?.message || 'Failed to cancel invoice' };
+    }
+
+    await logInvoiceAction(
+      supabase,
+      id,
+      'status_changed',
+      session.username,
+      invoice.invoice_status,
+      'cancelled',
+      { action: 'Cancel Invoice' },
     );
 
     revalidatePath('/admin/dashboard');

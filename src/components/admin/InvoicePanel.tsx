@@ -9,7 +9,8 @@ import {
   updateInvoice,
   deleteInvoice,
   confirmInvoice,
-  registerPayment,
+  postInvoice,
+  cancelInvoice,
   getInvoiceLogs,
   logInvoicePrint,
   type Invoice,
@@ -36,7 +37,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { Trash2, Edit2, CheckCircle, DollarSign, History, Printer } from "lucide-react";
+import { Trash2, Edit2, CheckCircle, History, Printer } from "lucide-react";
 import jsPDF from "jspdf";
 import { Badge } from "@/components/ui/badge";
 
@@ -44,10 +45,14 @@ function formatStatus(status: InvoiceStatus): string {
   switch (status) {
     case "draft":
       return "Draft";
+    case "confirmed":
+      return "Confirmed";
     case "posted":
       return "Posted";
     case "paid":
       return "Paid";
+    case "cancelled":
+      return "Cancelled";
     default:
       return status;
   }
@@ -70,10 +75,14 @@ function getStatusBadgeVariant(status: InvoiceStatus): "default" | "secondary" |
   switch (status) {
     case "draft":
       return "outline";
+    case "confirmed":
+      return "secondary";
     case "posted":
       return "secondary";
     case "paid":
       return "default";
+    case "cancelled":
+      return "outline";
     default:
       return "outline";
   }
@@ -87,6 +96,7 @@ type InvoiceFormState = {
   unit_price: string;
   total_amount: string;
   invoice_date: string;
+  due_date: string;
 };
 
 export function InvoicePanel({ salesAgentMode = false }: { salesAgentMode?: boolean } = {}) {
@@ -107,6 +117,7 @@ export function InvoicePanel({ salesAgentMode = false }: { salesAgentMode?: bool
     unit_price: "",
     total_amount: "",
     invoice_date: "",
+    due_date: "",
   });
 
   useEffect(() => {
@@ -143,6 +154,7 @@ export function InvoicePanel({ salesAgentMode = false }: { salesAgentMode?: bool
       unit_price: String(invoice.unit_price),
       total_amount: String(invoice.total_amount),
       invoice_date: invoice.invoice_date,
+      due_date: invoice.due_date || "",
     });
     setFormOpen(true);
   }
@@ -170,6 +182,7 @@ export function InvoicePanel({ salesAgentMode = false }: { salesAgentMode?: bool
         unit_price: "",
         total_amount: "",
         invoice_date: "",
+        due_date: "",
       });
     }
   }
@@ -239,14 +252,29 @@ export function InvoicePanel({ salesAgentMode = false }: { salesAgentMode?: bool
     });
   }
 
-  async function handleRegisterPayment(invoice: Invoice) {
+  async function handlePostInvoice(invoice: Invoice) {
     startTransition(async () => {
-      const result = await registerPayment(invoice.id);
+      const result = await postInvoice(invoice.id);
       if ("error" in result) {
-        toast.error(result.error || "Unable to register payment");
+        toast.error(result.error || "Unable to post invoice");
         return;
       }
-      toast.success("Payment registered", {
+      toast.success("Invoice posted with journal entry", {
+        className: "bg-green-500 text-white border-green-500",
+      });
+      await fetchInvoices();
+      router.refresh();
+    });
+  }
+
+  async function handleCancelInvoice(invoice: Invoice) {
+    startTransition(async () => {
+      const result = await cancelInvoice(invoice.id);
+      if ("error" in result) {
+        toast.error(result.error || "Unable to cancel invoice");
+        return;
+      }
+      toast.success("Invoice cancelled", {
         className: "bg-green-500 text-white border-green-500",
       });
       await fetchInvoices();
@@ -430,12 +458,28 @@ export function InvoicePanel({ salesAgentMode = false }: { salesAgentMode?: bool
           <span className="sidebar-text">Draft</span>
         </Button>
         <Button
+          variant={activeTab === "confirmed" ? "default" : "ghost"}
+          onClick={() => setActiveTab("confirmed")}
+          className="rounded-b-none shrink-0 sidebar-button"
+          data-variant={activeTab === "confirmed" ? "default" : "outline"}
+        >
+          <span className="sidebar-text">Confirmed</span>
+        </Button>
+        <Button
           variant={activeTab === "posted" ? "default" : "ghost"}
           onClick={() => setActiveTab("posted")}
           className="rounded-b-none shrink-0 sidebar-button"
           data-variant={activeTab === "posted" ? "default" : "outline"}
         >
           <span className="sidebar-text">Posted</span>
+        </Button>
+        <Button
+          variant={activeTab === "cancelled" ? "default" : "ghost"}
+          onClick={() => setActiveTab("cancelled")}
+          className="rounded-b-none shrink-0 sidebar-button"
+          data-variant={activeTab === "cancelled" ? "default" : "outline"}
+        >
+          <span className="sidebar-text">Cancelled</span>
         </Button>
         <Button
           variant={activeTab === "paid" ? "default" : "ghost"}
@@ -538,18 +582,41 @@ export function InvoicePanel({ salesAgentMode = false }: { salesAgentMode?: bool
                                 <CheckCircle className="h-4 w-4 mr-1" />
                                 Confirm Invoice
                               </Button>
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={() => handleCancelInvoice(invoice)}
+                                disabled={isPending}
+                              >
+                                Cancel
+                              </Button>
+                            </>
+                          )}
+                          {invoice.invoice_status === "confirmed" && (
+                            <>
+                              <Button
+                                size="sm"
+                                variant="default"
+                                onClick={() => handlePostInvoice(invoice)}
+                                disabled={isPending}
+                              >
+                                <CheckCircle className="h-4 w-4 mr-1" />
+                                Post Invoice
+                              </Button>
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={() => handleCancelInvoice(invoice)}
+                                disabled={isPending}
+                              >
+                                Cancel
+                              </Button>
                             </>
                           )}
                           {invoice.invoice_status === "posted" && (
-                            <Button
-                              size="sm"
-                              variant="default"
-                              onClick={() => handleRegisterPayment(invoice)}
-                              disabled={isPending}
-                            >
-                              <DollarSign className="h-4 w-4 mr-1" />
-                              Register Payment
-                            </Button>
+                            <span className="text-xs text-secondary-muted">
+                              Reconcile through Payments tab
+                            </span>
                           )}
                           <Button
                             size="sm"
@@ -653,6 +720,16 @@ export function InvoicePanel({ salesAgentMode = false }: { salesAgentMode?: bool
                   value={formState.invoice_date}
                   onChange={(e) => handleFormChange("invoice_date", e.target.value)}
                   required
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="due_date">Due Date</Label>
+                <Input
+                  id="due_date"
+                  name="due_date"
+                  type="date"
+                  value={formState.due_date}
+                  onChange={(e) => handleFormChange("due_date", e.target.value)}
                 />
               </div>
             </div>

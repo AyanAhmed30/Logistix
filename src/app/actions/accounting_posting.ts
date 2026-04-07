@@ -249,17 +249,43 @@ export async function buildVendorBillPosting(args: {
   partnerId: string;
   billNumber: string;
   entryDate: string;
+  expenseAccountId?: string | null;
+  payableAccountId?: string | null;
 }) {
   ensureAmountPositive(args.amount, 'Bill amount');
   const partner = await getActivePartner(args.partnerId);
   assertPartnerType(partner, 'vendor');
 
   const purchaseJournal = await getJournalByType('purchase');
-  const payable = await getAccountByCode('2100');
+  const payable = args.payableAccountId
+    ? await (async () => {
+        const supabase = await createAdminClient();
+        const { data, error } = await supabase
+          .from('chart_of_accounts')
+          .select('id, code, name, type, is_active, allow_reconciliation')
+          .eq('id', args.payableAccountId)
+          .eq('is_active', true)
+          .single();
+        if (error || !data) throw new Error(error?.message || 'Payable account not found.');
+        return data as AccountRow;
+      })()
+    : await getAccountByCode('2100');
   if (payable.type !== 'liability' || !payable.allow_reconciliation) {
     throw new Error('Accounts Payable (2100) must be active and reconciliation-enabled.');
   }
-  const expense = await getAccountByCode('5100');
+  const expense = args.expenseAccountId
+    ? await (async () => {
+        const supabase = await createAdminClient();
+        const { data, error } = await supabase
+          .from('chart_of_accounts')
+          .select('id, code, name, type, is_active, allow_reconciliation')
+          .eq('id', args.expenseAccountId)
+          .eq('is_active', true)
+          .single();
+        if (error || !data) throw new Error(error?.message || 'Expense account not found.');
+        return data as AccountRow;
+      })()
+    : await getAccountByCode('5100');
   if (expense.type !== 'expense' && expense.type !== 'asset') {
     throw new Error('Expense account (5100) must be expense or asset.');
   }

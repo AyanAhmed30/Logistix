@@ -10,6 +10,7 @@ export type QuotationStatus = 'quotation' | 'quotation_sent' | 'sales_order';
 export type Quotation = {
   id: string;
   quotation_number: string | null;
+  partner_id: string | null;
   customer_name: string;
   product_service: string;
   quantity: number;
@@ -81,6 +82,10 @@ async function generateQuotationNumber(supabase: Awaited<ReturnType<typeof creat
   return `S${String(nextNum).padStart(5, '0')}`;
 }
 
+function canPartnerBeCustomer(partnerType: string) {
+  return partnerType === 'customer' || partnerType === 'both';
+}
+
 export async function createQuotation(formData: FormData) {
   try {
     const session = await getSession();
@@ -113,6 +118,25 @@ export async function createQuotation(formData: FormData) {
 
     const supabase = await createAdminClient();
 
+    const { data: partnerRows, error: partnerError } = await supabase
+      .from('partners')
+      .select('id, name, partner_type, status')
+      .ilike('name', customer_name)
+      .eq('status', 'active')
+      .limit(5);
+
+    if (partnerError) {
+      return { error: partnerError.message };
+    }
+
+    const customerPartners = (partnerRows || []).filter((row) => canPartnerBeCustomer(row.partner_type));
+    if (customerPartners.length === 0) {
+      return { error: `Active customer partner "${customer_name}" not found.` };
+    }
+    if (customerPartners.length > 1) {
+      return { error: `Multiple active customer partners matched "${customer_name}". Please use unique partner names.` };
+    }
+
     // Generate quotation number
     const quotation_number = await generateQuotationNumber(supabase);
 
@@ -121,6 +145,7 @@ export async function createQuotation(formData: FormData) {
       .insert([
         {
           quotation_number,
+          partner_id: customerPartners[0].id,
           customer_name,
           product_service,
           quantity,
@@ -271,9 +296,28 @@ export async function updateQuotation(formData: FormData) {
       return { error: 'Quotation not found' };
     }
 
+    const { data: partnerRows, error: partnerError } = await supabase
+      .from('partners')
+      .select('id, name, partner_type, status')
+      .ilike('name', customer_name)
+      .eq('status', 'active')
+      .limit(5);
+
+    if (partnerError) {
+      return { error: partnerError.message };
+    }
+    const customerPartners = (partnerRows || []).filter((row) => canPartnerBeCustomer(row.partner_type));
+    if (customerPartners.length === 0) {
+      return { error: `Active customer partner "${customer_name}" not found.` };
+    }
+    if (customerPartners.length > 1) {
+      return { error: `Multiple active customer partners matched "${customer_name}". Please use unique partner names.` };
+    }
+
     const { data, error } = await supabase
       .from('quotations')
       .update({
+        partner_id: customerPartners[0].id,
         customer_name,
         product_service,
         quantity,

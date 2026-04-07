@@ -93,134 +93,18 @@ export async function reconcilePayment(
       return { error: 'Cannot reconcile more than remaining payment amount.' };
     }
 
-    for (const alloc of allocations) {
-      const amount = parseAmount(alloc.amount);
-      if (amount <= 0) {
-        return { error: 'Allocation amount must be greater than zero.' };
-      }
+    const normalizedAllocations = allocations.map((alloc) => ({
+      invoice_id: alloc.invoice_id || null,
+      vendor_bill_id: alloc.vendor_bill_id || null,
+      amount: parseAmount(alloc.amount),
+    }));
 
-      const hasInvoice = Boolean(alloc.invoice_id);
-      const hasBill = Boolean(alloc.vendor_bill_id);
-      if ((hasInvoice && hasBill) || (!hasInvoice && !hasBill)) {
-        return { error: 'Each allocation must target exactly one document.' };
-      }
-
-      if (hasInvoice) {
-        if (payment.payment_type !== 'inbound') {
-          return { error: 'Inbound payment is required for invoice reconciliation.' };
-        }
-        const { data: invoice, error: invoiceError } = await supabase
-          .from('invoices')
-          .select('*')
-          .eq('id', alloc.invoice_id)
-          .single();
-        if (invoiceError || !invoice) {
-          return { error: invoiceError?.message || 'Invoice not found.' };
-        }
-        if (invoice.partner_id !== payment.partner_id) {
-          return { error: 'Payment and invoice partners must match.' };
-        }
-        if (invoice.invoice_status !== 'posted' && invoice.invoice_status !== 'paid') {
-          return { error: 'Only posted/paid invoices can be reconciled.' };
-        }
-        const outstanding = parseAmount(invoice.outstanding_amount);
-        if (amount > outstanding) {
-          return { error: `Allocation exceeds invoice outstanding amount (${outstanding}).` };
-        }
-      } else {
-        if (payment.payment_type !== 'outbound') {
-          return { error: 'Outbound payment is required for vendor bill reconciliation.' };
-        }
-        const { data: bill, error: billError } = await supabase
-          .from('vendor_bills')
-          .select('*')
-          .eq('id', alloc.vendor_bill_id)
-          .single();
-        if (billError || !bill) {
-          return { error: billError?.message || 'Vendor bill not found.' };
-        }
-        if (bill.vendor_partner_id !== payment.partner_id) {
-          return { error: 'Payment and vendor bill partners must match.' };
-        }
-        if (bill.status !== 'posted' && bill.status !== 'paid') {
-          return { error: 'Only posted/paid vendor bills can be reconciled.' };
-        }
-        const outstanding = parseAmount(bill.outstanding_amount);
-        if (amount > outstanding) {
-          return { error: `Allocation exceeds vendor bill outstanding amount (${outstanding}).` };
-        }
-      }
-    }
-
-    for (const alloc of allocations) {
-      const amount = parseAmount(alloc.amount);
-      const { error: allocErr } = await supabase.from('payment_allocations').insert([
-        {
-          payment_id: paymentId,
-          invoice_id: alloc.invoice_id || null,
-          vendor_bill_id: alloc.vendor_bill_id || null,
-          amount,
-          created_by: session.username,
-        },
-      ]);
-      if (allocErr) return { error: allocErr.message };
-
-      if (alloc.invoice_id) {
-        const { data: invoice, error: invoiceError } = await supabase
-          .from('invoices')
-          .select('id, paid_amount, outstanding_amount, total_amount')
-          .eq('id', alloc.invoice_id)
-          .single();
-        if (invoiceError || !invoice) return { error: invoiceError?.message || 'Invoice not found.' };
-
-        const nextPaid = parseAmount(invoice.paid_amount) + amount;
-        const nextOutstanding = Math.max(parseAmount(invoice.total_amount) - nextPaid, 0);
-        const nextStatus = nextOutstanding === 0 ? 'paid' : 'posted';
-        const nextPaymentStatus = nextOutstanding === 0 ? 'paid' : nextPaid > 0 ? 'partial' : 'unpaid';
-
-        const { error } = await supabase
-          .from('invoices')
-          .update({
-            paid_amount: nextPaid,
-            outstanding_amount: nextOutstanding,
-            invoice_status: nextStatus,
-            payment_status: nextPaymentStatus,
-            updated_at: new Date().toISOString(),
-          })
-          .eq('id', alloc.invoice_id);
-        if (error) return { error: error.message };
-      } else if (alloc.vendor_bill_id) {
-        const { data: bill, error: billError } = await supabase
-          .from('vendor_bills')
-          .select('id, paid_amount, outstanding_amount, total_amount')
-          .eq('id', alloc.vendor_bill_id)
-          .single();
-        if (billError || !bill) return { error: billError?.message || 'Vendor bill not found.' };
-
-        const nextPaid = parseAmount(bill.paid_amount) + amount;
-        const nextOutstanding = Math.max(parseAmount(bill.total_amount) - nextPaid, 0);
-        const nextStatus = nextOutstanding === 0 ? 'paid' : 'posted';
-        const { error } = await supabase
-          .from('vendor_bills')
-          .update({
-            paid_amount: nextPaid,
-            outstanding_amount: nextOutstanding,
-            status: nextStatus,
-            updated_at: new Date().toISOString(),
-          })
-          .eq('id', alloc.vendor_bill_id);
-        if (error) return { error: error.message };
-      }
-    }
-
-    const { error: paymentUpdateError } = await supabase
-      .from('payments')
-      .update({
-        allocated_amount: allocatedSoFar + requestedAllocation,
-        updated_at: new Date().toISOString(),
-      })
-      .eq('id', paymentId);
-    if (paymentUpdateError) return { error: paymentUpdateError.message };
+    const { error: rpcError } = await supabase.rpc('reconcile_payment_allocations', {
+      p_payment_id: paymentId,
+      p_allocations: normalizedAllocations,
+      p_actor: session.username,
+    });
+    if (rpcError) return { error: rpcError.message };
 
     revalidatePath('/admin/dashboard');
     return { success: true };

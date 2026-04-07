@@ -35,6 +35,8 @@ type UpsertVendorBillInput = {
   bill_date: string;
   due_date: string;
   total_amount: number;
+  expense_account_id?: string | null;
+  payable_account_id?: string | null;
 };
 
 function ensureAdmin(session: { role: string } | null) {
@@ -98,6 +100,29 @@ export async function createVendorBill(input: UpsertVendorBillInput) {
     }
 
     const supabase = await createAdminClient();
+    if (!input.expense_account_id) return { error: 'Expense account is required.' };
+    if (!input.payable_account_id) return { error: 'Payable account is required.' };
+
+    const { data: expenseAccount, error: expenseError } = await supabase
+      .from('chart_of_accounts')
+      .select('id, type, is_active')
+      .eq('id', input.expense_account_id)
+      .single();
+    if (expenseError || !expenseAccount) return { error: expenseError?.message || 'Expense account not found.' };
+    if (!expenseAccount.is_active || (expenseAccount.type !== 'expense' && expenseAccount.type !== 'asset')) {
+      return { error: 'Expense account must be active expense/asset account.' };
+    }
+
+    const { data: payableAccount, error: payableError } = await supabase
+      .from('chart_of_accounts')
+      .select('id, type, is_active, allow_reconciliation')
+      .eq('id', input.payable_account_id)
+      .single();
+    if (payableError || !payableAccount) return { error: payableError?.message || 'Payable account not found.' };
+    if (!payableAccount.is_active || payableAccount.type !== 'liability' || !payableAccount.allow_reconciliation) {
+      return { error: 'Payable account must be active reconciliation-enabled liability account.' };
+    }
+
     const billNumber = await generateBillNumber(supabase, new Date(input.bill_date).getFullYear());
     const { data, error } = await supabase
       .from('vendor_bills')
@@ -108,6 +133,8 @@ export async function createVendorBill(input: UpsertVendorBillInput) {
           bill_date: input.bill_date,
           due_date: input.due_date,
           total_amount: amount,
+          expense_account_id: input.expense_account_id,
+          payable_account_id: input.payable_account_id,
           status: 'draft',
           paid_amount: 0,
           outstanding_amount: amount,
@@ -152,10 +179,35 @@ export async function updateVendorBill(input: UpsertVendorBillInput) {
       return { error: `Partner "${partner.name}" is not a vendor.` };
     }
 
+    if (!input.expense_account_id) return { error: 'Expense account is required.' };
+    if (!input.payable_account_id) return { error: 'Payable account is required.' };
+
+    const { data: expenseAccount, error: expenseError } = await supabase
+      .from('chart_of_accounts')
+      .select('id, type, is_active')
+      .eq('id', input.expense_account_id)
+      .single();
+    if (expenseError || !expenseAccount) return { error: expenseError?.message || 'Expense account not found.' };
+    if (!expenseAccount.is_active || (expenseAccount.type !== 'expense' && expenseAccount.type !== 'asset')) {
+      return { error: 'Expense account must be active expense/asset account.' };
+    }
+
+    const { data: payableAccount, error: payableError } = await supabase
+      .from('chart_of_accounts')
+      .select('id, type, is_active, allow_reconciliation')
+      .eq('id', input.payable_account_id)
+      .single();
+    if (payableError || !payableAccount) return { error: payableError?.message || 'Payable account not found.' };
+    if (!payableAccount.is_active || payableAccount.type !== 'liability' || !payableAccount.allow_reconciliation) {
+      return { error: 'Payable account must be active reconciliation-enabled liability account.' };
+    }
+
     const { data, error } = await supabase
       .from('vendor_bills')
       .update({
         vendor_partner_id: input.vendor_partner_id,
+        expense_account_id: input.expense_account_id,
+        payable_account_id: input.payable_account_id,
         bill_date: input.bill_date,
         due_date: input.due_date,
         total_amount: amount,
@@ -188,6 +240,8 @@ export async function postVendorBill(id: string) {
       partnerId: bill.vendor_partner_id,
       billNumber: bill.bill_number,
       entryDate: bill.bill_date,
+      expenseAccountId: bill.expense_account_id,
+      payableAccountId: bill.payable_account_id,
     });
     const postedEntryId = await createAndPostJournalEntry({
       reference: `BILL-${bill.bill_number}`,

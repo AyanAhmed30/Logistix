@@ -149,21 +149,23 @@ export async function createInvoiceFromSalesOrder(quotationId: string) {
     const invoiceDateString = invoiceDate.toISOString().split('T')[0];
     const dueDateString = invoiceDateString;
 
-    const { data: partnerRows, error: partnerError } = await supabase
-      .from('partners')
-      .select('id, name, partner_type, status')
-      .ilike('name', quotation.customer_name)
-      .eq('status', 'active')
-      .limit(5);
-
-    if (partnerError) {
-      return { error: partnerError.message };
+    const quotePartnerId = String(quotation.partner_id || '').trim();
+    if (!quotePartnerId) {
+      return {
+        error: 'Quotation is missing customer partner linkage. Update quotation partner before creating invoice.',
+      };
     }
 
-    const customerPartner = (partnerRows || []).find((row) => canPartnerBeCustomer(row.partner_type));
-    if (!customerPartner) {
+    const { data: customerPartner, error: partnerError } = await supabase
+      .from('partners')
+      .select('id, name, partner_type, status')
+      .eq('id', quotePartnerId)
+      .eq('status', 'active')
+      .single();
+
+    if (partnerError || !customerPartner || !canPartnerBeCustomer(customerPartner.partner_type)) {
       return {
-        error: `Active customer partner "${quotation.customer_name}" not found. Create partner first.`,
+        error: `Active customer partner for quotation "${quotation.customer_name}" is invalid.`,
       };
     }
 

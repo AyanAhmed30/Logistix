@@ -351,50 +351,70 @@ export function SalesAgentDashboardOverview() {
           <div className="grid gap-6 lg:grid-cols-3">
             <div className="lg:col-span-2">
               <div
-                className="relative rounded-xl border bg-gradient-to-b from-slate-50 to-white p-4"
+                className="relative overflow-hidden rounded-xl border bg-gradient-to-b from-slate-50 via-white to-blue-50/50 p-4"
                 style={{
                   backgroundImage:
                     "linear-gradient(to top, rgba(148,163,184,0.16) 1px, transparent 1px), linear-gradient(to right, rgba(148,163,184,0.10) 1px, transparent 1px)",
                   backgroundSize: "100% 25%, 16.66% 100%",
                 }}
               >
-                <div className="grid gap-3 grid-cols-6 items-end h-56">
+                <div className="pointer-events-none absolute -right-10 -top-10 h-44 w-44 rounded-full bg-cyan-200/35 blur-3xl" />
+                <div className="pointer-events-none absolute -left-8 bottom-0 h-36 w-36 rounded-full bg-indigo-200/30 blur-3xl" />
+
+                <div className="relative mb-3 flex items-center justify-between text-[11px] text-secondary-muted">
+                  <span>Lead Count</span>
+                  <span>Last 6 Months</span>
+                </div>
+
+                <div className="relative h-64">
+                  <div className="absolute inset-y-0 left-0 flex w-8 flex-col justify-between text-[10px] text-secondary-muted">
+                    <span>{maxMonthly}</span>
+                    <span>{Math.ceil(maxMonthly * 0.75)}</span>
+                    <span>{Math.ceil(maxMonthly * 0.5)}</span>
+                    <span>{Math.ceil(maxMonthly * 0.25)}</span>
+                    <span>0</span>
+                  </div>
+
+                  <div className="ml-10 grid h-full grid-cols-6 gap-3 items-end">
                   {stats.monthlyLeads.map((item, idx) => (
                     <div key={item.month} className="flex flex-col items-center gap-2">
-                      <div className="text-[10px] font-semibold text-primary-dark bg-white/90 border rounded px-1.5 py-0.5">
+                      <div className="text-[10px] font-semibold text-primary-dark bg-white/95 border rounded px-1.5 py-0.5 shadow-sm">
                         {item.count}
                       </div>
-                      <div
-                        className="w-full rounded-t-md bg-gradient-to-t from-indigo-600 via-blue-500 to-cyan-400 shadow-sm transition-all duration-700"
-                        style={{
-                          height: `${Math.max((item.count / maxMonthly) * 100, 10)}%`,
-                          animationDelay: `${idx * 70}ms`,
-                        }}
-                      />
-                      <div className="h-2 w-2 rounded-full bg-indigo-500" />
-                      <div className="text-[11px] text-secondary-muted">{item.month}</div>
+                      <div className="relative h-44 w-full rounded-md border border-slate-200/70 bg-gradient-to-t from-slate-100/70 to-transparent px-1 pt-1">
+                        <div
+                          className="absolute bottom-1 left-1 right-1 rounded-t-md bg-gradient-to-t from-indigo-700 via-blue-500 to-cyan-300 shadow-[0_8px_20px_-8px_rgba(37,99,235,0.65)] transition-all duration-700"
+                          style={{
+                            height: `${Math.max((item.count / maxMonthly) * 100, 8)}%`,
+                            animationDelay: `${idx * 80}ms`,
+                          }}
+                        />
+                      </div>
+                      <div className="h-2.5 w-2.5 rounded-full bg-indigo-500 shadow-[0_0_0_4px_rgba(99,102,241,0.12)]" />
+                      <div className="text-[11px] font-medium text-secondary-muted">{item.month}</div>
                     </div>
                   ))}
+                </div>
                 </div>
               </div>
             </div>
 
             <div className="space-y-3">
-              <div className="p-3 rounded-lg border bg-slate-50">
+              <div className="p-3 rounded-lg border bg-gradient-to-br from-slate-50 to-white shadow-sm">
                 <div className="text-xs text-secondary-muted">6-Month Total</div>
                 <div className="text-2xl font-bold text-primary-dark">
                   <AnimatedNumber value={monthlyTotal} />
                 </div>
               </div>
 
-              <div className="p-3 rounded-lg border bg-slate-50">
+              <div className="p-3 rounded-lg border bg-gradient-to-br from-blue-50 to-white shadow-sm">
                 <div className="text-xs text-secondary-muted">Monthly Average</div>
                 <div className="text-2xl font-bold text-blue-700">
                   <AnimatedNumber value={monthlyAverage} />
                 </div>
               </div>
 
-              <div className="p-3 rounded-lg border bg-slate-50">
+              <div className="p-3 rounded-lg border bg-gradient-to-br from-emerald-50 to-white shadow-sm">
                 <div className="text-xs text-secondary-muted">Peak Month</div>
                 <div className="text-lg font-bold text-emerald-700">
                   {peakMonth.month} ({peakMonth.count})

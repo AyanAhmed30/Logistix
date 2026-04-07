@@ -65,6 +65,11 @@ const permissionTabs: Record<string, { key: TabKey; label: string; icon: React.R
 // These tabs are always available to all sales agents (not permission-gated)
 const DEFAULT_TABS: { key: TabKey; label: string; icon: React.ReactNode }[] = [
   {
+    key: "dashboard",
+    label: "Dashboard",
+    icon: <TrendingUp className="h-4 w-4" />,
+  },
+  {
     key: "lead-transfer-tracking",
     label: "Lead Transfer Tracking",
     icon: <ArrowRightLeft className="h-4 w-4" />,
@@ -80,6 +85,9 @@ const DEFAULT_TABS: { key: TabKey; label: string; icon: React.ReactNode }[] = [
     icon: <ClipboardCheck className="h-4 w-4" />,
   },
 ];
+
+const DASHBOARD_TAB = DEFAULT_TABS.find((tab) => tab.key === "dashboard");
+const NON_DASHBOARD_DEFAULT_TABS = DEFAULT_TABS.filter((tab) => tab.key !== "dashboard");
 
 function useIsHydrated() {
   return useSyncExternalStore(
@@ -108,8 +116,8 @@ export function SalesAgentDashboardShell({ username, permissions }: Props) {
       .map((perm) => permissionTabs[perm])
       .filter((tab): tab is { key: TabKey; label: string; icon: React.ReactNode } => tab !== undefined);
     
-    // Always add default tabs at the end
-    return [...permissionTabsList, ...DEFAULT_TABS];
+    // Always keep dashboard first in sidebar, then permission tabs, then other always-on tabs.
+    return [...(DASHBOARD_TAB ? [DASHBOARD_TAB] : []), ...permissionTabsList, ...NON_DASHBOARD_DEFAULT_TABS];
   }, [permissions]);
 
   const resolvedActiveTab = useMemo<TabKey>(() => {

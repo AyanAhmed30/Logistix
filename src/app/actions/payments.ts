@@ -119,6 +119,7 @@ export async function createPayment(input: UpsertPaymentInput) {
   try {
     const session = await getSession();
     ensureAdmin(session);
+    if (!session) return { error: 'Unauthorized' };
     const amount = parseAmount(input.amount);
     if (!input.partner_id) return { error: 'Partner is required.' };
     if (!input.payment_date) return { error: 'Payment date is required.' };

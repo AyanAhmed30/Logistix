@@ -86,6 +86,7 @@ export async function createVendorBill(input: UpsertVendorBillInput) {
   try {
     const session = await getSession();
     ensureAdmin(session);
+    if (!session) return { error: 'Unauthorized' };
     const amount = parseAmount(input.total_amount);
     if (!input.vendor_partner_id) return { error: 'Vendor partner is required.' };
     if (!input.bill_date || !input.due_date) return { error: 'Bill date and due date are required.' };

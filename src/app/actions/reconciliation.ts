@@ -70,6 +70,7 @@ export async function reconcilePayment(
   try {
     const session = await getSession();
     ensureAdmin(session);
+    if (!session) return { error: 'Unauthorized' };
     const supabase = await createAdminClient();
     if (!paymentId) return { error: 'Payment id is required.' };
     if (!Array.isArray(allocations) || allocations.length === 0) {

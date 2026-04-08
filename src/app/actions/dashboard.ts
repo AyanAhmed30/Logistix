@@ -158,13 +158,41 @@ export async function getSalesAgentDashboardStats() {
       return { error: 'Sales agent not found' };
     }
 
-    const { data: leadsData, error: leadsError } = await supabase
-      .from('leads')
-      .select('id, status, created_at, created_by_sales_agent_id, transferred_from_sales_agent_id')
-      .eq('sales_agent_id', salesAgent.id);
+    const pageSize = 1000;
+    let from = 0;
+    const leads: Array<{
+      id: string;
+      status: string | null;
+      created_at: string;
+      created_by_sales_agent_id: string | null;
+      transferred_from_sales_agent_id: string | null;
+    }> = [];
 
-    if (leadsError) {
-      return { error: leadsError.message };
+    while (true) {
+      const { data: leadsData, error: leadsError } = await supabase
+        .from('leads')
+        .select('id, status, created_at, created_by_sales_agent_id, transferred_from_sales_agent_id')
+        .eq('sales_agent_id', salesAgent.id)
+        .order('created_at', { ascending: false })
+        .range(from, from + pageSize - 1);
+
+      if (leadsError) {
+        return { error: leadsError.message };
+      }
+
+      const batch = (leadsData || []) as Array<{
+        id: string;
+        status: string | null;
+        created_at: string;
+        created_by_sales_agent_id: string | null;
+        transferred_from_sales_agent_id: string | null;
+      }>;
+      leads.push(...batch);
+
+      if (batch.length < pageSize) {
+        break;
+      }
+      from += pageSize;
     }
 
     const { count: customersCount, error: customersError } = await supabase
@@ -177,7 +205,6 @@ export async function getSalesAgentDashboardStats() {
       return { error: customersError.message };
     }
 
-    const leads = leadsData || [];
     const totalLeads = leads.length;
     const totalCustomers = customersCount || 0;
 

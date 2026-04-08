@@ -11,10 +11,10 @@ const ADMIN_PASSWORD = 'admin123';
 
 export async function login(formData: FormData) {
     try {
-        const username = formData.get('username') as string;
-        const password = formData.get('password') as string;
+        const username = String(formData.get('username') || '').trim();
+        const password = String(formData.get('password') || '').trim();
 
-        if (!username?.trim() || !password?.trim()) {
+        if (!username || !password) {
             return { error: 'Username and password are required' };
         }
 
@@ -31,55 +31,54 @@ export async function login(formData: FormData) {
             redirect('/admin/dashboard');
         }
 
-        // 2. Check Sales Agents
+        // 2. Check DB-backed users in parallel to reduce login latency.
         const supabase = await createAdminClient();
-        const { data: salesAgent, error: salesAgentError } = await supabase
-            .from('sales_agents')
-            .select('username, password')
-            .eq('username', username)
-            .eq('password', password) // Simple verification for demo
-            .maybeSingle();
+        const [salesAgentResult, opsUserResult, appUserResult] = await Promise.all([
+            supabase
+                .from('sales_agents')
+                .select('username')
+                .eq('username', username)
+                .eq('password', password)
+                .maybeSingle(),
+            supabase
+                .from('operations_users')
+                .select('username')
+                .eq('username', username)
+                .eq('password', password)
+                .maybeSingle(),
+            supabase
+                .from('app_users')
+                .select('username, role')
+                .eq('username', username)
+                .eq('password', password)
+                .maybeSingle(),
+        ]);
 
-        if (salesAgentError) {
-            return { error: salesAgentError.message };
+        if (salesAgentResult.error) {
+            return { error: salesAgentResult.error.message };
+        }
+        if (opsUserResult.error && !opsUserResult.error.message.includes('does not exist') && !opsUserResult.error.message.includes('relation')) {
+            return { error: opsUserResult.error.message };
+        }
+        if (appUserResult.error) {
+            return { error: appUserResult.error.message };
         }
 
+        const salesAgent = salesAgentResult.data;
         if (salesAgent) {
             const session = await encrypt({ username: salesAgent.username, role: 'sales_agent', expires: cookieOptions.expires });
             (await cookies()).set('session', session, cookieOptions);
             redirect('/sales-agent/dashboard');
         }
 
-        // 3. Check Operations Users
-        const { data: opsUser, error: opsError } = await supabase
-            .from('operations_users')
-            .select('username, password, name')
-            .eq('username', username)
-            .eq('password', password)
-            .maybeSingle();
-
-        if (opsError && !opsError.message.includes('does not exist') && !opsError.message.includes('relation')) {
-            return { error: opsError.message };
-        }
-
+        const opsUser = opsUserResult.data;
         if (opsUser) {
             const session = await encrypt({ username: opsUser.username, role: 'operations', expires: cookieOptions.expires });
             (await cookies()).set('session', session, cookieOptions);
             redirect('/operations/dashboard');
         }
 
-        // 4. Check Database Users
-        const { data: user, error } = await supabase
-            .from('app_users')
-            .select('username, password, role')
-            .eq('username', username)
-            .eq('password', password) // Simple verification for demo
-            .maybeSingle();
-
-        if (error) {
-            return { error: error.message };
-        }
-
+        const user = appUserResult.data;
         if (user) {
             const session = await encrypt({ username: user.username, role: 'user', expires: cookieOptions.expires });
             (await cookies()).set('session', session, cookieOptions);

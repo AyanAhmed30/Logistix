@@ -3,11 +3,11 @@
 import { useCallback, useEffect, useMemo, useState, useTransition } from "react";
 import { toast } from "sonner";
 import {
-  cancelJournalEntry,
   createJournalEntry,
   deleteJournalEntry,
   getJournalEntries,
   postJournalEntry,
+  reverseJournalEntry,
   updateJournalEntry,
   type JournalEntry,
   type JournalEntryLineInput,
@@ -88,7 +88,7 @@ const STATUS_OPTIONS: { value: JournalEntryStatus | "all"; label: string }[] = [
   { value: "all", label: "All Statuses" },
   { value: "draft", label: "Draft" },
   { value: "posted", label: "Posted" },
-  { value: "cancelled", label: "Cancelled" },
+  { value: "reversed", label: "Reversed" },
 ];
 
 function createEmptyLine(): EditableLine {
@@ -308,14 +308,14 @@ export function JournalEntriesPanel() {
     });
   }
 
-  function handleCancel(entry: JournalEntry) {
+  function handleReverse(entry: JournalEntry) {
     startTransition(async () => {
-      const result = await cancelJournalEntry(entry.id);
+      const result = await reverseJournalEntry(entry.id);
       if ("error" in result) {
-        toast.error(result.error || "Unable to cancel journal entry.");
+        toast.error(result.error || "Unable to reverse journal entry.");
         return;
       }
-      toast.success("Journal entry cancelled successfully.");
+      toast.success("Journal entry reversed successfully.");
       await loadEntries(statusFilter);
     });
   }
@@ -455,7 +455,7 @@ export function JournalEntriesPanel() {
                               variant="outline"
                               size="sm"
                               onClick={() => handleEdit(entry)}
-                              disabled={isPending || entry.status === "posted"}
+                              disabled={isPending || entry.status !== "draft"}
                             >
                               Edit
                             </Button>
@@ -467,6 +467,15 @@ export function JournalEntriesPanel() {
                               disabled={isPending || entry.status !== "draft"}
                             >
                               Post
+                            </Button>
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              onClick={() => handleReverse(entry)}
+                              disabled={isPending || entry.status !== "posted"}
+                            >
+                              Reverse
                             </Button>
                           </div>
                         </TableCell>
@@ -543,7 +552,7 @@ export function JournalEntriesPanel() {
                         type="button"
                         variant="outline"
                         onClick={() => handleEdit(selectedEntry)}
-                        disabled={isPending || selectedEntry.status === "posted"}
+                        disabled={isPending || selectedEntry.status !== "draft"}
                       >
                         Edit
                       </Button>
@@ -558,16 +567,16 @@ export function JournalEntriesPanel() {
                       <Button
                         type="button"
                         variant="outline"
-                        onClick={() => handleCancel(selectedEntry)}
-                        disabled={isPending || selectedEntry.status !== "draft"}
+                        onClick={() => handleReverse(selectedEntry)}
+                        disabled={isPending || selectedEntry.status !== "posted"}
                       >
-                        Cancel
+                        Reverse
                       </Button>
                       <Button
                         type="button"
                         variant="outline"
                         onClick={() => handleDelete(selectedEntry)}
-                        disabled={isPending || selectedEntry.status === "posted"}
+                        disabled={isPending || selectedEntry.status !== "draft"}
                       >
                         <Trash2 className="mr-2 h-4 w-4" />
                         Delete

@@ -1,0 +1,314 @@
+{
+  "run_id": "QA-AUDIT-1775652480636",
+  "total": 34,
+  "passed": 34,
+  "failed": 0,
+  "report": [
+    {
+      "id": "1",
+      "title": "Balanced entry validation",
+      "expected": "PASS",
+      "actual": "PASS",
+      "details": "Valid entry posted",
+      "severity": null,
+      "fix": null
+    },
+    {
+      "id": "2",
+      "title": "Imbalanced entry rejected",
+      "expected": "FAIL expected",
+      "actual": "PASS",
+      "details": "Rejected as expected",
+      "severity": null,
+      "fix": null
+    },
+    {
+      "id": "3",
+      "title": "Immutability update/delete blocked",
+      "expected": "PASS",
+      "actual": "PASS",
+      "details": "Trigger blocks mutation",
+      "severity": null,
+      "fix": null
+    },
+    {
+      "id": "4",
+      "title": "Reversal logic",
+      "expected": "PASS",
+      "actual": "PASS",
+      "details": "Reversal created and linked",
+      "severity": null,
+      "fix": null
+    },
+    {
+      "id": "5",
+      "title": "Customer invoice posting impact",
+      "expected": "PASS",
+      "actual": "PASS",
+      "details": "{\"invoiceId\":\"2e07624e-22cf-43e0-8373-1d58cfc89d1c\",\"journalEntryId\":\"fdda1262-93ab-4f4d-947e-7b1ce8d0d3da\"}",
+      "severity": null,
+      "fix": null
+    },
+    {
+      "id": "6",
+      "title": "Invoice draft has no JE",
+      "expected": "PASS",
+      "actual": "PASS",
+      "details": "No JE before posting",
+      "severity": null,
+      "fix": null
+    },
+    {
+      "id": "7",
+      "title": "Payment against receivable",
+      "expected": "PASS",
+      "actual": "PASS",
+      "details": "{\"processed\":true,\"journal_entry_id\":\"118195d5-86c7-4a18-9f15-efaf62e74877\",\"message\":\"Processed\"}",
+      "severity": null,
+      "fix": null
+    },
+    {
+      "id": "8",
+      "title": "Overpayment prevention",
+      "expected": "FAIL expected",
+      "actual": "PASS",
+      "details": "Cannot reconcile more than remaining payment amount.",
+      "severity": null,
+      "fix": null
+    },
+    {
+      "id": "9",
+      "title": "Vendor bill posting",
+      "expected": "PASS",
+      "actual": "PASS",
+      "details": "{\"processed\":true,\"journal_entry_id\":\"fb0a9312-17f7-4cfb-b758-26fe7e0e356e\",\"message\":\"Processed\"}",
+      "severity": null,
+      "fix": null
+    },
+    {
+      "id": "10",
+      "title": "COD collection",
+      "expected": "PASS",
+      "actual": "PASS",
+      "details": "{\"processed\":true,\"journal_entry_id\":\"87869bb2-29e2-4017-91f8-83878edbd46c\",\"message\":\"Processed\"}",
+      "severity": null,
+      "fix": null
+    },
+    {
+      "id": "11",
+      "title": "COD settlement to bank",
+      "expected": "PASS",
+      "actual": "PASS",
+      "details": "{\"processed\":true,\"journal_entry_id\":\"b39ef128-6551-4856-a58f-96c5bc1690f8\",\"message\":\"Processed\"}",
+      "severity": null,
+      "fix": null
+    },
+    {
+      "id": "12",
+      "title": "COD mismatch validation",
+      "expected": "FAIL expected",
+      "actual": "PASS",
+      "details": "Rejected as expected",
+      "severity": null,
+      "fix": null
+    },
+    {
+      "id": "13",
+      "title": "Shipment created has no accounting entry",
+      "expected": "PASS",
+      "actual": "PASS",
+      "details": "89bd9fe4-09a0-4ad8-bc31-d8fb07781c2d",
+      "severity": null,
+      "fix": null
+    },
+    {
+      "id": "14",
+      "title": "Shipment cost added has no accounting entry",
+      "expected": "PASS",
+      "actual": "PASS",
+      "details": "No JE until vendor bill posted",
+      "severity": null,
+      "fix": null
+    },
+    {
+      "id": "15",
+      "title": "Vendor bill linked to shipment creates JE",
+      "expected": "PASS",
+      "actual": "PASS",
+      "details": "d2d67924-e2d4-4b64-9340-8a25214b32c2",
+      "severity": null,
+      "fix": null
+    },
+    {
+      "id": "16",
+      "title": "Event triggering logs CUSTOMER_INVOICE_POSTED",
+      "expected": "PASS",
+      "actual": "PASS",
+      "details": "{\"id\":\"f42d34a0-d280-403b-8de6-02bf47e3578f\",\"event_type\":\"CUSTOMER_INVOICE_POSTED\"}",
+      "severity": null,
+      "fix": null
+    },
+    {
+      "id": "17",
+      "title": "Duplicate event handling",
+      "expected": "PASS",
+      "actual": "PASS",
+      "details": "{\"je1\":\"6b9ff2d9-255a-47aa-918b-17288ddbaf91\",\"je2\":\"6b9ff2d9-255a-47aa-918b-17288ddbaf91\"}",
+      "severity": null,
+      "fix": null
+    },
+    {
+      "id": "18",
+      "title": "Invoice-payment reconciliation",
+      "expected": "PASS",
+      "actual": "PASS",
+      "details": "partial",
+      "severity": null,
+      "fix": null
+    },
+    {
+      "id": "19",
+      "title": "Partial payment keeps invoice partial",
+      "expected": "PASS",
+      "actual": "PASS",
+      "details": "{\"payment_status\":\"partial\",\"outstanding_amount\":600}",
+      "severity": null,
+      "fix": null
+    },
+    {
+      "id": "20",
+      "title": "Tradeflow purchase JE",
+      "expected": "PASS",
+      "actual": "PASS",
+      "details": "{\"processed\":true,\"journal_entry_id\":\"5696d4f3-e720-48f6-9fd7-0b6ee85355d5\",\"message\":\"Processed\"}",
+      "severity": null,
+      "fix": null
+    },
+    {
+      "id": "21",
+      "title": "Tradeflow delivery JE with COGS",
+      "expected": "PASS",
+      "actual": "PASS",
+      "details": "{\"processed\":true,\"journal_entry_id\":\"f15e160c-2ac8-4112-a195-e9e615c72c51\",\"message\":\"Processed\"}",
+      "severity": null,
+      "fix": null
+    },
+    {
+      "id": "22",
+      "title": "Tradeflow repayment JE",
+      "expected": "PASS",
+      "actual": "PASS",
+      "details": "{\"processed\":true,\"journal_entry_id\":\"41766381-e172-4d01-b42c-1ced7852ae53\",\"message\":\"Processed\"}",
+      "severity": null,
+      "fix": null
+    },
+    {
+      "id": "23",
+      "title": "Full business flow sanity",
+      "expected": "PASS",
+      "actual": "PASS",
+      "details": "Flow events present",
+      "severity": null,
+      "fix": null
+    },
+    {
+      "id": "24",
+      "title": "No direct balance update in code",
+      "expected": "PASS",
+      "actual": "PASS",
+      "details": "No direct balance writes",
+      "severity": null,
+      "fix": null
+    },
+    {
+      "id": "25",
+      "title": "Ledger as source of truth",
+      "expected": "PASS",
+      "actual": "PASS",
+      "details": "{\"debit\":53281,\"credit\":53281}",
+      "severity": null,
+      "fix": null
+    },
+    {
+      "id": "26",
+      "title": "Partial failure rollback",
+      "expected": "PASS",
+      "actual": "PASS",
+      "details": "Rollback verified",
+      "severity": null,
+      "fix": null
+    },
+    {
+      "id": "27",
+      "title": "Payment without invoice rejection",
+      "expected": "FAIL expected",
+      "actual": "PASS",
+      "details": "Invoice not found.",
+      "severity": null,
+      "fix": null
+    },
+    {
+      "id": "28",
+      "title": "Trial balance equality",
+      "expected": "PASS",
+      "actual": "PASS",
+      "details": "{\"debit\":53281,\"credit\":53281}",
+      "severity": null,
+      "fix": null
+    },
+    {
+      "id": "29",
+      "title": "P&L formula",
+      "expected": "PASS",
+      "actual": "PASS",
+      "details": "{\"revenue\":25201,\"expense\":7680,\"net\":17521}",
+      "severity": null,
+      "fix": null
+    },
+    {
+      "id": "30",
+      "title": "Balance sheet equation",
+      "expected": "PASS",
+      "actual": "PASS",
+      "details": "{\"assets\":6300,\"liabilities\":1920,\"equity\":0,\"income\":6300,\"expenses\":1920}",
+      "severity": null,
+      "fix": null
+    },
+    {
+      "id": "31",
+      "title": "Zero-value transaction rejected",
+      "expected": "FAIL expected",
+      "actual": "PASS",
+      "details": "Rejected as expected",
+      "severity": null,
+      "fix": null
+    },
+    {
+      "id": "32",
+      "title": "Negative values rejected",
+      "expected": "FAIL expected",
+      "actual": "PASS",
+      "details": "Rejected as expected",
+      "severity": null,
+      "fix": null
+    },
+    {
+      "id": "33",
+      "title": "Single-line entry rejected",
+      "expected": "FAIL expected",
+      "actual": "PASS",
+      "details": "Rejected as expected",
+      "severity": null,
+      "fix": null
+    },
+    {
+      "id": "34",
+      "title": "Performance batch insert (10k draft JE)",
+      "expected": "PASS",
+      "actual": "PASS",
+      "details": "{\"inserted\":10000}",
+      "severity": null,
+      "fix": null
+    }
+  ]
+}

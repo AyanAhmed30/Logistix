@@ -5,8 +5,14 @@ import { getSession } from '@/lib/auth/session';
 import { createAdminClient } from '@/utils/supabase/server';
 import type { ChartOfAccountType } from '@/app/actions/chart_of_accounts';
 import type { JournalType } from '@/app/actions/journals';
+import {
+  assertDraftForPosting,
+  assertMutableEntry,
+  buildReversalLines,
+  validateJournalEntry as validateJournalEntryCore,
+} from '@/lib/accounting/journalEngine';
 
-export type JournalEntryStatus = 'draft' | 'posted' | 'cancelled';
+export type JournalEntryStatus = 'draft' | 'posted' | 'reversed';
 
 export type JournalEntryLineInput = {
   id?: string;
@@ -274,7 +280,7 @@ function validateJournalEntryLines(
   partners: PartnerLookup[]
 ): { lines: NormalizedLine[]; totalDebit: number; totalCredit: number } | { error: string } {
   if (!Array.isArray(lines) || lines.length < 2) {
-    return { error: 'At least 2 lines are required.' };
+    return { error: 'Journal entry must have at least two lines' };
   }
 
   const normalizedLines: NormalizedLine[] = [];
@@ -302,7 +308,7 @@ function validateJournalEntryLines(
     const credit = roundAmount(toAmount(line.credit_amount));
 
     if (debit < 0 || credit < 0) {
-      return { error: `Line ${index + 1}: negative amounts are not allowed.` };
+      return { error: 'Invalid negative values in entry' };
     }
 
     if (debit > 0 && credit > 0) {
@@ -400,11 +406,11 @@ function validateJournalEntryLines(
   totalCredit = roundAmount(totalCredit);
 
   if (totalDebit <= 0 || totalCredit <= 0) {
-    return { error: 'Journal entry must contain non-zero debit and credit totals.' };
+    return { error: 'Entry must contain both debit and credit lines' };
   }
 
   if (totalDebit !== totalCredit) {
-    return { error: 'Total debit must equal total credit.' };
+    return { error: 'Total debit and credit must be equal' };
   }
 
   return {
@@ -585,8 +591,10 @@ export async function updateJournalEntry(input: UpsertJournalEntryInput) {
       return { error: 'Journal entry not found.' };
     }
 
-    if (existing.status !== 'draft') {
-      return { error: 'Only draft entries can be modified.' };
+    try {
+      assertMutableEntry(existing.status);
+    } catch (err) {
+      return { error: err instanceof Error ? err.message : 'Posted entries cannot be modified. Use reversal.' };
     }
 
     const validation = validateJournalEntryInput(input, journals, accounts, partners);
@@ -680,38 +688,48 @@ export async function postJournalEntry(entryId: string) {
       return { error: 'Journal entry not found.' };
     }
 
-    if (existing.status === 'posted') {
-      return { error: 'Journal entry is already posted.' };
-    }
-
-    if (existing.status === 'cancelled') {
-      return { error: 'Cancelled journal entries cannot be posted.' };
+    try {
+      assertDraftForPosting(existing.status);
+    } catch (err) {
+      return { error: err instanceof Error ? err.message : 'Only draft entries can be posted' };
     }
 
     const mappedEntry = formatJournalEntries([existing], lines, journals, accounts)[0];
-    const validation = validateJournalEntryLines(mappedEntry.lines, accounts, partners);
-    if ('error' in validation) {
-      return validation;
+    try {
+      validateJournalEntryCore({
+        lines: mappedEntry.lines.map((line) => ({
+          debit_amount: toAmount(line.debit_amount),
+          credit_amount: toAmount(line.credit_amount),
+        })),
+      });
+    } catch (err) {
+      return { error: err instanceof Error ? err.message : 'Failed to validate journal entry' };
     }
 
-    const { data, error } = await supabase
-      .from('journal_entries')
-      .update({
-        status: 'posted',
-        total_debit: validation.totalDebit,
-        total_credit: validation.totalCredit,
-        updated_at: new Date().toISOString(),
-      })
-      .eq('id', normalizedId)
-      .select('*')
-      .single();
+    const { data: postedRows, error } = await supabase.rpc('post_journal_entry_strict', {
+      p_entry_id: normalizedId,
+    });
 
-    if (error || !data) {
-      return { error: error?.message || 'Failed to post journal entry.' };
+    if (error) {
+      return { error: error.message || 'Failed to post journal entry.' };
+    }
+
+    const posted = Array.isArray(postedRows) ? postedRows[0] : null;
+    if (!posted) {
+      return { error: 'Failed to post journal entry.' };
     }
 
     revalidateAccountingPaths();
-    return { entry: data as JournalEntryRow };
+    return {
+      entry: {
+        ...existing,
+        status: 'posted' as JournalEntryStatus,
+        total_debit: mappedEntry.total_debit,
+        total_credit: mappedEntry.total_credit,
+      } as JournalEntryRow,
+      posting_reference: posted.posting_reference as string | null,
+      posted_at: posted.posted_at as string | null,
+    };
   } catch (err) {
     return {
       error: err instanceof Error ? err.message : 'An unexpected error occurred',
@@ -719,7 +737,7 @@ export async function postJournalEntry(entryId: string) {
   }
 }
 
-export async function cancelJournalEntry(entryId: string) {
+export async function reverseJournalEntry(entryId: string) {
   try {
     const session = await getSession();
     ensureAdmin(session);
@@ -729,36 +747,48 @@ export async function cancelJournalEntry(entryId: string) {
       return { error: 'Journal entry id is required.' };
     }
 
-    const { supabase, entries } = await getJournalEntryData();
+    const { supabase, entries, lines, journals, accounts } = await getJournalEntryData();
     const existing = entries.find((entry) => entry.id === normalizedId) ?? null;
     if (!existing) {
       return { error: 'Journal entry not found.' };
     }
 
-    if (existing.status === 'posted') {
-      return { error: 'Posted entries cannot be cancelled directly.' };
+    if (existing.status !== 'posted') {
+      return { error: 'Only posted entries can be reversed.' };
     }
 
-    if (existing.status === 'cancelled') {
-      return { error: 'Journal entry is already cancelled.' };
+    const mappedEntry = formatJournalEntries([existing], lines, journals, accounts)[0];
+    const reversalPreview = buildReversalLines(
+      mappedEntry.lines.map((line) => ({
+        debit_amount: toAmount(line.debit_amount),
+        credit_amount: toAmount(line.credit_amount),
+      }))
+    );
+    try {
+      validateJournalEntryCore({ lines: reversalPreview });
+    } catch (err) {
+      return { error: err instanceof Error ? err.message : 'Failed to validate reversal entry' };
     }
 
-    const { data, error } = await supabase
-      .from('journal_entries')
-      .update({
-        status: 'cancelled',
-        updated_at: new Date().toISOString(),
-      })
-      .eq('id', normalizedId)
-      .select('*')
-      .single();
+    const { data: reversalRows, error } = await supabase.rpc('reverse_journal_entry_strict', {
+      p_original_entry_id: normalizedId,
+    });
 
-    if (error || !data) {
-      return { error: error?.message || 'Failed to cancel journal entry.' };
+    if (error) {
+      return { error: error.message || 'Failed to reverse journal entry.' };
+    }
+
+    const reversal = Array.isArray(reversalRows) ? reversalRows[0] : null;
+    if (!reversal) {
+      return { error: 'Failed to reverse journal entry.' };
     }
 
     revalidateAccountingPaths();
-    return { entry: data as JournalEntryRow };
+    return {
+      success: true,
+      original_entry_id: reversal.original_entry_id as string,
+      reversal_entry_id: reversal.reversal_entry_id as string,
+    };
   } catch (err) {
     return {
       error: err instanceof Error ? err.message : 'An unexpected error occurred',
@@ -783,7 +813,7 @@ export async function deleteJournalEntry(entryId: string) {
     }
 
     if (existing.status === 'posted') {
-      return { error: 'Posted entries cannot be deleted.' };
+      return { error: 'Posted entries cannot be modified. Use reversal.' };
     }
 
     const { error } = await supabase.from('journal_entries').delete().eq('id', normalizedId);

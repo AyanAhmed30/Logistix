@@ -36,6 +36,7 @@ import { PlusCircle, Edit, Trash2, Search, X } from "lucide-react";
 export function LeadPanel() {
   const router = useRouter();
   const [leads, setLeads] = useState<Lead[]>([]);
+  const [totalLeadCount, setTotalLeadCount] = useState(0);
   const [isLoading, setIsLoading] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
@@ -58,8 +59,11 @@ export function LeadPanel() {
       if ("error" in result) {
         toast.error(result.error || "Unable to load leads");
         setLeads([]);
+        setTotalLeadCount(0);
       } else {
-        setLeads(result.leads || []);
+        const leadRows = result.leads || [];
+        setLeads(leadRows);
+        setTotalLeadCount(result.totalCount ?? leadRows.length);
       }
     } catch {
       toast.error("An unexpected error occurred");
@@ -171,6 +175,7 @@ export function LeadPanel() {
   }
 
   const totalLeads = leads.length;
+  const totalLeadsDisplay = totalLeadCount || totalLeads;
   const convertedLeads = leads.filter((l) => l.converted).length;
 
   // Filter leads based on search query
@@ -190,15 +195,15 @@ export function LeadPanel() {
           <div>
             <div className="flex items-center gap-2">
               <CardTitle>Leads</CardTitle>
-              {totalLeads > 0 && (
+              {totalLeadsDisplay > 0 && (
                 <span className="inline-flex items-center justify-center px-2 py-0.5 rounded-full bg-primary text-white text-xs">
-                  {totalLeads}
+                  {totalLeadsDisplay}
                 </span>
               )}
             </div>
             <CardDescription>
               Manage your leads. Add new leads and track their information.
-              {totalLeads > 0 && (
+              {totalLeadsDisplay > 0 && (
                 <> ({convertedLeads} converted)</>
               )}
             </CardDescription>

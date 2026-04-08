@@ -243,29 +243,46 @@ export async function getAllLeadsForSalesAgent() {
       return { error: 'Sales agent not found' };
     }
 
-    // Get all leads for this sales agent
-    const { data, error } = await supabase
-      .from('leads')
-      .select('*')
-      .eq('sales_agent_id', salesAgent.id)
-      .order('created_at', { ascending: false });
+    const pageSize = 1000;
+    let from = 0;
+    const allLeads: Lead[] = [];
 
-    if (error) {
-      if (error.message.includes('does not exist') || error.message.includes('relation') || error.code === '42P01') {
-        return { error: 'Leads table does not exist. Please run the SQL migration in Supabase.' };
+    while (true) {
+      const { data, error } = await supabase
+        .from('leads')
+        .select('*')
+        .eq('sales_agent_id', salesAgent.id)
+        .order('created_at', { ascending: false })
+        .range(from, from + pageSize - 1);
+
+      if (error) {
+        if (error.message.includes('does not exist') || error.message.includes('relation') || error.code === '42P01') {
+          return { error: 'Leads table does not exist. Please run the SQL migration in Supabase.' };
+        }
+        return { error: error.message };
       }
-      return { error: error.message };
+
+      const batch = (data || []) as Lead[];
+      allLeads.push(...batch);
+
+      if (batch.length < pageSize) {
+        break;
+      }
+      from += pageSize;
     }
 
     // Ensure all leads have a status (for existing leads created before migration)
-    const leadsWithStatus = (data || []).map((lead: Lead) => {
+    const leadsWithStatus = allLeads.map((lead: Lead) => {
       if (!lead.status) {
         return { ...lead, status: 'Leads' as LeadStatus };
       }
       return lead;
     });
 
-    return { leads: leadsWithStatus as Lead[] };
+    return {
+      leads: leadsWithStatus as Lead[],
+      totalCount: leadsWithStatus.length,
+    };
   } catch (err) {
     return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };
   }

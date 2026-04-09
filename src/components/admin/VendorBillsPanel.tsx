@@ -16,6 +16,8 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import {
+  approveVendorBill,
+  cancelVendorBill,
   createVendorBill,
   getVendorBills,
   postVendorBill,
@@ -257,7 +259,7 @@ export function VendorBillsPanel() {
       </Card>
 
       <div className="flex gap-2 border-b overflow-x-auto">
-        {(["all", "draft", "posted", "paid"] as const).map((tab) => (
+        {(["all", "draft", "approved", "posted", "partially_paid", "paid", "cancelled"] as const).map((tab) => (
           <Button
             key={tab}
             variant={status === tab ? "default" : "ghost"}
@@ -300,7 +302,15 @@ export function VendorBillsPanel() {
                       <TableCell>{bill.paid_amount.toFixed(2)}</TableCell>
                       <TableCell>{bill.outstanding_amount.toFixed(2)}</TableCell>
                       <TableCell>
-                        <Badge variant={bill.status === "paid" ? "default" : bill.status === "posted" ? "secondary" : "outline"}>
+                        <Badge
+                          variant={
+                            bill.status === "paid"
+                              ? "default"
+                              : bill.status === "posted" || bill.status === "approved" || bill.status === "partially_paid"
+                                ? "secondary"
+                                : "outline"
+                          }
+                        >
                           {bill.status}
                         </Badge>
                       </TableCell>
@@ -310,8 +320,65 @@ export function VendorBillsPanel() {
                             <Button size="sm" variant="outline" onClick={() => handleEdit(bill)} disabled={isPending}>
                               Edit
                             </Button>
+                            <Button
+                              size="sm"
+                              variant="secondary"
+                              onClick={() =>
+                                startTransition(async () => {
+                                  const result = await approveVendorBill(bill.id);
+                                  if ("error" in result) {
+                                    toast.error(result.error || "Failed to approve bill.");
+                                    return;
+                                  }
+                                  toast.success("Vendor bill approved.");
+                                  await loadData();
+                                })
+                              }
+                              disabled={isPending}
+                            >
+                              Approve
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() =>
+                                startTransition(async () => {
+                                  const result = await cancelVendorBill(bill.id);
+                                  if ("error" in result) {
+                                    toast.error(result.error || "Failed to cancel bill.");
+                                    return;
+                                  }
+                                  toast.success("Vendor bill cancelled.");
+                                  await loadData();
+                                })
+                              }
+                              disabled={isPending}
+                            >
+                              Cancel
+                            </Button>
+                          </div>
+                        ) : bill.status === "approved" ? (
+                          <div className="flex justify-end gap-2">
                             <Button size="sm" onClick={() => handlePost(bill.id)} disabled={isPending}>
                               Post Bill
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() =>
+                                startTransition(async () => {
+                                  const result = await cancelVendorBill(bill.id);
+                                  if ("error" in result) {
+                                    toast.error(result.error || "Failed to cancel bill.");
+                                    return;
+                                  }
+                                  toast.success("Vendor bill cancelled.");
+                                  await loadData();
+                                })
+                              }
+                              disabled={isPending}
+                            >
+                              Cancel
                             </Button>
                           </div>
                         ) : (

@@ -7,9 +7,15 @@ export type AccountingEventType =
   | 'PAYMENT_MADE'
   | 'COD_COLLECTED'
   | 'COD_SETTLED_TO_BANK'
+  | 'BANK_SETTLEMENT_POSTED'
+  | 'CUSTOMER_ADVANCE_RECEIVED'
+  | 'CUSTOMER_ADVANCE_APPLIED'
   | 'DUTY_PAID'
+  | 'DDP_DUTY_RECOVERABLE_INVOICED'
   | 'TRADEFLOW_PURCHASE'
+  | 'TRADEFLOW_MOVE_TO_TRANSIT'
   | 'TRADEFLOW_DELIVERY'
+  | 'TRADEFLOW_COGS_RECOGNIZED'
   | 'TRADEFLOW_REPAYMENT';
 
 export type AccountingEvent = {
@@ -25,6 +31,8 @@ export type AccountingEvent = {
     | 'customer_billing'
     | 'vendor_billing'
     | 'payments'
+    | 'bank'
+    | 'reconciliation'
     | 'cod'
     | 'tradeflow'
     | 'tax'

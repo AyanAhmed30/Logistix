@@ -8,7 +8,7 @@ import {
   createAndPostJournalEntry,
 } from '@/app/actions/accounting_posting';
 
-export type InvoiceStatus = 'draft' | 'confirmed' | 'posted' | 'paid' | 'cancelled';
+export type InvoiceStatus = 'draft' | 'approved' | 'confirmed' | 'posted' | 'partially_paid' | 'paid' | 'cancelled';
 export type PaymentStatus = 'unpaid' | 'paid' | 'partial';
 
 export type Invoice = {
@@ -513,13 +513,15 @@ export async function confirmInvoice(id: string) {
     }
 
     if (currentInvoice.invoice_status !== 'draft') {
-      return { error: 'Only invoices with status "Draft" can be confirmed' };
+      return { error: 'Only invoices with status "Draft" can be approved' };
     }
 
     const { data, error } = await supabase
       .from('invoices')
       .update({
-        invoice_status: 'confirmed',
+        invoice_status: 'approved',
+        approved_by: session.username,
+        approved_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
       })
       .eq('id', id)
@@ -537,8 +539,8 @@ export async function confirmInvoice(id: string) {
       'status_changed',
       session.username,
       'draft',
-      'confirmed',
-      { action: 'Confirm Invoice' }
+      'approved',
+      { action: 'Approve Invoice' }
     );
 
     revalidatePath('/admin/dashboard');
@@ -548,6 +550,10 @@ export async function confirmInvoice(id: string) {
     const message = err instanceof Error ? err.message : 'An unexpected error occurred';
     return { error: message };
   }
+}
+
+export async function approveInvoice(id: string) {
+  return confirmInvoice(id);
 }
 
 export async function postInvoice(id: string) {
@@ -575,8 +581,8 @@ export async function postInvoice(id: string) {
       return { error: fetchError?.message || 'Invoice not found' };
     }
 
-    if (currentInvoice.invoice_status !== 'confirmed') {
-      return { error: 'Only confirmed invoices can be posted' };
+    if (currentInvoice.invoice_status !== 'approved' && currentInvoice.invoice_status !== 'confirmed') {
+      return { error: 'Only approved invoices can be posted' };
     }
 
     if (!currentInvoice.partner_id) {
@@ -607,6 +613,7 @@ export async function postInvoice(id: string) {
         invoice_status: 'posted',
         payment_status: parseAmount(currentInvoice.total_amount) > 0 ? 'unpaid' : 'paid',
         posted_journal_entry_id: journalEntryId,
+        posted_by: session.username,
         updated_at: new Date().toISOString(),
       })
       .eq('id', id)
@@ -623,7 +630,7 @@ export async function postInvoice(id: string) {
       id,
       'status_changed',
       session.username,
-      'confirmed',
+      currentInvoice.invoice_status,
       'posted',
       {
         action: 'Post Invoice',
@@ -664,8 +671,8 @@ export async function cancelInvoice(id: string) {
     if (fetchError || !invoice) {
       return { error: fetchError?.message || 'Invoice not found' };
     }
-    if (invoice.invoice_status === 'posted' || invoice.invoice_status === 'paid') {
-      return { error: 'Posted/Paid invoices cannot be cancelled directly.' };
+    if (invoice.invoice_status === 'posted' || invoice.invoice_status === 'partially_paid' || invoice.invoice_status === 'paid') {
+      return { error: 'Posted invoices must be cancelled via reversal.' };
     }
     if (invoice.invoice_status === 'cancelled') {
       return { error: 'Invoice is already cancelled.' };
@@ -675,6 +682,8 @@ export async function cancelInvoice(id: string) {
       .from('invoices')
       .update({
         invoice_status: 'cancelled',
+        cancelled_by: session.username,
+        cancelled_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
       })
       .eq('id', id)
@@ -697,6 +706,100 @@ export async function cancelInvoice(id: string) {
     revalidatePath('/admin/dashboard');
     revalidatePath('/sales-agent/dashboard');
     return { invoice: data as Invoice };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'An unexpected error occurred';
+    return { error: message };
+  }
+}
+
+export async function reverseInvoice(id: string) {
+  try {
+    const session = await getSession();
+    ensureAdminOrSalesAgent(session);
+    if (!session) return { error: 'Unauthorized' };
+    if (!id) return { error: 'Invoice id is required' };
+
+    const supabase = await createAdminClient();
+    const { data: invoice, error: fetchError } = await supabase
+      .from('invoices')
+      .select('*')
+      .eq('id', id)
+      .single();
+    if (fetchError || !invoice) return { error: fetchError?.message || 'Invoice not found' };
+    if (invoice.invoice_status !== 'posted' && invoice.invoice_status !== 'partially_paid' && invoice.invoice_status !== 'paid') {
+      return { error: 'Only posted invoices can be reversed' };
+    }
+    if (!invoice.posted_journal_entry_id) {
+      return { error: 'Posted invoice is missing journal entry reference' };
+    }
+
+    const { data: reversalRows, error: reversalError } = await supabase.rpc('reverse_journal_entry_strict', {
+      p_original_entry_id: invoice.posted_journal_entry_id,
+    });
+    if (reversalError) return { error: reversalError.message || 'Failed to reverse invoice journal entry' };
+    const reversal = Array.isArray(reversalRows) ? reversalRows[0] : null;
+    if (!reversal) return { error: 'Failed to reverse invoice journal entry' };
+
+    const { data: reversalInvoice, error: insertError } = await supabase
+      .from('invoices')
+      .insert([
+        {
+          quotation_id: invoice.quotation_id,
+          partner_id: invoice.partner_id,
+          invoice_number: `${invoice.invoice_number}-REV`,
+          customer_name: invoice.customer_name,
+          product_service: `${invoice.product_service} (REV)`,
+          quantity: invoice.quantity,
+          unit_price: invoice.unit_price,
+          total_amount: invoice.total_amount,
+          invoice_date: new Date().toISOString().slice(0, 10),
+          due_date: invoice.due_date,
+          payment_status: 'unpaid',
+          invoice_status: 'cancelled',
+          paid_amount: 0,
+          outstanding_amount: 0,
+          posted_journal_entry_id: reversal.reversal_entry_id,
+          created_by: session.username,
+          original_invoice_id: invoice.id,
+        },
+      ])
+      .select('*')
+      .single();
+    if (insertError || !reversalInvoice) return { error: insertError?.message || 'Failed to create reversal invoice record' };
+
+    const { error: updateError } = await supabase
+      .from('invoices')
+      .update({
+        invoice_status: 'cancelled',
+        reversed_invoice_id: reversalInvoice.id,
+        reversed_by: session.username,
+        reversed_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', id);
+    if (updateError) return { error: updateError.message || 'Failed to update original invoice status' };
+
+    await logInvoiceAction(
+      supabase,
+      id,
+      'status_changed',
+      session.username,
+      invoice.invoice_status,
+      'cancelled',
+      {
+        action: 'Reverse Invoice',
+        reversal_invoice_id: reversalInvoice.id,
+        reversal_journal_entry_id: reversal.reversal_entry_id,
+      },
+    );
+
+    revalidatePath('/admin/dashboard');
+    revalidatePath('/sales-agent/dashboard');
+    return {
+      success: true,
+      reversal_invoice_id: reversalInvoice.id as string,
+      reversal_journal_entry_id: reversal.reversal_entry_id as string,
+    };
   } catch (err) {
     const message = err instanceof Error ? err.message : 'An unexpected error occurred';
     return { error: message };

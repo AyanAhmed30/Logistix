@@ -45,10 +45,14 @@ function formatStatus(status: InvoiceStatus): string {
   switch (status) {
     case "draft":
       return "Draft";
+    case "approved":
+      return "Approved";
     case "confirmed":
       return "Confirmed";
     case "posted":
       return "Posted";
+    case "partially_paid":
+      return "Partially Paid";
     case "paid":
       return "Paid";
     case "cancelled":
@@ -75,9 +79,13 @@ function getStatusBadgeVariant(status: InvoiceStatus): "default" | "secondary" |
   switch (status) {
     case "draft":
       return "outline";
+    case "approved":
+      return "secondary";
     case "confirmed":
       return "secondary";
     case "posted":
+      return "secondary";
+    case "partially_paid":
       return "secondary";
     case "paid":
       return "default";
@@ -458,12 +466,20 @@ export function InvoicePanel({ salesAgentMode = false }: { salesAgentMode?: bool
           <span className="sidebar-text">Draft</span>
         </Button>
         <Button
-          variant={activeTab === "confirmed" ? "default" : "ghost"}
-          onClick={() => setActiveTab("confirmed")}
+          variant={activeTab === "approved" ? "default" : "ghost"}
+          onClick={() => setActiveTab("approved")}
           className="rounded-b-none shrink-0 sidebar-button"
-          data-variant={activeTab === "confirmed" ? "default" : "outline"}
+          data-variant={activeTab === "approved" ? "default" : "outline"}
         >
-          <span className="sidebar-text">Confirmed</span>
+          <span className="sidebar-text">Approved</span>
+        </Button>
+        <Button
+          variant={activeTab === "partially_paid" ? "default" : "ghost"}
+          onClick={() => setActiveTab("partially_paid")}
+          className="rounded-b-none shrink-0 sidebar-button"
+          data-variant={activeTab === "partially_paid" ? "default" : "outline"}
+        >
+          <span className="sidebar-text">Partially Paid</span>
         </Button>
         <Button
           variant={activeTab === "posted" ? "default" : "ghost"}
@@ -592,7 +608,7 @@ export function InvoicePanel({ salesAgentMode = false }: { salesAgentMode?: bool
                               </Button>
                             </>
                           )}
-                          {invoice.invoice_status === "confirmed" && (
+                          {invoice.invoice_status === "approved" && (
                             <>
                               <Button
                                 size="sm"

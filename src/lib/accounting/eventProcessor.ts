@@ -21,6 +21,12 @@ async function preValidateCrossModule(event: AccountingEvent) {
     await validatePaymentWithinOutstanding({ paymentAmount, outstandingAmount });
   }
 
+  if (event.event_type === 'BANK_SETTLEMENT_POSTED') {
+    const settlementAmount = Number(event.payload.amount || 0);
+    const availableAmount = Number(event.payload.available_amount || settlementAmount);
+    await validatePaymentWithinOutstanding({ paymentAmount: settlementAmount, outstandingAmount: availableAmount });
+  }
+
   if (event.event_type === 'COD_COLLECTED') {
     await validateCodCollectedWithinInvoice({
       codCollected: Number(event.payload.amount || 0),

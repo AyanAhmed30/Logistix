@@ -22,6 +22,7 @@ import {
   createPayment,
   getPayments,
   postPayment,
+  reversePayment,
   type Payment,
   type PaymentStatus,
   type PaymentType,
@@ -261,7 +262,7 @@ export function PaymentsPanel() {
       </Card>
 
       <div className="flex flex-wrap gap-2 border-b pb-2">
-        {(["all", "draft", "posted"] as const).map((tab) => (
+        {(["all", "draft", "posted", "reconciled", "reversed"] as const).map((tab) => (
           <Button key={tab} variant={status === tab ? "default" : "ghost"} onClick={() => setStatus(tab)}>
             {tab === "all" ? "All Statuses" : tab}
           </Button>
@@ -302,14 +303,47 @@ export function PaymentsPanel() {
                       <TableCell>{new Date(payment.payment_date).toLocaleDateString()}</TableCell>
                       <TableCell>{payment.allocated_amount.toFixed(2)}</TableCell>
                       <TableCell>
-                        <Badge variant={payment.status === "posted" ? "default" : "outline"}>{payment.status}</Badge>
+                        <Badge
+                          variant={
+                            payment.status === "reversed"
+                              ? "outline"
+                              : payment.status === "reconciled"
+                                ? "secondary"
+                                : payment.status === "posted"
+                                  ? "default"
+                                  : "outline"
+                          }
+                        >
+                          {payment.status}
+                        </Badge>
                       </TableCell>
                       <TableCell className="text-right">
-                        {payment.status === "draft" ? (
+                        {payment.status === "draft" && (
                           <Button size="sm" disabled={isPending} onClick={() => handlePost(payment.id)}>
                             Post Payment
                           </Button>
-                        ) : (
+                        )}
+                        {(payment.status === "posted" || payment.status === "reconciled") && (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            disabled={isPending}
+                            onClick={() =>
+                              startTransition(async () => {
+                                const result = await reversePayment(payment.id);
+                                if ("error" in result) {
+                                  toast.error(result.error || "Failed to reverse payment.");
+                                  return;
+                                }
+                                toast.success("Payment reversed via journal reversal.");
+                                await loadData();
+                              })
+                            }
+                          >
+                            Reverse
+                          </Button>
+                        )}
+                        {payment.status === "reversed" && (
                           <span className="text-xs text-secondary-muted">No actions</span>
                         )}
                       </TableCell>

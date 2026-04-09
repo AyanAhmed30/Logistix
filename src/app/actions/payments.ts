@@ -10,7 +10,7 @@ import {
 } from '@/app/actions/accounting_posting';
 
 export type PaymentType = 'inbound' | 'outbound';
-export type PaymentStatus = 'draft' | 'posted';
+export type PaymentStatus = 'draft' | 'posted' | 'reconciled' | 'reversed';
 
 export type Payment = {
   id: string;
@@ -218,6 +218,8 @@ export async function postPayment(id: string) {
       .update({
         status: 'posted',
         posted_journal_entry_id: entryId,
+        posted_by: session?.username || 'system',
+        posted_at: new Date().toISOString(),
         receivable_account_id: receivableAccountId,
         payable_account_id: payableAccountId,
         updated_at: new Date().toISOString(),
@@ -229,6 +231,53 @@ export async function postPayment(id: string) {
 
     revalidatePath('/admin/dashboard');
     return { payment: data as Payment, postedJournalEntryId: entryId };
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };
+  }
+}
+
+export async function reversePayment(id: string) {
+  try {
+    const session = await getSession();
+    ensureAdmin(session);
+    if (!id) return { error: 'Payment id is required.' };
+    const supabase = await createAdminClient();
+    const { data: payment, error: paymentError } = await supabase
+      .from('payments')
+      .select('*')
+      .eq('id', id)
+      .single();
+    if (paymentError || !payment) return { error: paymentError?.message || 'Payment not found.' };
+    if (payment.status !== 'posted' && payment.status !== 'reconciled') {
+      return { error: 'Only posted/reconciled payments can be reversed.' };
+    }
+    if (!payment.posted_journal_entry_id) return { error: 'Payment has no posted journal entry.' };
+
+    const { data: reversalRows, error: reversalError } = await supabase.rpc('reverse_journal_entry_strict', {
+      p_original_entry_id: payment.posted_journal_entry_id,
+    });
+    if (reversalError) return { error: reversalError.message || 'Failed to reverse payment journal entry.' };
+    const reversal = Array.isArray(reversalRows) ? reversalRows[0] : null;
+    if (!reversal) return { error: 'Failed to reverse payment journal entry.' };
+
+    const { data, error } = await supabase
+      .from('payments')
+      .update({
+        status: 'reversed',
+        reversed_by: session?.username || 'system',
+        reversed_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', id)
+      .select('*')
+      .single();
+    if (error || !data) return { error: error?.message || 'Failed to mark payment reversed.' };
+
+    revalidatePath('/admin/dashboard');
+    return {
+      payment: data as Payment,
+      reversal_journal_entry_id: reversal.reversal_entry_id as string,
+    };
   } catch (err) {
     return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };
   }

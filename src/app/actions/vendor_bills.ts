@@ -8,8 +8,9 @@ import {
   createAndPostJournalEntry,
   getActivePartner,
 } from '@/app/actions/accounting_posting';
+import { reverseJournalEntry } from '@/app/actions/journal_entries';
 
-export type VendorBillStatus = 'draft' | 'posted' | 'paid';
+export type VendorBillStatus = 'draft' | 'approved' | 'posted' | 'partially_paid' | 'paid' | 'cancelled';
 
 export type VendorBill = {
   id: string;
@@ -170,7 +171,7 @@ export async function updateVendorBill(input: UpsertVendorBillInput) {
       .eq('id', id)
       .single();
     if (existingError || !existing) return { error: existingError?.message || 'Vendor bill not found.' };
-    if (existing.status === 'posted' || existing.status === 'paid') {
+    if (existing.status === 'posted' || existing.status === 'partially_paid' || existing.status === 'paid') {
       return { error: 'Posted/Paid bills cannot be modified.' };
     }
 
@@ -225,6 +226,34 @@ export async function updateVendorBill(input: UpsertVendorBillInput) {
   }
 }
 
+export async function approveVendorBill(id: string) {
+  try {
+    const session = await getSession();
+    ensureAdmin(session);
+    if (!id) return { error: 'Bill id is required.' };
+    const supabase = await createAdminClient();
+    const { data: bill, error: billError } = await supabase.from('vendor_bills').select('*').eq('id', id).single();
+    if (billError || !bill) return { error: billError?.message || 'Vendor bill not found.' };
+    if (bill.status !== 'draft') return { error: 'Only draft bills can be approved.' };
+    const { data, error } = await supabase
+      .from('vendor_bills')
+      .update({
+        status: 'approved',
+        approved_by: session?.username || 'system',
+        approved_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', id)
+      .select('*')
+      .single();
+    if (error || !data) return { error: error?.message || 'Failed to approve vendor bill.' };
+    revalidatePath('/admin/dashboard');
+    return { bill: data as VendorBill };
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };
+  }
+}
+
 export async function postVendorBill(id: string) {
   try {
     const session = await getSession();
@@ -233,7 +262,7 @@ export async function postVendorBill(id: string) {
     const supabase = await createAdminClient();
     const { data: bill, error: billError } = await supabase.from('vendor_bills').select('*').eq('id', id).single();
     if (billError || !bill) return { error: billError?.message || 'Vendor bill not found.' };
-    if (bill.status !== 'draft') return { error: 'Only draft bills can be posted.' };
+    if (bill.status !== 'approved' && bill.status !== 'draft') return { error: 'Only approved bills can be posted.' };
 
     const posting = await buildVendorBillPosting({
       amount: parseAmount(bill.total_amount),
@@ -255,6 +284,7 @@ export async function postVendorBill(id: string) {
       .update({
         status: 'posted',
         posted_journal_entry_id: postedEntryId,
+        posted_by: session?.username || 'system',
         updated_at: new Date().toISOString(),
       })
       .eq('id', id)
@@ -264,6 +294,75 @@ export async function postVendorBill(id: string) {
 
     revalidatePath('/admin/dashboard');
     return { bill: data as VendorBill, postedJournalEntryId: postedEntryId };
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };
+  }
+}
+
+export async function cancelVendorBill(id: string) {
+  try {
+    const session = await getSession();
+    ensureAdmin(session);
+    if (!id) return { error: 'Bill id is required.' };
+    const supabase = await createAdminClient();
+    const { data: bill, error: billError } = await supabase.from('vendor_bills').select('*').eq('id', id).single();
+    if (billError || !bill) return { error: billError?.message || 'Vendor bill not found.' };
+    if (bill.status === 'posted' || bill.status === 'partially_paid' || bill.status === 'paid') {
+      return { error: 'Posted bills must be cancelled via reversal.' };
+    }
+    const { data, error } = await supabase
+      .from('vendor_bills')
+      .update({
+        status: 'cancelled',
+        cancelled_by: session?.username || 'system',
+        cancelled_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', id)
+      .select('*')
+      .single();
+    if (error || !data) return { error: error?.message || 'Failed to cancel vendor bill.' };
+    revalidatePath('/admin/dashboard');
+    return { bill: data as VendorBill };
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };
+  }
+}
+
+export async function reverseVendorBill(id: string) {
+  try {
+    const session = await getSession();
+    ensureAdmin(session);
+    if (!id) return { error: 'Bill id is required.' };
+    const supabase = await createAdminClient();
+    const { data: bill, error: billError } = await supabase.from('vendor_bills').select('*').eq('id', id).single();
+    if (billError || !bill) return { error: billError?.message || 'Vendor bill not found.' };
+    if (bill.status !== 'posted' && bill.status !== 'partially_paid' && bill.status !== 'paid') {
+      return { error: 'Only posted bills can be reversed.' };
+    }
+    if (!bill.posted_journal_entry_id) return { error: 'Bill has no posted journal entry.' };
+
+    const reversal = await reverseJournalEntry(bill.posted_journal_entry_id);
+    if ('error' in reversal) return { error: reversal.error || 'Failed to reverse vendor bill journal entry.' };
+
+    const { data, error } = await supabase
+      .from('vendor_bills')
+      .update({
+        status: 'cancelled',
+        reversed_by: session?.username || 'system',
+        reversed_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', id)
+      .select('*')
+      .single();
+    if (error || !data) return { error: error?.message || 'Failed to mark vendor bill cancelled.' };
+
+    revalidatePath('/admin/dashboard');
+    return {
+      bill: data as VendorBill,
+      reversal_journal_entry_id: reversal.reversal_entry_id,
+    };
   } catch (err) {
     return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };
   }

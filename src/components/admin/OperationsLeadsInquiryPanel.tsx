@@ -341,27 +341,6 @@ export function OperationsLeadsInquiryPanel({
     );
   });
 
-  // Show each lead only once in the list (latest inquiry row per lead).
-  const dedupedFilteredInquiries = (() => {
-    const latestByLead = new Map<string, LeadInquiryWithLead>();
-    for (const inq of filteredInquiries) {
-      const leadKey = inq.lead_id || inq.leads?.id || inq.id;
-      const existing = latestByLead.get(leadKey);
-      if (!existing) {
-        latestByLead.set(leadKey, inq);
-        continue;
-      }
-      const existingTime = new Date(existing.created_at).getTime();
-      const currentTime = new Date(inq.created_at).getTime();
-      if (currentTime > existingTime) {
-        latestByLead.set(leadKey, inq);
-      }
-    }
-    return Array.from(latestByLead.values()).sort(
-      (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
-    );
-  })();
-
   async function openDetail(inquiry: LeadInquiryWithLead) {
     setSelectedInquiry(inquiry);
     setView("detail");
@@ -2040,7 +2019,7 @@ export function OperationsLeadsInquiryPanel({
             Refresh
           </Button>
           <span className="text-sm text-slate-500">
-            {dedupedFilteredInquiries.length} record{dedupedFilteredInquiries.length !== 1 ? "s" : ""}
+            {filteredInquiries.length} record{filteredInquiries.length !== 1 ? "s" : ""}
           </span>
         </div>
       </div>
@@ -2050,7 +2029,7 @@ export function OperationsLeadsInquiryPanel({
         <CardContent className="p-0">
           {isLoading ? (
             <div className="py-16 text-center text-slate-400">Loading inquiries...</div>
-          ) : dedupedFilteredInquiries.length === 0 ? (
+          ) : filteredInquiries.length === 0 ? (
             <div className="py-16 text-center text-slate-400">
               {searchQuery
                 ? "No inquiries match your search."
@@ -2074,7 +2053,7 @@ export function OperationsLeadsInquiryPanel({
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {dedupedFilteredInquiries.map((inquiry) => (
+                  {filteredInquiries.map((inquiry) => (
                     <TableRow
                       key={inquiry.id}
                       className="cursor-pointer hover:bg-slate-50 transition-colors"

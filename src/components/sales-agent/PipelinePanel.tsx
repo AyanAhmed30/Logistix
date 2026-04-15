@@ -1,7 +1,7 @@
 "use client";
 /* eslint-disable @next/next/no-img-element */
 
-import { useEffect, useState, useTransition, useCallback, useRef } from "react";
+import { useEffect, useState, useTransition, useCallback, useRef, useMemo } from "react";
 import { toast } from "sonner";
 import {
   DndContext,
@@ -58,9 +58,10 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import {
   saveInquiry,
   sendInquiryToAccounting,
-  getInquiryForLead,
-  getInquiryHistoryForLead,
+  getInquiriesForLead,
   getQuotationsForLead,
+  getInquiryLogs,
+  updateInquiryForAccounting,
   getInquiryTrackingForSalesAgent,
   getLeadChatMessages,
   sendLeadChatMessage,
@@ -68,6 +69,7 @@ import {
   type InquiryQuotation,
   type InquiryTrackingInfo,
   type LeadChatMessage,
+  type InquiryLog,
 } from "@/app/actions/inquiries";
 import jsPDF from "jspdf";
 
@@ -94,7 +96,8 @@ function LeadCard({
   lead,
   onOpenComments,
   onConvert,
-  onOpenInquiry,
+  onOpenInquiries,
+  onAddInquiry,
   onMoveToStatus,
   onOpenTransferDialog,
   showConvertButton,
@@ -104,7 +107,8 @@ function LeadCard({
   lead: Lead;
   onOpenComments: (lead: Lead) => void;
   onConvert?: (lead: Lead) => void;
-  onOpenInquiry?: (lead: Lead) => void;
+  onOpenInquiries?: (lead: Lead) => void;
+  onAddInquiry?: (lead: Lead) => void;
   onMoveToStatus?: (lead: Lead, status: LeadStatus) => void;
   onOpenTransferDialog?: (lead: Lead) => void;
   showConvertButton?: boolean;
@@ -198,31 +202,60 @@ function LeadCard({
                 </Badge>
               </div>
               <div className="flex gap-0.5 flex-shrink-0">
-                {showInquiryButton && onOpenInquiry && (
+                {showInquiryButton && onOpenInquiries && (
+                  <>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-6 w-6 p-0"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onOpenComments(lead);
+                      }}
+                      title="Comments"
+                    >
+                      <MessageSquare className="h-3 w-3" />
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-6 w-6 p-0"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onOpenInquiries(lead);
+                      }}
+                      title="View Inquiries"
+                    >
+                      <FileText className="h-3 w-3 text-orange-600" />
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-6 w-6 p-0"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onAddInquiry?.(lead);
+                      }}
+                      title="Add Inquiry"
+                    >
+                      <Plus className="h-3 w-3 text-emerald-600" />
+                    </Button>
+                  </>
+                )}
+                {!showInquiryButton && (
                   <Button
                     variant="ghost"
                     size="sm"
                     className="h-6 w-6 p-0"
                     onClick={(e) => {
                       e.stopPropagation();
-                      onOpenInquiry(lead);
+                      onOpenComments(lead);
                     }}
-                    title="Open Inquiry"
+                    title="Comments"
                   >
-                    <FileText className="h-3 w-3 text-orange-600" />
+                    <MessageSquare className="h-3 w-3" />
                   </Button>
                 )}
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="h-6 w-6 p-0"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onOpenComments(lead);
-                  }}
-                >
-                  <MessageSquare className="h-3 w-3" />
-                </Button>
               </div>
             </div>
             {showConvertButton && !lead.converted && onConvert && (
@@ -246,24 +279,35 @@ function LeadCard({
             )}
             {/* Inquiry Tracking Badge */}
             {inquiryTracking && (
-              <div className={`mt-1.5 px-1.5 py-0.5 rounded text-[10px] text-center flex items-center justify-center gap-1 ${
-                inquiryTracking.status === 'approved'
-                  ? 'bg-emerald-100 text-emerald-800'
-                  : inquiryTracking.status === 'sent'
-                  ? 'bg-blue-100 text-blue-800'
-                  : inquiryTracking.status === 'draft'
-                  ? 'bg-yellow-100 text-yellow-800'
-                  : ''
-              }`}>
-                {inquiryTracking.status === 'approved' && (
-                  <><CheckCircle2 className="h-3 w-3" /> Inquiry Approved</>
-                )}
-                {inquiryTracking.status === 'sent' && (
-                  <><Clock className="h-3 w-3" /> Inquiry Sent</>
-                )}
-                {inquiryTracking.status === 'draft' && (
-                  <><AlertCircle className="h-3 w-3" /> Inquiry Draft</>
-                )}
+              <div className="mt-1.5 space-y-1">
+                <div className={`px-1.5 py-0.5 rounded text-[10px] text-center flex items-center justify-center gap-1 ${
+                  inquiryTracking.status === 'approved'
+                    ? 'bg-emerald-100 text-emerald-800'
+                    : inquiryTracking.status === 'sent'
+                    ? 'bg-blue-100 text-blue-800'
+                    : inquiryTracking.status === 'draft'
+                    ? 'bg-yellow-100 text-yellow-800'
+                    : ''
+                }`}>
+                  {inquiryTracking.status === 'approved' && (
+                    <><CheckCircle2 className="h-3 w-3" /> Inquiry Approved</>
+                  )}
+                  {inquiryTracking.status === 'sent' && (
+                    <><Clock className="h-3 w-3" /> Inquiry Sent</>
+                  )}
+                  {inquiryTracking.status === 'draft' && (
+                    <><AlertCircle className="h-3 w-3" /> Inquiry Draft</>
+                  )}
+                </div>
+                <div className="px-1.5 py-0.5 rounded text-[10px] text-center bg-slate-100 text-slate-700">
+                  Total Inquiries: {inquiryTracking.total_inquiry_count || 0}
+                </div>
+                <div className="px-1.5 py-0.5 rounded text-[10px] text-center bg-slate-100 text-slate-700">
+                  Draft Inquiries: {inquiryTracking.draft_inquiry_count || 0}
+                </div>
+                <div className="px-1.5 py-0.5 rounded text-[10px] text-center bg-slate-100 text-slate-700">
+                  Sent Inquiries: {inquiryTracking.sent_inquiry_count || 0}
+                </div>
               </div>
             )}
             {/* Show "No Inquiry" for leads in Inquiry Received that have no tracking */}
@@ -284,7 +328,8 @@ function KanbanColumn({
   leads,
   onOpenComments,
   onConvert,
-  onOpenInquiry,
+  onOpenInquiries,
+  onAddInquiry,
   onMoveToStatus,
   onOpenTransferDialog,
   highlightedLeadId,
@@ -295,7 +340,8 @@ function KanbanColumn({
   leads: Lead[];
   onOpenComments: (lead: Lead) => void;
   onConvert?: (lead: Lead) => void;
-  onOpenInquiry?: (lead: Lead) => void;
+  onOpenInquiries?: (lead: Lead) => void;
+  onAddInquiry?: (lead: Lead) => void;
   onMoveToStatus?: (lead: Lead, status: LeadStatus) => void;
   onOpenTransferDialog?: (lead: Lead) => void;
   highlightedLeadId?: string | null;
@@ -378,7 +424,8 @@ function KanbanColumn({
                     lead={lead}
                     onOpenComments={onOpenComments}
                     onConvert={onConvert}
-                    onOpenInquiry={onOpenInquiry}
+                    onOpenInquiries={onOpenInquiries}
+                    onAddInquiry={onAddInquiry}
                     onMoveToStatus={onMoveToStatus}
                     onOpenTransferDialog={onOpenTransferDialog}
                     showConvertButton={showConvertButton}
@@ -608,10 +655,12 @@ function InquiryDialog({
   lead,
   open,
   onOpenChange,
+  mode = "create",
 }: {
   lead: Lead | null;
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  mode?: "create" | "view";
 }) {
   const inquiryImageInputId = "sales-inquiry-image-input";
   const [inquiry, setInquiry] = useState<LeadInquiry | null>(null);
@@ -632,57 +681,108 @@ function InquiryDialog({
   const [chatMessages, setChatMessages] = useState<LeadChatMessage[]>([]);
   const [chatInput, setChatInput] = useState("");
   const [isSendingChat, setIsSendingChat] = useState(false);
+  const [leadInquiries, setLeadInquiries] = useState<LeadInquiry[]>([]);
+  const [selectedInquiryId, setSelectedInquiryId] = useState<string>("");
+  const [inquiryLogs, setInquiryLogs] = useState<InquiryLog[]>([]);
+  const [isLoadingLogs, setIsLoadingLogs] = useState(false);
+  const [isViewEditing, setIsViewEditing] = useState(false);
+  const [baselineDraftState, setBaselineDraftState] = useState<{
+    product_name: string;
+    total_weight: string;
+    cbm: string;
+    quantity: string;
+    description: string;
+    image_count: number;
+  }>({
+    product_name: "",
+    total_weight: "",
+    cbm: "",
+    quantity: "",
+    description: "",
+    image_count: 0,
+  });
 
   const fetchInquiryData = useCallback(async () => {
     if (!lead) return;
     setIsLoading(true);
     try {
-      const [inquiryResult, inquiryHistoryResult, quotationsResult, trackingResult] = await Promise.all([
-        getInquiryForLead(lead.id),
-        getInquiryHistoryForLead(lead.id),
-        getQuotationsForLead(lead.id),
-        getInquiryTrackingForSalesAgent(),
-      ]);
-      if ("error" in inquiryResult) {
-        // No inquiry yet, that's fine
-      } else if (inquiryResult.inquiry) {
-        setInquiry(inquiryResult.inquiry);
-        setProductName(inquiryResult.inquiry.product_name || "");
-        setTotalWeight(inquiryResult.inquiry.total_weight || "");
-        setCbm(inquiryResult.inquiry.cbm || "");
-        setQuantity(inquiryResult.inquiry.quantity || "");
-        const primaryImage = inquiryResult.inquiry.image_url || "";
-        const additionalImages = Array.isArray(inquiryResult.inquiry.additional_image_urls)
-          ? inquiryResult.inquiry.additional_image_urls.filter((url) => typeof url === "string" && url.trim().length > 0)
+      // Fetch only core inquiry data first so dialog can render quickly.
+      const inquiryListResult = await getInquiriesForLead(lead.id);
+
+      if ("error" in inquiryListResult) {
+        setLeadInquiries([]);
+        setInquiry(null);
+        setProductName("");
+        setTotalWeight("");
+        setCbm("");
+        setQuantity("");
+        setImageDataList([]);
+        setOtherDetails("");
+        setConfirmationStatus("none");
+      } else {
+        const list = inquiryListResult.inquiries || [];
+        setLeadInquiries(list);
+        setInquiryHistory(list);
+
+        const selected = selectedInquiryId
+          ? list.find((x) => x.id === selectedInquiryId) || null
+          : null;
+        const current = mode === "create"
+          ? (selected || null)
+          : (selected || list[0] || null);
+
+        setSelectedInquiryId(current?.id || "");
+        setInquiry(current);
+        setProductName(current?.product_name || "");
+        setTotalWeight(current?.total_weight || "");
+        setCbm(current?.cbm || "");
+        setQuantity(current?.quantity || "");
+        const primaryImage = current?.image_url || "";
+        const additionalImages = Array.isArray(current?.additional_image_urls)
+          ? current.additional_image_urls.filter((url) => typeof url === "string" && url.trim().length > 0)
           : [];
         setImageDataList(primaryImage ? [primaryImage, ...additionalImages] : additionalImages);
-        setOtherDetails(inquiryResult.inquiry.description || "");
+        setOtherDetails(current?.description || "");
+        setBaselineDraftState({
+          product_name: current?.product_name || "",
+          total_weight: current?.total_weight || "",
+          cbm: current?.cbm || "",
+          quantity: current?.quantity || "",
+          description: current?.description || "",
+          image_count: (primaryImage ? 1 : 0) + additionalImages.length,
+        });
+
+        const pickedWithConfirmations = (current || null) as (LeadInquiry & {
+          inquiry_confirmations?: { status: string }[];
+        }) | null;
+        const hasApproved = !!pickedWithConfirmations && (pickedWithConfirmations.inquiry_confirmations || []).some((c) => c.status === "approved");
+        setConfirmationStatus(hasApproved ? "approved" : "none");
+
+        if (current?.id) {
+          await fetchLogsForInquiry(current.id);
+        } else {
+          setInquiryLogs([]);
+        }
       }
+
+      // Secondary data can load in parallel after primary UI is ready.
+      const [quotationsResult, chatResult] = await Promise.all([
+        getQuotationsForLead(lead.id),
+        getLeadChatMessages(lead.id),
+      ]);
+
       if (!("error" in quotationsResult)) {
         setQuotations(quotationsResult.quotations || []);
       }
-      if (!("error" in inquiryHistoryResult)) {
-        setInquiryHistory(inquiryHistoryResult.inquiries || []);
-      }
-      const chatResult = await getLeadChatMessages(lead.id);
       if (!("error" in chatResult)) {
         setChatMessages(chatResult.messages || []);
-      }
-      // Check confirmation status - only show "approved" to sales agent
-      if (!("error" in trackingResult) && trackingResult.tracking) {
-        const thisTracking = trackingResult.tracking.find((t) => t.lead_id === lead.id);
-        if (thisTracking?.status === 'approved') {
-          setConfirmationStatus('approved');
-        } else {
-          setConfirmationStatus('none');
-        }
       }
     } catch {
       toast.error("Failed to load inquiry data");
     } finally {
       setIsLoading(false);
     }
-  }, [lead]);
+  }, [lead, selectedInquiryId, mode]);
 
   useEffect(() => {
     if (open && lead) {
@@ -702,6 +802,18 @@ function InquiryDialog({
       setConfirmationStatus('none');
       setChatMessages([]);
       setChatInput("");
+      setLeadInquiries([]);
+      setSelectedInquiryId("");
+      setInquiryLogs([]);
+      setIsViewEditing(false);
+      setBaselineDraftState({
+        product_name: "",
+        total_weight: "",
+        cbm: "",
+        quantity: "",
+        description: "",
+        image_count: 0,
+      });
     }
   }, [open, lead, fetchInquiryData]);
 
@@ -803,8 +915,124 @@ function InquiryDialog({
     setImageDataList((prev) => prev.filter((_, i) => i !== index));
   }
 
+  function isIntegerString(value: string) {
+    return /^\d+$/.test(value);
+  }
+
+  function toDigitsOnly(value: string) {
+    return value.replace(/\D/g, "");
+  }
+
+  function formatLogAction(action: string) {
+    switch (action) {
+      case "created":
+        return "Created";
+      case "updated":
+        return "Updated";
+      case "status_changed":
+        return "Status Changed";
+      case "send_for_confirmation":
+        return "Sent for Confirmation";
+      case "image_uploaded":
+        return "Image Uploaded";
+      case "calculator_updated":
+        return "Calculator Updated";
+      case "lead_management_form_updated":
+        return "Lead Management Updated";
+      default:
+        return action.replace(/_/g, " ");
+    }
+  }
+
+  function fieldLabel(key: string) {
+    const labels: Record<string, string> = {
+      product_name: "Product",
+      total_weight: "Total Weight (kg)",
+      cbm: "CBM",
+      quantity: "Quantity",
+      description: "Other Details",
+      image_url: "Image",
+      additional_image_urls: "Additional Images",
+      sent_to_accounting: "Sent to Accounting",
+      sent_at: "Sent At",
+      status: "Status",
+    };
+    return labels[key] || key.replace(/_/g, " ");
+  }
+
+  function valueText(value: unknown) {
+    if (value === null || value === undefined || value === "") return "-";
+    if (typeof value === "boolean") return value ? "Yes" : "No";
+    if (typeof value === "string") {
+      if (value.includes("T") && !Number.isNaN(new Date(value).getTime())) {
+        return new Date(value).toLocaleString();
+      }
+      return value;
+    }
+    if (typeof value === "number") return String(value);
+    if (Array.isArray(value)) return value.length > 0 ? `${value.length} item(s)` : "-";
+    return "Updated";
+  }
+
+  async function fetchLogsForInquiry(inquiryId: string) {
+    setIsLoadingLogs(true);
+    try {
+      const result = await getInquiryLogs(inquiryId);
+      if ("error" in result) {
+        setInquiryLogs([]);
+      } else {
+        setInquiryLogs(result.logs || []);
+      }
+    } catch {
+      setInquiryLogs([]);
+    } finally {
+      setIsLoadingLogs(false);
+    }
+  }
+
+  function handleSelectInquiry(inquiryItem: LeadInquiry) {
+    setIsViewEditing(false);
+    setSelectedInquiryId(inquiryItem.id);
+    setInquiry(inquiryItem);
+    setProductName(inquiryItem.product_name || "");
+    setTotalWeight(inquiryItem.total_weight || "");
+    setCbm(inquiryItem.cbm || "");
+    setQuantity(inquiryItem.quantity || "");
+    const primaryImage = inquiryItem.image_url || "";
+    const additionalImages = Array.isArray(inquiryItem.additional_image_urls)
+      ? inquiryItem.additional_image_urls.filter((url) => typeof url === "string" && url.trim().length > 0)
+      : [];
+    setImageDataList(primaryImage ? [primaryImage, ...additionalImages] : additionalImages);
+    setOtherDetails(inquiryItem.description || "");
+    setBaselineDraftState({
+      product_name: inquiryItem.product_name || "",
+      total_weight: inquiryItem.total_weight || "",
+      cbm: inquiryItem.cbm || "",
+      quantity: inquiryItem.quantity || "",
+      description: inquiryItem.description || "",
+      image_count: (primaryImage ? 1 : 0) + additionalImages.length,
+    });
+    void fetchLogsForInquiry(inquiryItem.id);
+  }
+
   function handleSaveInquiry() {
     if (!lead) return;
+    if (!productName.trim()) {
+      toast.error("Please add a product name.");
+      return;
+    }
+    if (totalWeight.trim() && !isIntegerString(totalWeight.trim())) {
+      toast.error("Total Weight (kg) must be an integer.");
+      return;
+    }
+    if (quantity.trim() && !isIntegerString(quantity.trim())) {
+      toast.error("Quantity must be an integer.");
+      return;
+    }
+    if (cbm.trim() && !isIntegerString(cbm.trim())) {
+      toast.error("CBM (Cubic Meter) must be an integer.");
+      return;
+    }
     startTransition(async () => {
       const result = await saveInquiry(lead.id, {
         product_name: productName,
@@ -814,12 +1042,32 @@ function InquiryDialog({
         image_url: imageDataList[0] || null,
         additional_image_urls: imageDataList.slice(1),
         description: otherDetails,
-      });
+      }, mode === "view" ? inquiry?.id : undefined);
       if ("error" in result) {
         toast.error(result.error);
       } else {
         toast.success("Inquiry saved successfully");
-        if (result.inquiry) setInquiry(result.inquiry);
+        if (result.inquiry) {
+          setInquiry(result.inquiry);
+          setSelectedInquiryId(result.inquiry.id);
+          setLeadInquiries((prev) => {
+            const filtered = prev.filter((x) => x.id !== result.inquiry!.id);
+            return [result.inquiry!, ...filtered];
+          });
+          const primaryImage = result.inquiry.image_url || "";
+          const additionalImages = Array.isArray(result.inquiry.additional_image_urls)
+            ? result.inquiry.additional_image_urls.filter((url) => typeof url === "string" && url.trim().length > 0)
+            : [];
+          setBaselineDraftState({
+            product_name: result.inquiry.product_name || "",
+            total_weight: result.inquiry.total_weight || "",
+            cbm: result.inquiry.cbm || "",
+            quantity: result.inquiry.quantity || "",
+            description: result.inquiry.description || "",
+            image_count: (primaryImage ? 1 : 0) + additionalImages.length,
+          });
+          await fetchLogsForInquiry(result.inquiry.id);
+        }
       }
     });
   }
@@ -828,6 +1076,18 @@ function InquiryDialog({
     if (!lead) return;
     if (!productName.trim()) {
       toast.error("Please add a product name before sending.");
+      return;
+    }
+    if (totalWeight.trim() && !isIntegerString(totalWeight.trim())) {
+      toast.error("Total Weight (kg) must be an integer.");
+      return;
+    }
+    if (quantity.trim() && !isIntegerString(quantity.trim())) {
+      toast.error("Quantity must be an integer.");
+      return;
+    }
+    if (cbm.trim() && !isIntegerString(cbm.trim())) {
+      toast.error("CBM (Cubic Meter) must be an integer.");
       return;
     }
     startTransition(async () => {
@@ -840,21 +1100,104 @@ function InquiryDialog({
         image_url: imageDataList[0] || null,
         additional_image_urls: imageDataList.slice(1),
         description: otherDetails,
-      });
+      }, mode === "view" ? inquiry?.id : undefined);
       if ("error" in saveResult) {
         toast.error(saveResult.error);
         return;
       }
       // Then send to Accounting + Operations
-      const result = await sendInquiryToAccounting(lead.id);
+      const inquiryToSendId = saveResult.inquiry?.id || inquiry?.id;
+      if (!inquiryToSendId) {
+        toast.error("Unable to determine inquiry to send");
+        return;
+      }
+      const result = await sendInquiryToAccounting(inquiryToSendId);
       if ("error" in result) {
         toast.error(result.error);
       } else {
         toast.success("Inquiry sent to Accounting & Operations!");
-        if (result.inquiry) setInquiry(result.inquiry);
+        if (result.inquiry) {
+          setInquiry(result.inquiry);
+          const primaryImage = result.inquiry.image_url || "";
+          const additionalImages = Array.isArray(result.inquiry.additional_image_urls)
+            ? result.inquiry.additional_image_urls.filter((url) => typeof url === "string" && url.trim().length > 0)
+            : [];
+          setBaselineDraftState({
+            product_name: result.inquiry.product_name || "",
+            total_weight: result.inquiry.total_weight || "",
+            cbm: result.inquiry.cbm || "",
+            quantity: result.inquiry.quantity || "",
+            description: result.inquiry.description || "",
+            image_count: (primaryImage ? 1 : 0) + additionalImages.length,
+          });
+          await fetchLogsForInquiry(result.inquiry.id);
+        }
         // Close the modal after a successful send so the workflow can continue.
         onOpenChange(false);
       }
+    });
+  }
+
+  function handleStartViewEdit() {
+    if (!inquiry) return;
+    setIsViewEditing(true);
+  }
+
+  function handleCancelViewEdit() {
+    if (!inquiry) {
+      setIsViewEditing(false);
+      return;
+    }
+    setProductName(inquiry.product_name || "");
+    setTotalWeight(inquiry.total_weight || "");
+    setCbm(inquiry.cbm || "");
+    setQuantity(inquiry.quantity || "");
+    const primaryImage = inquiry.image_url || "";
+    const additionalImages = Array.isArray(inquiry.additional_image_urls)
+      ? inquiry.additional_image_urls.filter((url) => typeof url === "string" && url.trim().length > 0)
+      : [];
+    setImageDataList(primaryImage ? [primaryImage, ...additionalImages] : additionalImages);
+    setOtherDetails(inquiry.description || "");
+    setIsViewEditing(false);
+  }
+
+  function handleSaveViewEdit() {
+    if (!inquiry) return;
+    if (!productName.trim()) {
+      toast.error("Please add a product name.");
+      return;
+    }
+    if (totalWeight.trim() && !isIntegerString(totalWeight.trim())) {
+      toast.error("Total Weight (kg) must be an integer.");
+      return;
+    }
+    if (quantity.trim() && !isIntegerString(quantity.trim())) {
+      toast.error("Quantity must be an integer.");
+      return;
+    }
+    if (cbm.trim() && !isIntegerString(cbm.trim())) {
+      toast.error("CBM (Cubic Meter) must be an integer.");
+      return;
+    }
+
+    startTransition(async () => {
+      const result = await updateInquiryForAccounting(inquiry.id, {
+        product_name: productName,
+        total_weight: totalWeight,
+        cbm,
+        quantity,
+        image_url: imageDataList[0] || null,
+        additional_image_urls: imageDataList.slice(1),
+        description: otherDetails,
+      });
+      if ("error" in result) {
+        toast.error(result.error || "Unable to update inquiry");
+        return;
+      }
+      toast.success("Inquiry updated");
+      setIsViewEditing(false);
+      await fetchInquiryData();
+      await fetchLogsForInquiry(inquiry.id);
     });
   }
 
@@ -921,30 +1264,125 @@ function InquiryDialog({
     doc.save(`quotation_${q.quotation_number.replace(/\//g, '_')}.pdf`);
   }
 
+  const isFormValid = productName.trim().length > 0;
+  const canEditForm = mode === "create" || isViewEditing;
+  const liveUnsavedEntries = useMemo(() => {
+    if (!canEditForm) return [] as Array<{ key: string; label: string; oldValue: string; newValue: string }>;
+    const pairs = [
+      { key: "product_name", label: "Product", oldValue: baselineDraftState.product_name, newValue: productName },
+      { key: "total_weight", label: "Total Weight (kg)", oldValue: baselineDraftState.total_weight, newValue: totalWeight },
+      { key: "cbm", label: "CBM", oldValue: baselineDraftState.cbm, newValue: cbm },
+      { key: "quantity", label: "Quantity", oldValue: baselineDraftState.quantity, newValue: quantity },
+      { key: "description", label: "Other Details", oldValue: baselineDraftState.description, newValue: otherDetails },
+      { key: "image_count", label: "Images", oldValue: String(baselineDraftState.image_count), newValue: String(imageDataList.length) },
+    ];
+    return pairs
+      .filter((p) => (p.oldValue || "") !== (p.newValue || ""))
+      .map((p) => ({
+        key: p.key,
+        label: p.label,
+        oldValue: p.key === "image_count" ? `${p.oldValue} image(s)` : (p.oldValue || "-"),
+        newValue: p.key === "image_count" ? `${p.newValue} image(s)` : (p.newValue || "-"),
+      }));
+  }, [canEditForm, baselineDraftState, productName, totalWeight, cbm, quantity, otherDetails, imageDataList.length]);
+
   if (!lead) return null;
 
-  const isFormValid = productName.trim().length > 0;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-[700px] max-h-[85vh] overflow-y-auto">
-        <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
-            <FileText className="h-5 w-5 text-orange-600" />
-            Inquiry - {lead.name}
+      <DialogContent className="sm:max-w-[1200px] max-h-[90vh] overflow-y-auto border-0 rounded-3xl bg-white/95 backdrop-blur-xl shadow-[0_24px_80px_rgba(15,23,42,0.24)] p-0 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=open]:fade-in-0 data-[state=closed]:fade-out-0 data-[state=open]:zoom-in-[0.985] data-[state=closed]:zoom-out-[0.985] duration-200">
+        <DialogHeader className="p-6 pb-4 bg-gradient-to-b from-slate-50/90 to-white border-b border-slate-100">
+          <DialogTitle className="flex items-center justify-between gap-2 text-base">
+            <span className="flex items-center gap-2">
+              <FileText className="h-5 w-5 text-orange-600" />
+              Inquiry - {lead.name}
+            </span>
+            <Badge variant="outline" className="bg-orange-50 text-orange-700 border-orange-200 rounded-full px-3 py-1">
+              {mode === "create" ? "Create Inquiry" : isViewEditing ? "Editing" : "View Inquiry"}
+            </Badge>
           </DialogTitle>
-          <DialogDescription>
-            Submit product inquiry details to the Accounting & Operations departments.
+          <DialogDescription className="text-xs sm:text-sm text-slate-500">
+            Fill details in a simple form. Your logs and updates appear on the right automatically.
           </DialogDescription>
         </DialogHeader>
 
         {isLoading ? (
-          <div className="py-8 text-center text-secondary-muted text-sm">Loading inquiry data...</div>
+          <div className="py-10 text-center text-secondary-muted text-sm">Loading inquiry data...</div>
         ) : (
-          <div className="space-y-4">
+          <div className="p-4 sm:p-6 grid grid-cols-1 lg:grid-cols-3 gap-5">
+            <div className="space-y-5 lg:col-span-2">
+            {mode === "view" && (
+            <div className="rounded-2xl p-4 bg-white shadow-[0_8px_28px_rgba(15,23,42,0.08)] space-y-3">
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-xs font-semibold text-slate-700">
+                  Inquiry Records ({leadInquiries.length})
+                </p>
+              </div>
+              {leadInquiries.length > 0 ? (
+                <div className="flex flex-wrap gap-2">
+                  {leadInquiries.map((inq, idx) => (
+                    <Button
+                      key={inq.id}
+                      type="button"
+                      variant={selectedInquiryId === inq.id ? "default" : "outline"}
+                      size="sm"
+                      className={`h-8 text-xs rounded-full transition-all duration-200 ${
+                        selectedInquiryId === inq.id ? "bg-orange-600 hover:bg-orange-700 text-white shadow-md shadow-orange-200" : "hover:bg-slate-100 border-slate-200"
+                      }`}
+                      onClick={() => handleSelectInquiry(inq)}
+                    >
+                      #{leadInquiries.length - idx} {inq.sent_to_accounting ? "(Sent)" : "(Draft)"}
+                    </Button>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-xs text-slate-500">No inquiry found for this lead.</p>
+              )}
+            </div>
+            )}
+
+            {mode === "view" && inquiry && (
+              <div className="flex justify-end gap-2">
+                {isViewEditing ? (
+                  <>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={handleCancelViewEdit}
+                      disabled={isPending}
+                      className="rounded-full border-slate-200 hover:bg-slate-100 transition-colors"
+                    >
+                      Cancel
+                    </Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      className="bg-orange-600 hover:bg-orange-700 text-white rounded-full shadow-md shadow-orange-200 transition-all duration-200"
+                      onClick={handleSaveViewEdit}
+                      disabled={isPending}
+                    >
+                      {isPending ? "Saving..." : "Save Changes"}
+                    </Button>
+                  </>
+                ) : (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={handleStartViewEdit}
+                    className="rounded-full border-slate-200 hover:bg-slate-100 transition-colors"
+                  >
+                    Edit Inquiry
+                  </Button>
+                )}
+              </div>
+            )}
+
             {/* Confirmation Status Banner */}
             {confirmationStatus === 'approved' && (
-              <div className="flex items-center gap-2 p-3 bg-emerald-50 border border-emerald-200 rounded-lg">
+              <div className="flex items-center gap-2 p-4 bg-emerald-50/80 border border-emerald-200 rounded-2xl shadow-sm">
                 <CheckCircle2 className="h-5 w-5 text-emerald-600 shrink-0" />
                 <div>
                   <p className="text-sm font-semibold text-emerald-800">Inquiry Approved</p>
@@ -954,12 +1392,12 @@ function InquiryDialog({
             )}
 
             {/* Status badges */}
-            {inquiry?.sent_to_accounting && (
+            {mode === "view" && inquiry?.sent_to_accounting && (
               <div className="flex items-center gap-2 flex-wrap">
-                <Badge variant="outline" className="bg-green-50 text-green-700 border-green-300">
+                <Badge variant="outline" className="bg-green-50 text-green-700 border-green-300 rounded-full px-3">
                   Sent to Accounting
                 </Badge>
-                <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-300">
+                <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-300 rounded-full px-3">
                   Sent to Operations
                 </Badge>
                 {inquiry.sent_at && (
@@ -972,153 +1410,191 @@ function InquiryDialog({
 
             {/* Product Name */}
             <div className="space-y-1.5">
-              <label className="text-sm font-medium">
+              <label className="text-sm font-medium text-slate-700">
                 Product Name <span className="text-red-500">*</span>
               </label>
               <Input
                 placeholder="e.g. Steel Pipes, Cotton Fabric..."
                 value={productName}
                 onChange={(e) => setProductName(e.target.value)}
+                disabled={!canEditForm}
+                className="h-11 rounded-2xl border-slate-200 bg-white shadow-sm focus-visible:ring-2 focus-visible:ring-orange-200 transition-all"
               />
             </div>
 
             {/* Total Weight & CBM Row */}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div className="space-y-1.5">
-                <label className="text-sm font-medium">Total Weight</label>
+                <label className="text-sm font-medium text-slate-700">Total Weight (kg)</label>
                 <Input
-                  placeholder="e.g. 500 kg"
+                  placeholder="e.g. 500"
                   value={totalWeight}
-                  onChange={(e) => setTotalWeight(e.target.value)}
+                  inputMode={canEditForm ? "numeric" : "text"}
+                  pattern={canEditForm ? "[0-9]*" : undefined}
+                  onChange={(e) => setTotalWeight(canEditForm ? toDigitsOnly(e.target.value) : e.target.value)}
+                  disabled={!canEditForm}
+                  className="h-11 rounded-2xl border-slate-200 bg-white shadow-sm focus-visible:ring-2 focus-visible:ring-orange-200 transition-all"
                 />
               </div>
               <div className="space-y-1.5">
-                <label className="text-sm font-medium">CBM (Cubic Meter)</label>
+                <label className="text-sm font-medium text-slate-700">CBM (Cubic Meter)</label>
                 <Input
-                  placeholder="e.g. 12.5 m³"
+                  placeholder="e.g. 12"
                   value={cbm}
-                  onChange={(e) => setCbm(e.target.value)}
+                  inputMode={canEditForm ? "numeric" : "text"}
+                  pattern={canEditForm ? "[0-9]*" : undefined}
+                  onChange={(e) => setCbm(canEditForm ? toDigitsOnly(e.target.value) : e.target.value)}
+                  disabled={!canEditForm}
+                  className="h-11 rounded-2xl border-slate-200 bg-white shadow-sm focus-visible:ring-2 focus-visible:ring-orange-200 transition-all"
                 />
               </div>
             </div>
 
             {/* Quantity */}
             <div className="space-y-1.5">
-              <label className="text-sm font-medium">Quantity</label>
+              <label className="text-sm font-medium text-slate-700">Quantity</label>
               <Input
-                placeholder="e.g. 1000 pcs"
+                placeholder="e.g. 1000"
                 value={quantity}
-                onChange={(e) => setQuantity(e.target.value)}
+                inputMode={canEditForm ? "numeric" : "text"}
+                pattern={canEditForm ? "[0-9]*" : undefined}
+                onChange={(e) => setQuantity(canEditForm ? toDigitsOnly(e.target.value) : e.target.value)}
+                disabled={!canEditForm}
+                className="h-11 rounded-2xl border-slate-200 bg-white shadow-sm focus-visible:ring-2 focus-visible:ring-orange-200 transition-all"
               />
             </div>
 
             {/* Image Upload - Drag & Drop + Paste */}
-            <div className="space-y-1.5">
-              <label className="text-sm font-medium flex items-center gap-1">
-                <ImageIcon className="h-4 w-4" /> Images
-              </label>
-              <div
-                className={`border-2 border-dashed rounded-lg p-4 transition-colors ${
-                  isDragging
-                    ? "border-orange-500 bg-orange-50"
-                    : "border-slate-300 hover:border-orange-400 hover:bg-orange-50/50"
-                }`}
-                onDragOver={handleDragOver}
-                onDragLeave={handleDragLeave}
-                onDrop={handleDrop}
-              >
-                {imageDataList.length === 0 ? (
-                  <label htmlFor={inquiryImageInputId} className="block cursor-pointer text-center">
-                    <ImageIcon className="h-8 w-8 mx-auto text-slate-400 mb-2" />
-                    <p className="text-sm text-slate-600 font-medium">
-                      {isDragging ? "Drop image(s) here..." : "Drag & drop image(s) here"}
-                    </p>
-                    <p className="text-xs text-slate-400 mt-1">
-                      or click to browse &bull; Paste with <kbd className="px-1 py-0.5 bg-slate-200 rounded text-[10px] font-mono">Ctrl+V</kbd>
-                    </p>
-                    <p className="text-[10px] text-slate-400 mt-1">Max 5MB each &bull; JPG, PNG, GIF, WebP</p>
-                  </label>
-                ) : (
-                  <div className="space-y-3">
-                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-                      {imageDataList.map((img, idx) => (
-                        <div key={`${img.slice(0, 30)}-${idx}`} className="relative border rounded-md p-1.5 bg-white">
-                          <img
-                            src={img}
-                            alt={`Inquiry attachment ${idx + 1}`}
-                            className="h-28 w-full rounded object-contain bg-slate-50"
-                          />
-                          <Button
-                            variant="destructive"
-                            size="sm"
-                            className="absolute top-1 right-1 h-6 w-6 p-0"
-                            onClick={() => removeImage(idx)}
-                            type="button"
-                          >
-                            <X className="h-3 w-3" />
-                          </Button>
-                        </div>
-                      ))}
-                      <label
-                        htmlFor={inquiryImageInputId}
-                        className="h-28 border rounded-md border-dashed bg-white hover:bg-slate-50 transition-colors cursor-pointer flex flex-col items-center justify-center text-slate-500"
-                        title="Add more images"
-                      >
-                        <Plus className="h-5 w-5 mb-1" />
-                        <span className="text-xs font-medium">Add</span>
-                      </label>
+            {canEditForm ? (
+              <div className="space-y-1.5">
+                <label className="text-sm font-medium flex items-center gap-1">
+                  <ImageIcon className="h-4 w-4" /> Images
+                </label>
+                <div
+                  className={`border-2 border-dashed rounded-2xl p-4 transition-all duration-200 ${
+                    isDragging
+                      ? "border-orange-500 bg-orange-50 scale-[1.01]"
+                      : "border-slate-300 hover:border-orange-400 hover:bg-orange-50/50"
+                  }`}
+                  onDragOver={handleDragOver}
+                  onDragLeave={handleDragLeave}
+                  onDrop={handleDrop}
+                >
+                  {imageDataList.length === 0 ? (
+                    <label htmlFor={inquiryImageInputId} className="block cursor-pointer text-center">
+                      <ImageIcon className="h-8 w-8 mx-auto text-slate-400 mb-2" />
+                      <p className="text-sm text-slate-600 font-medium">
+                        {isDragging ? "Drop image(s) here..." : "Drag & drop image(s) here"}
+                      </p>
+                      <p className="text-xs text-slate-400 mt-1">
+                        or click to browse &bull; Paste with <kbd className="px-1 py-0.5 bg-slate-200 rounded text-[10px] font-mono">Ctrl+V</kbd>
+                      </p>
+                      <p className="text-[10px] text-slate-400 mt-1">Max 5MB each &bull; JPG, PNG, GIF, WebP</p>
+                    </label>
+                  ) : (
+                    <div className="space-y-3">
+                      <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                        {imageDataList.map((img, idx) => (
+                          <div key={`${img.slice(0, 30)}-${idx}`} className="relative border rounded-xl p-1.5 bg-white shadow-sm">
+                            <img
+                              src={img}
+                              alt={`Inquiry attachment ${idx + 1}`}
+                              className="h-28 w-full rounded-lg object-contain bg-slate-50"
+                            />
+                            <Button
+                              variant="destructive"
+                              size="sm"
+                              className="absolute top-1 right-1 h-6 w-6 p-0"
+                              onClick={() => removeImage(idx)}
+                              type="button"
+                            >
+                              <X className="h-3 w-3" />
+                            </Button>
+                          </div>
+                        ))}
+                        <label
+                          htmlFor={inquiryImageInputId}
+                          className="h-28 border rounded-xl border-dashed bg-white hover:bg-slate-50 transition-colors cursor-pointer flex flex-col items-center justify-center text-slate-500"
+                          title="Add more images"
+                        >
+                          <Plus className="h-5 w-5 mb-1" />
+                          <span className="text-xs font-medium">Add</span>
+                        </label>
+                      </div>
+                      <p className="text-[10px] text-slate-400">You can also drag-drop or paste (Ctrl+V) to add more images.</p>
                     </div>
-                    <p className="text-[10px] text-slate-400">You can also drag-drop or paste (Ctrl+V) to add more images.</p>
-                  </div>
-                )}
-                <input
-                  id={inquiryImageInputId}
-                  ref={fileInputRef}
-                  type="file"
-                  accept="image/*"
-                  multiple
-                  className="sr-only"
-                  onChange={handleFileSelect}
-                />
+                  )}
+                  <input
+                    id={inquiryImageInputId}
+                    ref={fileInputRef}
+                    type="file"
+                    accept="image/*"
+                    multiple
+                    className="sr-only"
+                    onChange={handleFileSelect}
+                  />
+                </div>
               </div>
-            </div>
+            ) : (
+              imageDataList.length > 0 && (
+                <div className="space-y-1.5">
+                  <label className="text-sm font-medium flex items-center gap-1">
+                    <ImageIcon className="h-4 w-4" /> Images
+                  </label>
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                    {imageDataList.map((img, idx) => (
+                      <div key={`${img.slice(0, 30)}-${idx}`} className="border rounded-xl p-1.5 bg-white shadow-sm">
+                        <img
+                          src={img}
+                          alt={`Inquiry attachment ${idx + 1}`}
+                          className="h-28 w-full rounded object-contain bg-slate-50"
+                        />
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )
+            )}
 
             {/* Other Details */}
             <div className="space-y-1.5">
-              <label className="text-sm font-medium">Other Details</label>
+              <label className="text-sm font-medium text-slate-700">Other Details</label>
               <Textarea
                 placeholder="Any additional information, specifications, or notes..."
                 value={otherDetails}
                 onChange={(e) => setOtherDetails(e.target.value)}
                 rows={3}
-                className="resize-none"
+                className="resize-none rounded-2xl border-slate-200 bg-white shadow-sm focus-visible:ring-2 focus-visible:ring-orange-200 transition-all"
+                disabled={!canEditForm}
               />
             </div>
 
             {/* Actions */}
-            <div className="flex flex-col sm:flex-row gap-2 pt-2">
-              <Button onClick={handleSaveInquiry} disabled={isPending} variant="outline" className="flex-1">
-                {isPending ? "Saving..." : "Save Draft"}
-              </Button>
-              <Button
-                onClick={handleSendInquiry}
-                disabled={isPending || !isFormValid}
-                className="flex-1 bg-orange-600 hover:bg-orange-700 text-white"
-              >
-                <Send className="h-4 w-4 mr-2" />
-                {isPending ? "Sending..." : "Send Inquiry"}
-              </Button>
-            </div>
+            {mode === "create" && (
+              <div className="flex flex-col sm:flex-row gap-2 pt-2">
+                <Button onClick={handleSaveInquiry} disabled={isPending} variant="outline" className="flex-1 rounded-full h-10 border-slate-200 hover:bg-slate-100 transition-colors">
+                  {isPending ? "Saving..." : "Save Draft"}
+                </Button>
+                <Button
+                  onClick={handleSendInquiry}
+                  disabled={isPending || !isFormValid}
+                  className="flex-1 bg-orange-600 hover:bg-orange-700 text-white rounded-full h-10 shadow-md shadow-orange-200 transition-all duration-200"
+                >
+                  <Send className="h-4 w-4 mr-2" />
+                  {isPending ? "Sending..." : "Send Inquiry"}
+                </Button>
+              </div>
+            )}
 
             {/* Sales <> Operations Chat (Lead-specific thread) */}
-            <div className="border-t pt-4 space-y-3">
+            <div className="pt-2 space-y-3">
               <h3 className="font-semibold text-sm">Sales & Operations Chat</h3>
               <div className="max-h-56 overflow-y-auto pr-1 space-y-2">
                 {chatMessages.length === 0 ? (
                   <p className="text-xs text-secondary-muted text-center py-4">No messages yet.</p>
                 ) : (
                   chatMessages.map((m) => (
-                    <Card key={m.id} className={`p-2.5 ${
+                    <Card key={m.id} className={`p-2.5 rounded-2xl shadow-sm transition-colors ${
                       m.sender_role === "sales_agent"
                         ? "bg-orange-50 border-orange-200"
                         : m.sender_role === "operations"
@@ -1149,13 +1625,13 @@ function InquiryDialog({
                   onChange={(e) => setChatInput(e.target.value)}
                   placeholder="Ask Operations for updates or provide more details..."
                   rows={2}
-                  className="resize-none"
+                  className="resize-none rounded-2xl border-slate-200 bg-white shadow-sm focus-visible:ring-2 focus-visible:ring-orange-200 transition-all"
                 />
                 <div className="flex justify-end">
                   <Button
                     onClick={handleSendChat}
                     disabled={isPending || isSendingChat || !chatInput.trim()}
-                    className="bg-orange-600 hover:bg-orange-700 text-white"
+                    className="bg-orange-600 hover:bg-orange-700 text-white rounded-full shadow-sm transition-all duration-200"
                   >
                     {isSendingChat ? "Sending..." : "Send Message"}
                   </Button>
@@ -1163,49 +1639,8 @@ function InquiryDialog({
               </div>
             </div>
 
-            {/* Inquiry Version History */}
-            {inquiryHistory.length > 1 && (
-              <div className="border-t pt-4 space-y-3">
-                <h3 className="font-semibold text-sm flex items-center gap-1">
-                  <History className="h-4 w-4" />
-                  Inquiry History ({inquiryHistory.length})
-                </h3>
-                <div className="space-y-2 max-h-56 overflow-y-auto pr-1">
-                  {inquiryHistory.map((h, idx) => (
-                    <Card key={h.id} className="p-3">
-                      <div className="flex items-center justify-between mb-2">
-                        <Badge variant="outline" className={idx === 0 ? "bg-teal-50 text-teal-700 border-teal-300" : ""}>
-                          {idx === 0 ? "Current" : `Previous #${idx}`}
-                        </Badge>
-                        <span className="text-[11px] text-slate-500">
-                          {new Date(h.created_at).toLocaleString()}
-                        </span>
-                      </div>
-                      <div className="grid grid-cols-2 gap-1 text-xs text-secondary-muted">
-                        <div>Product: <span className="text-primary-dark">{h.product_name || "-"}</span></div>
-                        <div>Qty: <span className="text-primary-dark">{h.quantity || "-"}</span></div>
-                        <div>Weight: <span className="text-primary-dark">{h.total_weight || "-"}</span></div>
-                        <div>CBM: <span className="text-primary-dark">{h.cbm || "-"}</span></div>
-                        <div className="col-span-2">
-                          Status:{" "}
-                          <span className="text-primary-dark">
-                            {h.sent_to_accounting ? "Sent" : "Draft"}
-                          </span>
-                        </div>
-                        {h.description && (
-                          <div className="col-span-2">
-                            Note: <span className="text-primary-dark">{h.description}</span>
-                          </div>
-                        )}
-                      </div>
-                    </Card>
-                  ))}
-                </div>
-              </div>
-            )}
-
             {/* Quotations from Accounting */}
-            {quotations.length > 0 && (
+            {mode === "view" && quotations.length > 0 && (
               <div className="border-t pt-4 space-y-3">
                 <div className="flex items-center justify-between">
                   <h3 className="font-semibold text-sm flex items-center gap-1">
@@ -1268,6 +1703,93 @@ function InquiryDialog({
                 ))}
               </div>
             )}
+            </div>
+            <div className="rounded-2xl p-3 bg-white space-y-3 lg:col-span-1 shadow-[0_8px_28px_rgba(15,23,42,0.08)]">
+              <h3 className="font-semibold text-sm flex items-center gap-1">
+                <History className="h-4 w-4" />
+                Inquiry Logs
+              </h3>
+              <div className="max-h-[70vh] overflow-y-auto pr-1 space-y-2">
+                {liveUnsavedEntries.length > 0 && (
+                  <Card className="p-2.5 rounded-xl border-amber-200 bg-amber-50">
+                    <div className="space-y-1.5">
+                      {liveUnsavedEntries.map((entry) => (
+                        <div key={entry.key} className="text-[11px] rounded border border-amber-100 bg-white p-2">
+                          <div className="font-medium text-slate-700">{entry.label}</div>
+                          <div className="text-teal-700">
+                            <span className="font-medium">{entry.newValue}</span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </Card>
+                )}
+                {isLoadingLogs ? (
+                  <p className="text-xs text-secondary-muted">Loading logs...</p>
+                ) : inquiryLogs.length === 0 ? (
+                  <p className="text-xs text-secondary-muted">
+                    {mode === "create" ? "No logs yet. Logs will appear after save/send." : "No logs available for this inquiry."}
+                  </p>
+                ) : (
+                  inquiryLogs.map((log) => {
+                    const previous = (log.previous_values || {}) as Record<string, unknown>;
+                    const current = (log.new_values || {}) as Record<string, unknown>;
+                    const changedKeys = Array.from(new Set([...Object.keys(previous), ...Object.keys(current)]));
+
+                    return (
+                      <Card key={log.id} className="p-2.5 rounded-2xl border-slate-100 bg-slate-50/60 shadow-sm">
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-xs font-semibold text-primary-dark">{log.performed_by}</span>
+                          <span className="text-[10px] text-secondary-muted">
+                            {new Date(log.performed_at).toLocaleString([], {
+                              month: "short",
+                              day: "numeric",
+                              hour: "2-digit",
+                              minute: "2-digit",
+                            })}
+                          </span>
+                        </div>
+                        <div className="mt-1">
+                          <Badge variant="outline" className="text-[10px] h-5 bg-slate-50 border-slate-200 text-slate-700">
+                            {formatLogAction(log.action)}
+                          </Badge>
+                        </div>
+                        {mode === "create" && Object.keys(current).length > 0 ? (
+                          <div className="mt-2 space-y-1.5">
+                            {Object.entries(current).map(([key, value]) => (
+                              <div key={`${log.id}-${key}`} className="text-[11px] rounded border border-slate-100 bg-white p-2">
+                                <div className="font-medium text-slate-700">{fieldLabel(key)}</div>
+                                <div className="text-teal-700">
+                                  <span className="font-medium">{valueText(value)}</span>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        ) : changedKeys.length > 0 ? (
+                          <div className="mt-2 space-y-1.5">
+                            {changedKeys.map((key) => (
+                              <div key={`${log.id}-${key}`} className="text-[11px] rounded border border-slate-100 bg-slate-50 p-2">
+                                <div className="font-medium text-slate-700">{fieldLabel(key)}</div>
+                                {previous[key] !== undefined && (
+                                  <div className="text-slate-500">
+                                    Old: <span className="line-through">{valueText(previous[key])}</span>
+                                  </div>
+                                )}
+                                <div className="text-teal-700">
+                                  New: <span className="font-medium">{valueText(current[key])}</span>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        ) : (
+                          <p className="mt-2 text-[11px] text-slate-500">Activity recorded.</p>
+                        )}
+                      </Card>
+                    );
+                  })
+                )}
+              </div>
+            </div>
           </div>
         )}
       </DialogContent>
@@ -1289,6 +1811,7 @@ export function PipelinePanel({
   const [commentsOpen, setCommentsOpen] = useState(false);
   const [inquiryLead, setInquiryLead] = useState<Lead | null>(null);
   const [inquiryOpen, setInquiryOpen] = useState(false);
+  const [inquiryDialogMode, setInquiryDialogMode] = useState<"create" | "view">("create");
   const [convertDialogOpen, setConvertDialogOpen] = useState(false);
   const [leadToConvert, setLeadToConvert] = useState<Lead | null>(null);
   const [leadToTransfer, setLeadToTransfer] = useState<Lead | null>(null);
@@ -1430,8 +1953,15 @@ export function PipelinePanel({
     setCommentsOpen(true);
   }
 
-  function handleOpenInquiry(lead: Lead) {
+  function handleOpenInquiries(lead: Lead) {
     setInquiryLead(lead);
+    setInquiryDialogMode("view");
+    setInquiryOpen(true);
+  }
+
+  function handleAddInquiryFromCard(lead: Lead) {
+    setInquiryLead(lead);
+    setInquiryDialogMode("create");
     setInquiryOpen(true);
   }
 
@@ -1566,7 +2096,8 @@ export function PipelinePanel({
                       leads={leads}
                       onOpenComments={handleOpenComments}
                       onConvert={handleConvertLead}
-                      onOpenInquiry={handleOpenInquiry}
+                      onOpenInquiries={handleOpenInquiries}
+                      onAddInquiry={handleAddInquiryFromCard}
                       onMoveToStatus={handleMoveToStatus}
                       onOpenTransferDialog={handleOpenTransferDialog}
                       highlightedLeadId={highlightedLeadId}
@@ -1584,7 +2115,8 @@ export function PipelinePanel({
                       leads={leads}
                       onOpenComments={handleOpenComments}
                       onConvert={handleConvertLead}
-                      onOpenInquiry={handleOpenInquiry}
+                      onOpenInquiries={handleOpenInquiries}
+                      onAddInquiry={handleAddInquiryFromCard}
                       onMoveToStatus={handleMoveToStatus}
                       onOpenTransferDialog={handleOpenTransferDialog}
                       highlightedLeadId={highlightedLeadId}
@@ -1627,6 +2159,7 @@ export function PipelinePanel({
       <InquiryDialog
         lead={inquiryLead}
         open={inquiryOpen}
+        mode={inquiryDialogMode}
         onOpenChange={(open) => {
           setInquiryOpen(open);
           if (!open) {

@@ -297,6 +297,7 @@ export async function getAllInquiryConfirmations() {
       .order('created_at', { ascending: false });
 
     if (error) return { error: error.message };
+
     return { confirmations: (data || []) as InquiryConfirmationWithLead[] };
   } catch (err) {
     return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };
@@ -321,6 +322,7 @@ export async function getConfirmationsForInquiry(inquiryId: string) {
       .order('created_at', { ascending: false });
 
     if (error) return { error: error.message };
+
     return { confirmations: (data || []) as InquiryConfirmation[] };
   } catch (err) {
     return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };
@@ -351,6 +353,15 @@ export async function approveInquiryConfirmation(confirmationId: string) {
       .single();
 
     if (error) return { error: error.message };
+
+    await supabase
+      .from('lead_inquiries')
+      .update({
+        approval_status: 'approved',
+        approved_at: data.reviewed_at || new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', data.inquiry_id);
 
     // Notify Sales Agent + Operations submitter about approval.
     const { data: lead } = await supabase
@@ -424,6 +435,15 @@ export async function rejectInquiryConfirmation(confirmationId: string) {
       .single();
 
     if (error) return { error: error.message };
+
+    await supabase
+      .from('lead_inquiries')
+      .update({
+        approval_status: 'rejected',
+        approved_at: null,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', data.inquiry_id);
 
     // Notify only the Operations submitter about rejection.
     const { data: lead } = await supabase

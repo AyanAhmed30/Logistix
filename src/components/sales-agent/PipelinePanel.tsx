@@ -45,7 +45,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { MessageSquare, Edit2, Trash2, Plus, UserPlus, Search, X, Send, FileText, ImageIcon, History, MoreVertical, CheckCircle2, Clock, AlertCircle } from "lucide-react";
+import { MessageSquare, Edit2, Trash2, Plus, UserPlus, Search, X, Send, FileText, ImageIcon, History, MoreVertical, CheckCircle2, Clock, AlertCircle, ScrollText, Eye, Inbox } from "lucide-react";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -58,9 +58,12 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import {
   saveInquiry,
   sendInquiryToAccounting,
+  getInquiryAvailabilityForLead,
   getInquiriesForLead,
   getQuotationsForLead,
   getInquiryLogs,
+  getLeadActivityTimeline,
+  recordInquiryViewed,
   updateInquiryForAccounting,
   getInquiryTrackingForSalesAgent,
   getLeadChatMessages,
@@ -70,6 +73,7 @@ import {
   type InquiryTrackingInfo,
   type LeadChatMessage,
   type InquiryLog,
+  type LeadActivityLog,
 } from "@/app/actions/inquiries";
 import jsPDF from "jspdf";
 
@@ -92,12 +96,26 @@ const NORMAL_BOARDS: LeadStatus[] = ["Leads", "Inquiry Received", "Quotation Sen
 // Boards where the dropdown shows the normal board options
 const SPECIAL_BOARDS: LeadStatus[] = ["Follow up", "Lose"];
 
+function formatRelativeTime(value: string | null | undefined) {
+  if (!value) return "No activity yet";
+  const now = Date.now();
+  const then = new Date(value).getTime();
+  if (Number.isNaN(then)) return "No activity yet";
+  const diffMinutes = Math.max(1, Math.floor((now - then) / 60000));
+  if (diffMinutes < 60) return `${diffMinutes} min ago`;
+  const diffHours = Math.floor(diffMinutes / 60);
+  if (diffHours < 24) return `${diffHours} hour${diffHours === 1 ? "" : "s"} ago`;
+  const diffDays = Math.floor(diffHours / 24);
+  return `${diffDays} day${diffDays === 1 ? "" : "s"} ago`;
+}
+
 function LeadCard({
   lead,
   onOpenComments,
   onConvert,
   onOpenInquiries,
   onAddInquiry,
+  onOpenLogs,
   onMoveToStatus,
   onOpenTransferDialog,
   showConvertButton,
@@ -109,6 +127,7 @@ function LeadCard({
   onConvert?: (lead: Lead) => void;
   onOpenInquiries?: (lead: Lead) => void;
   onAddInquiry?: (lead: Lead) => void;
+  onOpenLogs?: (lead: Lead) => void;
   onMoveToStatus?: (lead: Lead, status: LeadStatus) => void;
   onOpenTransferDialog?: (lead: Lead) => void;
   showConvertButton?: boolean;
@@ -133,18 +152,25 @@ function LeadCard({
   // Determine dropdown options based on current board
   const isInSpecialBoard = SPECIAL_BOARDS.includes(lead.status);
   const dropdownOptions: LeadStatus[] = isInSpecialBoard ? NORMAL_BOARDS : SPECIAL_BOARDS;
+  const statusBadge = inquiryTracking?.status === "approved"
+    ? "Sent"
+    : inquiryTracking?.status === "sent"
+      ? "Sent"
+      : inquiryTracking?.status === "draft"
+        ? "Draft"
+        : "Pending";
 
   return (
     <div ref={setNodeRef} style={style} {...attributes} {...listeners}>
       <Card className="mb-2 cursor-grab active:cursor-grabbing hover:shadow-md transition-shadow">
         <CardContent className="p-2.5">
-          <div className="space-y-1.5">
+          <div className="space-y-2">
             <div className="flex items-start justify-between gap-1">
               <div className="min-w-0 flex-1">
                 {lead.lead_id_formatted && (
                   <span className="font-mono text-[10px] text-primary-accent font-semibold">#{lead.lead_id_formatted}</span>
                 )}
-                <h4 className="font-semibold text-xs text-primary-dark leading-tight truncate">{lead.name}</h4>
+                <h4 className="font-semibold text-xs text-primary-dark leading-tight truncate">{lead.name || "Unnamed Lead"}</h4>
                 <p className="text-[10px] text-secondary-muted truncate">{lead.number}</p>
               </div>
               {/* Three-dot menu */}
@@ -200,64 +226,101 @@ function LeadCard({
                 >
                   {lead.created_by_sales_agent_id === lead.sales_agent_id ? "Own Lead" : "Received Lead"}
                 </Badge>
+                {showInquiryButton && (
+                  <Badge
+                    variant="outline"
+                    className={`h-5 text-[10px] px-1.5 ${
+                      statusBadge === "Sent"
+                        ? "bg-emerald-50 text-emerald-700 border-emerald-200"
+                        : statusBadge === "Draft"
+                          ? "bg-amber-50 text-amber-700 border-amber-200"
+                          : "bg-slate-50 text-slate-700 border-slate-200"
+                    }`}
+                  >
+                    {statusBadge}
+                  </Badge>
+                )}
               </div>
               <div className="flex gap-0.5 flex-shrink-0">
-                {showInquiryButton && onOpenInquiries && (
-                  <>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      className="h-6 w-6 p-0"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        onOpenComments(lead);
-                      }}
-                      title="Comments"
-                    >
-                      <MessageSquare className="h-3 w-3" />
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      className="h-6 w-6 p-0"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        onOpenInquiries(lead);
-                      }}
-                      title="View Inquiries"
-                    >
-                      <FileText className="h-3 w-3 text-orange-600" />
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      className="h-6 w-6 p-0"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        onAddInquiry?.(lead);
-                      }}
-                      title="Add Inquiry"
-                    >
-                      <Plus className="h-3 w-3 text-emerald-600" />
-                    </Button>
-                  </>
-                )}
-                {!showInquiryButton && (
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="h-6 w-6 p-0"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      onOpenComments(lead);
-                    }}
-                    title="Comments"
-                  >
-                    <MessageSquare className="h-3 w-3" />
-                  </Button>
-                )}
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-6 w-6 p-0"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onOpenComments(lead);
+                  }}
+                  title="Comments"
+                >
+                  <MessageSquare className="h-3 w-3" />
+                </Button>
               </div>
             </div>
+            {showInquiryButton && (
+              <div className="rounded-md border border-slate-100 bg-slate-50 p-2 space-y-1">
+                <p className="text-[10px] text-slate-700 font-medium">Inquiry Stats</p>
+                <div className="grid grid-cols-2 gap-1 text-[10px] text-slate-600">
+                  <span>Total: <strong>{inquiryTracking?.total_inquiry_count || 0}</strong></span>
+                  <span>Sent: <strong>{inquiryTracking?.sent_inquiry_count || 0}</strong></span>
+                  <span>Draft: <strong>{inquiryTracking?.draft_inquiry_count || 0}</strong></span>
+                  <span>Approved: <strong>{inquiryTracking?.approved_inquiry_count || 0}</strong></span>
+                  <span>Pending: <strong>{inquiryTracking?.pending_inquiry_count || 0}</strong></span>
+                </div>
+                <p className="text-[10px] text-slate-500">
+                  Last activity: {formatRelativeTime(inquiryTracking?.last_activity_at)}
+                </p>
+                {inquiryTracking?.approved_inquiry_id ? (
+                  <div className="rounded border border-emerald-200 bg-emerald-50 p-1.5">
+                    <p className="text-[10px] font-semibold text-emerald-700">Approved Inquiry Available</p>
+                    <p className="text-[10px] text-emerald-700">
+                      Approved: {inquiryTracking.approved_inquiry_count || 1}
+                    </p>
+                  </div>
+                ) : (
+                  <p className="text-[10px] text-slate-500">No approved inquiry yet</p>
+                )}
+              </div>
+            )}
+            {showInquiryButton && (
+              <div className="grid grid-cols-3 gap-1">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-7 text-[10px] px-1 border-emerald-200 text-emerald-700"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onAddInquiry?.(lead);
+                  }}
+                >
+                  <Plus className="h-3 w-3 mr-1" />
+                  Send
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-7 text-[10px] px-1 border-orange-200 text-orange-700"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onOpenInquiries?.(lead);
+                  }}
+                >
+                  <Eye className="h-3 w-3 mr-1" />
+                  View
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-7 text-[10px] px-1 border-blue-200 text-blue-700"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onOpenLogs?.(lead);
+                  }}
+                >
+                  <ScrollText className="h-3 w-3 mr-1" />
+                  Logs
+                </Button>
+              </div>
+            )}
             {showConvertButton && !lead.converted && onConvert && (
               <Button
                 variant="default"
@@ -277,8 +340,8 @@ function LeadCard({
                 Converted
               </div>
             )}
-            {/* Inquiry Tracking Badge */}
-            {inquiryTracking && (
+            {/* Inquiry Tracking Badge for non inquiry board */}
+            {!showInquiryButton && inquiryTracking && (
               <div className="mt-1.5 space-y-1">
                 <div className={`px-1.5 py-0.5 rounded text-[10px] text-center flex items-center justify-center gap-1 ${
                   inquiryTracking.status === 'approved'
@@ -330,6 +393,7 @@ function KanbanColumn({
   onConvert,
   onOpenInquiries,
   onAddInquiry,
+  onOpenLogs,
   onMoveToStatus,
   onOpenTransferDialog,
   highlightedLeadId,
@@ -342,6 +406,7 @@ function KanbanColumn({
   onConvert?: (lead: Lead) => void;
   onOpenInquiries?: (lead: Lead) => void;
   onAddInquiry?: (lead: Lead) => void;
+  onOpenLogs?: (lead: Lead) => void;
   onMoveToStatus?: (lead: Lead, status: LeadStatus) => void;
   onOpenTransferDialog?: (lead: Lead) => void;
   highlightedLeadId?: string | null;
@@ -426,6 +491,7 @@ function KanbanColumn({
                     onConvert={onConvert}
                     onOpenInquiries={onOpenInquiries}
                     onAddInquiry={onAddInquiry}
+                    onOpenLogs={onOpenLogs}
                     onMoveToStatus={onMoveToStatus}
                     onOpenTransferDialog={onOpenTransferDialog}
                     showConvertButton={showConvertButton}
@@ -682,6 +748,8 @@ function InquiryDialog({
   const [chatInput, setChatInput] = useState("");
   const [isSendingChat, setIsSendingChat] = useState(false);
   const [leadInquiries, setLeadInquiries] = useState<LeadInquiry[]>([]);
+  const [approvedInquiryId, setApprovedInquiryId] = useState<string | null>(null);
+  const [showOnlyApproved, setShowOnlyApproved] = useState(false);
   const [selectedInquiryId, setSelectedInquiryId] = useState<string>("");
   const [inquiryLogs, setInquiryLogs] = useState<InquiryLog[]>([]);
   const [isLoadingLogs, setIsLoadingLogs] = useState(false);
@@ -711,6 +779,7 @@ function InquiryDialog({
 
       if ("error" in inquiryListResult) {
         setLeadInquiries([]);
+        setApprovedInquiryId(null);
         setInquiry(null);
         setProductName("");
         setTotalWeight("");
@@ -722,6 +791,7 @@ function InquiryDialog({
       } else {
         const list = inquiryListResult.inquiries || [];
         setLeadInquiries(list);
+        setApprovedInquiryId(("approvedInquiryId" in inquiryListResult ? inquiryListResult.approvedInquiryId : null) || null);
         setInquiryHistory(list);
 
         const selected = selectedInquiryId
@@ -759,6 +829,7 @@ function InquiryDialog({
         setConfirmationStatus(hasApproved ? "approved" : "none");
 
         if (current?.id) {
+          void recordInquiryViewed(current.id);
           await fetchLogsForInquiry(current.id);
         } else {
           setInquiryLogs([]);
@@ -803,6 +874,8 @@ function InquiryDialog({
       setChatMessages([]);
       setChatInput("");
       setLeadInquiries([]);
+      setApprovedInquiryId(null);
+      setShowOnlyApproved(false);
       setSelectedInquiryId("");
       setInquiryLogs([]);
       setIsViewEditing(false);
@@ -1012,6 +1085,7 @@ function InquiryDialog({
       description: inquiryItem.description || "",
       image_count: (primaryImage ? 1 : 0) + additionalImages.length,
     });
+    void recordInquiryViewed(inquiryItem.id);
     void fetchLogsForInquiry(inquiryItem.id);
   }
 
@@ -1042,7 +1116,9 @@ function InquiryDialog({
         image_url: imageDataList[0] || null,
         additional_image_urls: imageDataList.slice(1),
         description: otherDetails,
-      }, mode === "view" ? inquiry?.id : undefined);
+      }, inquiry?.id, {
+        forceNewInquiry: mode === "create" && !inquiry?.id,
+      });
       if ("error" in result) {
         toast.error(result.error);
       } else {
@@ -1100,7 +1176,9 @@ function InquiryDialog({
         image_url: imageDataList[0] || null,
         additional_image_urls: imageDataList.slice(1),
         description: otherDetails,
-      }, mode === "view" ? inquiry?.id : undefined);
+      }, inquiry?.id, {
+        forceNewInquiry: mode === "create" && !inquiry?.id,
+      });
       if ("error" in saveResult) {
         toast.error(saveResult.error);
         return;
@@ -1286,6 +1364,15 @@ function InquiryDialog({
       }));
   }, [canEditForm, baselineDraftState, productName, totalWeight, cbm, quantity, otherDetails, imageDataList.length]);
 
+  const visibleInquiries = useMemo(() => {
+    if (!showOnlyApproved) return leadInquiries;
+    return leadInquiries.filter((inq) =>
+      inq.approval_status === "approved" ||
+      inq.id === approvedInquiryId ||
+      (inq.inquiry_confirmations || []).some((c) => c.status === "approved")
+    );
+  }, [leadInquiries, showOnlyApproved, approvedInquiryId]);
+
   if (!lead) return null;
 
 
@@ -1309,6 +1396,22 @@ function InquiryDialog({
 
         {isLoading ? (
           <div className="py-10 text-center text-secondary-muted text-sm">Loading inquiry data...</div>
+        ) : mode === "view" && leadInquiries.length === 0 ? (
+          <div className="py-16 px-6 flex flex-col items-center justify-center gap-4">
+            <div className="h-14 w-14 rounded-full bg-slate-100 flex items-center justify-center">
+              <Inbox className="h-7 w-7 text-slate-500" />
+            </div>
+            <h3 className="text-base font-semibold text-slate-800">No Inquiry Found</h3>
+            <p className="text-sm text-slate-500 text-center max-w-sm">
+              This lead does not have any inquiry yet. Create one from the Inquiry Received card using the Send button.
+            </p>
+            <Button
+              variant="outline"
+              onClick={() => onOpenChange(false)}
+            >
+              Close
+            </Button>
+          </div>
         ) : (
           <div className="p-4 sm:p-6 grid grid-cols-1 lg:grid-cols-3 gap-5">
             <div className="space-y-5 lg:col-span-2">
@@ -1318,26 +1421,80 @@ function InquiryDialog({
                 <p className="text-xs font-semibold text-slate-700">
                   Inquiry Records ({leadInquiries.length})
                 </p>
+                <Button
+                  type="button"
+                  variant={showOnlyApproved ? "default" : "outline"}
+                  size="sm"
+                  className="h-7 text-[10px]"
+                  onClick={() => setShowOnlyApproved((prev) => !prev)}
+                >
+                  {showOnlyApproved ? "Showing Approved" : "Show Only Approved"}
+                </Button>
               </div>
-              {leadInquiries.length > 0 ? (
-                <div className="flex flex-wrap gap-2">
-                  {leadInquiries.map((inq, idx) => (
-                    <Button
+              {visibleInquiries.length > 0 ? (
+                <div className="space-y-2">
+                  {visibleInquiries.map((inq, idx) => {
+                    const approvedConfirmation = (inq.inquiry_confirmations || [])
+                      .filter((c) => c.status === "approved")
+                      .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())[0];
+                    const isApproved = inq.approval_status === "approved" || inq.id === approvedInquiryId || Boolean(approvedConfirmation);
+                    const approvedAt = inq.approved_at || approvedConfirmation?.created_at || null;
+                    return (
+                    <details
                       key={inq.id}
-                      type="button"
-                      variant={selectedInquiryId === inq.id ? "default" : "outline"}
-                      size="sm"
-                      className={`h-8 text-xs rounded-full transition-all duration-200 ${
-                        selectedInquiryId === inq.id ? "bg-orange-600 hover:bg-orange-700 text-white shadow-md shadow-orange-200" : "hover:bg-slate-100 border-slate-200"
+                      className={`rounded-lg border ${
+                        isApproved
+                          ? "border-emerald-300 bg-emerald-50/40"
+                          : selectedInquiryId === inq.id
+                            ? "border-orange-300 bg-orange-50/30"
+                            : "border-slate-200"
                       }`}
-                      onClick={() => handleSelectInquiry(inq)}
                     >
-                      #{leadInquiries.length - idx} {inq.sent_to_accounting ? "(Sent)" : "(Draft)"}
-                    </Button>
-                  ))}
+                      <summary className="cursor-pointer list-none p-2">
+                        <div className="flex items-center justify-between gap-2">
+                          <button
+                            type="button"
+                            className={`text-xs font-medium ${
+                              selectedInquiryId === inq.id ? "text-orange-700" : "text-slate-700"
+                            }`}
+                            onClick={(e) => {
+                              e.preventDefault();
+                              handleSelectInquiry(inq);
+                            }}
+                          >
+                            Inquiry {idx + 1}
+                          </button>
+                          <div className="text-right">
+                            {isApproved ? (
+                              <span className="inline-flex items-center rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-bold text-emerald-700">
+                                APPROVED
+                              </span>
+                            ) : (
+                              <span className="inline-flex items-center rounded-full bg-slate-100 px-2 py-0.5 text-[10px] text-slate-600">
+                                Pending
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      </summary>
+                      <div className="px-2 pb-2 text-[11px] text-slate-600 space-y-1">
+                        {isApproved && approvedAt && (
+                          <p className="font-medium text-emerald-700">
+                            Approved on {new Date(approvedAt).toLocaleString()}
+                          </p>
+                        )}
+                        <p>Product: {inq.product_name || "-"}</p>
+                        <p>Quantity: {inq.quantity || "-"}</p>
+                        <p>CBM: {inq.cbm || "-"}</p>
+                      </div>
+                    </details>
+                  );
+                  })}
                 </div>
               ) : (
-                <p className="text-xs text-slate-500">No inquiry found for this lead.</p>
+                <p className="text-xs text-slate-500">
+                  {showOnlyApproved ? "No approved inquiry yet" : "No inquiry found for this lead."}
+                </p>
               )}
             </div>
             )}
@@ -1797,6 +1954,142 @@ function InquiryDialog({
   );
 }
 
+function ActivityLogsDialog({
+  lead,
+  open,
+  onOpenChange,
+}: {
+  lead: Lead | null;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+}) {
+  const [logs, setLogs] = useState<LeadActivityLog[]>([]);
+  const [isLoading, setIsLoading] = useState(false);
+
+  const fetchLogs = useCallback(async () => {
+    if (!lead) return;
+    setIsLoading(true);
+    try {
+      const result = await getLeadActivityTimeline(lead.id);
+      if ("error" in result) {
+        toast.error(result.error || "Unable to load logs");
+        setLogs([]);
+      } else {
+        setLogs(result.logs || []);
+      }
+    } finally {
+      setIsLoading(false);
+    }
+  }, [lead]);
+
+  useEffect(() => {
+    if (open && lead) {
+      void fetchLogs();
+    }
+    if (!open) {
+      setLogs([]);
+    }
+  }, [open, lead, fetchLogs]);
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-[760px] max-h-[85vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <ScrollText className="h-4 w-4 text-blue-600" />
+            Activity Timeline - {lead?.name || "Lead"}
+          </DialogTitle>
+          <DialogDescription>
+            Full lead lifecycle including inquiry versions, sends, edits, and views.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="space-y-3">
+          {isLoading ? (
+            <p className="text-sm text-slate-500">Loading timeline...</p>
+          ) : logs.length === 0 ? (
+            <p className="text-sm text-slate-500">No logs available yet.</p>
+          ) : (
+            logs.map((log) => {
+              const previous = (log.previous_values || {}) as Record<string, unknown>;
+              const current = (log.new_values || {}) as Record<string, unknown>;
+              const keys = Array.from(new Set([...Object.keys(previous), ...Object.keys(current)]));
+              return (
+                <Card key={log.id} className="p-3">
+                  <div className="flex items-start justify-between gap-2">
+                    <div>
+                      <p className="text-sm font-semibold text-slate-800">{log.action_label}</p>
+                      <p className="text-xs text-slate-500">
+                        {new Date(log.performed_at).toLocaleString()} by {log.performed_by}
+                        {log.inquiry_version ? ` - v${log.inquiry_version}` : ""}
+                      </p>
+                    </div>
+                    <Badge variant="outline" className="text-[10px]">
+                      {log.action_type}
+                    </Badge>
+                  </div>
+                  {keys.length > 0 && (
+                    <div className="mt-2 space-y-1">
+                      {keys.map((key) => (
+                        <div key={`${log.id}-${key}`} className="rounded border bg-slate-50 p-2 text-xs">
+                          <p className="font-medium text-slate-700">{key.replace(/_/g, " ")}</p>
+                          {previous[key] !== undefined && <p className="text-slate-500">Old: {String(previous[key])}</p>}
+                          {current[key] !== undefined && <p className="text-teal-700">New: {String(current[key])}</p>}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </Card>
+              );
+            })
+          )}
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function NoInquiryEmptyStateDialog({
+  lead,
+  open,
+  onOpenChange,
+  onCreateInquiry,
+}: {
+  lead: Lead | null;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  onCreateInquiry: (lead: Lead) => void;
+}) {
+  if (!lead) return null;
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-[560px]">
+        <DialogHeader>
+          <DialogTitle className="text-center">No Inquiry Found</DialogTitle>
+          <DialogDescription className="text-center">
+            This lead does not have any inquiry yet.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="py-8 flex flex-col items-center justify-center gap-4">
+          <div className="h-14 w-14 rounded-full bg-slate-100 flex items-center justify-center">
+            <Inbox className="h-7 w-7 text-slate-500" />
+          </div>
+          <p className="text-sm text-slate-500 text-center max-w-sm">
+            Create the first inquiry to start tracking versions, send events, and activity logs for this lead.
+          </p>
+          <Button
+            className="bg-orange-600 hover:bg-orange-700 text-white"
+            onClick={() => onCreateInquiry(lead)}
+          >
+            <Plus className="h-4 w-4 mr-2" />
+            Create Inquiry
+          </Button>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 export function PipelinePanel({
   focusLeadId,
   onFocusHandled,
@@ -1812,6 +2105,10 @@ export function PipelinePanel({
   const [inquiryLead, setInquiryLead] = useState<Lead | null>(null);
   const [inquiryOpen, setInquiryOpen] = useState(false);
   const [inquiryDialogMode, setInquiryDialogMode] = useState<"create" | "view">("create");
+  const [noInquiryLead, setNoInquiryLead] = useState<Lead | null>(null);
+  const [noInquiryOpen, setNoInquiryOpen] = useState(false);
+  const [activityLead, setActivityLead] = useState<Lead | null>(null);
+  const [activityLogsOpen, setActivityLogsOpen] = useState(false);
   const [convertDialogOpen, setConvertDialogOpen] = useState(false);
   const [leadToConvert, setLeadToConvert] = useState<Lead | null>(null);
   const [leadToTransfer, setLeadToTransfer] = useState<Lead | null>(null);
@@ -1953,16 +2250,35 @@ export function PipelinePanel({
     setCommentsOpen(true);
   }
 
-  function handleOpenInquiries(lead: Lead) {
+  async function handleOpenInquiries(lead: Lead) {
+    const availability = await getInquiryAvailabilityForLead(lead.id);
+    if ("error" in availability) {
+      toast.error(availability.error || "Unable to check inquiry availability");
+      return;
+    }
+
+    if (!availability.hasInquiry) {
+      setNoInquiryLead(lead);
+      setNoInquiryOpen(true);
+      return;
+    }
+
     setInquiryLead(lead);
     setInquiryDialogMode("view");
     setInquiryOpen(true);
   }
 
   function handleAddInquiryFromCard(lead: Lead) {
+    setNoInquiryOpen(false);
+    setNoInquiryLead(null);
     setInquiryLead(lead);
     setInquiryDialogMode("create");
     setInquiryOpen(true);
+  }
+
+  function handleOpenActivityLogs(lead: Lead) {
+    setActivityLead(lead);
+    setActivityLogsOpen(true);
   }
 
   function handleMoveToStatus(lead: Lead, newStatus: LeadStatus) {
@@ -2098,6 +2414,7 @@ export function PipelinePanel({
                       onConvert={handleConvertLead}
                       onOpenInquiries={handleOpenInquiries}
                       onAddInquiry={handleAddInquiryFromCard}
+                      onOpenLogs={handleOpenActivityLogs}
                       onMoveToStatus={handleMoveToStatus}
                       onOpenTransferDialog={handleOpenTransferDialog}
                       highlightedLeadId={highlightedLeadId}
@@ -2117,6 +2434,7 @@ export function PipelinePanel({
                       onConvert={handleConvertLead}
                       onOpenInquiries={handleOpenInquiries}
                       onAddInquiry={handleAddInquiryFromCard}
+                      onOpenLogs={handleOpenActivityLogs}
                       onMoveToStatus={handleMoveToStatus}
                       onOpenTransferDialog={handleOpenTransferDialog}
                       highlightedLeadId={highlightedLeadId}
@@ -2167,6 +2485,25 @@ export function PipelinePanel({
             // Refresh tracking data when inquiry dialog closes
             fetchInquiryTracking();
           }
+        }}
+      />
+
+      <NoInquiryEmptyStateDialog
+        lead={noInquiryLead}
+        open={noInquiryOpen}
+        onOpenChange={(open) => {
+          setNoInquiryOpen(open);
+          if (!open) setNoInquiryLead(null);
+        }}
+        onCreateInquiry={(lead) => handleAddInquiryFromCard(lead)}
+      />
+
+      <ActivityLogsDialog
+        lead={activityLead}
+        open={activityLogsOpen}
+        onOpenChange={(open) => {
+          setActivityLogsOpen(open);
+          if (!open) setActivityLead(null);
         }}
       />
 

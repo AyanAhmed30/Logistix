@@ -9,6 +9,9 @@ export type InquiryStatus = 'pending' | 'in_progress' | 'quotation_sent' | 'comp
 export type LeadInquiry = {
   id: string;
   lead_id: string;
+  inquiry_group_id?: string;
+  version_number?: number;
+  is_current_version?: boolean;
   description: string;
   image_url: string | null;
   additional_image_urls?: string[] | null;
@@ -21,9 +24,16 @@ export type LeadInquiry = {
   sent_to_accounting: boolean;
   sent_to_operations: boolean;
   sent_at: string | null;
+  approval_status?: 'sent' | 'approved' | 'rejected';
+  approved_at?: string | null;
   calculator_values: Record<string, string> | null;
   created_at: string;
   updated_at: string;
+  inquiry_confirmations?: {
+    id: string;
+    status: string;
+    created_at: string;
+  }[];
 };
 
 export type LeadInquiryWithLead = LeadInquiry & {
@@ -72,6 +82,30 @@ export type InquiryLog = {
   id: string;
   inquiry_id: string;
   action: string;
+  previous_values: Record<string, unknown> | null;
+  new_values: Record<string, unknown> | null;
+  performed_by: string;
+  performed_at: string;
+};
+
+export type LeadActivityAction =
+  | 'lead_created'
+  | 'lead_updated'
+  | 'inquiry_created_draft'
+  | 'inquiry_edited'
+  | 'inquiry_sent'
+  | 'inquiry_resent'
+  | 'inquiry_viewed'
+  | 'inquiry_status_changed';
+
+export type LeadActivityLog = {
+  id: string;
+  lead_id: string;
+  inquiry_id: string | null;
+  inquiry_version: number | null;
+  action_type: LeadActivityAction;
+  action_label: string;
+  metadata: Record<string, unknown> | null;
   previous_values: Record<string, unknown> | null;
   new_values: Record<string, unknown> | null;
   performed_by: string;
@@ -139,6 +173,44 @@ async function canAccessLeadChat(
   return { allowed: false, error: 'Unauthorized' };
 }
 
+function toComparableValue(value: unknown) {
+  if (value === null || value === undefined) return '';
+  if (Array.isArray(value)) return JSON.stringify(value);
+  return String(value);
+}
+
+async function addLeadActivityLog(
+  supabase: Awaited<ReturnType<typeof createAdminClient>>,
+  input: {
+    leadId: string;
+    inquiryId?: string | null;
+    inquiryVersion?: number | null;
+    actionType: LeadActivityAction;
+    actionLabel: string;
+    performedBy: string;
+    metadata?: Record<string, unknown> | null;
+    previousValues?: Record<string, unknown> | null;
+    newValues?: Record<string, unknown> | null;
+  }
+) {
+  const { error } = await supabase.from('lead_activity_logs').insert([
+    {
+      lead_id: input.leadId,
+      inquiry_id: input.inquiryId || null,
+      inquiry_version: input.inquiryVersion ?? null,
+      action_type: input.actionType,
+      action_label: input.actionLabel,
+      metadata: input.metadata || null,
+      previous_values: input.previousValues || null,
+      new_values: input.newValues || null,
+      performed_by: input.performedBy,
+    },
+  ]);
+  if (error) {
+    console.error('[lead_activity_logs] insert failed:', error.message);
+  }
+}
+
 // ========== Sales Agent Actions ==========
 
 export async function saveInquiry(
@@ -152,7 +224,10 @@ export async function saveInquiry(
     additional_image_urls?: string[] | null;
     description: string;
   },
-  inquiryId?: string
+  inquiryId?: string,
+  options?: {
+    forceNewInquiry?: boolean;
+  }
 ) {
   try {
     const session = await getSession();
@@ -160,12 +235,17 @@ export async function saveInquiry(
 
     const supabase = await createAdminClient();
 
+    const forceNewInquiry = Boolean(options?.forceNewInquiry);
+
     const { data: latest } = inquiryId
-      ? { data: { id: inquiryId, sent_to_accounting: false } }
+      ? { data: { id: inquiryId, sent_to_accounting: false, inquiry_group_id: null, version_number: 1, lead_id: leadId } }
+      : forceNewInquiry
+        ? { data: null }
       : await supabase
           .from('lead_inquiries')
-          .select('id, sent_to_accounting')
+          .select('id, lead_id, sent_to_accounting, inquiry_group_id, version_number')
           .eq('lead_id', leadId)
+          .order('version_number', { ascending: false })
           .order('created_at', { ascending: false })
           .limit(1)
           .maybeSingle();
@@ -213,27 +293,27 @@ export async function saveInquiry(
       const previousValues: Record<string, unknown> = {};
       const newValues: Record<string, unknown> = {};
 
-      if (inquiryData.description !== (current.description || '')) {
+      if (toComparableValue(inquiryData.description) !== toComparableValue(current.description)) {
         previousValues.description = current.description;
         newValues.description = inquiryData.description;
       }
-      if (inquiryData.image_url !== (current.image_url || null)) {
+      if (toComparableValue(inquiryData.image_url) !== toComparableValue(current.image_url)) {
         previousValues.image_url = current.image_url ? 'Attached' : 'None';
         newValues.image_url = inquiryData.image_url ? 'Attached' : 'Removed';
       }
-      if ((inquiryData.product_name || '') !== (current.product_name || '')) {
+      if (toComparableValue(inquiryData.product_name) !== toComparableValue(current.product_name)) {
         previousValues.product_name = current.product_name;
         newValues.product_name = inquiryData.product_name;
       }
-      if ((inquiryData.total_weight || '') !== (current.total_weight || '')) {
+      if (toComparableValue(inquiryData.total_weight) !== toComparableValue(current.total_weight)) {
         previousValues.total_weight = current.total_weight;
         newValues.total_weight = inquiryData.total_weight;
       }
-      if ((inquiryData.cbm || '') !== (current.cbm || '')) {
+      if (toComparableValue(inquiryData.cbm) !== toComparableValue(current.cbm)) {
         previousValues.cbm = current.cbm;
         newValues.cbm = inquiryData.cbm;
       }
-      if ((inquiryData.quantity || '') !== (current.quantity || '')) {
+      if (toComparableValue(inquiryData.quantity) !== toComparableValue(current.quantity)) {
         previousValues.quantity = current.quantity;
         newValues.quantity = inquiryData.quantity;
       }
@@ -242,25 +322,50 @@ export async function saveInquiry(
         await supabase.from('inquiry_logs').insert([
           {
             inquiry_id: latest.id,
-            action: 'updated',
+            action: 'inquiry_edited',
             previous_values: previousValues,
             new_values: newValues,
             performed_by: session.username || 'sales-agent',
           },
         ]);
+        await addLeadActivityLog(supabase, {
+          leadId,
+          inquiryId: latest.id,
+          inquiryVersion: current.version_number || latest.version_number || 1,
+          actionType: 'inquiry_edited',
+          actionLabel: 'Inquiry Edited',
+          performedBy: session.username || 'sales-agent',
+          previousValues,
+          newValues,
+        });
       }
 
       return { success: true, inquiry: result as LeadInquiry };
     } else {
       // Create a new inquiry (either first ever, or latest was already sent)
+      const nextVersion = latest?.version_number ? Number(latest.version_number) + 1 : 1;
+      const versionGroupId = latest?.inquiry_group_id || crypto.randomUUID();
+
+      if (latest?.id) {
+        await supabase
+          .from('lead_inquiries')
+          .update({ is_current_version: false, updated_at: new Date().toISOString() })
+          .eq('id', latest.id);
+      }
+
       const { data: result, error } = await supabase
         .from('lead_inquiries')
         .insert([{
           lead_id: leadId,
+          inquiry_group_id: versionGroupId,
+          version_number: nextVersion,
+          is_current_version: true,
           ...inquiryData,
           status: 'pending',
           sent_to_accounting: false,
           sent_to_operations: false,
+          approval_status: 'draft',
+          approved_at: null,
         }])
         .select()
         .single();
@@ -271,9 +376,10 @@ export async function saveInquiry(
       await supabase.from('inquiry_logs').insert([
         {
           inquiry_id: result.id,
-          action: 'created',
+          action: latest?.id ? 'inquiry_resent' : 'inquiry_created_draft',
           previous_values: null,
           new_values: {
+            version_number: nextVersion,
             product_name: inquiryData.product_name,
             total_weight: inquiryData.total_weight,
             cbm: inquiryData.cbm,
@@ -284,6 +390,24 @@ export async function saveInquiry(
           performed_by: session.username || 'sales-agent',
         },
       ]);
+
+      await addLeadActivityLog(supabase, {
+        leadId,
+        inquiryId: result.id,
+        inquiryVersion: nextVersion,
+        actionType: latest?.id ? 'inquiry_edited' : 'inquiry_created_draft',
+        actionLabel: latest?.id ? 'Inquiry Re-Sent (New Version Drafted)' : 'Inquiry Created (Draft)',
+        performedBy: session.username || 'sales-agent',
+        newValues: {
+          version_number: nextVersion,
+          product_name: inquiryData.product_name,
+          total_weight: inquiryData.total_weight,
+          cbm: inquiryData.cbm,
+          quantity: inquiryData.quantity,
+          description: inquiryData.description,
+        },
+        metadata: latest?.id ? { previous_inquiry_id: latest.id } : null,
+      });
 
       return { success: true, inquiry: result as LeadInquiry };
     }
@@ -307,10 +431,6 @@ export async function sendInquiryToAccounting(inquiryId: string) {
 
     if (inquiryError || !inquiry) {
       return { error: 'Inquiry not found. Please add inquiry details first.' };
-    }
-
-    if (inquiry.sent_to_accounting) {
-      return { error: 'This inquiry is already sent.' };
     }
 
     if (session.role === 'sales_agent') {
@@ -339,6 +459,8 @@ export async function sendInquiryToAccounting(inquiryId: string) {
     const updatePayload: Record<string, unknown> = {
       sent_to_accounting: true,
       sent_at: new Date().toISOString(),
+      approval_status: 'sent',
+      approved_at: null,
       status: 'pending',
       updated_at: new Date().toISOString(),
     };
@@ -353,11 +475,14 @@ export async function sendInquiryToAccounting(inquiryId: string) {
     if (error) return { error: error.message };
 
     // Add status change log so the activity/history UI shows the "send" event.
+    const wasAlreadySent = Boolean(inquiry.sent_to_accounting);
+    const action = wasAlreadySent ? 'inquiry_resent' : 'inquiry_sent';
+    const actionLabel = wasAlreadySent ? 'Inquiry Re-Sent' : 'Inquiry Sent';
     await supabase.from('inquiry_logs').insert([
       {
         inquiry_id: inquiry.id,
-        action: 'status_changed',
-        previous_values: { sent_to_accounting: false },
+        action,
+        previous_values: { sent_to_accounting: inquiry.sent_to_accounting, sent_at: inquiry.sent_at },
         new_values: {
           sent_to_accounting: true,
           sent_at: updatePayload.sent_at,
@@ -365,6 +490,16 @@ export async function sendInquiryToAccounting(inquiryId: string) {
         performed_by: session.username || 'sales-agent',
       },
     ]);
+    await addLeadActivityLog(supabase, {
+      leadId: inquiry.lead_id,
+      inquiryId: inquiry.id,
+      inquiryVersion: inquiry.version_number || null,
+      actionType: wasAlreadySent ? 'inquiry_resent' : 'inquiry_sent',
+      actionLabel,
+      performedBy: session.username || 'sales-agent',
+      previousValues: { sent_to_accounting: inquiry.sent_to_accounting, sent_at: inquiry.sent_at },
+      newValues: { sent_to_accounting: true, sent_at: updatePayload.sent_at },
+    });
 
     // Notify Operations users that a new inquiry has been sent by Sales Agent.
     const { data: leadForNotification } = await supabase
@@ -432,10 +567,32 @@ export async function createInquiryDraft(leadId: string) {
       return { error: 'Unauthorized' };
     }
 
+    const { data: latestInquiry } = await supabase
+      .from('lead_inquiries')
+      .select('id, inquiry_group_id, version_number')
+      .eq('lead_id', leadId)
+      .order('version_number', { ascending: false })
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    const nextVersion = latestInquiry?.version_number ? Number(latestInquiry.version_number) + 1 : 1;
+    const versionGroupId = latestInquiry?.inquiry_group_id || crypto.randomUUID();
+
+    if (latestInquiry?.id) {
+      await supabase
+        .from('lead_inquiries')
+        .update({ is_current_version: false, updated_at: new Date().toISOString() })
+        .eq('id', latestInquiry.id);
+    }
+
     const { data: result, error } = await supabase
       .from('lead_inquiries')
       .insert([{
         lead_id: leadId,
+        inquiry_group_id: versionGroupId,
+        version_number: nextVersion,
+        is_current_version: true,
         product_name: '',
         total_weight: '',
         cbm: '',
@@ -446,6 +603,8 @@ export async function createInquiryDraft(leadId: string) {
         status: 'pending',
         sent_to_accounting: false,
         sent_to_operations: false,
+        approval_status: 'draft',
+        approved_at: null,
       }])
       .select()
       .single();
@@ -454,9 +613,10 @@ export async function createInquiryDraft(leadId: string) {
 
     await supabase.from('inquiry_logs').insert([{
       inquiry_id: result.id,
-      action: 'created',
+      action: 'inquiry_created_draft',
       previous_values: null,
       new_values: {
+        version_number: nextVersion,
         product_name: '',
         total_weight: '',
         cbm: '',
@@ -465,6 +625,17 @@ export async function createInquiryDraft(leadId: string) {
       },
       performed_by: session.username || 'sales-agent',
     }]);
+    await addLeadActivityLog(supabase, {
+      leadId,
+      inquiryId: result.id,
+      inquiryVersion: nextVersion,
+      actionType: 'inquiry_created_draft',
+      actionLabel: 'Inquiry Created (Draft)',
+      performedBy: session.username || 'sales-agent',
+      newValues: {
+        version_number: nextVersion,
+      },
+    });
 
     revalidatePath('/sales-agent/dashboard');
     return { success: true, inquiry: result as LeadInquiry };
@@ -485,6 +656,12 @@ export type InquiryTrackingInfo = {
   total_inquiry_count: number;
   sent_inquiry_count: number;
   draft_inquiry_count: number;
+  approved_inquiry_count: number;
+  pending_inquiry_count: number;
+  last_activity_at: string | null;
+  approved_inquiry_id: string | null;
+  approved_inquiry_version: number | null;
+  approved_inquiry_approved_at: string | null;
 };
 
 type InquiryConfirmationLite = {
@@ -526,7 +703,11 @@ export async function getInquiryTrackingForSalesAgent() {
       .select(`
         id,
         lead_id,
+        version_number,
+        status,
+        approval_status,
         created_at,
+        updated_at,
         sent_to_accounting,
         sent_at,
         leads!inner (
@@ -548,9 +729,13 @@ export async function getInquiryTrackingForSalesAgent() {
     type TrackingInquiryRow = {
       id: string;
       lead_id: string;
+      version_number?: number | null;
+      status: string;
+      approval_status?: 'draft' | 'sent' | 'approved' | 'rejected' | null;
       created_at: string | null;
       sent_to_accounting: boolean;
       sent_at: string | null;
+      updated_at: string | null;
       inquiry_confirmations?: { id: string; status: string; created_at: string }[];
     };
 
@@ -560,6 +745,13 @@ export async function getInquiryTrackingForSalesAgent() {
     const sentCountByLead = new Map<string, number>();
     const totalCountByLead = new Map<string, number>();
     const draftCountByLead = new Map<string, number>();
+    const approvedCountByLead = new Map<string, number>();
+    const pendingCountByLead = new Map<string, number>();
+    const lastActivityByLead = new Map<string, string>();
+    const latestApprovedByLead = new Map<
+      string,
+      { inquiry_id: string; version_number: number | null; approved_at: string | null }
+    >();
 
     // Ensure newest inquiries come first so we keep the first record per lead_id.
     const sortedInquiries = ([...(inquiries || [])] as TrackingInquiryRow[]).sort((a, b) => {
@@ -571,10 +763,45 @@ export async function getInquiryTrackingForSalesAgent() {
     // First pass: aggregate full counts across ALL inquiries per lead.
     for (const inq of sortedInquiries) {
       totalCountByLead.set(inq.lead_id, (totalCountByLead.get(inq.lead_id) || 0) + 1);
+      const approvedByConfirmation = (inq.inquiry_confirmations || []).some((c) => c.status === 'approved');
+      let approvalStatus = (inq as { approval_status?: string }).approval_status || null;
+      if (!inq.sent_to_accounting) {
+        approvalStatus = 'draft';
+      } else if (approvedByConfirmation) {
+        approvalStatus = 'approved';
+      } else if (!approvalStatus) {
+        approvalStatus = 'sent';
+      }
+
       if (inq.sent_to_accounting) {
         sentCountByLead.set(inq.lead_id, (sentCountByLead.get(inq.lead_id) || 0) + 1);
-      } else {
+      }
+
+      if (approvalStatus === 'draft') {
         draftCountByLead.set(inq.lead_id, (draftCountByLead.get(inq.lead_id) || 0) + 1);
+      }
+
+      if (approvalStatus === 'approved') {
+        approvedCountByLead.set(inq.lead_id, (approvedCountByLead.get(inq.lead_id) || 0) + 1);
+      }
+
+      if (approvalStatus === 'sent') {
+        pendingCountByLead.set(inq.lead_id, (pendingCountByLead.get(inq.lead_id) || 0) + 1);
+      }
+      const candidateActivity = inq.updated_at || inq.created_at || null;
+      if (candidateActivity && !lastActivityByLead.has(inq.lead_id)) {
+        lastActivityByLead.set(inq.lead_id, candidateActivity);
+      }
+
+      const approvedConfirmation = (inq.inquiry_confirmations || [])
+        .filter((c) => c.status === 'approved')
+        .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())[0];
+      if (approvedConfirmation && !latestApprovedByLead.has(inq.lead_id)) {
+        latestApprovedByLead.set(inq.lead_id, {
+          inquiry_id: inq.id,
+          version_number: inq.version_number || null,
+          approved_at: approvedConfirmation.created_at || null,
+        });
       }
     }
 
@@ -592,10 +819,11 @@ export async function getInquiryTrackingForSalesAgent() {
 
       let status: InquiryTrackingStatus = 'draft';
       let approved_at: string | null = null;
+      const approvedMeta = latestApprovedByLead.get(inq.lead_id) || null;
 
-      if (latestApproved) {
+      if (approvedMeta || latestApproved) {
         status = 'approved';
-        approved_at = latestApproved.created_at;
+        approved_at = approvedMeta?.approved_at || latestApproved?.created_at || null;
       } else if (inq.sent_to_accounting) {
         status = 'sent';
       }
@@ -608,6 +836,12 @@ export async function getInquiryTrackingForSalesAgent() {
         total_inquiry_count: totalCountByLead.get(inq.lead_id) || 0,
         sent_inquiry_count: sentCountByLead.get(inq.lead_id) || 0,
         draft_inquiry_count: draftCountByLead.get(inq.lead_id) || 0,
+        approved_inquiry_count: approvedCountByLead.get(inq.lead_id) || 0,
+        pending_inquiry_count: pendingCountByLead.get(inq.lead_id) || 0,
+        last_activity_at: lastActivityByLead.get(inq.lead_id) || null,
+        approved_inquiry_id: approvedMeta?.inquiry_id || null,
+        approved_inquiry_version: approvedMeta?.version_number || null,
+        approved_inquiry_approved_at: approvedMeta?.approved_at || null,
       });
     }
 
@@ -742,6 +976,7 @@ export async function getInquiriesForLead(leadId: string) {
         )
       `)
       .eq('lead_id', leadId)
+      .order('version_number', { ascending: false })
       .order('created_at', { ascending: false });
 
     if (error) return { error: error.message };
@@ -754,7 +989,85 @@ export async function getInquiriesForLead(leadId: string) {
           ? (row.inquiry_confirmations || []).filter((c) => c.status === 'approved')
           : (row.inquiry_confirmations || []),
     }));
-    return { inquiries: sanitized };
+
+    const approvedCandidate = [...sanitized]
+      .filter((row) => row.approval_status === 'approved' || (row.inquiry_confirmations || []).some((c) => c.status === 'approved'))
+      .sort((a, b) => {
+        const aApproved =
+          a.approved_at ||
+          (a.inquiry_confirmations || []).find((c) => c.status === 'approved')?.created_at ||
+          a.updated_at;
+        const bApproved =
+          b.approved_at ||
+          (b.inquiry_confirmations || []).find((c) => c.status === 'approved')?.created_at ||
+          b.updated_at;
+        return new Date(bApproved || 0).getTime() - new Date(aApproved || 0).getTime();
+      })[0];
+
+    return {
+      inquiries: sanitized,
+      approvedInquiryId: approvedCandidate?.id || null,
+    };
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };
+  }
+}
+
+export async function getInquiryAvailabilityForLead(leadId: string) {
+  try {
+    const session = await getSession();
+    if (!session) return { error: 'Unauthorized' };
+    if (!leadId) return { error: 'Lead id is required' };
+
+    const supabase = await createAdminClient();
+
+    if (session.role === 'sales_agent') {
+      const { data: salesAgent } = await supabase
+        .from('sales_agents')
+        .select('id')
+        .eq('username', session.username)
+        .maybeSingle();
+
+      if (!salesAgent) return { error: 'Unauthorized' };
+
+      const { data: lead } = await supabase
+        .from('leads')
+        .select('id, sales_agent_id')
+        .eq('id', leadId)
+        .maybeSingle();
+
+      if (!lead || lead.sales_agent_id !== salesAgent.id) {
+        return { error: 'Unauthorized' };
+      }
+    } else if (session.role !== 'admin' && session.role !== 'operations') {
+      return { error: 'Unauthorized' };
+    }
+
+    const { data, error } = await supabase
+      .from('lead_inquiries')
+      .select('id')
+      .eq('lead_id', leadId)
+      .limit(1);
+
+    if (error) return { error: error.message };
+
+    const hasInquiry = Boolean(data && data.length > 0);
+    if (!hasInquiry) {
+      return {
+        hasInquiry: false,
+        message: 'No inquiry found for this lead',
+      };
+    }
+
+    const inquiryResult = await getInquiriesForLead(leadId);
+    if ('error' in inquiryResult) {
+      return { error: inquiryResult.error };
+    }
+
+    return {
+      hasInquiry: true,
+      inquiries: inquiryResult.inquiries || [],
+    };
   } catch (err) {
     return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };
   }
@@ -798,6 +1111,7 @@ export async function getInquiryHistoryForLead(leadId: string) {
       .from('lead_inquiries')
       .select('*')
       .eq('lead_id', leadId)
+      .order('version_number', { ascending: false })
       .order('created_at', { ascending: false });
 
     if (error) return { error: error.message };
@@ -1031,11 +1345,21 @@ export async function updateInquiryForAccounting(
     if (Object.keys(newValues).length > 0) {
       await supabase.from('inquiry_logs').insert([{
         inquiry_id: inquiryId,
-        action: 'updated',
+        action: 'inquiry_edited',
         previous_values: previousValues,
         new_values: newValues,
         performed_by: session.username || 'admin',
       }]);
+      await addLeadActivityLog(supabase, {
+        leadId: current.lead_id,
+        inquiryId: inquiryId,
+        inquiryVersion: current.version_number || null,
+        actionType: 'inquiry_edited',
+        actionLabel: 'Inquiry Edited',
+        performedBy: session.username || 'admin',
+        previousValues,
+        newValues,
+      });
     }
 
     revalidatePath('/admin/dashboard');
@@ -1104,16 +1428,104 @@ export async function getInquiryLogs(inquiryId: string) {
   }
 }
 
+export async function recordInquiryViewed(inquiryId: string) {
+  try {
+    const session = await getSession();
+    if (!session) return { error: 'Unauthorized' };
+
+    const supabase = await createAdminClient();
+    const { data: inquiry, error } = await supabase
+      .from('lead_inquiries')
+      .select('id, lead_id, version_number')
+      .eq('id', inquiryId)
+      .maybeSingle();
+
+    if (error || !inquiry) return { error: 'Inquiry not found' };
+
+    await addLeadActivityLog(supabase, {
+      leadId: inquiry.lead_id,
+      inquiryId: inquiry.id,
+      inquiryVersion: inquiry.version_number || null,
+      actionType: 'inquiry_viewed',
+      actionLabel: 'Inquiry Viewed',
+      performedBy: session.username || 'user',
+      metadata: { source: 'sales_agent_dashboard' },
+    });
+
+    return { success: true };
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };
+  }
+}
+
+export async function getLeadActivityTimeline(leadId: string) {
+  try {
+    const session = await getSession();
+    if (!session) return { error: 'Unauthorized' };
+    if (!leadId) return { error: 'Lead id is required' };
+
+    const supabase = await createAdminClient();
+
+    if (session.role === 'sales_agent') {
+      const { data: salesAgent } = await supabase
+        .from('sales_agents')
+        .select('id')
+        .eq('username', session.username)
+        .maybeSingle();
+      if (!salesAgent) return { error: 'Unauthorized' };
+
+      const { data: lead } = await supabase
+        .from('leads')
+        .select('id')
+        .eq('id', leadId)
+        .eq('sales_agent_id', salesAgent.id)
+        .maybeSingle();
+      if (!lead) return { error: 'Unauthorized' };
+    } else if (session.role !== 'admin' && session.role !== 'operations') {
+      return { error: 'Unauthorized' };
+    }
+
+    const { data, error } = await supabase
+      .from('lead_activity_logs')
+      .select('*')
+      .eq('lead_id', leadId)
+      .order('performed_at', { ascending: false });
+
+    if (error) return { error: error.message };
+    return { logs: (data || []) as LeadActivityLog[] };
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };
+  }
+}
+
 export async function getInquiryLogsForLead(leadId: string) {
   try {
     const session = await getSession();
-    if (!session || (session.role !== 'admin' && session.role !== 'operations')) {
+    if (!session) {
       return { error: 'Unauthorized' };
     }
 
     if (!leadId) return { error: 'Lead id is required' };
 
     const supabase = await createAdminClient();
+
+    if (session.role === 'sales_agent') {
+      const { data: salesAgent } = await supabase
+        .from('sales_agents')
+        .select('id')
+        .eq('username', session.username)
+        .maybeSingle();
+      if (!salesAgent) return { error: 'Unauthorized' };
+      const { data: lead } = await supabase
+        .from('leads')
+        .select('id')
+        .eq('id', leadId)
+        .eq('sales_agent_id', salesAgent.id)
+        .maybeSingle();
+      if (!lead) return { error: 'Unauthorized' };
+    } else if (session.role !== 'admin' && session.role !== 'operations') {
+      return { error: 'Unauthorized' };
+    }
 
     const { data: inquiryRows, error: inquiryErr } = await supabase
       .from('lead_inquiries')

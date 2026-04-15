@@ -61,6 +61,36 @@ export type LeadWithSalesAgent = Lead & {
   } | null;
 };
 
+async function addLeadLifecycleLog(
+  supabase: Awaited<ReturnType<typeof createAdminClient>>,
+  input: {
+    leadId: string;
+    actionType: 'lead_created' | 'lead_updated';
+    actionLabel: string;
+    performedBy: string;
+    previousValues?: Record<string, unknown> | null;
+    newValues?: Record<string, unknown> | null;
+    metadata?: Record<string, unknown> | null;
+  }
+) {
+  const { error } = await supabase.from('lead_activity_logs').insert([
+    {
+      lead_id: input.leadId,
+      inquiry_id: null,
+      inquiry_version: null,
+      action_type: input.actionType,
+      action_label: input.actionLabel,
+      metadata: input.metadata || null,
+      previous_values: input.previousValues || null,
+      new_values: input.newValues || null,
+      performed_by: input.performedBy,
+    },
+  ]);
+  if (error) {
+    console.error('[lead_activity_logs] insert failed:', error.message);
+  }
+}
+
 export async function createLead(formData: FormData) {
   try {
     const session = await getSession();
@@ -190,6 +220,19 @@ export async function createLead(formData: FormData) {
           return { error: retryError.message };
         }
 
+        await addLeadLifecycleLog(supabase, {
+          leadId: retryData.id,
+          actionType: 'lead_created',
+          actionLabel: 'Lead Created',
+          performedBy: session.username || 'sales-agent',
+          newValues: {
+            name: retryData.name,
+            number: retryData.number,
+            source: retryData.source,
+            status: retryData.status,
+          },
+        });
+
         revalidatePath('/sales-agent/dashboard');
         revalidatePath('/admin/dashboard');
         return { success: true, lead: retryData as Lead };
@@ -199,6 +242,19 @@ export async function createLead(formData: FormData) {
       }
       return { error: error.message };
     }
+
+    await addLeadLifecycleLog(supabase, {
+      leadId: data.id,
+      actionType: 'lead_created',
+      actionLabel: 'Lead Created',
+      performedBy: session.username || 'sales-agent',
+      newValues: {
+        name: data.name,
+        number: data.number,
+        source: data.source,
+        status: data.status,
+      },
+    });
 
     revalidatePath('/sales-agent/dashboard');
     revalidatePath('/admin/dashboard');
@@ -428,6 +484,16 @@ export async function updateLeadStatus(leadId: string, status: LeadStatus) {
       return { error: error.message };
     }
 
+    await addLeadLifecycleLog(supabase, {
+      leadId,
+      actionType: 'lead_updated',
+      actionLabel: 'Lead Updated',
+      performedBy: session.username || 'sales-agent',
+      previousValues: { status: lead.status || 'Leads' },
+      newValues: { status: normalizedStatus },
+      metadata: { change_type: 'status_transition' },
+    });
+
     revalidatePath('/sales-agent/dashboard');
     return { success: true, lead: data as Lead };
   } catch (err) {
@@ -458,7 +524,7 @@ export async function getLeadComments(leadId: string) {
     // Check if lead belongs to this sales agent
     const { data: lead, error: leadError } = await supabase
       .from('leads')
-      .select('sales_agent_id')
+      .select('sales_agent_id, name, number, source')
       .eq('id', leadId)
       .single();
 
@@ -524,7 +590,7 @@ export async function createLeadComment(leadId: string, comment: string) {
     // Check if lead belongs to this sales agent
     const { data: lead, error: leadError } = await supabase
       .from('leads')
-      .select('sales_agent_id')
+      .select('sales_agent_id, name, number, source')
       .eq('id', leadId)
       .single();
 
@@ -757,7 +823,7 @@ export async function updateLead(formData: FormData) {
     // Verify the lead belongs to this sales agent
     const { data: lead, error: leadError } = await supabase
       .from('leads')
-      .select('sales_agent_id')
+      .select('sales_agent_id, name, number, source')
       .eq('id', leadId)
       .single();
 
@@ -784,6 +850,24 @@ export async function updateLead(formData: FormData) {
       }
       return { error: error.message };
     }
+
+    await addLeadLifecycleLog(supabase, {
+      leadId,
+      actionType: 'lead_updated',
+      actionLabel: 'Lead Updated',
+      performedBy: session.username || 'sales-agent',
+      previousValues: {
+        name: lead.name,
+        number: lead.number,
+        source: lead.source,
+      },
+      newValues: {
+        name: data.name,
+        number: data.number,
+        source: data.source,
+      },
+      metadata: { change_type: 'lead_profile' },
+    });
 
     revalidatePath('/sales-agent/dashboard');
     revalidatePath('/admin/dashboard');

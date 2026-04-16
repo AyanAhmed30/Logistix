@@ -43,7 +43,7 @@ export default function LoginPage() {
                         />
                     </div>
                     <CardDescription className="text-center text-secondary-muted font-medium text-lg">
-                        Secure Logistics Portal Login
+                        Logistics Portal Login
                     </CardDescription>
                 </CardHeader>
                 <form onSubmit={handleSubmit}>

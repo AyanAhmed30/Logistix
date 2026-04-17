@@ -1,7 +1,7 @@
 "use client";
-/* eslint-disable @next/next/no-img-element */
 
-import { useEffect, useState, useTransition, useCallback, useRef, useMemo } from "react";
+import { useEffect, useState, useTransition, useCallback } from "react";
+import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import {
   DndContext,
@@ -45,7 +45,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { MessageSquare, Edit2, Trash2, Plus, UserPlus, Search, X, Send, FileText, ImageIcon, History, MoreVertical, CheckCircle2, Clock, AlertCircle, ScrollText, Eye, Inbox } from "lucide-react";
+import { MessageSquare, Edit2, Trash2, Plus, UserPlus, Search, X, FileText, MoreVertical, CheckCircle2, Clock, AlertCircle, GripVertical } from "lucide-react";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -56,26 +56,9 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import {
-  saveInquiry,
-  sendInquiryToAccounting,
-  getInquiryAvailabilityForLead,
-  getInquiriesForLead,
-  getQuotationsForLead,
-  getInquiryLogs,
-  getLeadActivityTimeline,
-  recordInquiryViewed,
-  updateInquiryForAccounting,
   getInquiryTrackingForSalesAgent,
-  getLeadChatMessages,
-  sendLeadChatMessage,
-  type LeadInquiry,
-  type InquiryQuotation,
   type InquiryTrackingInfo,
-  type LeadChatMessage,
-  type InquiryLog,
-  type LeadActivityLog,
 } from "@/app/actions/inquiries";
-import jsPDF from "jspdf";
 
 const STATUSES: LeadStatus[] = [
   "Leads",
@@ -96,26 +79,11 @@ const NORMAL_BOARDS: LeadStatus[] = ["Leads", "Inquiry Received", "Quotation Sen
 // Boards where the dropdown shows the normal board options
 const SPECIAL_BOARDS: LeadStatus[] = ["Follow up", "Lose"];
 
-function formatRelativeTime(value: string | null | undefined) {
-  if (!value) return "No activity yet";
-  const now = Date.now();
-  const then = new Date(value).getTime();
-  if (Number.isNaN(then)) return "No activity yet";
-  const diffMinutes = Math.max(1, Math.floor((now - then) / 60000));
-  if (diffMinutes < 60) return `${diffMinutes} min ago`;
-  const diffHours = Math.floor(diffMinutes / 60);
-  if (diffHours < 24) return `${diffHours} hour${diffHours === 1 ? "" : "s"} ago`;
-  const diffDays = Math.floor(diffHours / 24);
-  return `${diffDays} day${diffDays === 1 ? "" : "s"} ago`;
-}
-
 function LeadCard({
   lead,
   onOpenComments,
   onConvert,
-  onOpenInquiries,
-  onAddInquiry,
-  onOpenLogs,
+  onOpenLeadDetail,
   onMoveToStatus,
   onOpenTransferDialog,
   showConvertButton,
@@ -125,9 +93,7 @@ function LeadCard({
   lead: Lead;
   onOpenComments: (lead: Lead) => void;
   onConvert?: (lead: Lead) => void;
-  onOpenInquiries?: (lead: Lead) => void;
-  onAddInquiry?: (lead: Lead) => void;
-  onOpenLogs?: (lead: Lead) => void;
+  onOpenLeadDetail?: (lead: Lead, tab?: "create" | "view" | "status") => void;
   onMoveToStatus?: (lead: Lead, status: LeadStatus) => void;
   onOpenTransferDialog?: (lead: Lead) => void;
   showConvertButton?: boolean;
@@ -160,10 +126,9 @@ function LeadCard({
         ? "Draft"
         : "Pending";
 
-  return (
-    <div ref={setNodeRef} style={style} {...attributes} {...listeners}>
-      <Card className="mb-2 cursor-grab active:cursor-grabbing hover:shadow-md transition-shadow">
-        <CardContent className="p-2.5">
+  function renderLeadBody() {
+    return (
+      <CardContent className="p-2.5">
           <div className="space-y-2">
             <div className="flex items-start justify-between gap-1">
               <div className="min-w-0 flex-1">
@@ -256,71 +221,6 @@ function LeadCard({
                 </Button>
               </div>
             </div>
-            {showInquiryButton && (
-              <div className="rounded-md border border-slate-100 bg-slate-50 p-2 space-y-1">
-                <p className="text-[10px] text-slate-700 font-medium">Inquiry Stats</p>
-                <div className="grid grid-cols-2 gap-1 text-[10px] text-slate-600">
-                  <span>Total: <strong>{inquiryTracking?.total_inquiry_count || 0}</strong></span>
-                  <span>Sent: <strong>{inquiryTracking?.sent_inquiry_count || 0}</strong></span>
-                  <span>Draft: <strong>{inquiryTracking?.draft_inquiry_count || 0}</strong></span>
-                  <span>Approved: <strong>{inquiryTracking?.approved_inquiry_count || 0}</strong></span>
-                  <span>Pending: <strong>{inquiryTracking?.pending_inquiry_count || 0}</strong></span>
-                </div>
-                <p className="text-[10px] text-slate-500">
-                  Last activity: {formatRelativeTime(inquiryTracking?.last_activity_at)}
-                </p>
-                {inquiryTracking?.approved_inquiry_id ? (
-                  <div className="rounded border border-emerald-200 bg-emerald-50 p-1.5">
-                    <p className="text-[10px] font-semibold text-emerald-700">Approved Inquiry Available</p>
-                    <p className="text-[10px] text-emerald-700">
-                      Approved: {inquiryTracking.approved_inquiry_count || 1}
-                    </p>
-                  </div>
-                ) : (
-                  <p className="text-[10px] text-slate-500">No approved inquiry yet</p>
-                )}
-              </div>
-            )}
-            {showInquiryButton && (
-              <div className="grid grid-cols-3 gap-1">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="h-7 text-[10px] px-1 border-emerald-200 text-emerald-700"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onAddInquiry?.(lead);
-                  }}
-                >
-                  <Plus className="h-3 w-3 mr-1" />
-                  Send
-                </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="h-7 text-[10px] px-1 border-orange-200 text-orange-700"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onOpenInquiries?.(lead);
-                  }}
-                >
-                  <Eye className="h-3 w-3 mr-1" />
-                  View
-                </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="h-7 text-[10px] px-1 border-blue-200 text-blue-700"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onOpenLogs?.(lead);
-                  }}
-                >
-                  <ScrollText className="h-3 w-3 mr-1" />
-                  Logs
-                </Button>
-              </div>
-            )}
             {showConvertButton && !lead.converted && onConvert && (
               <Button
                 variant="default"
@@ -381,7 +281,50 @@ function LeadCard({
             )}
           </div>
         </CardContent>
-      </Card>
+    );
+  }
+
+  if (showInquiryButton) {
+    return (
+      <div ref={setNodeRef} style={style} {...attributes} className="mb-2">
+        <div className="flex gap-0 items-stretch min-w-0">
+          <button
+            type="button"
+            {...listeners}
+            className="rounded-l-md border border-r-0 border-slate-200 bg-slate-50 px-1 cursor-grab active:cursor-grabbing touch-none shrink-0 flex items-center justify-center self-stretch hover:bg-slate-100 min-w-[28px]"
+            aria-label="Drag to move lead"
+          >
+            <GripVertical className="h-4 w-4 text-slate-400" />
+          </button>
+          <Card
+            className="flex-1 min-w-0 rounded-l-none rounded-r-xl border-slate-200 cursor-pointer hover:shadow-md transition-shadow shadow-sm mb-0"
+            onClick={() => onOpenLeadDetail?.(lead)}
+          >
+            {renderLeadBody()}
+          </Card>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div ref={setNodeRef} style={style} {...attributes} className="mb-2">
+      <div className="flex gap-0 items-stretch min-w-0">
+        <button
+          type="button"
+          {...listeners}
+          className="rounded-l-md border border-r-0 border-slate-200 bg-slate-50 px-1 cursor-grab active:cursor-grabbing touch-none shrink-0 flex items-center justify-center self-stretch hover:bg-slate-100 min-w-[28px]"
+          aria-label="Drag to move lead"
+        >
+          <GripVertical className="h-4 w-4 text-slate-400" />
+        </button>
+        <Card
+          className="flex-1 min-w-0 rounded-l-none rounded-r-xl border-slate-200 cursor-pointer hover:shadow-md transition-shadow shadow-sm mb-0"
+          onClick={() => onOpenLeadDetail?.(lead)}
+        >
+          {renderLeadBody()}
+        </Card>
+      </div>
     </div>
   );
 }
@@ -391,12 +334,9 @@ function KanbanColumn({
   leads,
   onOpenComments,
   onConvert,
-  onOpenInquiries,
-  onAddInquiry,
-  onOpenLogs,
+  onOpenLeadDetail,
   onMoveToStatus,
   onOpenTransferDialog,
-  highlightedLeadId,
   searchQuery,
   inquiryTrackingMap,
 }: {
@@ -404,12 +344,9 @@ function KanbanColumn({
   leads: Lead[];
   onOpenComments: (lead: Lead) => void;
   onConvert?: (lead: Lead) => void;
-  onOpenInquiries?: (lead: Lead) => void;
-  onAddInquiry?: (lead: Lead) => void;
-  onOpenLogs?: (lead: Lead) => void;
+  onOpenLeadDetail?: (lead: Lead, tab?: "create" | "view" | "status") => void;
   onMoveToStatus?: (lead: Lead, status: LeadStatus) => void;
   onOpenTransferDialog?: (lead: Lead) => void;
-  highlightedLeadId?: string | null;
   searchQuery?: string;
   inquiryTrackingMap?: Map<string, InquiryTrackingInfo>;
 }) {
@@ -480,18 +417,12 @@ function KanbanColumn({
               </div>
             ) : (
               filteredLeads.map((lead) => (
-                <div
-                  key={lead.id}
-                  id={`pipeline-lead-${lead.id}`}
-                  className={highlightedLeadId === lead.id ? "rounded-md ring-2 ring-orange-400 ring-offset-2" : ""}
-                >
+                <div key={lead.id} id={`pipeline-lead-${lead.id}`}>
                   <LeadCard
                     lead={lead}
                     onOpenComments={onOpenComments}
                     onConvert={onConvert}
-                    onOpenInquiries={onOpenInquiries}
-                    onAddInquiry={onAddInquiry}
-                    onOpenLogs={onOpenLogs}
+                    onOpenLeadDetail={onOpenLeadDetail}
                     onMoveToStatus={onMoveToStatus}
                     onOpenTransferDialog={onOpenTransferDialog}
                     showConvertButton={showConvertButton}
@@ -717,1406 +648,20 @@ function CommentsDialog({
   );
 }
 
-function InquiryDialog({
-  lead,
-  open,
-  onOpenChange,
-  mode = "create",
-}: {
-  lead: Lead | null;
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-  mode?: "create" | "view";
-}) {
-  const inquiryImageInputId = "sales-inquiry-image-input";
-  const [inquiry, setInquiry] = useState<LeadInquiry | null>(null);
-  const [quotations, setQuotations] = useState<InquiryQuotation[]>([]);
-  const [productName, setProductName] = useState("");
-  const [totalWeight, setTotalWeight] = useState("");
-  const [cbm, setCbm] = useState("");
-  const [quantity, setQuantity] = useState("");
-  const [imageDataList, setImageDataList] = useState<string[]>([]);
-  const [otherDetails, setOtherDetails] = useState("");
-  const [isLoading, setIsLoading] = useState(false);
-  const [isPending, startTransition] = useTransition();
-  const [showQuotationHistory, setShowQuotationHistory] = useState(false);
-  const [inquiryHistory, setInquiryHistory] = useState<LeadInquiry[]>([]);
-  const [isDragging, setIsDragging] = useState(false);
-  const fileInputRef = useRef<HTMLInputElement>(null);
-  const [confirmationStatus, setConfirmationStatus] = useState<'none' | 'approved'>('none');
-  const [chatMessages, setChatMessages] = useState<LeadChatMessage[]>([]);
-  const [chatInput, setChatInput] = useState("");
-  const [isSendingChat, setIsSendingChat] = useState(false);
-  const [leadInquiries, setLeadInquiries] = useState<LeadInquiry[]>([]);
-  const [approvedInquiryId, setApprovedInquiryId] = useState<string | null>(null);
-  const [showOnlyApproved, setShowOnlyApproved] = useState(false);
-  const [selectedInquiryId, setSelectedInquiryId] = useState<string>("");
-  const [inquiryLogs, setInquiryLogs] = useState<InquiryLog[]>([]);
-  const [isLoadingLogs, setIsLoadingLogs] = useState(false);
-  const [isViewEditing, setIsViewEditing] = useState(false);
-  const [baselineDraftState, setBaselineDraftState] = useState<{
-    product_name: string;
-    total_weight: string;
-    cbm: string;
-    quantity: string;
-    description: string;
-    image_count: number;
-  }>({
-    product_name: "",
-    total_weight: "",
-    cbm: "",
-    quantity: "",
-    description: "",
-    image_count: 0,
-  });
-
-  const fetchInquiryData = useCallback(async () => {
-    if (!lead) return;
-    setIsLoading(true);
-    try {
-      // Fetch only core inquiry data first so dialog can render quickly.
-      const inquiryListResult = await getInquiriesForLead(lead.id);
-
-      if ("error" in inquiryListResult) {
-        setLeadInquiries([]);
-        setApprovedInquiryId(null);
-        setInquiry(null);
-        setProductName("");
-        setTotalWeight("");
-        setCbm("");
-        setQuantity("");
-        setImageDataList([]);
-        setOtherDetails("");
-        setConfirmationStatus("none");
-      } else {
-        const list = inquiryListResult.inquiries || [];
-        setLeadInquiries(list);
-        setApprovedInquiryId(("approvedInquiryId" in inquiryListResult ? inquiryListResult.approvedInquiryId : null) || null);
-        setInquiryHistory(list);
-
-        const selected = selectedInquiryId
-          ? list.find((x) => x.id === selectedInquiryId) || null
-          : null;
-        const current = mode === "create"
-          ? (selected || null)
-          : (selected || list[0] || null);
-
-        setSelectedInquiryId(current?.id || "");
-        setInquiry(current);
-        setProductName(current?.product_name || "");
-        setTotalWeight(current?.total_weight || "");
-        setCbm(current?.cbm || "");
-        setQuantity(current?.quantity || "");
-        const primaryImage = current?.image_url || "";
-        const additionalImages = Array.isArray(current?.additional_image_urls)
-          ? current.additional_image_urls.filter((url) => typeof url === "string" && url.trim().length > 0)
-          : [];
-        setImageDataList(primaryImage ? [primaryImage, ...additionalImages] : additionalImages);
-        setOtherDetails(current?.description || "");
-        setBaselineDraftState({
-          product_name: current?.product_name || "",
-          total_weight: current?.total_weight || "",
-          cbm: current?.cbm || "",
-          quantity: current?.quantity || "",
-          description: current?.description || "",
-          image_count: (primaryImage ? 1 : 0) + additionalImages.length,
-        });
-
-        const pickedWithConfirmations = (current || null) as (LeadInquiry & {
-          inquiry_confirmations?: { status: string }[];
-        }) | null;
-        const hasApproved = !!pickedWithConfirmations && (pickedWithConfirmations.inquiry_confirmations || []).some((c) => c.status === "approved");
-        setConfirmationStatus(hasApproved ? "approved" : "none");
-
-        if (current?.id) {
-          void recordInquiryViewed(current.id);
-          await fetchLogsForInquiry(current.id);
-        } else {
-          setInquiryLogs([]);
-        }
-      }
-
-      // Secondary data can load in parallel after primary UI is ready.
-      const [quotationsResult, chatResult] = await Promise.all([
-        getQuotationsForLead(lead.id),
-        getLeadChatMessages(lead.id),
-      ]);
-
-      if (!("error" in quotationsResult)) {
-        setQuotations(quotationsResult.quotations || []);
-      }
-      if (!("error" in chatResult)) {
-        setChatMessages(chatResult.messages || []);
-      }
-    } catch {
-      toast.error("Failed to load inquiry data");
-    } finally {
-      setIsLoading(false);
-    }
-  }, [lead, selectedInquiryId, mode]);
-
-  useEffect(() => {
-    if (open && lead) {
-      fetchInquiryData();
-    } else {
-      setInquiry(null);
-      setQuotations([]);
-      setProductName("");
-      setTotalWeight("");
-      setCbm("");
-      setQuantity("");
-      setImageDataList([]);
-      setOtherDetails("");
-      setShowQuotationHistory(false);
-      setInquiryHistory([]);
-      setIsDragging(false);
-      setConfirmationStatus('none');
-      setChatMessages([]);
-      setChatInput("");
-      setLeadInquiries([]);
-      setApprovedInquiryId(null);
-      setShowOnlyApproved(false);
-      setSelectedInquiryId("");
-      setInquiryLogs([]);
-      setIsViewEditing(false);
-      setBaselineDraftState({
-        product_name: "",
-        total_weight: "",
-        cbm: "",
-        quantity: "",
-        description: "",
-        image_count: 0,
-      });
-    }
-  }, [open, lead, fetchInquiryData]);
-
-  useEffect(() => {
-    if (!open || !lead) return;
-    const timer = setInterval(async () => {
-      const chatResult = await getLeadChatMessages(lead.id);
-      if (!("error" in chatResult)) {
-        setChatMessages(chatResult.messages || []);
-      }
-    }, 5000);
-    return () => clearInterval(timer);
-  }, [open, lead]);
-
-  const readImageAsDataUrl = useCallback((file: File) => {
-    return new Promise<string>((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => resolve(String(reader.result || ""));
-      reader.onerror = () => reject(new Error("Failed to read image"));
-      reader.readAsDataURL(file);
-    });
-  }, []);
-
-  // Handle image files (from drop, paste, or file input)
-  const handleImageFiles = useCallback(async (files: File[]) => {
-    const validFiles = files.filter((file) => {
-      if (file.size > 5 * 1024 * 1024) {
-        toast.error(`"${file.name}" is larger than 5MB`);
-        return false;
-      }
-      if (!file.type.startsWith("image/")) {
-        toast.error(`"${file.name}" is not an image file`);
-        return false;
-      }
-      return true;
-    });
-    if (validFiles.length === 0) return;
-    try {
-      const urls = await Promise.all(validFiles.map((file) => readImageAsDataUrl(file)));
-      setImageDataList((prev) => [...prev, ...urls.filter((u) => u.length > 0)]);
-    } catch {
-      toast.error("Failed to process selected image(s)");
-    }
-  }, [readImageAsDataUrl]);
-
-  // Global paste handler for Ctrl+V image paste
-  useEffect(() => {
-    if (!open) return;
-    function handlePaste(e: ClipboardEvent) {
-      const items = e.clipboardData?.items;
-      if (!items) return;
-      for (const item of Array.from(items)) {
-        if (item.type.startsWith("image/")) {
-          e.preventDefault();
-          const file = item.getAsFile();
-          if (file) {
-            void handleImageFiles([file]);
-          }
-          break;
-        }
-      }
-    }
-    document.addEventListener("paste", handlePaste);
-    return () => document.removeEventListener("paste", handlePaste);
-  }, [open, handleImageFiles]);
-
-  function handleDragOver(e: React.DragEvent) {
-    e.preventDefault();
-    e.stopPropagation();
-    setIsDragging(true);
-  }
-
-  function handleDragLeave(e: React.DragEvent) {
-    e.preventDefault();
-    e.stopPropagation();
-    setIsDragging(false);
-  }
-
-  function handleDrop(e: React.DragEvent) {
-    e.preventDefault();
-    e.stopPropagation();
-    setIsDragging(false);
-    const files = e.dataTransfer.files;
-    if (files.length > 0) {
-      void handleImageFiles(Array.from(files));
-    }
-  }
-
-  function handleFileSelect(e: React.ChangeEvent<HTMLInputElement>) {
-    const files = e.target.files;
-    if (files && files.length > 0) {
-      void handleImageFiles(Array.from(files));
-    }
-    // Reset input so the same file can be selected again
-    if (fileInputRef.current) fileInputRef.current.value = "";
-  }
-
-  function removeImage(index: number) {
-    setImageDataList((prev) => prev.filter((_, i) => i !== index));
-  }
-
-  function isIntegerString(value: string) {
-    return /^\d+$/.test(value);
-  }
-
-  function toDigitsOnly(value: string) {
-    return value.replace(/\D/g, "");
-  }
-
-  function formatLogAction(action: string) {
-    switch (action) {
-      case "created":
-        return "Created";
-      case "updated":
-        return "Updated";
-      case "status_changed":
-        return "Status Changed";
-      case "send_for_confirmation":
-        return "Sent for Confirmation";
-      case "image_uploaded":
-        return "Image Uploaded";
-      case "calculator_updated":
-        return "Calculator Updated";
-      case "lead_management_form_updated":
-        return "Lead Management Updated";
-      default:
-        return action.replace(/_/g, " ");
-    }
-  }
-
-  function fieldLabel(key: string) {
-    const labels: Record<string, string> = {
-      product_name: "Product",
-      total_weight: "Total Weight (kg)",
-      cbm: "CBM",
-      quantity: "Quantity",
-      description: "Other Details",
-      image_url: "Image",
-      additional_image_urls: "Additional Images",
-      sent_to_accounting: "Sent to Accounting",
-      sent_at: "Sent At",
-      status: "Status",
-    };
-    return labels[key] || key.replace(/_/g, " ");
-  }
-
-  function valueText(value: unknown) {
-    if (value === null || value === undefined || value === "") return "-";
-    if (typeof value === "boolean") return value ? "Yes" : "No";
-    if (typeof value === "string") {
-      if (value.includes("T") && !Number.isNaN(new Date(value).getTime())) {
-        return new Date(value).toLocaleString();
-      }
-      return value;
-    }
-    if (typeof value === "number") return String(value);
-    if (Array.isArray(value)) return value.length > 0 ? `${value.length} item(s)` : "-";
-    return "Updated";
-  }
-
-  async function fetchLogsForInquiry(inquiryId: string) {
-    setIsLoadingLogs(true);
-    try {
-      const result = await getInquiryLogs(inquiryId);
-      if ("error" in result) {
-        setInquiryLogs([]);
-      } else {
-        setInquiryLogs(result.logs || []);
-      }
-    } catch {
-      setInquiryLogs([]);
-    } finally {
-      setIsLoadingLogs(false);
-    }
-  }
-
-  function handleSelectInquiry(inquiryItem: LeadInquiry) {
-    setIsViewEditing(false);
-    setSelectedInquiryId(inquiryItem.id);
-    setInquiry(inquiryItem);
-    setProductName(inquiryItem.product_name || "");
-    setTotalWeight(inquiryItem.total_weight || "");
-    setCbm(inquiryItem.cbm || "");
-    setQuantity(inquiryItem.quantity || "");
-    const primaryImage = inquiryItem.image_url || "";
-    const additionalImages = Array.isArray(inquiryItem.additional_image_urls)
-      ? inquiryItem.additional_image_urls.filter((url) => typeof url === "string" && url.trim().length > 0)
-      : [];
-    setImageDataList(primaryImage ? [primaryImage, ...additionalImages] : additionalImages);
-    setOtherDetails(inquiryItem.description || "");
-    setBaselineDraftState({
-      product_name: inquiryItem.product_name || "",
-      total_weight: inquiryItem.total_weight || "",
-      cbm: inquiryItem.cbm || "",
-      quantity: inquiryItem.quantity || "",
-      description: inquiryItem.description || "",
-      image_count: (primaryImage ? 1 : 0) + additionalImages.length,
-    });
-    void recordInquiryViewed(inquiryItem.id);
-    void fetchLogsForInquiry(inquiryItem.id);
-  }
-
-  function handleSaveInquiry() {
-    if (!lead) return;
-    if (!productName.trim()) {
-      toast.error("Please add a product name.");
-      return;
-    }
-    if (totalWeight.trim() && !isIntegerString(totalWeight.trim())) {
-      toast.error("Total Weight (kg) must be an integer.");
-      return;
-    }
-    if (quantity.trim() && !isIntegerString(quantity.trim())) {
-      toast.error("Quantity must be an integer.");
-      return;
-    }
-    if (cbm.trim() && !isIntegerString(cbm.trim())) {
-      toast.error("CBM (Cubic Meter) must be an integer.");
-      return;
-    }
-    startTransition(async () => {
-      const result = await saveInquiry(lead.id, {
-        product_name: productName,
-        total_weight: totalWeight,
-        cbm,
-        quantity,
-        image_url: imageDataList[0] || null,
-        additional_image_urls: imageDataList.slice(1),
-        description: otherDetails,
-      }, inquiry?.id, {
-        forceNewInquiry: mode === "create" && !inquiry?.id,
-      });
-      if ("error" in result) {
-        toast.error(result.error);
-      } else {
-        toast.success("Inquiry saved successfully");
-        if (result.inquiry) {
-          setInquiry(result.inquiry);
-          setSelectedInquiryId(result.inquiry.id);
-          setLeadInquiries((prev) => {
-            const filtered = prev.filter((x) => x.id !== result.inquiry!.id);
-            return [result.inquiry!, ...filtered];
-          });
-          const primaryImage = result.inquiry.image_url || "";
-          const additionalImages = Array.isArray(result.inquiry.additional_image_urls)
-            ? result.inquiry.additional_image_urls.filter((url) => typeof url === "string" && url.trim().length > 0)
-            : [];
-          setBaselineDraftState({
-            product_name: result.inquiry.product_name || "",
-            total_weight: result.inquiry.total_weight || "",
-            cbm: result.inquiry.cbm || "",
-            quantity: result.inquiry.quantity || "",
-            description: result.inquiry.description || "",
-            image_count: (primaryImage ? 1 : 0) + additionalImages.length,
-          });
-          await fetchLogsForInquiry(result.inquiry.id);
-        }
-      }
-    });
-  }
-
-  function handleSendInquiry() {
-    if (!lead) return;
-    if (!productName.trim()) {
-      toast.error("Please add a product name before sending.");
-      return;
-    }
-    if (totalWeight.trim() && !isIntegerString(totalWeight.trim())) {
-      toast.error("Total Weight (kg) must be an integer.");
-      return;
-    }
-    if (quantity.trim() && !isIntegerString(quantity.trim())) {
-      toast.error("Quantity must be an integer.");
-      return;
-    }
-    if (cbm.trim() && !isIntegerString(cbm.trim())) {
-      toast.error("CBM (Cubic Meter) must be an integer.");
-      return;
-    }
-    startTransition(async () => {
-      // Save first
-      const saveResult = await saveInquiry(lead.id, {
-        product_name: productName,
-        total_weight: totalWeight,
-        cbm,
-        quantity,
-        image_url: imageDataList[0] || null,
-        additional_image_urls: imageDataList.slice(1),
-        description: otherDetails,
-      }, inquiry?.id, {
-        forceNewInquiry: mode === "create" && !inquiry?.id,
-      });
-      if ("error" in saveResult) {
-        toast.error(saveResult.error);
-        return;
-      }
-      // Then send to Accounting + Operations
-      const inquiryToSendId = saveResult.inquiry?.id || inquiry?.id;
-      if (!inquiryToSendId) {
-        toast.error("Unable to determine inquiry to send");
-        return;
-      }
-      const result = await sendInquiryToAccounting(inquiryToSendId);
-      if ("error" in result) {
-        toast.error(result.error);
-      } else {
-        toast.success("Inquiry sent to Accounting & Operations!");
-        if (result.inquiry) {
-          setInquiry(result.inquiry);
-          const primaryImage = result.inquiry.image_url || "";
-          const additionalImages = Array.isArray(result.inquiry.additional_image_urls)
-            ? result.inquiry.additional_image_urls.filter((url) => typeof url === "string" && url.trim().length > 0)
-            : [];
-          setBaselineDraftState({
-            product_name: result.inquiry.product_name || "",
-            total_weight: result.inquiry.total_weight || "",
-            cbm: result.inquiry.cbm || "",
-            quantity: result.inquiry.quantity || "",
-            description: result.inquiry.description || "",
-            image_count: (primaryImage ? 1 : 0) + additionalImages.length,
-          });
-          await fetchLogsForInquiry(result.inquiry.id);
-        }
-        // Close the modal after a successful send so the workflow can continue.
-        onOpenChange(false);
-      }
-    });
-  }
-
-  function handleStartViewEdit() {
-    if (!inquiry) return;
-    setIsViewEditing(true);
-  }
-
-  function handleCancelViewEdit() {
-    if (!inquiry) {
-      setIsViewEditing(false);
-      return;
-    }
-    setProductName(inquiry.product_name || "");
-    setTotalWeight(inquiry.total_weight || "");
-    setCbm(inquiry.cbm || "");
-    setQuantity(inquiry.quantity || "");
-    const primaryImage = inquiry.image_url || "";
-    const additionalImages = Array.isArray(inquiry.additional_image_urls)
-      ? inquiry.additional_image_urls.filter((url) => typeof url === "string" && url.trim().length > 0)
-      : [];
-    setImageDataList(primaryImage ? [primaryImage, ...additionalImages] : additionalImages);
-    setOtherDetails(inquiry.description || "");
-    setIsViewEditing(false);
-  }
-
-  function handleSaveViewEdit() {
-    if (!inquiry) return;
-    if (!productName.trim()) {
-      toast.error("Please add a product name.");
-      return;
-    }
-    if (totalWeight.trim() && !isIntegerString(totalWeight.trim())) {
-      toast.error("Total Weight (kg) must be an integer.");
-      return;
-    }
-    if (quantity.trim() && !isIntegerString(quantity.trim())) {
-      toast.error("Quantity must be an integer.");
-      return;
-    }
-    if (cbm.trim() && !isIntegerString(cbm.trim())) {
-      toast.error("CBM (Cubic Meter) must be an integer.");
-      return;
-    }
-
-    startTransition(async () => {
-      const result = await updateInquiryForAccounting(inquiry.id, {
-        product_name: productName,
-        total_weight: totalWeight,
-        cbm,
-        quantity,
-        image_url: imageDataList[0] || null,
-        additional_image_urls: imageDataList.slice(1),
-        description: otherDetails,
-      });
-      if ("error" in result) {
-        toast.error(result.error || "Unable to update inquiry");
-        return;
-      }
-      toast.success("Inquiry updated");
-      setIsViewEditing(false);
-      await fetchInquiryData();
-      await fetchLogsForInquiry(inquiry.id);
-    });
-  }
-
-  function handleSendChat() {
-    if (!lead || !chatInput.trim()) return;
-    setIsSendingChat(true);
-    startTransition(async () => {
-      const result = await sendLeadChatMessage(lead.id, chatInput);
-      if ("error" in result) {
-        toast.error(result.error || "Failed to send message");
-      } else {
-        setChatInput("");
-        const chatResult = await getLeadChatMessages(lead.id);
-        if (!("error" in chatResult)) {
-          setChatMessages(chatResult.messages || []);
-        }
-      }
-      setIsSendingChat(false);
-    });
-  }
-
-  function handleDownloadQuotationPDF(q: InquiryQuotation) {
-    const doc = new jsPDF();
-    doc.setFontSize(18);
-    doc.text("Quotation", 105, 20, { align: "center" });
-    doc.setFontSize(10);
-    doc.text(`Quotation #: ${q.quotation_number}`, 20, 35);
-    doc.text(`Date: ${new Date(q.created_at).toLocaleDateString()}`, 20, 42);
-    doc.text(`Version: ${q.version}`, 150, 35);
-    
-    doc.setFontSize(12);
-    doc.text("Customer Details", 20, 55);
-    doc.setFontSize(10);
-    doc.text(`Customer: ${q.customer_name}`, 20, 63);
-    
-    doc.setFontSize(12);
-    doc.text("Quotation Details", 20, 78);
-    doc.setFontSize(10);
-    
-    // Table header
-    doc.setFillColor(240, 240, 240);
-    doc.rect(20, 84, 170, 8, "F");
-    doc.text("Product/Service", 22, 90);
-    doc.text("Qty", 105, 90);
-    doc.text("Unit Price", 125, 90);
-    doc.text("Total", 160, 90);
-    
-    // Table row
-    doc.text(q.product_service, 22, 100);
-    doc.text(String(q.quantity), 105, 100);
-    doc.text(`Rs. ${Number(q.unit_price).toFixed(2)}`, 125, 100);
-    doc.text(`Rs. ${Number(q.total_amount).toFixed(2)}`, 160, 100);
-    
-    // Total
-    doc.setFontSize(12);
-    doc.text(`Total Amount: Rs. ${Number(q.total_amount).toFixed(2)}`, 20, 118);
-    
-    if (q.notes) {
-      doc.setFontSize(10);
-      doc.text("Notes:", 20, 132);
-      doc.text(q.notes, 20, 140);
-    }
-    
-    doc.save(`quotation_${q.quotation_number.replace(/\//g, '_')}.pdf`);
-  }
-
-  const isFormValid = productName.trim().length > 0;
-  const canEditForm = mode === "create" || isViewEditing;
-  const liveUnsavedEntries = useMemo(() => {
-    if (!canEditForm) return [] as Array<{ key: string; label: string; oldValue: string; newValue: string }>;
-    const pairs = [
-      { key: "product_name", label: "Product", oldValue: baselineDraftState.product_name, newValue: productName },
-      { key: "total_weight", label: "Total Weight (kg)", oldValue: baselineDraftState.total_weight, newValue: totalWeight },
-      { key: "cbm", label: "CBM", oldValue: baselineDraftState.cbm, newValue: cbm },
-      { key: "quantity", label: "Quantity", oldValue: baselineDraftState.quantity, newValue: quantity },
-      { key: "description", label: "Other Details", oldValue: baselineDraftState.description, newValue: otherDetails },
-      { key: "image_count", label: "Images", oldValue: String(baselineDraftState.image_count), newValue: String(imageDataList.length) },
-    ];
-    return pairs
-      .filter((p) => (p.oldValue || "") !== (p.newValue || ""))
-      .map((p) => ({
-        key: p.key,
-        label: p.label,
-        oldValue: p.key === "image_count" ? `${p.oldValue} image(s)` : (p.oldValue || "-"),
-        newValue: p.key === "image_count" ? `${p.newValue} image(s)` : (p.newValue || "-"),
-      }));
-  }, [canEditForm, baselineDraftState, productName, totalWeight, cbm, quantity, otherDetails, imageDataList.length]);
-
-  const visibleInquiries = useMemo(() => {
-    if (!showOnlyApproved) return leadInquiries;
-    return leadInquiries.filter((inq) =>
-      inq.approval_status === "approved" ||
-      inq.id === approvedInquiryId ||
-      (inq.inquiry_confirmations || []).some((c) => c.status === "approved")
-    );
-  }, [leadInquiries, showOnlyApproved, approvedInquiryId]);
-
-  if (!lead) return null;
-
-
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-[1200px] max-h-[90vh] overflow-y-auto border-0 rounded-3xl bg-white/95 backdrop-blur-xl shadow-[0_24px_80px_rgba(15,23,42,0.24)] p-0 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=open]:fade-in-0 data-[state=closed]:fade-out-0 data-[state=open]:zoom-in-[0.985] data-[state=closed]:zoom-out-[0.985] duration-200">
-        <DialogHeader className="p-6 pb-4 bg-gradient-to-b from-slate-50/90 to-white border-b border-slate-100">
-          <DialogTitle className="flex items-center justify-between gap-2 text-base">
-            <span className="flex items-center gap-2">
-              <FileText className="h-5 w-5 text-orange-600" />
-              Inquiry - {lead.name}
-            </span>
-            <Badge variant="outline" className="bg-orange-50 text-orange-700 border-orange-200 rounded-full px-3 py-1">
-              {mode === "create" ? "Create Inquiry" : isViewEditing ? "Editing" : "View Inquiry"}
-            </Badge>
-          </DialogTitle>
-          <DialogDescription className="text-xs sm:text-sm text-slate-500">
-            Fill details in a simple form. Your logs and updates appear on the right automatically.
-          </DialogDescription>
-        </DialogHeader>
-
-        {isLoading ? (
-          <div className="py-10 text-center text-secondary-muted text-sm">Loading inquiry data...</div>
-        ) : mode === "view" && leadInquiries.length === 0 ? (
-          <div className="py-16 px-6 flex flex-col items-center justify-center gap-4">
-            <div className="h-14 w-14 rounded-full bg-slate-100 flex items-center justify-center">
-              <Inbox className="h-7 w-7 text-slate-500" />
-            </div>
-            <h3 className="text-base font-semibold text-slate-800">No Inquiry Found</h3>
-            <p className="text-sm text-slate-500 text-center max-w-sm">
-              This lead does not have any inquiry yet. Create one from the Inquiry Received card using the Send button.
-            </p>
-            <Button
-              variant="outline"
-              onClick={() => onOpenChange(false)}
-            >
-              Close
-            </Button>
-          </div>
-        ) : (
-          <div className="p-4 sm:p-6 grid grid-cols-1 lg:grid-cols-3 gap-5">
-            <div className="space-y-5 lg:col-span-2">
-            {mode === "view" && (
-            <div className="rounded-2xl p-4 bg-white shadow-[0_8px_28px_rgba(15,23,42,0.08)] space-y-3">
-              <div className="flex items-center justify-between gap-2">
-                <p className="text-xs font-semibold text-slate-700">
-                  Inquiry Records ({leadInquiries.length})
-                </p>
-                <Button
-                  type="button"
-                  variant={showOnlyApproved ? "default" : "outline"}
-                  size="sm"
-                  className="h-7 text-[10px]"
-                  onClick={() => setShowOnlyApproved((prev) => !prev)}
-                >
-                  {showOnlyApproved ? "Showing Approved" : "Show Only Approved"}
-                </Button>
-              </div>
-              {visibleInquiries.length > 0 ? (
-                <div className="space-y-2">
-                  {visibleInquiries.map((inq, idx) => {
-                    const approvedConfirmation = (inq.inquiry_confirmations || [])
-                      .filter((c) => c.status === "approved")
-                      .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())[0];
-                    const isApproved = inq.approval_status === "approved" || inq.id === approvedInquiryId || Boolean(approvedConfirmation);
-                    const approvedAt = inq.approved_at || approvedConfirmation?.created_at || null;
-                    return (
-                    <details
-                      key={inq.id}
-                      className={`rounded-lg border ${
-                        isApproved
-                          ? "border-emerald-300 bg-emerald-50/40"
-                          : selectedInquiryId === inq.id
-                            ? "border-orange-300 bg-orange-50/30"
-                            : "border-slate-200"
-                      }`}
-                    >
-                      <summary className="cursor-pointer list-none p-2">
-                        <div className="flex items-center justify-between gap-2">
-                          <button
-                            type="button"
-                            className={`text-xs font-medium ${
-                              selectedInquiryId === inq.id ? "text-orange-700" : "text-slate-700"
-                            }`}
-                            onClick={(e) => {
-                              e.preventDefault();
-                              handleSelectInquiry(inq);
-                            }}
-                          >
-                            Inquiry {idx + 1}
-                          </button>
-                          <div className="text-right">
-                            {isApproved ? (
-                              <span className="inline-flex items-center rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-bold text-emerald-700">
-                                APPROVED
-                              </span>
-                            ) : (
-                              <span className="inline-flex items-center rounded-full bg-slate-100 px-2 py-0.5 text-[10px] text-slate-600">
-                                Pending
-                              </span>
-                            )}
-                          </div>
-                        </div>
-                      </summary>
-                      <div className="px-2 pb-2 text-[11px] text-slate-600 space-y-1">
-                        {isApproved && approvedAt && (
-                          <p className="font-medium text-emerald-700">
-                            Approved on {new Date(approvedAt).toLocaleString()}
-                          </p>
-                        )}
-                        <p>Product: {inq.product_name || "-"}</p>
-                        <p>Quantity: {inq.quantity || "-"}</p>
-                        <p>CBM: {inq.cbm || "-"}</p>
-                      </div>
-                    </details>
-                  );
-                  })}
-                </div>
-              ) : (
-                <p className="text-xs text-slate-500">
-                  {showOnlyApproved ? "No approved inquiry yet" : "No inquiry found for this lead."}
-                </p>
-              )}
-            </div>
-            )}
-
-            {mode === "view" && inquiry && (
-              <div className="flex justify-end gap-2">
-                {isViewEditing ? (
-                  <>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      onClick={handleCancelViewEdit}
-                      disabled={isPending}
-                      className="rounded-full border-slate-200 hover:bg-slate-100 transition-colors"
-                    >
-                      Cancel
-                    </Button>
-                    <Button
-                      type="button"
-                      size="sm"
-                      className="bg-orange-600 hover:bg-orange-700 text-white rounded-full shadow-md shadow-orange-200 transition-all duration-200"
-                      onClick={handleSaveViewEdit}
-                      disabled={isPending}
-                    >
-                      {isPending ? "Saving..." : "Save Changes"}
-                    </Button>
-                  </>
-                ) : (
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    onClick={handleStartViewEdit}
-                    className="rounded-full border-slate-200 hover:bg-slate-100 transition-colors"
-                  >
-                    Edit Inquiry
-                  </Button>
-                )}
-              </div>
-            )}
-
-            {/* Confirmation Status Banner */}
-            {confirmationStatus === 'approved' && (
-              <div className="flex items-center gap-2 p-4 bg-emerald-50/80 border border-emerald-200 rounded-2xl shadow-sm">
-                <CheckCircle2 className="h-5 w-5 text-emerald-600 shrink-0" />
-                <div>
-                  <p className="text-sm font-semibold text-emerald-800">Inquiry Approved</p>
-                  <p className="text-xs text-emerald-600">This inquiry has been approved by the Admin. You may proceed with further work.</p>
-                </div>
-              </div>
-            )}
-
-            {/* Status badges */}
-            {mode === "view" && inquiry?.sent_to_accounting && (
-              <div className="flex items-center gap-2 flex-wrap">
-                <Badge variant="outline" className="bg-green-50 text-green-700 border-green-300 rounded-full px-3">
-                  Sent to Accounting
-                </Badge>
-                <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-300 rounded-full px-3">
-                  Sent to Operations
-                </Badge>
-                {inquiry.sent_at && (
-                  <span className="text-xs text-secondary-muted">
-                    on {new Date(inquiry.sent_at).toLocaleString()}
-                  </span>
-                )}
-              </div>
-            )}
-
-            {/* Product Name */}
-            <div className="space-y-1.5">
-              <label className="text-sm font-medium text-slate-700">
-                Product Name <span className="text-red-500">*</span>
-              </label>
-              <Input
-                placeholder="e.g. Steel Pipes, Cotton Fabric..."
-                value={productName}
-                onChange={(e) => setProductName(e.target.value)}
-                disabled={!canEditForm}
-                className="h-11 rounded-2xl border-slate-200 bg-white shadow-sm focus-visible:ring-2 focus-visible:ring-orange-200 transition-all"
-              />
-            </div>
-
-            {/* Total Weight & CBM Row */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <div className="space-y-1.5">
-                <label className="text-sm font-medium text-slate-700">Total Weight (kg)</label>
-                <Input
-                  placeholder="e.g. 500"
-                  value={totalWeight}
-                  inputMode={canEditForm ? "numeric" : "text"}
-                  pattern={canEditForm ? "[0-9]*" : undefined}
-                  onChange={(e) => setTotalWeight(canEditForm ? toDigitsOnly(e.target.value) : e.target.value)}
-                  disabled={!canEditForm}
-                  className="h-11 rounded-2xl border-slate-200 bg-white shadow-sm focus-visible:ring-2 focus-visible:ring-orange-200 transition-all"
-                />
-              </div>
-              <div className="space-y-1.5">
-                <label className="text-sm font-medium text-slate-700">CBM (Cubic Meter)</label>
-                <Input
-                  placeholder="e.g. 12"
-                  value={cbm}
-                  inputMode={canEditForm ? "numeric" : "text"}
-                  pattern={canEditForm ? "[0-9]*" : undefined}
-                  onChange={(e) => setCbm(canEditForm ? toDigitsOnly(e.target.value) : e.target.value)}
-                  disabled={!canEditForm}
-                  className="h-11 rounded-2xl border-slate-200 bg-white shadow-sm focus-visible:ring-2 focus-visible:ring-orange-200 transition-all"
-                />
-              </div>
-            </div>
-
-            {/* Quantity */}
-            <div className="space-y-1.5">
-              <label className="text-sm font-medium text-slate-700">Quantity</label>
-              <Input
-                placeholder="e.g. 1000"
-                value={quantity}
-                inputMode={canEditForm ? "numeric" : "text"}
-                pattern={canEditForm ? "[0-9]*" : undefined}
-                onChange={(e) => setQuantity(canEditForm ? toDigitsOnly(e.target.value) : e.target.value)}
-                disabled={!canEditForm}
-                className="h-11 rounded-2xl border-slate-200 bg-white shadow-sm focus-visible:ring-2 focus-visible:ring-orange-200 transition-all"
-              />
-            </div>
-
-            {/* Image Upload - Drag & Drop + Paste */}
-            {canEditForm ? (
-              <div className="space-y-1.5">
-                <label className="text-sm font-medium flex items-center gap-1">
-                  <ImageIcon className="h-4 w-4" /> Images
-                </label>
-                <div
-                  className={`border-2 border-dashed rounded-2xl p-4 transition-all duration-200 ${
-                    isDragging
-                      ? "border-orange-500 bg-orange-50 scale-[1.01]"
-                      : "border-slate-300 hover:border-orange-400 hover:bg-orange-50/50"
-                  }`}
-                  onDragOver={handleDragOver}
-                  onDragLeave={handleDragLeave}
-                  onDrop={handleDrop}
-                >
-                  {imageDataList.length === 0 ? (
-                    <label htmlFor={inquiryImageInputId} className="block cursor-pointer text-center">
-                      <ImageIcon className="h-8 w-8 mx-auto text-slate-400 mb-2" />
-                      <p className="text-sm text-slate-600 font-medium">
-                        {isDragging ? "Drop image(s) here..." : "Drag & drop image(s) here"}
-                      </p>
-                      <p className="text-xs text-slate-400 mt-1">
-                        or click to browse &bull; Paste with <kbd className="px-1 py-0.5 bg-slate-200 rounded text-[10px] font-mono">Ctrl+V</kbd>
-                      </p>
-                      <p className="text-[10px] text-slate-400 mt-1">Max 5MB each &bull; JPG, PNG, GIF, WebP</p>
-                    </label>
-                  ) : (
-                    <div className="space-y-3">
-                      <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-                        {imageDataList.map((img, idx) => (
-                          <div key={`${img.slice(0, 30)}-${idx}`} className="relative border rounded-xl p-1.5 bg-white shadow-sm">
-                            <img
-                              src={img}
-                              alt={`Inquiry attachment ${idx + 1}`}
-                              className="h-28 w-full rounded-lg object-contain bg-slate-50"
-                            />
-                            <Button
-                              variant="destructive"
-                              size="sm"
-                              className="absolute top-1 right-1 h-6 w-6 p-0"
-                              onClick={() => removeImage(idx)}
-                              type="button"
-                            >
-                              <X className="h-3 w-3" />
-                            </Button>
-                          </div>
-                        ))}
-                        <label
-                          htmlFor={inquiryImageInputId}
-                          className="h-28 border rounded-xl border-dashed bg-white hover:bg-slate-50 transition-colors cursor-pointer flex flex-col items-center justify-center text-slate-500"
-                          title="Add more images"
-                        >
-                          <Plus className="h-5 w-5 mb-1" />
-                          <span className="text-xs font-medium">Add</span>
-                        </label>
-                      </div>
-                      <p className="text-[10px] text-slate-400">You can also drag-drop or paste (Ctrl+V) to add more images.</p>
-                    </div>
-                  )}
-                  <input
-                    id={inquiryImageInputId}
-                    ref={fileInputRef}
-                    type="file"
-                    accept="image/*"
-                    multiple
-                    className="sr-only"
-                    onChange={handleFileSelect}
-                  />
-                </div>
-              </div>
-            ) : (
-              imageDataList.length > 0 && (
-                <div className="space-y-1.5">
-                  <label className="text-sm font-medium flex items-center gap-1">
-                    <ImageIcon className="h-4 w-4" /> Images
-                  </label>
-                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-                    {imageDataList.map((img, idx) => (
-                      <div key={`${img.slice(0, 30)}-${idx}`} className="border rounded-xl p-1.5 bg-white shadow-sm">
-                        <img
-                          src={img}
-                          alt={`Inquiry attachment ${idx + 1}`}
-                          className="h-28 w-full rounded object-contain bg-slate-50"
-                        />
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )
-            )}
-
-            {/* Other Details */}
-            <div className="space-y-1.5">
-              <label className="text-sm font-medium text-slate-700">Other Details</label>
-              <Textarea
-                placeholder="Any additional information, specifications, or notes..."
-                value={otherDetails}
-                onChange={(e) => setOtherDetails(e.target.value)}
-                rows={3}
-                className="resize-none rounded-2xl border-slate-200 bg-white shadow-sm focus-visible:ring-2 focus-visible:ring-orange-200 transition-all"
-                disabled={!canEditForm}
-              />
-            </div>
-
-            {/* Actions */}
-            {mode === "create" && (
-              <div className="flex flex-col sm:flex-row gap-2 pt-2">
-                <Button onClick={handleSaveInquiry} disabled={isPending} variant="outline" className="flex-1 rounded-full h-10 border-slate-200 hover:bg-slate-100 transition-colors">
-                  {isPending ? "Saving..." : "Save Draft"}
-                </Button>
-                <Button
-                  onClick={handleSendInquiry}
-                  disabled={isPending || !isFormValid}
-                  className="flex-1 bg-orange-600 hover:bg-orange-700 text-white rounded-full h-10 shadow-md shadow-orange-200 transition-all duration-200"
-                >
-                  <Send className="h-4 w-4 mr-2" />
-                  {isPending ? "Sending..." : "Send Inquiry"}
-                </Button>
-              </div>
-            )}
-
-            {/* Sales <> Operations Chat (Lead-specific thread) */}
-            <div className="pt-2 space-y-3">
-              <h3 className="font-semibold text-sm">Sales & Operations Chat</h3>
-              <div className="max-h-56 overflow-y-auto pr-1 space-y-2">
-                {chatMessages.length === 0 ? (
-                  <p className="text-xs text-secondary-muted text-center py-4">No messages yet.</p>
-                ) : (
-                  chatMessages.map((m) => (
-                    <Card key={m.id} className={`p-2.5 rounded-2xl shadow-sm transition-colors ${
-                      m.sender_role === "sales_agent"
-                        ? "bg-orange-50 border-orange-200"
-                        : m.sender_role === "operations"
-                          ? "bg-blue-50 border-blue-200"
-                          : "bg-slate-50"
-                    }`}>
-                      <div className="flex items-center justify-between gap-2 mb-1">
-                        <span className="text-xs font-semibold text-primary-dark">
-                          {m.sender_role === "sales_agent" ? "Sales" : m.sender_role === "operations" ? "Operations" : "Admin"} · {m.sender_username}
-                        </span>
-                        <span className="text-[10px] text-secondary-muted">
-                          {new Date(m.created_at).toLocaleString([], {
-                            month: "short",
-                            day: "numeric",
-                            hour: "2-digit",
-                            minute: "2-digit",
-                          })}
-                        </span>
-                      </div>
-                      <p className="text-sm text-primary-dark whitespace-pre-wrap">{m.message}</p>
-                    </Card>
-                  ))
-                )}
-              </div>
-              <div className="space-y-2">
-                <Textarea
-                  value={chatInput}
-                  onChange={(e) => setChatInput(e.target.value)}
-                  placeholder="Ask Operations for updates or provide more details..."
-                  rows={2}
-                  className="resize-none rounded-2xl border-slate-200 bg-white shadow-sm focus-visible:ring-2 focus-visible:ring-orange-200 transition-all"
-                />
-                <div className="flex justify-end">
-                  <Button
-                    onClick={handleSendChat}
-                    disabled={isPending || isSendingChat || !chatInput.trim()}
-                    className="bg-orange-600 hover:bg-orange-700 text-white rounded-full shadow-sm transition-all duration-200"
-                  >
-                    {isSendingChat ? "Sending..." : "Send Message"}
-                  </Button>
-                </div>
-              </div>
-            </div>
-
-            {/* Quotations from Accounting */}
-            {mode === "view" && quotations.length > 0 && (
-              <div className="border-t pt-4 space-y-3">
-                <div className="flex items-center justify-between">
-                  <h3 className="font-semibold text-sm flex items-center gap-1">
-                    <History className="h-4 w-4" />
-                    Quotations from Accounting ({quotations.length})
-                  </h3>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => setShowQuotationHistory(!showQuotationHistory)}
-                  >
-                    {showQuotationHistory ? "Show Latest" : "Show All"}
-                  </Button>
-                </div>
-                {(showQuotationHistory ? quotations : quotations.slice(0, 1)).map((q) => (
-                  <Card key={q.id} className="p-3">
-                    <div className="space-y-2">
-                      <div className="flex items-center justify-between">
-                        <span className="font-semibold text-sm">{q.quotation_number}</span>
-                        <div className="flex items-center gap-2">
-                          <Badge variant="outline" className="text-xs">
-                            v{q.version}
-                          </Badge>
-                          {q.sent_to_agent && (
-                            <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-300 text-xs">
-                              From Accounting
-                            </Badge>
-                          )}
-                        </div>
-                      </div>
-                      <div className="grid grid-cols-2 gap-1 text-xs text-secondary-muted">
-                        <div>Product: <span className="text-primary-dark">{q.product_service}</span></div>
-                        <div>Customer: <span className="text-primary-dark">{q.customer_name}</span></div>
-                        <div>Qty: <span className="text-primary-dark">{q.quantity}</span></div>
-                        <div>Unit Price: <span className="text-primary-dark">Rs. {Number(q.unit_price).toFixed(2)}</span></div>
-                        <div className="col-span-2 font-semibold text-primary-dark">
-                          Total: Rs. {Number(q.total_amount).toFixed(2)}
-                        </div>
-                      </div>
-                      {q.notes && (
-                        <p className="text-xs text-secondary-muted bg-slate-50 p-2 rounded">{q.notes}</p>
-                      )}
-                      <div className="flex items-center gap-2 text-xs text-secondary-muted">
-                        <span>{new Date(q.created_at).toLocaleString()}</span>
-                        <span>by {q.created_by}</span>
-                      </div>
-                      {q.sent_to_agent && (
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          className="w-full text-xs h-7"
-                          onClick={() => handleDownloadQuotationPDF(q)}
-                        >
-                          <FileText className="h-3 w-3 mr-1" />
-                          Download PDF
-                        </Button>
-                      )}
-                    </div>
-                  </Card>
-                ))}
-              </div>
-            )}
-            </div>
-            <div className="rounded-2xl p-3 bg-white space-y-3 lg:col-span-1 shadow-[0_8px_28px_rgba(15,23,42,0.08)]">
-              <h3 className="font-semibold text-sm flex items-center gap-1">
-                <History className="h-4 w-4" />
-                Inquiry Logs
-              </h3>
-              <div className="max-h-[70vh] overflow-y-auto pr-1 space-y-2">
-                {liveUnsavedEntries.length > 0 && (
-                  <Card className="p-2.5 rounded-xl border-amber-200 bg-amber-50">
-                    <div className="space-y-1.5">
-                      {liveUnsavedEntries.map((entry) => (
-                        <div key={entry.key} className="text-[11px] rounded border border-amber-100 bg-white p-2">
-                          <div className="font-medium text-slate-700">{entry.label}</div>
-                          <div className="text-teal-700">
-                            <span className="font-medium">{entry.newValue}</span>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </Card>
-                )}
-                {isLoadingLogs ? (
-                  <p className="text-xs text-secondary-muted">Loading logs...</p>
-                ) : inquiryLogs.length === 0 ? (
-                  <p className="text-xs text-secondary-muted">
-                    {mode === "create" ? "No logs yet. Logs will appear after save/send." : "No logs available for this inquiry."}
-                  </p>
-                ) : (
-                  inquiryLogs.map((log) => {
-                    const previous = (log.previous_values || {}) as Record<string, unknown>;
-                    const current = (log.new_values || {}) as Record<string, unknown>;
-                    const changedKeys = Array.from(new Set([...Object.keys(previous), ...Object.keys(current)]));
-
-                    return (
-                      <Card key={log.id} className="p-2.5 rounded-2xl border-slate-100 bg-slate-50/60 shadow-sm">
-                        <div className="flex items-center justify-between gap-2">
-                          <span className="text-xs font-semibold text-primary-dark">{log.performed_by}</span>
-                          <span className="text-[10px] text-secondary-muted">
-                            {new Date(log.performed_at).toLocaleString([], {
-                              month: "short",
-                              day: "numeric",
-                              hour: "2-digit",
-                              minute: "2-digit",
-                            })}
-                          </span>
-                        </div>
-                        <div className="mt-1">
-                          <Badge variant="outline" className="text-[10px] h-5 bg-slate-50 border-slate-200 text-slate-700">
-                            {formatLogAction(log.action)}
-                          </Badge>
-                        </div>
-                        {mode === "create" && Object.keys(current).length > 0 ? (
-                          <div className="mt-2 space-y-1.5">
-                            {Object.entries(current).map(([key, value]) => (
-                              <div key={`${log.id}-${key}`} className="text-[11px] rounded border border-slate-100 bg-white p-2">
-                                <div className="font-medium text-slate-700">{fieldLabel(key)}</div>
-                                <div className="text-teal-700">
-                                  <span className="font-medium">{valueText(value)}</span>
-                                </div>
-                              </div>
-                            ))}
-                          </div>
-                        ) : changedKeys.length > 0 ? (
-                          <div className="mt-2 space-y-1.5">
-                            {changedKeys.map((key) => (
-                              <div key={`${log.id}-${key}`} className="text-[11px] rounded border border-slate-100 bg-slate-50 p-2">
-                                <div className="font-medium text-slate-700">{fieldLabel(key)}</div>
-                                {previous[key] !== undefined && (
-                                  <div className="text-slate-500">
-                                    Old: <span className="line-through">{valueText(previous[key])}</span>
-                                  </div>
-                                )}
-                                <div className="text-teal-700">
-                                  New: <span className="font-medium">{valueText(current[key])}</span>
-                                </div>
-                              </div>
-                            ))}
-                          </div>
-                        ) : (
-                          <p className="mt-2 text-[11px] text-slate-500">Activity recorded.</p>
-                        )}
-                      </Card>
-                    );
-                  })
-                )}
-              </div>
-            </div>
-          </div>
-        )}
-      </DialogContent>
-    </Dialog>
-  );
-}
-
-function ActivityLogsDialog({
-  lead,
-  open,
-  onOpenChange,
-}: {
-  lead: Lead | null;
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-}) {
-  const [logs, setLogs] = useState<LeadActivityLog[]>([]);
-  const [isLoading, setIsLoading] = useState(false);
-
-  const fetchLogs = useCallback(async () => {
-    if (!lead) return;
-    setIsLoading(true);
-    try {
-      const result = await getLeadActivityTimeline(lead.id);
-      if ("error" in result) {
-        toast.error(result.error || "Unable to load logs");
-        setLogs([]);
-      } else {
-        setLogs(result.logs || []);
-      }
-    } finally {
-      setIsLoading(false);
-    }
-  }, [lead]);
-
-  useEffect(() => {
-    if (open && lead) {
-      void fetchLogs();
-    }
-    if (!open) {
-      setLogs([]);
-    }
-  }, [open, lead, fetchLogs]);
-
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-[760px] max-h-[85vh] overflow-y-auto">
-        <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
-            <ScrollText className="h-4 w-4 text-blue-600" />
-            Activity Timeline - {lead?.name || "Lead"}
-          </DialogTitle>
-          <DialogDescription>
-            Full lead lifecycle including inquiry versions, sends, edits, and views.
-          </DialogDescription>
-        </DialogHeader>
-        <div className="space-y-3">
-          {isLoading ? (
-            <p className="text-sm text-slate-500">Loading timeline...</p>
-          ) : logs.length === 0 ? (
-            <p className="text-sm text-slate-500">No logs available yet.</p>
-          ) : (
-            logs.map((log) => {
-              const previous = (log.previous_values || {}) as Record<string, unknown>;
-              const current = (log.new_values || {}) as Record<string, unknown>;
-              const keys = Array.from(new Set([...Object.keys(previous), ...Object.keys(current)]));
-              return (
-                <Card key={log.id} className="p-3">
-                  <div className="flex items-start justify-between gap-2">
-                    <div>
-                      <p className="text-sm font-semibold text-slate-800">{log.action_label}</p>
-                      <p className="text-xs text-slate-500">
-                        {new Date(log.performed_at).toLocaleString()} by {log.performed_by}
-                        {log.inquiry_version ? ` - v${log.inquiry_version}` : ""}
-                      </p>
-                    </div>
-                    <Badge variant="outline" className="text-[10px]">
-                      {log.action_type}
-                    </Badge>
-                  </div>
-                  {keys.length > 0 && (
-                    <div className="mt-2 space-y-1">
-                      {keys.map((key) => (
-                        <div key={`${log.id}-${key}`} className="rounded border bg-slate-50 p-2 text-xs">
-                          <p className="font-medium text-slate-700">{key.replace(/_/g, " ")}</p>
-                          {previous[key] !== undefined && <p className="text-slate-500">Old: {String(previous[key])}</p>}
-                          {current[key] !== undefined && <p className="text-teal-700">New: {String(current[key])}</p>}
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </Card>
-              );
-            })
-          )}
-        </div>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
-function NoInquiryEmptyStateDialog({
-  lead,
-  open,
-  onOpenChange,
-  onCreateInquiry,
-}: {
-  lead: Lead | null;
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-  onCreateInquiry: (lead: Lead) => void;
-}) {
-  if (!lead) return null;
-
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-[560px]">
-        <DialogHeader>
-          <DialogTitle className="text-center">No Inquiry Found</DialogTitle>
-          <DialogDescription className="text-center">
-            This lead does not have any inquiry yet.
-          </DialogDescription>
-        </DialogHeader>
-        <div className="py-8 flex flex-col items-center justify-center gap-4">
-          <div className="h-14 w-14 rounded-full bg-slate-100 flex items-center justify-center">
-            <Inbox className="h-7 w-7 text-slate-500" />
-          </div>
-          <p className="text-sm text-slate-500 text-center max-w-sm">
-            Create the first inquiry to start tracking versions, send events, and activity logs for this lead.
-          </p>
-          <Button
-            className="bg-orange-600 hover:bg-orange-700 text-white"
-            onClick={() => onCreateInquiry(lead)}
-          >
-            <Plus className="h-4 w-4 mr-2" />
-            Create Inquiry
-          </Button>
-        </div>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
-export function PipelinePanel({
-  focusLeadId,
-  onFocusHandled,
-}: {
-  focusLeadId?: string | null;
-  onFocusHandled?: () => void;
-} = {}) {
+export function PipelinePanel() {
   const [leads, setLeads] = useState<Lead[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [selectedLead, setSelectedLead] = useState<Lead | null>(null);
   const [commentsOpen, setCommentsOpen] = useState(false);
-  const [inquiryLead, setInquiryLead] = useState<Lead | null>(null);
-  const [inquiryOpen, setInquiryOpen] = useState(false);
-  const [inquiryDialogMode, setInquiryDialogMode] = useState<"create" | "view">("create");
-  const [noInquiryLead, setNoInquiryLead] = useState<Lead | null>(null);
-  const [noInquiryOpen, setNoInquiryOpen] = useState(false);
-  const [activityLead, setActivityLead] = useState<Lead | null>(null);
-  const [activityLogsOpen, setActivityLogsOpen] = useState(false);
   const [convertDialogOpen, setConvertDialogOpen] = useState(false);
   const [leadToConvert, setLeadToConvert] = useState<Lead | null>(null);
   const [leadToTransfer, setLeadToTransfer] = useState<Lead | null>(null);
   const [transferDialogOpen, setTransferDialogOpen] = useState(false);
   const [selectedTransferAgentId, setSelectedTransferAgentId] = useState<string>("");
   const [transferableAgents, setTransferableAgents] = useState<TransferableSalesAgent[]>([]);
-  const [highlightedLeadId, setHighlightedLeadId] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
+  const router = useRouter();
   const [isPending, startTransition] = useTransition();
   const [inquiryTrackingMap, setInquiryTrackingMap] = useState<Map<string, InquiryTrackingInfo>>(new Map());
 
@@ -2133,20 +678,6 @@ export function PipelinePanel({
     fetchInquiryTracking();
     fetchTransferableSalesAgents();
   }, []);
-
-  useEffect(() => {
-    if (!focusLeadId || leads.length === 0) return;
-    const target = leads.find((l) => l.id === focusLeadId);
-    if (target) {
-      setHighlightedLeadId(target.id);
-      setTimeout(() => {
-        const el = document.getElementById(`pipeline-lead-${target.id}`);
-        el?.scrollIntoView({ behavior: "smooth", block: "center", inline: "nearest" });
-      }, 100);
-      setTimeout(() => setHighlightedLeadId(null), 2500);
-    }
-    onFocusHandled?.();
-  }, [focusLeadId, leads, onFocusHandled]);
 
   async function fetchLeads() {
     setIsLoading(true);
@@ -2250,35 +781,9 @@ export function PipelinePanel({
     setCommentsOpen(true);
   }
 
-  async function handleOpenInquiries(lead: Lead) {
-    const availability = await getInquiryAvailabilityForLead(lead.id);
-    if ("error" in availability) {
-      toast.error(availability.error || "Unable to check inquiry availability");
-      return;
-    }
-
-    if (!availability.hasInquiry) {
-      setNoInquiryLead(lead);
-      setNoInquiryOpen(true);
-      return;
-    }
-
-    setInquiryLead(lead);
-    setInquiryDialogMode("view");
-    setInquiryOpen(true);
-  }
-
-  function handleAddInquiryFromCard(lead: Lead) {
-    setNoInquiryOpen(false);
-    setNoInquiryLead(null);
-    setInquiryLead(lead);
-    setInquiryDialogMode("create");
-    setInquiryOpen(true);
-  }
-
-  function handleOpenActivityLogs(lead: Lead) {
-    setActivityLead(lead);
-    setActivityLogsOpen(true);
+  function navigateToLeadDetail(lead: Lead, tab?: "create" | "view" | "status") {
+    const q = tab ? `?tab=${tab}` : "";
+    router.push(`/sales-agent/leads/${lead.id}${q}`);
   }
 
   function handleMoveToStatus(lead: Lead, newStatus: LeadStatus) {
@@ -2412,12 +917,9 @@ export function PipelinePanel({
                       leads={leads}
                       onOpenComments={handleOpenComments}
                       onConvert={handleConvertLead}
-                      onOpenInquiries={handleOpenInquiries}
-                      onAddInquiry={handleAddInquiryFromCard}
-                      onOpenLogs={handleOpenActivityLogs}
+                      onOpenLeadDetail={navigateToLeadDetail}
                       onMoveToStatus={handleMoveToStatus}
                       onOpenTransferDialog={handleOpenTransferDialog}
-                      highlightedLeadId={highlightedLeadId}
                       searchQuery={searchQuery}
                       inquiryTrackingMap={inquiryTrackingMap}
                     />
@@ -2432,12 +934,9 @@ export function PipelinePanel({
                       leads={leads}
                       onOpenComments={handleOpenComments}
                       onConvert={handleConvertLead}
-                      onOpenInquiries={handleOpenInquiries}
-                      onAddInquiry={handleAddInquiryFromCard}
-                      onOpenLogs={handleOpenActivityLogs}
+                      onOpenLeadDetail={navigateToLeadDetail}
                       onMoveToStatus={handleMoveToStatus}
                       onOpenTransferDialog={handleOpenTransferDialog}
-                      highlightedLeadId={highlightedLeadId}
                       searchQuery={searchQuery}
                       inquiryTrackingMap={inquiryTrackingMap}
                     />
@@ -2472,39 +971,6 @@ export function PipelinePanel({
         lead={selectedLead}
         open={commentsOpen}
         onOpenChange={setCommentsOpen}
-      />
-
-      <InquiryDialog
-        lead={inquiryLead}
-        open={inquiryOpen}
-        mode={inquiryDialogMode}
-        onOpenChange={(open) => {
-          setInquiryOpen(open);
-          if (!open) {
-            setInquiryLead(null);
-            // Refresh tracking data when inquiry dialog closes
-            fetchInquiryTracking();
-          }
-        }}
-      />
-
-      <NoInquiryEmptyStateDialog
-        lead={noInquiryLead}
-        open={noInquiryOpen}
-        onOpenChange={(open) => {
-          setNoInquiryOpen(open);
-          if (!open) setNoInquiryLead(null);
-        }}
-        onCreateInquiry={(lead) => handleAddInquiryFromCard(lead)}
-      />
-
-      <ActivityLogsDialog
-        lead={activityLead}
-        open={activityLogsOpen}
-        onOpenChange={(open) => {
-          setActivityLogsOpen(open);
-          if (!open) setActivityLead(null);
-        }}
       />
 
       <Dialog

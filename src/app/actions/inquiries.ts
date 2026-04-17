@@ -238,7 +238,7 @@ export async function saveInquiry(
     const forceNewInquiry = Boolean(options?.forceNewInquiry);
 
     const { data: latest } = inquiryId
-      ? { data: { id: inquiryId, sent_to_accounting: false, inquiry_group_id: null, version_number: 1, lead_id: leadId } }
+      ? { data: { id: inquiryId } as { id: string } }
       : forceNewInquiry
         ? { data: null }
       : await supabase
@@ -261,8 +261,8 @@ export async function saveInquiry(
       updated_at: new Date().toISOString(),
     };
 
-    if (latest && !latest.sent_to_accounting) {
-      // Load current values to compute diffs for inquiry logs.
+    if (latest && latest.id) {
+      // Load current values to compute diffs for inquiry logs (draft or already sent — update in place).
       const { data: current, error: currentError } = await supabase
         .from('lead_inquiries')
         .select('*')
@@ -275,11 +275,8 @@ export async function saveInquiry(
       if (current.lead_id !== leadId) {
         return { error: 'Inquiry does not belong to this lead' };
       }
-      if (current.sent_to_accounting) {
-        return { error: 'Sent inquiry cannot be edited. Create a new inquiry with + Add Inquiry.' };
-      }
 
-      // Update the latest draft inquiry
+      // Update inquiry in place (no new version row)
       const { data: result, error } = await supabase
         .from('lead_inquiries')
         .update(inquiryData)
@@ -331,9 +328,9 @@ export async function saveInquiry(
         await addLeadActivityLog(supabase, {
           leadId,
           inquiryId: latest.id,
-          inquiryVersion: current.version_number || latest.version_number || 1,
+          inquiryVersion: null,
           actionType: 'inquiry_edited',
-          actionLabel: 'Inquiry Edited',
+          actionLabel: 'Inquiry updated',
           performedBy: session.username || 'sales-agent',
           previousValues,
           newValues,
@@ -343,14 +340,22 @@ export async function saveInquiry(
       return { success: true, inquiry: result as LeadInquiry };
     } else {
       // Create a new inquiry (either first ever, or latest was already sent)
-      const nextVersion = latest?.version_number ? Number(latest.version_number) + 1 : 1;
-      const versionGroupId = latest?.inquiry_group_id || crypto.randomUUID();
+      const priorForNewRow =
+        latest && typeof latest === 'object' && 'version_number' in latest
+          ? (latest as {
+              id: string;
+              version_number?: string | number | null;
+              inquiry_group_id?: string | null;
+            })
+          : null;
+      const nextVersion = priorForNewRow?.version_number ? Number(priorForNewRow.version_number) + 1 : 1;
+      const versionGroupId = priorForNewRow?.inquiry_group_id || crypto.randomUUID();
 
-      if (latest?.id) {
+      if (priorForNewRow?.id) {
         await supabase
           .from('lead_inquiries')
           .update({ is_current_version: false, updated_at: new Date().toISOString() })
-          .eq('id', latest.id);
+          .eq('id', priorForNewRow.id);
       }
 
       const { data: result, error } = await supabase
@@ -372,14 +377,12 @@ export async function saveInquiry(
 
       if (error) return { error: error.message };
 
-      // Log the creation so UI history/activity can show the version.
       await supabase.from('inquiry_logs').insert([
         {
           inquiry_id: result.id,
-          action: latest?.id ? 'inquiry_resent' : 'inquiry_created_draft',
+          action: priorForNewRow?.id ? 'inquiry_resent' : 'inquiry_created_draft',
           previous_values: null,
           new_values: {
-            version_number: nextVersion,
             product_name: inquiryData.product_name,
             total_weight: inquiryData.total_weight,
             cbm: inquiryData.cbm,
@@ -394,19 +397,18 @@ export async function saveInquiry(
       await addLeadActivityLog(supabase, {
         leadId,
         inquiryId: result.id,
-        inquiryVersion: nextVersion,
-        actionType: latest?.id ? 'inquiry_edited' : 'inquiry_created_draft',
-        actionLabel: latest?.id ? 'Inquiry Re-Sent (New Version Drafted)' : 'Inquiry Created (Draft)',
+        inquiryVersion: null,
+        actionType: priorForNewRow?.id ? 'inquiry_edited' : 'inquiry_created_draft',
+        actionLabel: priorForNewRow?.id ? 'New inquiry draft started' : 'Inquiry created (draft)',
         performedBy: session.username || 'sales-agent',
         newValues: {
-          version_number: nextVersion,
           product_name: inquiryData.product_name,
           total_weight: inquiryData.total_weight,
           cbm: inquiryData.cbm,
           quantity: inquiryData.quantity,
           description: inquiryData.description,
         },
-        metadata: latest?.id ? { previous_inquiry_id: latest.id } : null,
+        metadata: priorForNewRow?.id ? { previous_inquiry_id: priorForNewRow.id } : null,
       });
 
       return { success: true, inquiry: result as LeadInquiry };
@@ -982,7 +984,11 @@ export async function getInquiriesForLead(leadId: string) {
     if (error) return { error: error.message };
 
     const rows = (data || []) as (LeadInquiry & { inquiry_confirmations?: InquiryConfirmationLite[] })[];
-    const sanitized = rows.map((row) => ({
+    const visibleRows =
+      session.role === 'sales_agent'
+        ? rows.filter((row) => row.approval_status !== 'rejected')
+        : rows;
+    const sanitized = visibleRows.map((row) => ({
       ...row,
       inquiry_confirmations:
         session.role === 'sales_agent'
@@ -2046,6 +2052,34 @@ export async function getQuotationsForInquiry(inquiryId: string) {
     if (!session) return { error: 'Unauthorized' };
 
     const supabase = await createAdminClient();
+
+    const { data: inquiryRow, error: inqErr } = await supabase
+      .from('lead_inquiries')
+      .select('id, lead_id')
+      .eq('id', inquiryId)
+      .maybeSingle();
+
+    if (inqErr) return { error: inqErr.message };
+    if (!inquiryRow) return { error: 'Inquiry not found' };
+
+    if (session.role === 'sales_agent') {
+      const { data: salesAgent } = await supabase
+        .from('sales_agents')
+        .select('id')
+        .eq('username', session.username)
+        .maybeSingle();
+      if (!salesAgent) return { error: 'Unauthorized' };
+      const { data: lead } = await supabase
+        .from('leads')
+        .select('sales_agent_id')
+        .eq('id', inquiryRow.lead_id)
+        .maybeSingle();
+      if (!lead || lead.sales_agent_id !== salesAgent.id) {
+        return { error: 'Unauthorized' };
+      }
+    } else if (session.role !== 'admin' && session.role !== 'operations') {
+      return { error: 'Unauthorized' };
+    }
 
     const { data, error } = await supabase
       .from('inquiry_quotations')

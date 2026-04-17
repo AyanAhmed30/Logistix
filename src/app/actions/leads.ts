@@ -344,6 +344,57 @@ export async function getAllLeadsForSalesAgent() {
   }
 }
 
+export async function getLeadForSalesAgentById(leadId: string) {
+  try {
+    const session = await getSession();
+    if (!session || session.role !== 'sales_agent') {
+      return { error: 'Unauthorized' };
+    }
+
+    const { hasPermission } = await import('@/lib/auth/permissions');
+    const hasLead = await hasPermission('lead');
+    const hasPipeline = await hasPermission('pipeline');
+    if (!hasLead && !hasPipeline) {
+      return { error: 'Unauthorized' };
+    }
+
+    const supabase = await createAdminClient();
+
+    const { data: salesAgent, error: agentError } = await supabase
+      .from('sales_agents')
+      .select('id')
+      .eq('username', session.username)
+      .single();
+
+    if (agentError || !salesAgent) {
+      return { error: 'Sales agent not found' };
+    }
+
+    const { data, error } = await supabase
+      .from('leads')
+      .select('*')
+      .eq('id', leadId)
+      .eq('sales_agent_id', salesAgent.id)
+      .maybeSingle();
+
+    if (error) {
+      return { error: error.message };
+    }
+    if (!data) {
+      return { error: 'Lead not found' };
+    }
+
+    const lead = data as Lead;
+    const leadWithStatus: Lead = lead.status
+      ? lead
+      : { ...lead, status: 'Leads' as LeadStatus };
+
+    return { lead: leadWithStatus };
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };
+  }
+}
+
 export async function getAllLeadsForAdmin() {
   try {
     const session = await getSession();

@@ -34,6 +34,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { useRouter } from "next/navigation";
 
 type Props = {
   username: string;
@@ -98,11 +99,11 @@ function useIsHydrated() {
 }
 
 export function SalesAgentDashboardShell({ username, permissions }: Props) {
+  const router = useRouter();
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const mounted = useIsHydrated();
   const [notifications, setNotifications] = useState<LeadChatNotification[]>([]);
   const [unreadCount, setUnreadCount] = useState(0);
-  const [focusLeadId, setFocusLeadId] = useState<string | null>(null);
   const [notificationsError, setNotificationsError] = useState<string | null>(null);
   
   // Default landing is always dashboard for sales agents.
@@ -157,8 +158,7 @@ export function SalesAgentDashboardShell({ username, permissions }: Props) {
       );
       setUnreadCount((prev) => Math.max(0, prev - 1));
     }
-    setActiveTab("pipeline");
-    setFocusLeadId(notification.lead_id);
+    router.push(`/sales-agent/leads/${notification.lead_id}`);
   }
 
   return (
@@ -323,12 +323,7 @@ export function SalesAgentDashboardShell({ username, permissions }: Props) {
       <main className="pt-20 md:pl-72 px-6 md:px-10 pb-10 space-y-6">
         {/* All tabs are permission-based */}
         {resolvedActiveTab === "lead" && <LeadPanel />}
-        {resolvedActiveTab === "pipeline" && (
-          <PipelinePanel
-            focusLeadId={focusLeadId}
-            onFocusHandled={() => setFocusLeadId(null)}
-          />
-        )}
+        {resolvedActiveTab === "pipeline" && <PipelinePanel />}
         {resolvedActiveTab === "customer-list" && <CustomerListPanel />}
         {resolvedActiveTab === "manage-request" && (
           <Card className="bg-white border shadow-sm">

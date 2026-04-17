@@ -682,7 +682,7 @@ export async function postJournalEntry(entryId: string) {
       return { error: 'Journal entry id is required.' };
     }
 
-    const { supabase, entries, lines, journals, accounts, partners } = await getJournalEntryData();
+    const { supabase, entries, lines, journals, accounts } = await getJournalEntryData();
     const existing = entries.find((entry) => entry.id === normalizedId) ?? null;
     if (!existing) {
       return { error: 'Journal entry not found.' };

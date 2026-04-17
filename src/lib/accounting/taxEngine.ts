@@ -92,7 +92,6 @@ export function calculate_tax(line: TaxInputLine, taxes: TaxDefinition[]): Calcu
 
   const percentageInclusive = taxes.filter((t) => t.is_inclusive && t.rate_type === 'percentage');
   const fixedInclusive = taxes.filter((t) => t.is_inclusive && t.rate_type === 'fixed');
-  const exclusiveTaxes = taxes.filter((t) => !t.is_inclusive);
   const inclusiveRateSum = percentageInclusive.reduce((sum, t) => sum + toAmount(t.rate_value), 0);
   const fixedInclusiveTotal = fixedInclusive.reduce((sum, t) => sum + toAmount(t.rate_value), 0);
 

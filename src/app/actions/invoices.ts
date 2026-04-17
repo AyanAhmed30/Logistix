@@ -648,6 +648,9 @@ export async function postInvoice(id: string) {
 }
 
 export async function registerPayment(id: string) {
+  if (!id?.trim()) {
+    return { error: 'Invoice id is required' };
+  }
   return { error: 'Use Payments + Reconciliation module to register payments.' };
 }
 

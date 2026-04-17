@@ -1,5 +1,4 @@
 "use client";
-/* eslint-disable @next/next/no-img-element */
 
 import { useEffect, useState, useCallback } from "react";
 import { toast } from "sonner";

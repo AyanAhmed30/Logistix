@@ -1,6 +1,5 @@
 "use client";
 
-import { useMemo } from "react";
 import { useSearchParams } from "next/navigation";
 import type { Lead } from "@/app/actions/leads";
 import { LeadInquiryWorkspace, type LeadInquiryWorkspaceTab } from "@/components/sales-agent/LeadInquiryWorkspace";
@@ -14,7 +13,7 @@ function tabFromSearchParams(searchParams: URLSearchParams): LeadInquiryWorkspac
 
 export function LeadDetailPageClient({ lead }: { lead: Lead }) {
   const searchParams = useSearchParams();
-  const initialTab = useMemo(() => tabFromSearchParams(searchParams), [searchParams.toString()]);
+  const initialTab = tabFromSearchParams(searchParams);
   const remountKey = `${lead.id}-${initialTab ?? "default"}`;
 
   return (

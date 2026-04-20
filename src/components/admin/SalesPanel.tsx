@@ -1,7 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import Link from "next/link";
+import { useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import {
@@ -12,10 +11,12 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { Users, UserSquare2 } from "lucide-react";
+import { Users, UserSquare2, Trophy, ArrowRight, Search } from "lucide-react";
+import { Input } from "@/components/ui/input";
 import { getAllLeadsForAdmin, type LeadWithSalesAgent } from "@/app/actions/leads";
 import { getAllConvertedCustomersForAdmin, type ConvertedCustomerWithDetails } from "@/app/actions/customer_conversion";
 import { getSalesAgentDirectoryForAdmin, type SalesAgentDirectoryRow } from "@/app/actions/admin_sales_agent_overview";
+import { SalesAgentOverviewDrawer, type DateRangeKey } from "@/components/admin/SalesAgentOverviewDrawer";
 import { toast } from "sonner";
 
 type SalesSubTab = "leads" | "customer-list" | "sales-agent-overview";
@@ -28,6 +29,30 @@ export function SalesPanel() {
   const [isLoadingCustomers, setIsLoadingCustomers] = useState(false);
   const [agentRows, setAgentRows] = useState<SalesAgentDirectoryRow[]>([]);
   const [isLoadingAgents, setIsLoadingAgents] = useState(false);
+  const [drawerAgentId, setDrawerAgentId] = useState<string | null>(null);
+  const [agentSearch, setAgentSearch] = useState("");
+  const [barDateRange, setBarDateRange] = useState<DateRangeKey>("all");
+  const [barCustomFrom, setBarCustomFrom] = useState("");
+  const [barCustomTo, setBarCustomTo] = useState("");
+
+  const topAgentId = useMemo(() => {
+    if (agentRows.length === 0) return null;
+    let leader: SalesAgentDirectoryRow | null = null;
+    for (const row of agentRows) {
+      if (row.won_deals <= 0) continue;
+      if (!leader || row.won_deals > leader.won_deals) leader = row;
+    }
+    return leader?.id ?? null;
+  }, [agentRows]);
+
+  const visibleAgentRows = useMemo(() => {
+    const needle = agentSearch.trim().toLowerCase();
+    if (!needle) return agentRows;
+    return agentRows.filter((row) => {
+      const hay = `${row.name} ${row.email || ""} ${row.username || ""} ${row.phone_number || ""}`.toLowerCase();
+      return hay.includes(needle);
+    });
+  }, [agentRows, agentSearch]);
 
   useEffect(() => {
     if (activeSubTab === "leads") {
@@ -206,60 +231,152 @@ export function SalesPanel() {
           <CardHeader>
             <CardTitle>Sales Agent Overview</CardTitle>
             <CardDescription>
-              Full performance and activity for each sales agent. Open a row for the detailed dashboard.
+              Pick any agent and click <span className="font-medium">Open Overview</span> to see their complete dashboard in a side panel.
             </CardDescription>
           </CardHeader>
-          <CardContent>
+          <CardContent className="space-y-4">
+            <div className="flex flex-col gap-3 rounded-md border border-slate-200 bg-slate-50/50 p-3 md:flex-row md:items-center md:justify-between">
+              <div className="relative md:flex-1 md:max-w-sm">
+                <Search className="h-3.5 w-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                <Input
+                  placeholder="Search agent by name, email or username"
+                  value={agentSearch}
+                  onChange={(e) => setAgentSearch(e.target.value)}
+                  className="h-9 pl-9 text-sm bg-white"
+                />
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-[11px] font-medium uppercase tracking-wide text-slate-500">
+                  Drawer preset
+                </span>
+                {(
+                  [
+                    { id: "today", label: "Today" },
+                    { id: "7d", label: "7 Days" },
+                    { id: "30d", label: "30 Days" },
+                    { id: "all", label: "All time" },
+                  ] as Array<{ id: DateRangeKey; label: string }>
+                ).map((opt) => (
+                  <Button
+                    key={opt.id}
+                    type="button"
+                    size="sm"
+                    variant={barDateRange === opt.id ? "default" : "outline"}
+                    onClick={() => setBarDateRange(opt.id)}
+                    className="h-8 rounded-full text-xs"
+                    title="Presets the date filter when you open an agent overview"
+                  >
+                    {opt.label}
+                  </Button>
+                ))}
+                <div className="flex items-center gap-1.5">
+                  <Input
+                    type="date"
+                    value={barCustomFrom}
+                    onChange={(e) => {
+                      setBarDateRange("custom");
+                      setBarCustomFrom(e.target.value);
+                    }}
+                    className="h-8 w-36 text-xs bg-white"
+                    aria-label="Preset from"
+                  />
+                  <span className="text-xs text-slate-500">–</span>
+                  <Input
+                    type="date"
+                    value={barCustomTo}
+                    onChange={(e) => {
+                      setBarDateRange("custom");
+                      setBarCustomTo(e.target.value);
+                    }}
+                    className="h-8 w-36 text-xs bg-white"
+                    aria-label="Preset to"
+                  />
+                </div>
+              </div>
+            </div>
+
             {isLoadingAgents ? (
               <div className="py-16 text-center text-secondary-muted">Loading sales agents...</div>
             ) : agentRows.length === 0 ? (
               <div className="py-16 text-center text-secondary-muted">No sales agents found.</div>
+            ) : visibleAgentRows.length === 0 ? (
+              <div className="py-16 text-center text-secondary-muted">
+                No agents match &ldquo;{agentSearch}&rdquo;.
+              </div>
             ) : (
               <div className="overflow-x-auto">
                 <Table>
                   <TableHeader>
                     <TableRow>
-                      <TableHead>Name</TableHead>
-                      <TableHead>Email / username</TableHead>
+                      <TableHead>Agent name</TableHead>
                       <TableHead className="text-right">Total leads</TableHead>
-                      <TableHead className="text-right">Total inquiries</TableHead>
-                      <TableHead className="w-[140px]"> </TableHead>
+                      <TableHead className="text-right">Won</TableHead>
+                      <TableHead className="text-right">Pending</TableHead>
+                      <TableHead className="text-right">Customers</TableHead>
+                      <TableHead className="text-right w-[160px]">Action</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {agentRows.map((row) => (
-                      <TableRow key={row.id} className="cursor-pointer hover:bg-slate-50/80">
-                        <TableCell className="font-semibold">
-                          <Link
-                            href={`/admin/dashboard/sales-agents/${row.id}`}
-                            className="text-primary-accent hover:underline"
-                          >
-                            {row.name}
-                          </Link>
-                        </TableCell>
-                        <TableCell>
-                          <div className="text-sm">
-                            {row.email ? (
-                              <span className="text-slate-800">{row.email}</span>
-                            ) : (
-                              <span className="text-secondary-muted">—</span>
-                            )}
-                          </div>
-                          {row.username ? (
-                            <div className="text-xs text-secondary-muted font-mono">@{row.username}</div>
-                          ) : (
-                            <div className="text-[10px] font-mono text-slate-400 mt-0.5">id {row.id.slice(0, 8)}…</div>
-                          )}
-                        </TableCell>
-                        <TableCell className="text-right tabular-nums">{row.total_leads}</TableCell>
-                        <TableCell className="text-right tabular-nums">{row.total_inquiries}</TableCell>
-                        <TableCell>
-                          <Button variant="outline" size="sm" className="rounded-sm" asChild>
-                            <Link href={`/admin/dashboard/sales-agents/${row.id}`}>Open overview</Link>
-                          </Button>
-                        </TableCell>
-                      </TableRow>
-                    ))}
+                    {visibleAgentRows.map((row) => {
+                      const isTop = topAgentId === row.id;
+                      return (
+                        <TableRow
+                          key={row.id}
+                          className={`cursor-pointer hover:bg-slate-50/80 transition-colors ${
+                            isTop ? "bg-amber-50/40 hover:bg-amber-50/70" : ""
+                          }`}
+                          onClick={() => setDrawerAgentId(row.id)}
+                        >
+                          <TableCell className="font-semibold">
+                            <div className="flex items-center gap-2">
+                              <span>{row.name}</span>
+                              {isTop ? (
+                                <span
+                                  className="inline-flex items-center gap-1 rounded-full border border-amber-300 bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium text-amber-800"
+                                  title="Top performer"
+                                >
+                                  <Trophy className="h-3 w-3" />
+                                  Top
+                                </span>
+                              ) : null}
+                            </div>
+                            <div className="text-xs text-secondary-muted mt-0.5">
+                              {row.email || row.phone_number || (row.username ? `@${row.username}` : "")}
+                            </div>
+                          </TableCell>
+                          <TableCell className="text-right tabular-nums">{row.total_leads}</TableCell>
+                          <TableCell className="text-right tabular-nums">
+                            <span className="inline-flex items-center rounded-full bg-emerald-50 px-2 py-0.5 text-xs font-semibold text-emerald-700 border border-emerald-200">
+                              {row.won_deals}
+                            </span>
+                          </TableCell>
+                          <TableCell className="text-right tabular-nums">
+                            <span className="inline-flex items-center rounded-full bg-amber-50 px-2 py-0.5 text-xs font-semibold text-amber-700 border border-amber-200">
+                              {row.pending_leads}
+                            </span>
+                          </TableCell>
+                          <TableCell className="text-right tabular-nums">
+                            <span className="inline-flex items-center rounded-full bg-blue-50 px-2 py-0.5 text-xs font-semibold text-blue-700 border border-blue-200">
+                              {row.customers_count}
+                            </span>
+                          </TableCell>
+                          <TableCell className="text-right">
+                            <Button
+                              variant="default"
+                              size="sm"
+                              className="rounded-md h-8"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setDrawerAgentId(row.id);
+                              }}
+                            >
+                              Open Overview
+                              <ArrowRight className="h-3.5 w-3.5 ml-1.5" />
+                            </Button>
+                          </TableCell>
+                        </TableRow>
+                      );
+                    })}
                   </TableBody>
                 </Table>
               </div>
@@ -267,6 +384,16 @@ export function SalesPanel() {
           </CardContent>
         </Card>
       )}
+
+      <SalesAgentOverviewDrawer
+        salesAgentId={drawerAgentId}
+        onOpenChange={(open) => {
+          if (!open) setDrawerAgentId(null);
+        }}
+        initialDateRange={barDateRange}
+        initialCustomFrom={barCustomFrom}
+        initialCustomTo={barCustomTo}
+      />
 
       {/* Customer List Tab Content - Only show when this tab is selected */}
       {activeSubTab === "customer-list" && (

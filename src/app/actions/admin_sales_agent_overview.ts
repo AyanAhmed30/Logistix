@@ -3,7 +3,7 @@
 import { createAdminClient } from '@/utils/supabase/server';
 import { getSession } from '@/lib/auth/session';
 import type { InquiryLog, LeadActivityLog } from '@/app/actions/inquiries';
-import type { Lead } from '@/app/actions/leads';
+import type { Lead, LeadComment } from '@/app/actions/leads';
 import type { SalesAgent } from '@/app/actions/sales_agents';
 
 export type SalesAgentDirectoryRow = {
@@ -14,6 +14,9 @@ export type SalesAgentDirectoryRow = {
   phone_number: string | null;
   total_leads: number;
   total_inquiries: number;
+  won_deals: number;
+  pending_leads: number;
+  customers_count: number;
 };
 
 type InquiryConfirmationLite = { status: string };
@@ -81,6 +84,7 @@ export type SalesAgentOverviewDetail = {
   activityLogs: LeadActivityLog[];
   inquiryLogs: InquiryLog[];
   inquiryIdToMeta: Record<string, { lead_id: string; product_name: string }>;
+  notes: Array<LeadComment & { lead_name: string; lead_id_formatted: string | null }>;
 };
 
 function inquiryIsSent(inq: Pick<SalesAgentOverviewInquiry, 'sent_to_accounting' | 'sent_to_operations' | 'sent_at'>) {
@@ -153,16 +157,26 @@ export async function getSalesAgentDirectoryForAdmin() {
 }
 
 async function mergeAgentStats(supabase: Awaited<ReturnType<typeof createAdminClient>>, agents: SalesAgent[]) {
-  const { data: leadsMin, error: leadsErr } = await supabase.from('leads').select('id, sales_agent_id');
+  const { data: leadsMin, error: leadsErr } = await supabase
+    .from('leads')
+    .select('id, sales_agent_id, status');
   if (leadsErr) return { error: leadsErr.message };
 
   const leadIdToAgent = new Map<string, string>();
   const leadCountByAgent = new Map<string, number>();
+  const wonByAgent = new Map<string, number>();
+  const pendingByAgent = new Map<string, number>();
   for (const row of leadsMin || []) {
     const aid = row.sales_agent_id as string;
     const lid = row.id as string;
+    const status = (row.status as string) || '';
     leadIdToAgent.set(lid, aid);
     leadCountByAgent.set(aid, (leadCountByAgent.get(aid) || 0) + 1);
+    if (status === 'Win') {
+      wonByAgent.set(aid, (wonByAgent.get(aid) || 0) + 1);
+    } else if (status !== 'Lose') {
+      pendingByAgent.set(aid, (pendingByAgent.get(aid) || 0) + 1);
+    }
   }
 
   const { data: inqRows, error: inqErr } = await supabase.from('lead_inquiries').select('id, lead_id');
@@ -175,6 +189,18 @@ async function mergeAgentStats(supabase: Awaited<ReturnType<typeof createAdminCl
     inquiryCountByAgent.set(aid, (inquiryCountByAgent.get(aid) || 0) + 1);
   }
 
+  const { data: custRows, error: custErr } = await supabase
+    .from('customers')
+    .select('id, sales_agent_id');
+  if (custErr) return { error: custErr.message };
+
+  const customerCountByAgent = new Map<string, number>();
+  for (const row of custRows || []) {
+    const aid = row.sales_agent_id as string | null;
+    if (!aid) continue;
+    customerCountByAgent.set(aid, (customerCountByAgent.get(aid) || 0) + 1);
+  }
+
   const rows: SalesAgentDirectoryRow[] = agents.map((a) => ({
     id: a.id,
     name: a.name,
@@ -183,6 +209,9 @@ async function mergeAgentStats(supabase: Awaited<ReturnType<typeof createAdminCl
     phone_number: a.phone_number,
     total_leads: leadCountByAgent.get(a.id) || 0,
     total_inquiries: inquiryCountByAgent.get(a.id) || 0,
+    won_deals: wonByAgent.get(a.id) || 0,
+    pending_leads: pendingByAgent.get(a.id) || 0,
+    customers_count: customerCountByAgent.get(a.id) || 0,
   }));
 
   return { rows };
@@ -272,6 +301,25 @@ export async function getSalesAgentOverviewDetailForAdmin(salesAgentId: string) 
 
       if (actErr) return { error: actErr.message };
       activityLogs = (act || []) as LeadActivityLog[];
+    }
+
+    let notes: Array<LeadComment & { lead_name: string; lead_id_formatted: string | null }> = [];
+    if (leadIds.length > 0) {
+      const { data: cmt, error: cmtErr } = await supabase
+        .from('lead_comments')
+        .select('*')
+        .in('lead_id', leadIds)
+        .order('created_at', { ascending: false });
+      if (cmtErr) return { error: cmtErr.message };
+      const leadMeta = new Map(leadList.map((l) => [l.id, { name: l.name, fmt: l.lead_id_formatted }]));
+      notes = ((cmt || []) as LeadComment[]).map((c) => {
+        const meta = leadMeta.get(c.lead_id);
+        return {
+          ...c,
+          lead_name: meta?.name || 'Unknown lead',
+          lead_id_formatted: meta?.fmt || null,
+        };
+      });
     }
 
     let inquiryLogs: InquiryLog[] = [];
@@ -373,6 +421,7 @@ export async function getSalesAgentOverviewDetailForAdmin(salesAgentId: string) 
       activityLogs,
       inquiryLogs,
       inquiryIdToMeta,
+      notes,
     };
 
     return { overview };

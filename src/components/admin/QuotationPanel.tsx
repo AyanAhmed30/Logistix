@@ -1749,7 +1749,7 @@ export function QuotationPanel({
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div className="flex items-center gap-3">
           <Button
-            onClick={openNew}
+            onClick={() => openNew()}
             className="bg-pink-600 hover:bg-pink-700 text-white"
             size="sm"
           >

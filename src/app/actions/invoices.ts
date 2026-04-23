@@ -306,6 +306,9 @@ export async function createInvoiceFromSalesOrder(quotationId: string) {
     if ('error' in partnerResolve && partnerResolve.error) {
       return { error: partnerResolve.error };
     }
+    if (!('partner' in partnerResolve) || !partnerResolve.partner) {
+      return { error: 'Unable to resolve a valid customer partner for this quotation.' };
+    }
     const customerPartner = partnerResolve.partner;
 
     // Keep quotation.partner_id synchronized so subsequent actions don't fail.

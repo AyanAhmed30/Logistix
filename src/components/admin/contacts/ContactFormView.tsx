@@ -1440,10 +1440,14 @@ function LinkedQuotationsSection({
 
   useEffect(() => {
     if (!contactId) {
-      setQuotations([]);
+      Promise.resolve().then(() => {
+        setQuotations([]);
+      });
       return;
     }
-    setLoading(true);
+    Promise.resolve().then(() => {
+      setLoading(true);
+    });
     getQuotationsByContact(contactId).then((res) => {
       Promise.resolve().then(() => {
         if ("error" in res && res.error) {
@@ -1574,10 +1578,14 @@ function LinkedInvoicesSection({ contactId }: { contactId: string | null }) {
 
   useEffect(() => {
     if (!contactId) {
-      setInvoices([]);
+      Promise.resolve().then(() => {
+        setInvoices([]);
+      });
       return;
     }
-    setLoading(true);
+    Promise.resolve().then(() => {
+      setLoading(true);
+    });
     getInvoicesByContact(contactId).then((res) => {
       Promise.resolve().then(() => {
         if ("error" in res && res.error) {

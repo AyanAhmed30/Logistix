@@ -195,7 +195,9 @@ export function AdminUserManager({
   useEffect(() => {
     if (!quotationPayload?.token) return;
     if (activeTab === "accounting") {
-      setAccountingSubTab("quotation");
+      Promise.resolve().then(() => {
+        setAccountingSubTab("quotation");
+      });
     }
   }, [quotationPayload?.token, activeTab]);
 
@@ -204,7 +206,9 @@ export function AdminUserManager({
   useEffect(() => {
     if (!invoicePayload?.token) return;
     if (activeTab === "accounting") {
-      setAccountingSubTab("customer-invoice");
+      Promise.resolve().then(() => {
+        setAccountingSubTab("customer-invoice");
+      });
     }
   }, [invoicePayload?.token, activeTab]);
 
@@ -529,7 +533,7 @@ export function AdminUserManager({
         ) : activeTab === "sales" ? (
           <SalesPanel />
         ) : activeTab === "contacts" ? (
-          <ContactsPanel initialPayload={contactPayload} />
+          <ContactsPanel initialPayload={contactPayload ?? undefined} />
         ) : activeTab === "operations" ? (
           <div className="space-y-6">
             {/* Sub-tabs */}
@@ -675,7 +679,7 @@ export function AdminUserManager({
 
             {/* Quotation Sub-tab Content */}
             {accountingSubTab === "quotation" && (
-              <QuotationPanel initialPayload={quotationPayload} />
+              <QuotationPanel initialPayload={quotationPayload ?? undefined} />
             )}
 
             {accountingSubTab === "chart-of-accounts" && (

@@ -816,3 +816,181 @@ export async function getSalespersonOptions() {
     return { error: err instanceof Error ? err.message : 'Failed to load salespersons' };
   }
 }
+
+// =============================================================
+// Customer picker helpers (used by the Quotation module)
+// =============================================================
+
+export type CustomerSearchResult = {
+  id: string;
+  name: string;
+  company_name: string | null;
+  email: string | null;
+  phone: string | null;
+  city: string | null;
+  country: string | null;
+  company_type: CompanyType;
+  customer_rank: number;
+  vendor_rank: number;
+};
+
+/**
+ * Search top-level contacts that can be used as a customer on a quotation.
+ * Excludes contacts flagged as vendor-only (vendor_rank > 0 AND customer_rank = 0).
+ */
+export async function searchCustomerContacts(query: string): Promise<
+  { contacts: CustomerSearchResult[] } | { error: string }
+> {
+  try {
+    const session = await getSession();
+    ensureAuth(session);
+
+    const supabase = await createAdminClient();
+    let q = supabase
+      .from('contacts')
+      .select(
+        'id, name, company_name, email, phone, city, country, company_type, customer_rank, vendor_rank'
+      )
+      .is('parent_id', null)
+      .order('updated_at', { ascending: false })
+      .limit(20);
+
+    const needle = String(query || '').trim();
+    if (needle) {
+      const like = `%${needle}%`;
+      q = q.or(
+        `name.ilike.${like},email.ilike.${like},phone.ilike.${like},company_name.ilike.${like},city.ilike.${like}`
+      );
+    }
+
+    const { data, error } = await q;
+    if (error) return { error: error.message };
+
+    // Filter vendor-only contacts out of the default result set.
+    const filtered = (data || []).filter(
+      (row) => !(Number(row.vendor_rank) > 0 && Number(row.customer_rank) === 0)
+    );
+
+    return { contacts: filtered as CustomerSearchResult[] };
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : 'Failed to search contacts' };
+  }
+}
+
+export type ContactAutofillData = {
+  id: string;
+  name: string;
+  company_name: string | null;
+  email: string | null;
+  phone: string | null;
+  mobile: string | null;
+  street: string | null;
+  street2: string | null;
+  city: string | null;
+  state: string | null;
+  zip: string | null;
+  country: string | null;
+  payment_terms: string | null;
+  pricelist: string | null;
+  salesperson_id: string | null;
+  salesperson_name: string | null;
+  customer_rank: number;
+  vendor_rank: number;
+  /** True when the contact is flagged as a vendor but not as a customer. */
+  vendor_only: boolean;
+  /** One-line composed address, useful for tooltips / preview. */
+  full_address: string;
+};
+
+export async function getContactAutofillData(
+  contactId: string
+): Promise<{ data: ContactAutofillData } | { error: string }> {
+  try {
+    const session = await getSession();
+    ensureAuth(session);
+    if (!contactId) return { error: 'Contact id is required' };
+
+    const supabase = await createAdminClient();
+    const { data, error } = await supabase
+      .from('contacts')
+      .select(
+        'id, name, company_name, email, phone, mobile, street, street2, city, state, zip, country, payment_terms, pricelist, salesperson_id, customer_rank, vendor_rank'
+      )
+      .eq('id', contactId)
+      .single();
+
+    if (error || !data) return { error: error?.message || 'Contact not found' };
+
+    let salesperson_name: string | null = null;
+    if (data.salesperson_id) {
+      const { data: sp } = await supabase
+        .from('sales_agents')
+        .select('name')
+        .eq('id', data.salesperson_id)
+        .single();
+      salesperson_name = (sp?.name as string | undefined) || null;
+    }
+
+    const addrParts = [
+      data.street,
+      data.street2,
+      data.city,
+      data.state,
+      data.zip,
+      data.country,
+    ]
+      .map((p) => (p === null || p === undefined ? '' : String(p).trim()))
+      .filter((p) => p.length > 0);
+
+    const vendor_only =
+      Number(data.vendor_rank) > 0 && Number(data.customer_rank) === 0;
+
+    return {
+      data: {
+        id: data.id as string,
+        name: (data.name as string) || '',
+        company_name: (data.company_name as string | null) ?? null,
+        email: (data.email as string | null) ?? null,
+        phone: (data.phone as string | null) ?? null,
+        mobile: (data.mobile as string | null) ?? null,
+        street: (data.street as string | null) ?? null,
+        street2: (data.street2 as string | null) ?? null,
+        city: (data.city as string | null) ?? null,
+        state: (data.state as string | null) ?? null,
+        zip: (data.zip as string | null) ?? null,
+        country: (data.country as string | null) ?? null,
+        payment_terms: (data.payment_terms as string | null) ?? null,
+        pricelist: (data.pricelist as string | null) ?? null,
+        salesperson_id: (data.salesperson_id as string | null) ?? null,
+        salesperson_name,
+        customer_rank: Number(data.customer_rank) || 0,
+        vendor_rank: Number(data.vendor_rank) || 0,
+        vendor_only,
+        full_address: addrParts.join(', '),
+      },
+    };
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : 'Failed to load contact' };
+  }
+}
+
+/**
+ * Quickly create a minimal contact from inside another module (e.g. the
+ * quotation customer picker). Only name is required; email / phone are
+ * optional. Returns the same `Contact` shape as `createContact`.
+ */
+export async function createQuickContact(input: {
+  name: string;
+  email?: string | null;
+  phone?: string | null;
+  company_name?: string | null;
+}) {
+  return createContact({
+    name: input.name,
+    email: input.email ?? null,
+    phone: input.phone ?? null,
+    company_name: input.company_name ?? null,
+    company_type: input.company_name ? 'company' : 'person',
+    customer_rank: 1,
+  });
+}

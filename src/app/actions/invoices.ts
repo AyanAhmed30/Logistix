@@ -44,6 +44,8 @@ export type InvoiceLog = {
   details: Record<string, unknown> | null;
 };
 
+type InvoiceChatterKind = 'message' | 'note' | 'activity';
+
 function ensureAdminOrSalesAgent(session: { role: string } | null) {
   if (!session || (session.role !== 'admin' && session.role !== 'sales_agent')) {
     throw new Error('Unauthorized');
@@ -82,6 +84,154 @@ function canPartnerBeCustomer(partnerType: string) {
 function parseAmount(value: unknown) {
   const parsed = Number(value || 0);
   return Number.isFinite(parsed) ? parsed : 0;
+}
+
+async function resolveCustomerPartnerForQuotation(
+  supabase: Awaited<ReturnType<typeof createAdminClient>>,
+  quotation: {
+    id: string;
+    customer_name: string;
+    partner_id?: string | null;
+    contact_id?: string | null;
+  }
+) {
+  const quotePartnerId = String(quotation.partner_id || '').trim();
+  if (quotePartnerId) {
+    const { data: existingPartner } = await supabase
+      .from('partners')
+      .select('id, name, partner_type, status')
+      .eq('id', quotePartnerId)
+      .eq('status', 'active')
+      .single();
+
+    if (existingPartner && canPartnerBeCustomer(existingPartner.partner_type)) {
+      return { partner: existingPartner };
+    }
+  }
+
+  const customerName = String(quotation.customer_name || '').trim();
+
+  // 1) Try exact active customer/both by name
+  if (customerName) {
+    const { data: byNameRows } = await supabase
+      .from('partners')
+      .select('id, name, partner_type, status')
+      .eq('status', 'active')
+      .ilike('name', customerName)
+      .limit(5);
+
+    const customerCandidates = (byNameRows || []).filter((p) =>
+      canPartnerBeCustomer(p.partner_type)
+    );
+
+    if (customerCandidates.length === 1) {
+      return { partner: customerCandidates[0] };
+    }
+  }
+
+  // 2) If quotation links to a contact, auto-create a customer partner
+  //    (or upgrade an existing vendor/agent to "both")
+  let contactPayload: {
+    name: string;
+    email: string | null;
+    phone: string | null;
+    street: string | null;
+    street2: string | null;
+    city: string | null;
+    state: string | null;
+    zip: string | null;
+    country: string | null;
+  } | null = null;
+
+  const contactId = String(quotation.contact_id || '').trim();
+  if (contactId) {
+    const { data: c } = await supabase
+      .from('contacts')
+      .select('name, email, phone, street, street2, city, state, zip, country')
+      .eq('id', contactId)
+      .single();
+    if (c) {
+      contactPayload = {
+        name: String(c.name || '').trim(),
+        email: (c.email as string | null) ?? null,
+        phone: (c.phone as string | null) ?? null,
+        street: (c.street as string | null) ?? null,
+        street2: (c.street2 as string | null) ?? null,
+        city: (c.city as string | null) ?? null,
+        state: (c.state as string | null) ?? null,
+        zip: (c.zip as string | null) ?? null,
+        country: (c.country as string | null) ?? null,
+      };
+    }
+  }
+
+  const fallbackName = contactPayload?.name || customerName;
+  if (!fallbackName) {
+    return {
+      error:
+        'Quotation is missing customer linkage. Please select a valid contact/customer before creating invoice.',
+    };
+  }
+
+  const address = [
+    contactPayload?.street,
+    contactPayload?.street2,
+    contactPayload?.city,
+    contactPayload?.state,
+    contactPayload?.zip,
+    contactPayload?.country,
+  ]
+    .map((v) => (v ? String(v).trim() : ''))
+    .filter((v) => v.length > 0)
+    .join(', ');
+
+  // If partner exists with same name but non-customer type, upgrade to "both"
+  const { data: sameNamePartner } = await supabase
+    .from('partners')
+    .select('id, name, partner_type, status')
+    .eq('status', 'active')
+    .ilike('name', fallbackName)
+    .limit(1)
+    .single();
+
+  if (sameNamePartner) {
+    if (!canPartnerBeCustomer(sameNamePartner.partner_type)) {
+      const { data: upgraded } = await supabase
+        .from('partners')
+        .update({
+          partner_type: 'both',
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', sameNamePartner.id)
+        .select('id, name, partner_type, status')
+        .single();
+      if (upgraded) return { partner: upgraded };
+    } else {
+      return { partner: sameNamePartner };
+    }
+  }
+
+  // Create a brand-new customer partner
+  const { data: createdPartner, error: createErr } = await supabase
+    .from('partners')
+    .insert([
+      {
+        name: fallbackName,
+        partner_type: 'customer',
+        email: contactPayload?.email || null,
+        phone: contactPayload?.phone || null,
+        address: address || null,
+        status: 'active',
+      },
+    ])
+    .select('id, name, partner_type, status')
+    .single();
+
+  if (createErr || !createdPartner) {
+    return { error: createErr?.message || 'Failed to create customer partner.' };
+  }
+
+  return { partner: createdPartner };
 }
 
 async function logInvoiceAction(
@@ -134,12 +284,15 @@ export async function createInvoiceFromSalesOrder(quotationId: string) {
     // Check if invoice already exists for this quotation
     const { data: existingInvoice } = await supabase
       .from('invoices')
-      .select('id, invoice_number')
+      .select('*')
       .eq('quotation_id', quotationId)
       .single();
 
     if (existingInvoice) {
-      return { error: `Invoice already exists for this sales order: ${existingInvoice.invoice_number}` };
+      return {
+        invoice: existingInvoice as Invoice,
+        alreadyExists: true,
+      };
     }
 
     // Generate invoice number
@@ -149,25 +302,20 @@ export async function createInvoiceFromSalesOrder(quotationId: string) {
     const invoiceDateString = invoiceDate.toISOString().split('T')[0];
     const dueDateString = invoiceDateString;
 
-    const quotePartnerId = String(quotation.partner_id || '').trim();
-    if (!quotePartnerId) {
-      return {
-        error: 'Quotation is missing customer partner linkage. Update quotation partner before creating invoice.',
-      };
+    const partnerResolve = await resolveCustomerPartnerForQuotation(supabase, quotation);
+    if ('error' in partnerResolve && partnerResolve.error) {
+      return { error: partnerResolve.error };
     }
+    const customerPartner = partnerResolve.partner;
 
-    const { data: customerPartner, error: partnerError } = await supabase
-      .from('partners')
-      .select('id, name, partner_type, status')
-      .eq('id', quotePartnerId)
-      .eq('status', 'active')
-      .single();
-
-    if (partnerError || !customerPartner || !canPartnerBeCustomer(customerPartner.partner_type)) {
-      return {
-        error: `Active customer partner for quotation "${quotation.customer_name}" is invalid.`,
-      };
-    }
+    // Keep quotation.partner_id synchronized so subsequent actions don't fail.
+    await supabase
+      .from('quotations')
+      .update({
+        partner_id: customerPartner.id,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', quotationId);
 
     // Create invoice
     const { data, error } = await supabase
@@ -223,6 +371,117 @@ export async function createInvoiceFromSalesOrder(quotationId: string) {
   } catch (err) {
     const message = err instanceof Error ? err.message : 'An unexpected error occurred';
     return { error: message };
+  }
+}
+
+/**
+ * Manual invoice creation path used by the Accounting Invoice editor when the
+ * user opens a fresh "New" form (not coming from an existing quotation).
+ *
+ * To keep accounting integrity consistent, we first create a minimal
+ * `sales_order` quotation and then reuse `createInvoiceFromSalesOrder`.
+ */
+export async function createManualInvoice(formData: FormData) {
+  try {
+    const session = await getSession();
+    ensureAdminOrSalesAgent(session);
+    if (!session) return { error: 'Unauthorized' };
+
+    const customer_name = String(formData.get('customer_name') || '').trim();
+    const manual_invoice_number = String(formData.get('invoice_number') || '').trim();
+    const product_service = String(formData.get('product_service') || '').trim();
+    const quantity = parseFloat(String(formData.get('quantity') || '0'));
+    const unit_price = parseFloat(String(formData.get('unit_price') || '0'));
+    const total_amount = parseFloat(String(formData.get('total_amount') || '0'));
+    const invoice_date = String(formData.get('invoice_date') || '').trim();
+    const due_date = String(formData.get('due_date') || '').trim() || null;
+
+    if (!customer_name || !product_service || !invoice_date) {
+      return { error: 'Customer, product/service and invoice date are required.' };
+    }
+    if (quantity <= 0 || unit_price <= 0 || total_amount <= 0) {
+      return { error: 'Quantity, unit price and total amount must be greater than zero.' };
+    }
+
+    const supabase = await createAdminClient();
+
+    // Best-effort partner linkage from customer name.
+    let partner_id: string | null = null;
+    const { data: partnerRows } = await supabase
+      .from('partners')
+      .select('id, partner_type, status')
+      .eq('status', 'active')
+      .ilike('name', customer_name)
+      .limit(5);
+    const customerPartners = (partnerRows || []).filter((p) =>
+      canPartnerBeCustomer(String(p.partner_type || ''))
+    );
+    if (customerPartners.length === 1) {
+      partner_id = customerPartners[0].id as string;
+    }
+
+    // Create minimal quotation as sales order.
+    const { data: quote, error: qErr } = await supabase
+      .from('quotations')
+      .insert([
+        {
+          quotation_number: null,
+          partner_id,
+          customer_name,
+          product_service,
+          quantity,
+          unit_price,
+          total_amount,
+          taxes: 0,
+          uom: 'pcs / u',
+          expiration_date: due_date,
+          payment_terms: 'Immediate',
+          status: 'sales_order',
+          created_by: session.username,
+        },
+      ])
+      .select('id')
+      .single();
+
+    if (qErr || !quote) {
+      return { error: qErr?.message || 'Failed to create source sales order.' };
+    }
+
+    // Reuse the canonical invoice creation path.
+    const created = await createInvoiceFromSalesOrder(String(quote.id));
+    if ('error' in created && created.error) return created;
+
+    if ('invoice' in created && created.invoice && manual_invoice_number) {
+      // Let user override auto-number when explicitly entered.
+      const { data: updated, error: updateErr } = await supabase
+        .from('invoices')
+        .update({
+          invoice_number: manual_invoice_number,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', created.invoice.id)
+        .select('*')
+        .single();
+
+      if (!updateErr && updated) {
+        await logInvoiceAction(
+          supabase,
+          updated.id,
+          'updated',
+          session.username,
+          updated.invoice_status,
+          updated.invoice_status,
+          { action: 'Invoice Number Updated', invoice_number: manual_invoice_number }
+        );
+        return { invoice: updated as Invoice };
+      }
+    }
+
+    return created;
+  } catch (err) {
+    return {
+      error: err instanceof Error ? err.message : 'Failed to create invoice',
+    };
   }
 }
 
@@ -323,6 +582,83 @@ export async function getInvoiceByQuotationId(quotationId: string) {
   }
 }
 
+export async function getInvoiceById(invoiceId: string) {
+  try {
+    const session = await getSession();
+    ensureAdminOrSalesAgent(session);
+    if (!session) {
+      return { error: 'Unauthorized' };
+    }
+
+    if (!invoiceId) {
+      return { error: 'Invoice id is required' };
+    }
+
+    const supabase = await createAdminClient();
+    const { data, error } = await supabase
+      .from('invoices')
+      .select('*')
+      .eq('id', invoiceId)
+      .single();
+
+    if (error || !data) {
+      return { error: error?.message || 'Invoice not found' };
+    }
+
+    return { invoice: data as Invoice };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'An unexpected error occurred';
+    return { error: message };
+  }
+}
+
+export async function getInvoicesByContact(contactId: string) {
+  try {
+    const session = await getSession();
+    ensureAdminOrSalesAgent(session);
+    if (!session) return { error: 'Unauthorized' };
+    if (!contactId) return { error: 'Contact id is required' };
+
+    const supabase = await createAdminClient();
+
+    const { data: contact } = await supabase
+      .from('contacts')
+      .select('id, name')
+      .eq('id', contactId)
+      .single();
+    if (!contact) return { invoices: [] as Invoice[] };
+
+    const contactName = String(contact.name || '').trim();
+
+    let qQuery = supabase
+      .from('quotations')
+      .select('id')
+      .order('created_at', { ascending: false });
+
+    qQuery = contactName
+      ? qQuery.or(`contact_id.eq.${contactId},customer_name.ilike.${contactName}`)
+      : qQuery.eq('contact_id', contactId);
+
+    const { data: quoteRows, error: qErr } = await qQuery;
+    if (qErr) return { error: qErr.message };
+
+    const quotationIds = (quoteRows || []).map((q) => q.id);
+    if (quotationIds.length === 0) return { invoices: [] as Invoice[] };
+
+    const { data: invoices, error: invErr } = await supabase
+      .from('invoices')
+      .select('*')
+      .in('quotation_id', quotationIds)
+      .order('created_at', { ascending: false });
+    if (invErr) return { error: invErr.message };
+
+    return { invoices: (invoices || []) as Invoice[] };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'An unexpected error occurred';
+    return { error: message };
+  }
+}
+
 export async function updateInvoice(formData: FormData) {
   try {
     const session = await getSession();
@@ -336,6 +672,7 @@ export async function updateInvoice(formData: FormData) {
       return { error: 'Invoice id is required' };
     }
 
+    const invoice_number = String(formData.get('invoice_number') || '').trim();
     const customer_name = String(formData.get('customer_name') || '').trim();
     const product_service = String(formData.get('product_service') || '').trim();
     const quantity = parseFloat(String(formData.get('quantity') || '0'));
@@ -372,6 +709,7 @@ export async function updateInvoice(formData: FormData) {
     const { data, error } = await supabase
       .from('invoices')
       .update({
+        ...(invoice_number ? { invoice_number } : {}),
         customer_name,
         product_service,
         quantity,
@@ -400,6 +738,7 @@ export async function updateInvoice(formData: FormData) {
       data.invoice_status,
       {
         previous: {
+          invoice_number: currentInvoice.invoice_number,
           customer_name: currentInvoice.customer_name,
           product_service: currentInvoice.product_service,
           quantity: currentInvoice.quantity,
@@ -408,6 +747,7 @@ export async function updateInvoice(formData: FormData) {
           invoice_date: currentInvoice.invoice_date,
         },
         new: {
+          invoice_number: invoice_number || currentInvoice.invoice_number,
           customer_name,
           product_service,
           quantity,
@@ -883,5 +1223,120 @@ export async function logInvoicePrint(invoiceId: string) {
   } catch (err) {
     const message = err instanceof Error ? err.message : 'An unexpected error occurred';
     return { error: message };
+  }
+}
+
+export async function addInvoiceLogNote(invoiceId: string, note: string) {
+  try {
+    const session = await getSession();
+    ensureAdminOrSalesAgent(session);
+    if (!session) return { error: 'Unauthorized' };
+    if (!invoiceId || !note.trim()) return { error: 'Invoice id and note are required' };
+
+    const supabase = await createAdminClient();
+    const { data: invoice } = await supabase
+      .from('invoices')
+      .select('invoice_status')
+      .eq('id', invoiceId)
+      .single();
+    if (!invoice) return { error: 'Invoice not found' };
+
+    await logInvoiceAction(
+      supabase,
+      invoiceId,
+      'updated',
+      session.username,
+      invoice.invoice_status,
+      invoice.invoice_status,
+      { chatter_kind: 'note' as InvoiceChatterKind, note: note.trim() }
+    );
+    revalidatePath('/admin/dashboard');
+    revalidatePath('/sales-agent/dashboard');
+    return { success: true };
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : 'Failed to add note' };
+  }
+}
+
+export async function addInvoiceMessage(invoiceId: string, message: string) {
+  try {
+    const session = await getSession();
+    ensureAdminOrSalesAgent(session);
+    if (!session) return { error: 'Unauthorized' };
+    if (!invoiceId || !message.trim()) return { error: 'Invoice id and message are required' };
+
+    const supabase = await createAdminClient();
+    const { data: invoice } = await supabase
+      .from('invoices')
+      .select('invoice_status')
+      .eq('id', invoiceId)
+      .single();
+    if (!invoice) return { error: 'Invoice not found' };
+
+    await logInvoiceAction(
+      supabase,
+      invoiceId,
+      'updated',
+      session.username,
+      invoice.invoice_status,
+      invoice.invoice_status,
+      { chatter_kind: 'message' as InvoiceChatterKind, message: message.trim() }
+    );
+    revalidatePath('/admin/dashboard');
+    revalidatePath('/sales-agent/dashboard');
+    return { success: true };
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : 'Failed to add message' };
+  }
+}
+
+export async function addInvoiceActivity(
+  invoiceId: string,
+  summary: string,
+  dueDate: string | null
+) {
+  try {
+    const session = await getSession();
+    ensureAdminOrSalesAgent(session);
+    if (!session) return { error: 'Unauthorized' };
+    if (!invoiceId || !summary.trim()) return { error: 'Invoice id and summary are required' };
+
+    const supabase = await createAdminClient();
+    const { data: invoice } = await supabase
+      .from('invoices')
+      .select('invoice_status')
+      .eq('id', invoiceId)
+      .single();
+    if (!invoice) return { error: 'Invoice not found' };
+
+    await logInvoiceAction(
+      supabase,
+      invoiceId,
+      'updated',
+      session.username,
+      invoice.invoice_status,
+      invoice.invoice_status,
+      {
+        chatter_kind: 'activity' as InvoiceChatterKind,
+        summary: summary.trim(),
+        due_date: dueDate || null,
+      }
+    );
+    revalidatePath('/admin/dashboard');
+    revalidatePath('/sales-agent/dashboard');
+    return { success: true };
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : 'Failed to add activity' };
+  }
+}
+
+export async function getCurrentInvoiceUsername() {
+  try {
+    const session = await getSession();
+    ensureAdminOrSalesAgent(session);
+    if (!session) return { error: 'Unauthorized' };
+    return { username: session.username || '' };
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : 'Unable to resolve current user' };
   }
 }

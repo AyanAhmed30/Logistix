@@ -19,6 +19,11 @@ import {
   type QuotationStatus,
   type QuotationLog,
 } from "@/app/actions/quotations";
+import { getContactAutofillData } from "@/app/actions/contacts";
+import {
+  CustomerPicker,
+  type PickedCustomer,
+} from "@/components/admin/quotations/CustomerPicker";
 import {
   createInvoiceFromSalesOrder,
   getInvoiceByQuotationId,
@@ -60,6 +65,7 @@ import {
   StickyNote,
   CalendarClock,
   Clock,
+  AlertTriangle,
 } from "lucide-react";
 import jsPDF from "jspdf";
 import { Badge } from "@/components/ui/badge";
@@ -69,6 +75,7 @@ import { Badge } from "@/components/ui/badge";
 type ViewMode = "list" | "detail";
 
 type QuotationFormState = {
+  contact_id: string | null;
   customer_name: string;
   product_service: string;
   quantity: string;
@@ -87,6 +94,7 @@ const UOM_OPTIONS = [
 ] as const;
 
 const emptyForm: QuotationFormState = {
+  contact_id: null,
   customer_name: "",
   product_service: "",
   quantity: "",
@@ -473,7 +481,22 @@ function generateQuotationPdf(q: Quotation) {
 
 // ─── Main Component ──────────────────────────────────────────────────
 
-export function QuotationPanel({ salesAgentMode = false }: { salesAgentMode?: boolean } = {}) {
+export type QuotationPanelInitialPayload = {
+  /** When set and no quotationId, open "New" form with this contact pre-selected. */
+  contactId?: string | null;
+  /** When set, open the detail view for this existing quotation. */
+  quotationId?: string | null;
+  /** Monotonically-changing token so the same payload can be applied twice. */
+  token?: number;
+};
+
+export function QuotationPanel({
+  salesAgentMode = false,
+  initialPayload,
+}: {
+  salesAgentMode?: boolean;
+  initialPayload?: QuotationPanelInitialPayload;
+} = {}) {
   const router = useRouter();
   const [view, setView] = useState<ViewMode>("list");
   const [quotations, setQuotations] = useState<Quotation[]>([]);
@@ -483,6 +506,7 @@ export function QuotationPanel({ salesAgentMode = false }: { salesAgentMode?: bo
   const [isLoading, setIsLoading] = useState(true);
   const [isPending, startTransition] = useTransition();
   const [formState, setFormState] = useState<QuotationFormState>(emptyForm);
+  const [vendorWarning, setVendorWarning] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [logs, setLogs] = useState<QuotationLog[]>([]);
   const [invoiceMap, setInvoiceMap] = useState<Record<string, Invoice>>({});
@@ -566,6 +590,25 @@ export function QuotationPanel({ salesAgentMode = false }: { salesAgentMode?: bo
     fetchQuotations();
   }, [fetchQuotations]);
 
+  // Handle cross-module payloads (e.g. "open this quotation" or
+  // "new quotation prefilled with this contact").
+  useEffect(() => {
+    if (!initialPayload) return;
+    if (initialPayload.quotationId) {
+      const q = quotations.find((row) => row.id === initialPayload.quotationId);
+      if (q) {
+        openDetail(q);
+      } else if (!isLoading) {
+        toast.error("Quotation not found");
+      }
+      return;
+    }
+    if (initialPayload.contactId) {
+      openNew({ contact_id: initialPayload.contactId });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialPayload?.token]);
+
   // ─── Navigation ──────────────────────────────────────────
 
   function openDetail(quotation: Quotation) {
@@ -579,13 +622,18 @@ export function QuotationPanel({ salesAgentMode = false }: { salesAgentMode?: bo
     }
   }
 
-  function openNew() {
+  function openNew(prefill?: { contact_id?: string | null }) {
     setSelectedQuotation(null);
     setIsNewMode(true);
     setIsEditMode(true);
     setFormState({ ...emptyForm });
     setLogs([]);
+    setVendorWarning(null);
     setView("detail");
+    if (prefill?.contact_id) {
+      // Auto-fill from the contact asynchronously.
+      applyContactAutofill(prefill.contact_id);
+    }
   }
 
   function backToList() {
@@ -614,6 +662,7 @@ export function QuotationPanel({ salesAgentMode = false }: { salesAgentMode?: bo
     if (!selectedQuotation) return;
     const q = selectedQuotation;
     setFormState({
+      contact_id: q.contact_id || null,
       customer_name: q.customer_name,
       product_service: q.product_service,
       quantity: String(q.quantity),
@@ -624,6 +673,55 @@ export function QuotationPanel({ salesAgentMode = false }: { salesAgentMode?: bo
       payment_terms: q.payment_terms || "Immediate",
     });
     setIsEditMode(true);
+    setVendorWarning(null);
+  }
+
+  // ─── Customer picker / auto-fill ────────────────────────────
+
+  async function applyContactAutofill(contactId: string) {
+    const res = await getContactAutofillData(contactId);
+    if ("error" in res && res.error) {
+      toast.error(res.error);
+      return;
+    }
+    if ("data" in res) {
+      const c = res.data;
+      setFormState((prev) => ({
+        ...prev,
+        contact_id: c.id,
+        customer_name: c.name,
+        payment_terms: c.payment_terms || prev.payment_terms,
+      }));
+      setVendorWarning(
+        c.vendor_only
+          ? `"${c.name}" is flagged as a vendor. Continue only if this contact is also a customer.`
+          : null
+      );
+    }
+  }
+
+  function handleCustomerPicked(picked: PickedCustomer) {
+    setFormState((prev) => ({
+      ...prev,
+      contact_id: picked.contact_id,
+      customer_name: picked.name,
+    }));
+    setVendorWarning(
+      picked.vendor_only
+        ? `"${picked.name}" is flagged as a vendor. Continue only if this contact is also a customer.`
+        : null
+    );
+    // Fire-and-forget to pull pricing/terms/etc.
+    applyContactAutofill(picked.contact_id);
+  }
+
+  function openLinkedContact() {
+    const cid = selectedQuotation?.contact_id || formState.contact_id;
+    if (!cid) return;
+    if (typeof window === "undefined") return;
+    window.dispatchEvent(
+      new CustomEvent("admin:open-contact", { detail: { contactId: cid } })
+    );
   }
 
   // ─── Form handlers ──────────────────────────────────────
@@ -646,6 +744,7 @@ export function QuotationPanel({ salesAgentMode = false }: { salesAgentMode?: bo
 
     const fd = new FormData();
     if (selectedQuotation?.id) fd.set("id", selectedQuotation.id);
+    if (formState.contact_id) fd.set("contact_id", formState.contact_id);
     fd.set("customer_name", formState.customer_name.trim());
     fd.set("product_service", formState.product_service.trim());
     fd.set("quantity", formState.quantity);
@@ -850,8 +949,22 @@ export function QuotationPanel({ salesAgentMode = false }: { salesAgentMode?: bo
         toast.error(result.error || "Unable to create invoice");
         return;
       }
-      toast.success("Invoice created successfully");
+      const invoiceId =
+        "invoice" in result && result.invoice ? String(result.invoice.id) : null;
+      const alreadyExists =
+        "alreadyExists" in result ? Boolean(result.alreadyExists) : false;
+
+      toast.success(
+        alreadyExists ? "Invoice already exists. Opening invoice screen…" : "Invoice created successfully"
+      );
       fetchInvoiceForQuotation(selectedQuotation.id);
+      if (typeof window !== "undefined") {
+        window.dispatchEvent(
+          new CustomEvent("admin:open-invoice", {
+            detail: { invoiceId },
+          })
+        );
+      }
       router.refresh();
     });
   }
@@ -999,7 +1112,19 @@ export function QuotationPanel({ salesAgentMode = false }: { salesAgentMode?: bo
                       <Printer className="h-3.5 w-3.5 mr-1" /> Print
                     </Button>
                     {invoiceMap[q.id] ? (
-                      <Button variant="outline" size="sm" onClick={() => toast.info(`Invoice: ${invoiceMap[q.id].invoice_number}`)}>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => {
+                          if (typeof window !== "undefined") {
+                            window.dispatchEvent(
+                              new CustomEvent("admin:open-invoice", {
+                                detail: { invoiceId: invoiceMap[q.id].id },
+                              })
+                            );
+                          }
+                        }}
+                      >
                         <ExternalLink className="h-3.5 w-3.5 mr-1" /> View Invoice
                       </Button>
                     ) : (
@@ -1039,12 +1164,29 @@ export function QuotationPanel({ salesAgentMode = false }: { salesAgentMode?: bo
                     <div>
                       <Label className="text-xs text-slate-500 font-medium">Customer</Label>
                       {isEditMode ? (
-                        <Input
-                          value={formState.customer_name}
-                          onChange={(e) => handleFormChange("customer_name", e.target.value)}
-                          placeholder="Type to find a customer..."
-                          className="mt-1"
-                        />
+                        <div className="mt-1 space-y-2">
+                          <CustomerPicker
+                            contactId={formState.contact_id}
+                            customerName={formState.customer_name}
+                            onSelect={handleCustomerPicked}
+                          />
+                          {vendorWarning && (
+                            <div className="flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50 p-2 text-[11px] text-amber-800">
+                              <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-0.5" />
+                              <span>{vendorWarning}</span>
+                            </div>
+                          )}
+                        </div>
+                      ) : q?.contact_id ? (
+                        <button
+                          type="button"
+                          onClick={openLinkedContact}
+                          className="mt-1 text-left font-semibold text-violet-700 hover:underline inline-flex items-center gap-1"
+                          title="Open linked contact"
+                        >
+                          {q?.customer_name || "-"}
+                          <ExternalLink className="h-3.5 w-3.5" />
+                        </button>
                       ) : (
                         <div className="font-semibold mt-1 text-slate-800">
                           {q?.customer_name || "-"}

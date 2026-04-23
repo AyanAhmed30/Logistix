@@ -101,6 +101,19 @@ type Props = {
       | "calculator-config"
       | "contacts"
   ) => void;
+  quotationPayload?: {
+    contactId?: string | null;
+    quotationId?: string | null;
+    token: number;
+  } | null;
+  contactPayload?: {
+    contactId?: string | null;
+    token: number;
+  } | null;
+  invoicePayload?: {
+    invoiceId?: string | null;
+    token: number;
+  } | null;
 };
 
 export function AdminUserManager({
@@ -111,6 +124,9 @@ export function AdminUserManager({
   onSidebarClose,
   activeTab,
   onTabChange,
+  quotationPayload,
+  contactPayload,
+  invoicePayload,
 }: Props) {
   const router = useRouter();
   // Initialize sub-tabs based on activeTab
@@ -173,6 +189,24 @@ export function AdminUserManager({
       }, 0);
     }
   }, [activeTab]);
+
+  // When a cross-module payload arrives for the quotation module, make sure
+  // the accounting "Quotation" sub-tab is active.
+  useEffect(() => {
+    if (!quotationPayload?.token) return;
+    if (activeTab === "accounting") {
+      setAccountingSubTab("quotation");
+    }
+  }, [quotationPayload?.token, activeTab]);
+
+  // When a cross-module payload arrives for the invoice module, make sure
+  // the accounting "Customer Invoice" sub-tab is active.
+  useEffect(() => {
+    if (!invoicePayload?.token) return;
+    if (activeTab === "accounting") {
+      setAccountingSubTab("customer-invoice");
+    }
+  }, [invoicePayload?.token, activeTab]);
 
   const sortedUsers = useMemo(() => {
     return [...users].sort(
@@ -495,7 +529,7 @@ export function AdminUserManager({
         ) : activeTab === "sales" ? (
           <SalesPanel />
         ) : activeTab === "contacts" ? (
-          <ContactsPanel />
+          <ContactsPanel initialPayload={contactPayload} />
         ) : activeTab === "operations" ? (
           <div className="space-y-6">
             {/* Sub-tabs */}
@@ -641,7 +675,7 @@ export function AdminUserManager({
 
             {/* Quotation Sub-tab Content */}
             {accountingSubTab === "quotation" && (
-              <QuotationPanel />
+              <QuotationPanel initialPayload={quotationPayload} />
             )}
 
             {accountingSubTab === "chart-of-accounts" && (
@@ -662,7 +696,7 @@ export function AdminUserManager({
 
             {/* Customer Invoice Sub-tab Content */}
             {accountingSubTab === "customer-invoice" && (
-              <InvoicePanel />
+              <InvoicePanel initialPayload={invoicePayload} />
             )}
 
             {accountingSubTab === "vendor-bills" && (

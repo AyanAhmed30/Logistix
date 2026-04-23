@@ -27,6 +27,8 @@ import {
   Globe,
   Tag as TagIcon,
   ImageIcon,
+  FileText,
+  ArrowUpRight,
 } from "lucide-react";
 import {
   createContact,
@@ -47,6 +49,16 @@ import {
 } from "@/app/actions/contacts";
 import { ContactChatter } from "@/components/admin/contacts/ContactChatter";
 import { ChildContactDialog } from "@/components/admin/contacts/ChildContactDialog";
+import {
+  getQuotationsByContact,
+  type Quotation,
+  type QuotationStatus,
+} from "@/app/actions/quotations";
+import {
+  getInvoicesByContact,
+  type Invoice,
+  type InvoiceStatus,
+} from "@/app/actions/invoices";
 
 type Props = {
   contactId: string | null;
@@ -761,12 +773,19 @@ export function ContactFormView({ contactId, onBack, onSaved }: Props) {
             {/* Tab Content */}
             <div className="p-6">
               {activeTab === "contacts" && (
-                <ContactsTabContent
-                  relatedContacts={loadedContact?.children || []}
-                  canAddChild
-                  onAddChild={handleAddRelated}
-                  onDeleteChild={handleChildDelete}
-                />
+                <div className="space-y-8">
+                  <ContactsTabContent
+                    relatedContacts={loadedContact?.children || []}
+                    canAddChild
+                    onAddChild={handleAddRelated}
+                    onDeleteChild={handleChildDelete}
+                  />
+                  <LinkedQuotationsSection
+                    contactId={savedId}
+                    contactName={form.name}
+                  />
+                  <LinkedInvoicesSection contactId={savedId} />
+                </div>
               )}
 
               {activeTab === "sales" && (
@@ -1333,6 +1352,326 @@ function AccountingTab({
           Used on customer invoices.
         </p>
       </div>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────
+// Linked Quotations section (shown on the Contacts tab)
+// ─────────────────────────────────────────────────────────────
+
+function formatQuotationStatus(status: QuotationStatus): string {
+  switch (status) {
+    case "quotation":
+      return "Quotation";
+    case "quotation_sent":
+      return "Sent";
+    case "sales_order":
+      return "Sales Order";
+    default:
+      return status;
+  }
+}
+
+function quotationStatusClasses(status: QuotationStatus): string {
+  switch (status) {
+    case "quotation":
+      return "bg-emerald-50 text-emerald-700 border-emerald-200";
+    case "quotation_sent":
+      return "bg-green-50 text-green-700 border-green-300";
+    case "sales_order":
+      return "bg-purple-50 text-purple-700 border-purple-200";
+    default:
+      return "bg-slate-50 text-slate-700 border-slate-200";
+  }
+}
+
+function formatInvoiceStatus(status: InvoiceStatus): string {
+  switch (status) {
+    case "draft":
+      return "Draft";
+    case "approved":
+      return "Approved";
+    case "confirmed":
+      return "Confirmed";
+    case "posted":
+      return "Posted";
+    case "partially_paid":
+      return "Partially Paid";
+    case "paid":
+      return "Paid";
+    case "cancelled":
+      return "Cancelled";
+    default:
+      return status;
+  }
+}
+
+function invoiceStatusClasses(status: InvoiceStatus): string {
+  switch (status) {
+    case "draft":
+      return "bg-slate-50 text-slate-700 border-slate-200";
+    case "approved":
+      return "bg-sky-50 text-sky-700 border-sky-200";
+    case "confirmed":
+      return "bg-cyan-50 text-cyan-700 border-cyan-200";
+    case "posted":
+      return "bg-indigo-50 text-indigo-700 border-indigo-200";
+    case "partially_paid":
+      return "bg-amber-50 text-amber-700 border-amber-200";
+    case "paid":
+      return "bg-emerald-50 text-emerald-700 border-emerald-200";
+    case "cancelled":
+      return "bg-rose-50 text-rose-700 border-rose-200";
+    default:
+      return "bg-slate-50 text-slate-700 border-slate-200";
+  }
+}
+
+function LinkedQuotationsSection({
+  contactId,
+  contactName,
+}: {
+  contactId: string | null;
+  contactName: string;
+}) {
+  const [quotations, setQuotations] = useState<Quotation[]>([]);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (!contactId) {
+      setQuotations([]);
+      return;
+    }
+    setLoading(true);
+    getQuotationsByContact(contactId).then((res) => {
+      Promise.resolve().then(() => {
+        if ("error" in res && res.error) {
+          setQuotations([]);
+        } else if ("quotations" in res && res.quotations) {
+          setQuotations(res.quotations);
+        }
+        setLoading(false);
+      });
+    });
+  }, [contactId]);
+
+  function openQuotation(qId: string) {
+    if (typeof window === "undefined") return;
+    window.dispatchEvent(
+      new CustomEvent("admin:open-quotation", {
+        detail: { quotationId: qId },
+      })
+    );
+  }
+
+  function createQuotationForContact() {
+    if (!contactId) {
+      toast.error("Save the contact first to create a quotation.");
+      return;
+    }
+    if (typeof window === "undefined") return;
+    window.dispatchEvent(
+      new CustomEvent("admin:open-quotation", {
+        detail: { contactId, contactName },
+      })
+    );
+  }
+
+  const total = quotations.reduce((sum, q) => sum + Number(q.total_amount || 0), 0);
+
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-3">
+        <div className="flex items-center gap-2">
+          <FileText className="h-4 w-4 text-slate-500" />
+          <h3 className="text-sm font-semibold text-primary-dark">Quotations</h3>
+          <span className="text-xs text-secondary-muted">
+            {quotations.length} record{quotations.length !== 1 ? "s" : ""}
+            {quotations.length > 0 && (
+              <> • Total {total.toFixed(2)} Rs.</>
+            )}
+          </span>
+        </div>
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          onClick={createQuotationForContact}
+          disabled={!contactId}
+          className="gap-1.5"
+        >
+          <Plus className="h-3.5 w-3.5" />
+          New Quotation
+        </Button>
+      </div>
+
+      {!contactId ? (
+        <div className="border border-dashed rounded-lg p-6 text-center text-xs text-secondary-muted">
+          Save the contact first to see linked quotations.
+        </div>
+      ) : loading ? (
+        <div className="border rounded-lg p-6 text-center text-xs text-secondary-muted">
+          Loading quotations…
+        </div>
+      ) : quotations.length === 0 ? (
+        <div className="border border-dashed rounded-lg p-6 text-center text-xs text-secondary-muted">
+          No quotations linked to this contact yet.
+        </div>
+      ) : (
+        <div className="border rounded-lg overflow-hidden">
+          <table className="w-full text-sm">
+            <thead className="bg-slate-50 text-xs text-secondary-muted">
+              <tr>
+                <th className="text-left font-medium px-3 py-2">Number</th>
+                <th className="text-left font-medium px-3 py-2">Date</th>
+                <th className="text-left font-medium px-3 py-2">Status</th>
+                <th className="text-right font-medium px-3 py-2">Total</th>
+                <th className="w-10 px-3 py-2" />
+              </tr>
+            </thead>
+            <tbody>
+              {quotations.map((q) => (
+                <tr
+                  key={q.id}
+                  className="border-t hover:bg-violet-50/50 transition-colors cursor-pointer"
+                  onClick={() => openQuotation(q.id)}
+                >
+                  <td className="px-3 py-2 font-medium text-violet-700">
+                    {q.quotation_number || `QT-${q.id.substring(0, 8).toUpperCase()}`}
+                  </td>
+                  <td className="px-3 py-2 text-slate-700">
+                    {new Date(q.created_at).toLocaleDateString()}
+                  </td>
+                  <td className="px-3 py-2">
+                    <span
+                      className={`inline-flex items-center text-[11px] font-medium px-2 py-0.5 rounded-full border ${quotationStatusClasses(
+                        q.status
+                      )}`}
+                    >
+                      {formatQuotationStatus(q.status)}
+                    </span>
+                  </td>
+                  <td className="px-3 py-2 text-right font-semibold text-slate-800">
+                    {Number(q.total_amount || 0).toFixed(2)} Rs.
+                  </td>
+                  <td className="px-3 py-2 text-slate-400">
+                    <ArrowUpRight className="h-4 w-4" />
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function LinkedInvoicesSection({ contactId }: { contactId: string | null }) {
+  const [invoices, setInvoices] = useState<Invoice[]>([]);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (!contactId) {
+      setInvoices([]);
+      return;
+    }
+    setLoading(true);
+    getInvoicesByContact(contactId).then((res) => {
+      Promise.resolve().then(() => {
+        if ("error" in res && res.error) {
+          setInvoices([]);
+        } else if ("invoices" in res && res.invoices) {
+          setInvoices(res.invoices);
+        }
+        setLoading(false);
+      });
+    });
+  }, [contactId]);
+
+  function openInvoice(invoiceId: string) {
+    if (typeof window === "undefined") return;
+    window.dispatchEvent(
+      new CustomEvent("admin:open-invoice", {
+        detail: { invoiceId },
+      })
+    );
+  }
+
+  const total = invoices.reduce((sum, i) => sum + Number(i.total_amount || 0), 0);
+
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-3">
+        <div className="flex items-center gap-2">
+          <FileText className="h-4 w-4 text-slate-500" />
+          <h3 className="text-sm font-semibold text-primary-dark">Invoices</h3>
+          <span className="text-xs text-secondary-muted">
+            {invoices.length} record{invoices.length !== 1 ? "s" : ""}
+            {invoices.length > 0 && <> • Total {total.toFixed(2)} Rs.</>}
+          </span>
+        </div>
+      </div>
+
+      {!contactId ? (
+        <div className="border border-dashed rounded-lg p-6 text-center text-xs text-secondary-muted">
+          Save the contact first to see linked invoices.
+        </div>
+      ) : loading ? (
+        <div className="border rounded-lg p-6 text-center text-xs text-secondary-muted">
+          Loading invoices…
+        </div>
+      ) : invoices.length === 0 ? (
+        <div className="border border-dashed rounded-lg p-6 text-center text-xs text-secondary-muted">
+          No invoices linked to this contact yet.
+        </div>
+      ) : (
+        <div className="border rounded-lg overflow-hidden">
+          <table className="w-full text-sm">
+            <thead className="bg-slate-50 text-xs text-secondary-muted">
+              <tr>
+                <th className="text-left font-medium px-3 py-2">Number</th>
+                <th className="text-left font-medium px-3 py-2">Date</th>
+                <th className="text-left font-medium px-3 py-2">Status</th>
+                <th className="text-right font-medium px-3 py-2">Total</th>
+                <th className="w-10 px-3 py-2" />
+              </tr>
+            </thead>
+            <tbody>
+              {invoices.map((i) => (
+                <tr
+                  key={i.id}
+                  className="border-t hover:bg-violet-50/50 transition-colors cursor-pointer"
+                  onClick={() => openInvoice(i.id)}
+                >
+                  <td className="px-3 py-2 font-medium text-violet-700">
+                    {i.invoice_number}
+                  </td>
+                  <td className="px-3 py-2 text-slate-700">
+                    {new Date(i.created_at).toLocaleDateString()}
+                  </td>
+                  <td className="px-3 py-2">
+                    <span
+                      className={`inline-flex items-center text-[11px] font-medium px-2 py-0.5 rounded-full border ${invoiceStatusClasses(
+                        i.invoice_status
+                      )}`}
+                    >
+                      {formatInvoiceStatus(i.invoice_status)}
+                    </span>
+                  </td>
+                  <td className="px-3 py-2 text-right font-semibold text-slate-800">
+                    {Number(i.total_amount || 0).toFixed(2)} Rs.
+                  </td>
+                  <td className="px-3 py-2 text-slate-400">
+                    <ArrowUpRight className="h-4 w-4" />
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   );
 }

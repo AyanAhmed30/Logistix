@@ -43,6 +43,60 @@ export function AdminDashboardShell({ users, dbError }: Props) {
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const [unreadCount, setUnreadCount] = useState(0);
 
+  // Cross-module navigation payloads
+  const [quotationPayload, setQuotationPayload] = useState<{
+    contactId?: string | null;
+    quotationId?: string | null;
+    token: number;
+  } | null>(null);
+  const [contactPayload, setContactPayload] = useState<{
+    contactId?: string | null;
+    token: number;
+  } | null>(null);
+  const [invoicePayload, setInvoicePayload] = useState<{
+    invoiceId?: string | null;
+    token: number;
+  } | null>(null);
+
+  // Listen for module-to-module navigation events.
+  useEffect(() => {
+    function onOpenQuotation(e: Event) {
+      const detail = (e as CustomEvent).detail || {};
+      setQuotationPayload({
+        contactId: detail.contactId ?? null,
+        quotationId: detail.quotationId ?? null,
+        token: Date.now(),
+      });
+      // QuotationPanel lives under the Accounting tab → Quotation sub-tab.
+      setActiveTab("accounting");
+    }
+    function onOpenContact(e: Event) {
+      const detail = (e as CustomEvent).detail || {};
+      if (!detail.contactId) return;
+      setContactPayload({
+        contactId: String(detail.contactId),
+        token: Date.now(),
+      });
+      setActiveTab("contacts");
+    }
+    function onOpenInvoice(e: Event) {
+      const detail = (e as CustomEvent).detail || {};
+      setInvoicePayload({
+        invoiceId: detail.invoiceId ? String(detail.invoiceId) : null,
+        token: Date.now(),
+      });
+      setActiveTab("accounting");
+    }
+    window.addEventListener("admin:open-quotation", onOpenQuotation);
+    window.addEventListener("admin:open-contact", onOpenContact);
+    window.addEventListener("admin:open-invoice", onOpenInvoice);
+    return () => {
+      window.removeEventListener("admin:open-quotation", onOpenQuotation);
+      window.removeEventListener("admin:open-contact", onOpenContact);
+      window.removeEventListener("admin:open-invoice", onOpenInvoice);
+    };
+  }, []);
+
   useEffect(() => {
     let isMounted = true;
     const lastSeenRaw = localStorage.getItem("admin_notifications_seen_at");
@@ -146,6 +200,9 @@ export function AdminDashboardShell({ users, dbError }: Props) {
         onSidebarClose={() => setIsSidebarOpen(false)}
         activeTab={activeTab}
         onTabChange={setActiveTab}
+        quotationPayload={quotationPayload}
+        contactPayload={contactPayload}
+        invoicePayload={invoicePayload}
       />
     </div>
   );

@@ -11,6 +11,7 @@ export type Quotation = {
   id: string;
   quotation_number: string | null;
   partner_id: string | null;
+  contact_id: string | null;
   customer_name: string;
   product_service: string;
   quantity: number;
@@ -94,6 +95,8 @@ export async function createQuotation(formData: FormData) {
       return { error: 'Unauthorized' };
     }
 
+    const contact_id_raw = String(formData.get('contact_id') || '').trim();
+    const contact_id = contact_id_raw.length > 0 ? contact_id_raw : null;
     const customer_name = String(formData.get('customer_name') || '').trim();
     const product_service = String(formData.get('product_service') || '').trim();
     const quantity = parseFloat(String(formData.get('quantity') || '0'));
@@ -118,22 +121,24 @@ export async function createQuotation(formData: FormData) {
 
     const supabase = await createAdminClient();
 
-    const { data: partnerRows, error: partnerError } = await supabase
+    // Resolve partner_id (best-effort: no longer a hard requirement
+    // since the new flow is anchored on contact_id).
+    let partner_id: string | null = null;
+    const { data: partnerRows } = await supabase
       .from('partners')
       .select('id, name, partner_type, status')
       .ilike('name', customer_name)
       .eq('status', 'active')
       .limit(5);
-
-    if (partnerError) {
-      return { error: partnerError.message };
-    }
-
     const customerPartners = (partnerRows || []).filter((row) => canPartnerBeCustomer(row.partner_type));
-    if (customerPartners.length === 0) {
-      return { error: `Active customer partner "${customer_name}" not found.` };
-    }
-    if (customerPartners.length > 1) {
+    if (customerPartners.length === 1) {
+      partner_id = customerPartners[0].id;
+    } else if (!contact_id) {
+      // Only enforce the partner match when there is no contact link at all,
+      // to keep the legacy flow working.
+      if (customerPartners.length === 0) {
+        return { error: `Active customer partner "${customer_name}" not found.` };
+      }
       return { error: `Multiple active customer partners matched "${customer_name}". Please use unique partner names.` };
     }
 
@@ -145,7 +150,8 @@ export async function createQuotation(formData: FormData) {
       .insert([
         {
           quotation_number,
-          partner_id: customerPartners[0].id,
+          partner_id,
+          contact_id,
           customer_name,
           product_service,
           quantity,
@@ -248,6 +254,49 @@ export async function getAllQuotationsForSalesAgent(status?: QuotationStatus) {
   }
 }
 
+/**
+ * Fetch every quotation that belongs to a given contact.
+ * Matches either the new contact_id link or, for legacy rows, an
+ * exact (case-insensitive) customer_name match against the contact's name.
+ */
+export async function getQuotationsByContact(contactId: string) {
+  try {
+    const session = await getSession();
+    ensureAdminOrSalesAgent(session);
+    if (!session) return { error: 'Unauthorized' };
+    if (!contactId) return { error: 'Contact id is required' };
+
+    const supabase = await createAdminClient();
+
+    const { data: contact } = await supabase
+      .from('contacts')
+      .select('id, name')
+      .eq('id', contactId)
+      .single();
+
+    if (!contact) return { quotations: [] as Quotation[] };
+
+    const nameFilter = contact.name ? String(contact.name).trim() : '';
+
+    let query = supabase
+      .from('quotations')
+      .select('*')
+      .order('created_at', { ascending: false });
+
+    query = nameFilter
+      ? query.or(`contact_id.eq.${contactId},customer_name.ilike.${nameFilter}`)
+      : query.eq('contact_id', contactId);
+
+    const { data, error } = await query;
+
+    if (error) return { error: error.message };
+    return { quotations: (data || []) as Quotation[] };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'An unexpected error occurred';
+    return { error: message };
+  }
+}
+
 export async function updateQuotation(formData: FormData) {
   try {
     const session = await getSession();
@@ -261,6 +310,8 @@ export async function updateQuotation(formData: FormData) {
       return { error: 'Quotation id is required' };
     }
 
+    const contact_id_raw = String(formData.get('contact_id') || '').trim();
+    const contact_id = contact_id_raw.length > 0 ? contact_id_raw : null;
     const customer_name = String(formData.get('customer_name') || '').trim();
     const product_service = String(formData.get('product_service') || '').trim();
     const quantity = parseFloat(String(formData.get('quantity') || '0'));
@@ -296,28 +347,29 @@ export async function updateQuotation(formData: FormData) {
       return { error: 'Quotation not found' };
     }
 
-    const { data: partnerRows, error: partnerError } = await supabase
+    // Resolve partner_id (best-effort when a contact is linked).
+    let partner_id: string | null = currentQuotation.partner_id || null;
+    const { data: partnerRows } = await supabase
       .from('partners')
       .select('id, name, partner_type, status')
       .ilike('name', customer_name)
       .eq('status', 'active')
       .limit(5);
-
-    if (partnerError) {
-      return { error: partnerError.message };
-    }
     const customerPartners = (partnerRows || []).filter((row) => canPartnerBeCustomer(row.partner_type));
-    if (customerPartners.length === 0) {
-      return { error: `Active customer partner "${customer_name}" not found.` };
-    }
-    if (customerPartners.length > 1) {
+    if (customerPartners.length === 1) {
+      partner_id = customerPartners[0].id;
+    } else if (!contact_id) {
+      if (customerPartners.length === 0) {
+        return { error: `Active customer partner "${customer_name}" not found.` };
+      }
       return { error: `Multiple active customer partners matched "${customer_name}". Please use unique partner names.` };
     }
 
     const { data, error } = await supabase
       .from('quotations')
       .update({
-        partner_id: customerPartners[0].id,
+        partner_id,
+        contact_id,
         customer_name,
         product_service,
         quantity,

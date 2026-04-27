@@ -218,6 +218,11 @@ function toComparableValue(value: unknown) {
   return String(value);
 }
 
+function isValidDecimal(value: string) {
+  if (!value.trim()) return true;
+  return /^(?:\d+|\d+\.\d+|\d*\.\d+)$/.test(value.trim());
+}
+
 async function addLeadActivityLog(
   supabase: Awaited<ReturnType<typeof createAdminClient>>,
   input: {
@@ -299,6 +304,10 @@ export async function saveInquiry(
       additional_image_urls: Array.isArray(data.additional_image_urls) ? data.additional_image_urls : [],
       updated_at: new Date().toISOString(),
     };
+
+    if (!isValidDecimal(inquiryData.cbm)) {
+      return { error: 'CBM must be a valid decimal number (e.g. 1.5).' };
+    }
 
     if (latest && latest.id) {
       // Load current values to compute diffs for inquiry logs (draft or already sent — update in place).
@@ -1436,6 +1445,10 @@ export async function updateInquiryForAccounting(
         : [];
     }
 
+    if (updates.cbm !== undefined && !isValidDecimal(updates.cbm)) {
+      return { error: 'CBM must be a valid decimal number (e.g. 1.5).' };
+    }
+
     const { data, error } = await supabase
       .from('lead_inquiries')
       .update(updateData)
@@ -1558,6 +1571,99 @@ export async function deleteInquiry(inquiryId: string) {
     revalidatePath('/operations/dashboard');
     invalidateOperationsInquiriesCache();
     return { success: true };
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };
+  }
+}
+
+export async function deleteInquiryForSalesAgent(inquiryId: string) {
+  try {
+    const session = await getSession();
+    if (!session || session.role !== 'sales_agent') {
+      return { error: 'Unauthorized' };
+    }
+    const supabase = await createAdminClient();
+
+    const { data: salesAgent } = await supabase
+      .from('sales_agents')
+      .select('id')
+      .eq('username', session.username)
+      .maybeSingle();
+    if (!salesAgent) return { error: 'Unauthorized' };
+
+    const { data: inquiry, error: fetchError } = await supabase
+      .from('lead_inquiries')
+      .select('id, lead_id, product_name, sent_to_accounting, approval_status, version_number')
+      .eq('id', inquiryId)
+      .maybeSingle();
+    if (fetchError || !inquiry) return { error: 'Inquiry not found' };
+
+    const { data: lead } = await supabase
+      .from('leads')
+      .select('id, sales_agent_id')
+      .eq('id', inquiry.lead_id)
+      .maybeSingle();
+    if (!lead || lead.sales_agent_id !== salesAgent.id) {
+      return { error: 'Unauthorized' };
+    }
+
+    if (inquiry.approval_status === 'approved') {
+      return { error: 'Approved inquiries cannot be deleted.' };
+    }
+
+    await addLeadActivityLog(supabase, {
+      leadId: inquiry.lead_id,
+      inquiryId: inquiry.id,
+      inquiryVersion: inquiry.version_number || null,
+      actionType: 'inquiry_edited',
+      actionLabel: 'Inquiry Deleted',
+      performedBy: session.username || 'sales-agent',
+      previousValues: { product_name: inquiry.product_name, sent_to_accounting: inquiry.sent_to_accounting },
+    });
+
+    const { error } = await supabase
+      .from('lead_inquiries')
+      .delete()
+      .eq('id', inquiryId);
+    if (error) return { error: error.message };
+
+    revalidatePath('/sales-agent/dashboard');
+    revalidatePath('/admin/dashboard');
+    revalidatePath('/operations/dashboard');
+    invalidateOperationsInquiriesCache();
+    return { success: true };
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };
+  }
+}
+
+export async function getLatestQuotationPricingByInquiryIds(inquiryIds: string[]) {
+  try {
+    const session = await getSession();
+    if (!session) return { error: 'Unauthorized' };
+    const ids = Array.isArray(inquiryIds) ? inquiryIds.filter(Boolean) : [];
+    if (ids.length === 0) return { pricing: {} as Record<string, { quotation_number: string; unit_price: number; total_amount: number; notes: string | null }> };
+
+    const supabase = await createAdminClient();
+    const { data, error } = await supabase
+      .from('inquiry_quotations')
+      .select('inquiry_id, quotation_number, unit_price, total_amount, notes, version')
+      .in('inquiry_id', ids)
+      .order('version', { ascending: false });
+    if (error) return { error: error.message };
+
+    const pricing: Record<string, { quotation_number: string; unit_price: number; total_amount: number; notes: string | null }> = {};
+    for (const row of data || []) {
+      const inquiryId = String(row.inquiry_id || '');
+      if (!inquiryId || pricing[inquiryId]) continue;
+      pricing[inquiryId] = {
+        quotation_number: String(row.quotation_number || ''),
+        unit_price: Number(row.unit_price || 0),
+        total_amount: Number(row.total_amount || 0),
+        notes: row.notes ? String(row.notes) : null,
+      };
+    }
+    return { pricing };
   } catch (err) {
     return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };
   }

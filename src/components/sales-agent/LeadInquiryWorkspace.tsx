@@ -28,10 +28,12 @@ import {
   saveInquiry,
   sendInquiryToAccounting,
   getInquiriesForLead,
+  deleteInquiryForSalesAgent,
   getInquiryLogs,
   recordInquiryViewed,
   updateInquiryForAccounting,
   getQuotationsForInquiry,
+  getLatestQuotationPricingByInquiryIds,
   type LeadInquiry,
   type InquiryLog,
   type InquiryQuotation,
@@ -40,6 +42,7 @@ import {
   Dialog,
   DialogContent,
   DialogDescription,
+  DialogFooter,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
@@ -70,6 +73,11 @@ function pickPrimaryQuotation(quotations: InquiryQuotation[]): InquiryQuotation 
 
 function formatInquiryMoney(n: number) {
   return `Rs. ${Number(n).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
+
+function isDecimalString(value: string) {
+  if (!value.trim()) return true;
+  return /^(?:\d+|\d+\.\d+|\d*\.\d+)$/.test(value.trim());
 }
 
 function buildApprovedInquiryDetailText(inq: LeadInquiry, quotations: InquiryQuotation[]): string {
@@ -168,6 +176,11 @@ export function LeadInquiryWorkspace({
   const [approvedDetailLoading, setApprovedDetailLoading] = useState(false);
   const [approvedDetailText, setApprovedDetailText] = useState("");
   const [approvedDetailTitle, setApprovedDetailTitle] = useState("");
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [pricingByInquiryId, setPricingByInquiryId] = useState<
+    Record<string, { quotation_number: string; unit_price: number; total_amount: number; notes: string | null }>
+  >({});
 
   const fetchInquiryData = useCallback(async () => {
     if (!lead) return;
@@ -192,6 +205,19 @@ export function LeadInquiryWorkspace({
         const nextApprovedFallback =
           ("approvedInquiryId" in inquiryListResult ? inquiryListResult.approvedInquiryId : null) || null;
         setLeadInquiries(list);
+        const approvedInquiryIds = list
+          .filter((x) => salesInquiryIsApproved(x, nextApprovedFallback))
+          .map((x) => x.id);
+        if (approvedInquiryIds.length > 0) {
+          const pricingResult = await getLatestQuotationPricingByInquiryIds(approvedInquiryIds);
+          if (!("error" in pricingResult)) {
+            setPricingByInquiryId(pricingResult.pricing || {});
+          } else {
+            setPricingByInquiryId({});
+          }
+        } else {
+          setPricingByInquiryId({});
+        }
         setApprovedInquiryId(nextApprovedFallback);
 
         const selected = selectedInquiryId
@@ -293,6 +319,7 @@ export function LeadInquiryWorkspace({
       setApprovedDetailLoading(false);
       setApprovedDetailText("");
       setApprovedDetailTitle("");
+      setPricingByInquiryId({});
       setBaselineDraftState({
         product_name: "",
         total_weight: "",
@@ -397,6 +424,15 @@ export function LeadInquiryWorkspace({
 
   function toDigitsOnly(value: string) {
     return value.replace(/\D/g, "");
+  }
+
+  function toDecimalInput(value: string) {
+    let next = value.replace(/[^0-9.]/g, "");
+    const firstDot = next.indexOf(".");
+    if (firstDot !== -1) {
+      next = next.slice(0, firstDot + 1) + next.slice(firstDot + 1).replace(/\./g, "");
+    }
+    return next;
   }
 
   function formatLogAction(action: string) {
@@ -540,8 +576,8 @@ export function LeadInquiryWorkspace({
       toast.error("Quantity must be an integer.");
       return;
     }
-    if (cbm.trim() && !isIntegerString(cbm.trim())) {
-      toast.error("CBM (Cubic Meter) must be an integer.");
+    if (cbm.trim() && !isDecimalString(cbm.trim())) {
+      toast.error("CBM (Cubic Meter) must be a valid number (e.g. 1.5).");
       return;
     }
     startTransition(async () => {
@@ -601,8 +637,8 @@ export function LeadInquiryWorkspace({
       toast.error("Quantity must be an integer.");
       return;
     }
-    if (cbm.trim() && !isIntegerString(cbm.trim())) {
-      toast.error("CBM (Cubic Meter) must be an integer.");
+    if (cbm.trim() && !isDecimalString(cbm.trim())) {
+      toast.error("CBM (Cubic Meter) must be a valid number (e.g. 1.5).");
       return;
     }
     startTransition(async () => {
@@ -694,8 +730,8 @@ export function LeadInquiryWorkspace({
       toast.error("Quantity must be an integer.");
       return;
     }
-    if (cbm.trim() && !isIntegerString(cbm.trim())) {
-      toast.error("CBM (Cubic Meter) must be an integer.");
+    if (cbm.trim() && !isDecimalString(cbm.trim())) {
+      toast.error("CBM (Cubic Meter) must be a valid number (e.g. 1.5).");
       return;
     }
 
@@ -747,6 +783,23 @@ export function LeadInquiryWorkspace({
     () => leadInquiries.filter((inq) => salesInquiryIsApproved(inq, approvedInquiryId)),
     [leadInquiries, approvedInquiryId]
   );
+
+  async function handleDeleteInquiry() {
+    if (!inquiry?.id) return;
+    setIsDeleting(true);
+    const result = await deleteInquiryForSalesAgent(inquiry.id);
+    setIsDeleting(false);
+    if ("error" in result) {
+      toast.error(result.error || "Unable to delete inquiry.");
+      return;
+    }
+    toast.success("Inquiry deleted");
+    setDeleteDialogOpen(false);
+    setInquiry(null);
+    setSelectedInquiryId("");
+    setInquiryLogs([]);
+    await fetchInquiryData();
+  }
 
   const statusTabInquiries = useMemo(
     () =>
@@ -897,9 +950,14 @@ export function LeadInquiryWorkspace({
               </Button>
             </>
           ) : (
-            <Button type="button" variant="outline" size="sm" onClick={handleStartViewEdit}>
-              Edit
-            </Button>
+            <>
+              <Button type="button" variant="outline" size="sm" onClick={handleStartViewEdit}>
+                Edit
+              </Button>
+              <Button type="button" variant="destructive" size="sm" onClick={() => setDeleteDialogOpen(true)}>
+                Delete
+              </Button>
+            </>
           )}
         </div>
       )}
@@ -959,9 +1017,9 @@ export function LeadInquiryWorkspace({
           <Input
             placeholder="e.g. 12"
             value={cbm}
-            inputMode={canEditForm ? "numeric" : "text"}
-            pattern={canEditForm ? "[0-9]*" : undefined}
-            onChange={(e) => setCbm(canEditForm ? toDigitsOnly(e.target.value) : e.target.value)}
+            inputMode={canEditForm ? "decimal" : "text"}
+            pattern={canEditForm ? "^[0-9]*\\.?[0-9]*$" : undefined}
+            onChange={(e) => setCbm(canEditForm ? toDecimalInput(e.target.value) : e.target.value)}
             disabled={!canEditForm}
             className="h-10 rounded-sm border-slate-200 bg-white"
           />
@@ -1317,6 +1375,16 @@ export function LeadInquiryWorkspace({
                                       ) : (
                                         <p className="text-[10px] text-slate-500">Awaiting approval</p>
                                       )}
+                                      {isApproved && pricingByInquiryId[inq.id] ? (
+                                        <div className="rounded-sm border border-emerald-200 bg-white px-2 py-1 text-[10px] leading-tight">
+                                          <p className="font-semibold text-emerald-900">
+                                            Unit: {formatInquiryMoney(pricingByInquiryId[inq.id].unit_price)}
+                                          </p>
+                                          <p className="font-medium text-emerald-800">
+                                            Total: {formatInquiryMoney(pricingByInquiryId[inq.id].total_amount)}
+                                          </p>
+                                        </div>
+                                      ) : null}
                                     </>
                                   );
                                   return isApproved ? (
@@ -1386,6 +1454,24 @@ export function LeadInquiryWorkspace({
             {approvedDetailText}
           </pre>
         )}
+      </DialogContent>
+    </Dialog>
+    <Dialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
+      <DialogContent className="sm:max-w-md rounded-sm">
+        <DialogHeader>
+          <DialogTitle>Delete Inquiry</DialogTitle>
+          <DialogDescription>
+            This will permanently remove this inquiry. This action cannot be undone.
+          </DialogDescription>
+        </DialogHeader>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => setDeleteDialogOpen(false)} disabled={isDeleting}>
+            Cancel
+          </Button>
+          <Button variant="destructive" onClick={() => void handleDeleteInquiry()} disabled={isDeleting}>
+            {isDeleting ? "Deleting..." : "Delete Inquiry"}
+          </Button>
+        </DialogFooter>
       </DialogContent>
     </Dialog>
     </>

@@ -20,6 +20,8 @@ export type InquiryConfirmation = {
   original_image_url: string | null;
   additional_image_1_url: string | null;
   additional_image_2_url: string | null;
+  sales_additional_image_urls?: string[] | null;
+  rejection_reason?: string | null;
   status: ConfirmationStatus;
   submitted_by: string;
   reviewed_by: string | null;
@@ -124,6 +126,7 @@ export async function submitInquiryForConfirmation(data: {
   hs_code: string;
   calculator_values: Record<string, string>;
   original_image_url: string | null;
+  sales_additional_image_urls?: string[] | null;
   additional_image_1_url: string | null;
   additional_image_2_url: string | null;
 }) {
@@ -157,6 +160,9 @@ export async function submitInquiryForConfirmation(data: {
         hs_code: (data.hs_code || '').trim(),
         calculator_values: data.calculator_values || {},
         original_image_url: data.original_image_url || null,
+        sales_additional_image_urls: Array.isArray(data.sales_additional_image_urls)
+          ? data.sales_additional_image_urls.filter((u) => typeof u === 'string' && u.trim().length > 0)
+          : [],
         additional_image_1_url: data.additional_image_1_url || null,
         additional_image_2_url: data.additional_image_2_url || null,
         status: 'pending',
@@ -297,8 +303,48 @@ export async function getAllInquiryConfirmations() {
       .order('created_at', { ascending: false });
 
     if (error) return { error: error.message };
+    const rows = (data || []) as InquiryConfirmationWithLead[];
+    const inquiryIds = [...new Set(rows.map((r) => r.inquiry_id).filter(Boolean))];
+    let inquiryMap = new Map<string, { image_url: string | null; additional_image_urls: string[]; calculator_values: Record<string, string> | null }>();
+    if (inquiryIds.length > 0) {
+      const { data: inquiryRows } = await supabase
+        .from('lead_inquiries')
+        .select('id, image_url, additional_image_urls, calculator_values')
+        .in('id', inquiryIds);
+      inquiryMap = new Map(
+        (inquiryRows || []).map((row) => [
+          String(row.id),
+          {
+            image_url: row.image_url || null,
+            additional_image_urls: Array.isArray(row.additional_image_urls)
+              ? row.additional_image_urls.filter((u: unknown) => typeof u === 'string' && String(u).trim().length > 0)
+              : [],
+            calculator_values:
+              row.calculator_values && typeof row.calculator_values === 'object'
+                ? (row.calculator_values as Record<string, string>)
+                : null,
+          },
+        ])
+      );
+    }
 
-    return { confirmations: (data || []) as InquiryConfirmationWithLead[] };
+    const confirmations = rows.map((row) => {
+      const inquiryData = inquiryMap.get(row.inquiry_id);
+      return {
+        ...row,
+        original_image_url: row.original_image_url || inquiryData?.image_url || null,
+        sales_additional_image_urls:
+          Array.isArray(row.sales_additional_image_urls) && row.sales_additional_image_urls.length > 0
+            ? row.sales_additional_image_urls
+            : inquiryData?.additional_image_urls || [],
+        calculator_values:
+          row.calculator_values && Object.keys(row.calculator_values).length > 0
+            ? row.calculator_values
+            : inquiryData?.calculator_values || {},
+      };
+    });
+
+    return { confirmations: confirmations as InquiryConfirmationWithLead[] };
   } catch (err) {
     return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };
   }
@@ -322,8 +368,34 @@ export async function getConfirmationsForInquiry(inquiryId: string) {
       .order('created_at', { ascending: false });
 
     if (error) return { error: error.message };
+    const rows = (data || []) as InquiryConfirmation[];
+    const { data: inquiry } = await supabase
+      .from('lead_inquiries')
+      .select('image_url, additional_image_urls, calculator_values')
+      .eq('id', inquiryId)
+      .maybeSingle();
+    const inquiryImages = Array.isArray(inquiry?.additional_image_urls)
+      ? inquiry.additional_image_urls.filter((u: unknown) => typeof u === 'string' && String(u).trim().length > 0)
+      : [];
+    const inquiryCalculator =
+      inquiry?.calculator_values && typeof inquiry.calculator_values === 'object'
+        ? (inquiry.calculator_values as Record<string, string>)
+        : {};
 
-    return { confirmations: (data || []) as InquiryConfirmation[] };
+    const confirmations = rows.map((row) => ({
+      ...row,
+      original_image_url: row.original_image_url || inquiry?.image_url || null,
+      sales_additional_image_urls:
+        Array.isArray(row.sales_additional_image_urls) && row.sales_additional_image_urls.length > 0
+          ? row.sales_additional_image_urls
+          : inquiryImages,
+      calculator_values:
+        row.calculator_values && Object.keys(row.calculator_values).length > 0
+          ? row.calculator_values
+          : inquiryCalculator,
+    }));
+
+    return { confirmations };
   } catch (err) {
     return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };
   }
@@ -413,7 +485,7 @@ export async function approveInquiryConfirmation(confirmationId: string) {
 
 // ─── Admin: Reject confirmation ─────────────────────────────────────
 
-export async function rejectInquiryConfirmation(confirmationId: string) {
+export async function rejectInquiryConfirmation(confirmationId: string, rejectionReason: string) {
   try {
     const session = await getSession();
     if (!session || session.role !== 'admin') {
@@ -422,10 +494,14 @@ export async function rejectInquiryConfirmation(confirmationId: string) {
 
     const supabase = await createAdminClient();
 
+    const reason = String(rejectionReason || '').trim();
+    if (!reason) return { error: 'Rejection reason is required.' };
+
     const { data, error } = await supabase
       .from('inquiry_confirmations')
       .update({
         status: 'rejected',
+        rejection_reason: reason,
         reviewed_by: session.username || 'admin',
         reviewed_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
@@ -461,7 +537,7 @@ export async function rejectInquiryConfirmation(confirmationId: string) {
         recipient_role: 'operations',
         recipient_username: data.submitted_by,
         event_type: 'rejected',
-        message: `Inquiry for Lead #${lead?.lead_id_formatted || data.lead_number} was rejected by Admin.`,
+        message: `Inquiry for Lead #${lead?.lead_id_formatted || data.lead_number} was rejected by Admin. Reason: ${reason}`,
       }]);
     }
 

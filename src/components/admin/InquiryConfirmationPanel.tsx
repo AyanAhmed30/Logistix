@@ -27,6 +27,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { Textarea } from "@/components/ui/textarea";
 import {
   ClipboardCheck,
   Search,
@@ -81,6 +82,8 @@ export function InquiryConfirmationPanel() {
   const [searchQuery, setSearchQuery] = useState("");
   const [isActioning, setIsActioning] = useState(false);
   const [imagePreview, setImagePreview] = useState<{ url: string; title: string } | null>(null);
+  const [rejectDialogOpen, setRejectDialogOpen] = useState(false);
+  const [rejectReason, setRejectReason] = useState("");
 
   const fetchConfirmations = useCallback(async () => {
     setIsLoading(true);
@@ -148,14 +151,26 @@ export function InquiryConfirmationPanel() {
 
   async function handleReject() {
     if (!selected) return;
+    if (!rejectReason.trim()) {
+      toast.error("Rejection reason is required.");
+      return;
+    }
     setIsActioning(true);
     try {
-      const result = await rejectInquiryConfirmation(selected.id);
+      const result = await rejectInquiryConfirmation(selected.id, rejectReason);
       if ("error" in result) {
         toast.error(result.error);
       } else {
         toast.success("Inquiry confirmation rejected.");
-        setSelected({ ...selected, status: "rejected", reviewed_by: "admin", reviewed_at: new Date().toISOString() });
+        setSelected({
+          ...selected,
+          status: "rejected",
+          rejection_reason: rejectReason.trim(),
+          reviewed_by: "admin",
+          reviewed_at: new Date().toISOString(),
+        });
+        setRejectDialogOpen(false);
+        setRejectReason("");
         fetchConfirmations();
       }
     } catch {
@@ -183,6 +198,11 @@ export function InquiryConfirmationPanel() {
       c.calculator_values && typeof c.calculator_values === "object"
         ? (c.calculator_values as Record<string, string>)
         : {};
+    const showRaw = (value: string | number | null | undefined) => {
+      if (value === null || value === undefined) return "0";
+      const text = String(value);
+      return text.trim() === "" ? "0" : text;
+    };
     const invValue = toNum(calculatorValues.inv_value);
     const exchangeRate = toNum(calculatorValues.exchange_rate);
     const customDutyRate = toNum(calculatorValues.custom_duty_rate);
@@ -305,8 +325,8 @@ export function InquiryConfirmationPanel() {
             <div>
               <h3 className="text-sm font-semibold text-slate-700 mb-3">Calculator Values</h3>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-2 text-sm">
-                <div>INV Value: <span className="font-semibold">{invValue || "-"}</span></div>
-                <div>Exchange Rate: <span className="font-semibold">{exchangeRate || "-"}</span></div>
+                <div>INV Value: <span className="font-semibold">{showRaw(calculatorValues.inv_value)}</span></div>
+                <div>Exchange Rate: <span className="font-semibold">{showRaw(calculatorValues.exchange_rate)}</span></div>
                 <div>PKR Value: <span className="font-semibold">{fmtMoney(pkrValue)}</span></div>
                 <div>Assessed Value: <span className="font-semibold">{fmtMoney(assessedValue)}</span></div>
                 <div>Custom Duty ({customDutyRate}%): <span className="font-semibold">{fmtMoney(customDuty)}</span></div>
@@ -325,6 +345,18 @@ export function InquiryConfirmationPanel() {
                 <div>Cost per Weight: <span className="font-semibold">{weightKg > 0 ? costPerWeight.toFixed(6) : "-"}</span></div>
               </div>
             </div>
+
+            {c.status === "rejected" && c.rejection_reason ? (
+              <>
+                <div className="border-t" />
+                <div>
+                  <h3 className="text-sm font-semibold text-red-700 mb-2">Rejection Reason</h3>
+                  <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+                    {c.rejection_reason}
+                  </div>
+                </div>
+              </>
+            ) : null}
 
             <div className="border-t" />
 
@@ -393,6 +425,20 @@ export function InquiryConfirmationPanel() {
                     </div>
                   )}
                 </div>
+                {/* Sales Additional Images */}
+                {(Array.isArray(c.sales_additional_image_urls) ? c.sales_additional_image_urls : []).map((url, idx) => (
+                  <div className="space-y-1.5" key={`sales-extra-${idx}`}>
+                    <label className="text-xs text-slate-500 font-medium">Sales Image {idx + 1}</label>
+                    <div className="border rounded-lg p-2">
+                      <img
+                        src={url}
+                        alt={`Sales image ${idx + 1}`}
+                        className="max-h-48 rounded object-contain w-full cursor-zoom-in"
+                        onClick={() => setImagePreview({ url, title: `Sales Image ${idx + 1}` })}
+                      />
+                    </div>
+                  </div>
+                ))}
               </div>
             </div>
 
@@ -427,7 +473,7 @@ export function InquiryConfirmationPanel() {
                 <div className="flex justify-end gap-3">
                   <Button
                     variant="destructive"
-                    onClick={handleReject}
+                    onClick={() => setRejectDialogOpen(true)}
                     disabled={isActioning}
                     className="gap-2"
                   >
@@ -465,6 +511,31 @@ export function InquiryConfirmationPanel() {
                 <img src={imagePreview.url} alt={imagePreview.title} className="w-full h-auto object-contain" />
               </div>
             ) : null}
+          </DialogContent>
+        </Dialog>
+        <Dialog open={rejectDialogOpen} onOpenChange={setRejectDialogOpen}>
+          <DialogContent className="sm:max-w-lg">
+            <DialogHeader>
+              <DialogTitle>Reject Inquiry Confirmation</DialogTitle>
+            </DialogHeader>
+            <div className="space-y-2">
+              <p className="text-sm text-slate-600">Please enter a clear rejection reason. This will be visible to operations.</p>
+              <Textarea
+                value={rejectReason}
+                onChange={(e) => setRejectReason(e.target.value)}
+                placeholder="Write rejection reason..."
+                className="min-h-[110px]"
+              />
+            </div>
+            <div className="flex justify-end gap-2">
+              <Button variant="outline" onClick={() => setRejectDialogOpen(false)} disabled={isActioning}>
+                Cancel
+              </Button>
+              <Button variant="destructive" onClick={handleReject} disabled={isActioning || !rejectReason.trim()}>
+                {isActioning ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : null}
+                Reject
+              </Button>
+            </div>
           </DialogContent>
         </Dialog>
       </div>

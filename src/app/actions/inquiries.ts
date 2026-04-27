@@ -139,6 +139,45 @@ export type LeadChatNotification = {
   } | null;
 };
 
+type OperationsInquiriesPage = {
+  inquiries: LeadInquiryWithLead[];
+  hasMore: boolean;
+  nextOffset: number;
+};
+
+const OPERATIONS_INQUIRY_CACHE_TTL_MS = 15000;
+const OPERATIONS_INQUIRY_CACHE_MAX_ENTRIES = 120;
+const operationsInquiriesCache = new Map<string, { expiresAt: number; data: OperationsInquiriesPage }>();
+
+function buildOperationsInquiriesCacheKey(input: { role: string; limit: number; offset: number; search: string }) {
+  return `${input.role}|${input.limit}|${input.offset}|${input.search.toLowerCase()}`;
+}
+
+function readOperationsInquiriesCache(key: string) {
+  const now = Date.now();
+  const hit = operationsInquiriesCache.get(key);
+  if (!hit) return null;
+  if (hit.expiresAt <= now) {
+    operationsInquiriesCache.delete(key);
+    return null;
+  }
+  return hit.data;
+}
+
+function writeOperationsInquiriesCache(key: string, data: OperationsInquiriesPage) {
+  if (operationsInquiriesCache.size >= OPERATIONS_INQUIRY_CACHE_MAX_ENTRIES) {
+    operationsInquiriesCache.clear();
+  }
+  operationsInquiriesCache.set(key, {
+    expiresAt: Date.now() + OPERATIONS_INQUIRY_CACHE_TTL_MS,
+    data,
+  });
+}
+
+function invalidateOperationsInquiriesCache() {
+  operationsInquiriesCache.clear();
+}
+
 async function canAccessLeadChat(
   supabase: Awaited<ReturnType<typeof createAdminClient>>,
   session: Awaited<ReturnType<typeof getSession>>,
@@ -537,6 +576,7 @@ export async function sendInquiryToAccounting(inquiryId: string) {
     revalidatePath('/sales-agent/dashboard');
     revalidatePath('/admin/dashboard');
     revalidatePath('/operations/dashboard');
+    invalidateOperationsInquiriesCache();
     return { success: true, inquiry: data as LeadInquiry };
   } catch (err) {
     return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };
@@ -1193,7 +1233,11 @@ export async function getAllInquiriesForAccounting() {
 
 // ========== Operations Actions ==========
 
-export async function getAllInquiriesForOperations() {
+export async function getAllInquiriesForOperations(input?: {
+  limit?: number;
+  offset?: number;
+  search?: string;
+}) {
   try {
     const session = await getSession();
     if (!session || (session.role !== 'admin' && session.role !== 'operations')) {
@@ -1202,13 +1246,61 @@ export async function getAllInquiriesForOperations() {
 
     const supabase = await createAdminClient();
 
-    // Query using sent_to_accounting as the source of truth
-    // Every inquiry sent to accounting is also visible in operations
-    // Also fetch related inquiry_confirmations so Operations can see approval status
-    const { data, error } = await supabase
+    const pageLimit = Math.min(Math.max(Number(input?.limit || 20), 1), 100);
+    const offset = Math.max(Number(input?.offset || 0), 0);
+    const search = String(input?.search || "").trim();
+    const cacheKey = buildOperationsInquiriesCacheKey({
+      role: session.role,
+      limit: pageLimit,
+      offset,
+      search,
+    });
+    const cached = readOperationsInquiriesCache(cacheKey);
+    if (cached) {
+      return cached;
+    }
+
+    let matchedLeadIds: string[] = [];
+    if (search) {
+      const { data: leadRows } = await supabase
+        .from('leads')
+        .select('id')
+        .or(
+          [
+            `name.ilike.%${search}%`,
+            `number.ilike.%${search}%`,
+            `source.ilike.%${search}%`,
+            `lead_id_formatted.ilike.%${search}%`,
+          ].join(',')
+        )
+        .limit(200);
+      matchedLeadIds = (leadRows || []).map((row) => String(row.id || '')).filter(Boolean);
+    }
+
+    // Query using sent_to_accounting as the source of truth.
+    // Fetch one extra row to cheaply derive "hasMore" without count(*).
+    let query = supabase
       .from('lead_inquiries')
       .select(`
-        *,
+        id,
+        lead_id,
+        description,
+        image_url,
+        additional_image_urls,
+        link_url,
+        product_name,
+        total_weight,
+        cbm,
+        quantity,
+        status,
+        sent_to_accounting,
+        sent_to_operations,
+        sent_at,
+        approval_status,
+        approved_at,
+        calculator_values,
+        created_at,
+        updated_at,
         leads (
           id,
           lead_id_formatted,
@@ -1229,10 +1321,65 @@ export async function getAllInquiriesForOperations() {
         )
       `)
       .eq('sent_to_accounting', true)
-      .order('sent_at', { ascending: false });
+      .order('sent_at', { ascending: false })
+      .range(offset, offset + pageLimit);
+
+    if (search) {
+      const leadIdClause = matchedLeadIds.length > 0 ? `,lead_id.in.(${matchedLeadIds.join(',')})` : '';
+      query = query.or(
+        [
+          `product_name.ilike.%${search}%`,
+          `description.ilike.%${search}%`,
+          `status.ilike.%${search}%`,
+          `total_weight.ilike.%${search}%`,
+          `cbm.ilike.%${search}%`,
+          `quantity.ilike.%${search}%`,
+        ].join(',') + leadIdClause
+      );
+    }
+
+    query = query
+      .order('created_at', { foreignTable: 'inquiry_confirmations', ascending: false })
+      .limit(1, { foreignTable: 'inquiry_confirmations' });
+
+    const { data, error } = await query;
 
     if (error) return { error: error.message };
-    return { inquiries: (data || []) as LeadInquiryWithLead[] };
+    const rawRows = (data || []) as Array<Record<string, unknown>>;
+    const rows = rawRows.map((row) => {
+      const rawLead = Array.isArray(row.leads)
+        ? row.leads[0] as Record<string, unknown> | undefined
+        : row.leads as Record<string, unknown> | undefined;
+      const rawSalesAgent = rawLead && Array.isArray(rawLead.sales_agents)
+        ? (rawLead.sales_agents[0] as Record<string, unknown> | undefined)
+        : (rawLead?.sales_agents as Record<string, unknown> | undefined);
+      return {
+        ...(row as LeadInquiryWithLead),
+        leads: rawLead
+          ? {
+              id: String(rawLead.id || ''),
+              lead_id_formatted: rawLead.lead_id_formatted ? String(rawLead.lead_id_formatted) : null,
+              name: String(rawLead.name || ''),
+              number: String(rawLead.number || ''),
+              source: String(rawLead.source || ''),
+              sales_agent_id: String(rawLead.sales_agent_id || ''),
+              sales_agents: rawSalesAgent
+                ? {
+                    id: String(rawSalesAgent.id || ''),
+                    name: String(rawSalesAgent.name || ''),
+                    username: rawSalesAgent.username ? String(rawSalesAgent.username) : null,
+                  }
+                : null,
+            }
+          : null,
+      } as LeadInquiryWithLead;
+    });
+    const hasMore = rows.length > pageLimit;
+    const inquiries = hasMore ? rows.slice(0, pageLimit) : rows;
+    const nextOffset = offset + inquiries.length;
+    const result = { inquiries, hasMore, nextOffset };
+    writeOperationsInquiriesCache(cacheKey, result);
+    return result;
   } catch (err) {
     return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };
   }
@@ -1370,6 +1517,7 @@ export async function updateInquiryForAccounting(
 
     revalidatePath('/admin/dashboard');
     revalidatePath('/operations/dashboard');
+    invalidateOperationsInquiriesCache();
     return { success: true, inquiry: data as LeadInquiry };
   } catch (err) {
     return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };
@@ -1408,6 +1556,7 @@ export async function deleteInquiry(inquiryId: string) {
     revalidatePath('/admin/dashboard');
     revalidatePath('/sales-agent/dashboard');
     revalidatePath('/operations/dashboard');
+    invalidateOperationsInquiriesCache();
     return { success: true };
   } catch (err) {
     return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };

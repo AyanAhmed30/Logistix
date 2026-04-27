@@ -12,7 +12,6 @@ import {
   addInquiryActivity,
   addInquiryCalculatorFieldLog,
   saveInquiryCalculatorField,
-  getSharedInquiryCalculatorValues,
   getLeadChatMessages,
   sendLeadChatMessage,
   type LeadInquiryWithLead,
@@ -119,6 +118,7 @@ function getLatestConfirmationStatus(inquiry: LeadInquiryWithLead): string | nul
 // ─── Main Component ──────────────────────────────────────────────────
 
 type ViewMode = "list" | "detail";
+const PAGE_SIZE = 20;
 
 export function OperationsLeadsInquiryPanel({
   focusLeadId,
@@ -132,8 +132,12 @@ export function OperationsLeadsInquiryPanel({
   const [view, setView] = useState<ViewMode>("list");
   const [inquiries, setInquiries] = useState<LeadInquiryWithLead[]>([]);
   const [isLoading, setIsLoading] = useState(false);
+  const [isLoadingMore, setIsLoadingMore] = useState(false);
+  const [hasMore, setHasMore] = useState(false);
+  const [nextOffset, setNextOffset] = useState(0);
   const [selectedInquiry, setSelectedInquiry] = useState<LeadInquiryWithLead | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
+  const [debouncedSearchQuery, setDebouncedSearchQuery] = useState("");
 
   // Lead Management Form state
   const [showForm, setShowForm] = useState(false);
@@ -182,15 +186,15 @@ export function OperationsLeadsInquiryPanel({
   const [imagePreview, setImagePreview] = useState<{ url: string; title: string } | null>(null);
 
   // Duty calculator state (Operations detail view)
-  const [calcInvValue, setCalcInvValue] = useState("");
-  const [calcExchangeRate, setCalcExchangeRate] = useState("2254.13");
+  const [calcInvValue, setCalcInvValue] = useState("0");
+  const [calcExchangeRate, setCalcExchangeRate] = useState("0");
   const [calcCustomDutyRate, setCalcCustomDutyRate] = useState("0");
   const [calcAddCdRate, setCalcAddCdRate] = useState("0");
-  const [calcGstRate, setCalcGstRate] = useState("18");
+  const [calcGstRate, setCalcGstRate] = useState("0");
   const [calcAddGstRate, setCalcAddGstRate] = useState("0");
-  const [calcIncomeTaxRate, setCalcIncomeTaxRate] = useState("12");
-  const [calcExciseRate, setCalcExciseRate] = useState("1.8");
-  const [calcRegularDutyRate, setCalcRegularDutyRate] = useState("30");
+  const [calcIncomeTaxRate, setCalcIncomeTaxRate] = useState("0");
+  const [calcExciseRate, setCalcExciseRate] = useState("0");
+  const [calcRegularDutyRate, setCalcRegularDutyRate] = useState("0");
   const [calcStampDutyRate, setCalcStampDutyRate] = useState("0");
   const [calcInvFine, setCalcInvFine] = useState("0");
   const [calcFreight, setCalcFreight] = useState("0");
@@ -199,15 +203,15 @@ export function OperationsLeadsInquiryPanel({
   const [lastCalcSnapshot, setLastCalcSnapshot] = useState<Record<string, string>>({});
 
   const getDefaultCalculatorValues = useCallback(() => ({
-    inv_value: "",
-    exchange_rate: "2254.13",
+    inv_value: "0",
+    exchange_rate: "0",
     custom_duty_rate: "0",
     add_cd_rate: "0",
-    gst_rate: "18",
+    gst_rate: "0",
     add_gst_rate: "0",
-    income_tax_rate: "12",
-    excise_rate: "1.8",
-    regular_duty_rate: "30",
+    income_tax_rate: "0",
+    excise_rate: "0",
+    regular_duty_rate: "0",
     stamp_duty_rate: "0",
     inv_fine: "0",
     freight: "0",
@@ -216,15 +220,15 @@ export function OperationsLeadsInquiryPanel({
   }), []);
 
   const applyCalculatorValues = useCallback((values: Record<string, string>) => {
-    setCalcInvValue(values.inv_value ?? "");
-    setCalcExchangeRate(values.exchange_rate ?? "2254.13");
+    setCalcInvValue(values.inv_value ?? "0");
+    setCalcExchangeRate(values.exchange_rate ?? "0");
     setCalcCustomDutyRate(values.custom_duty_rate ?? "0");
     setCalcAddCdRate(values.add_cd_rate ?? "0");
-    setCalcGstRate(values.gst_rate ?? "18");
+    setCalcGstRate(values.gst_rate ?? "0");
     setCalcAddGstRate(values.add_gst_rate ?? "0");
-    setCalcIncomeTaxRate(values.income_tax_rate ?? "12");
-    setCalcExciseRate(values.excise_rate ?? "1.8");
-    setCalcRegularDutyRate(values.regular_duty_rate ?? "30");
+    setCalcIncomeTaxRate(values.income_tax_rate ?? "0");
+    setCalcExciseRate(values.excise_rate ?? "0");
+    setCalcRegularDutyRate(values.regular_duty_rate ?? "0");
     setCalcStampDutyRate(values.stamp_duty_rate ?? "0");
     setCalcInvFine(values.inv_fine ?? "0");
     setCalcFreight(values.freight ?? "0");
@@ -273,26 +277,66 @@ export function OperationsLeadsInquiryPanel({
     [lastCalcSnapshot, refreshInquiryLogs, selectedInquiry]
   );
 
-  const fetchInquiries = useCallback(async () => {
-    setIsLoading(true);
+  const fetchInquiries = useCallback(async (opts?: { append?: boolean; offset?: number; query?: string }) => {
+    const append = Boolean(opts?.append);
+    const offset = Math.max(Number(opts?.offset || 0), 0);
+    const query = String(opts?.query ?? debouncedSearchQuery);
+    if (append) {
+      setIsLoadingMore(true);
+    } else {
+      setIsLoading(true);
+    }
     try {
-      const result = await getAllInquiriesForOperations();
+      const result = await getAllInquiriesForOperations({
+        limit: PAGE_SIZE,
+        offset,
+        search: query,
+      });
       if ("error" in result) {
         toast.error(result.error || "Unable to load inquiries");
-        setInquiries([]);
+        if (!append) {
+          setInquiries([]);
+          setHasMore(false);
+          setNextOffset(0);
+        }
       } else {
-        setInquiries(result.inquiries || []);
+        const incoming = result.inquiries || [];
+        if (append) {
+          setInquiries((prev) => {
+            const seen = new Set(prev.map((row) => row.id));
+            const merged = [...prev];
+            for (const row of incoming) {
+              if (!seen.has(row.id)) merged.push(row);
+            }
+            return merged;
+          });
+        } else {
+          setInquiries(incoming);
+        }
+        setHasMore(Boolean(result.hasMore));
+        setNextOffset(Number(result.nextOffset || offset + incoming.length));
       }
     } catch {
       toast.error("An unexpected error occurred");
     } finally {
-      setIsLoading(false);
+      if (append) {
+        setIsLoadingMore(false);
+      } else {
+        setIsLoading(false);
+      }
     }
-  }, []);
+  }, [debouncedSearchQuery]);
 
   useEffect(() => {
-    fetchInquiries();
-  }, [fetchInquiries]);
+    const timer = setTimeout(() => {
+      setDebouncedSearchQuery(searchQuery.trim());
+    }, 250);
+    return () => clearTimeout(timer);
+  }, [searchQuery]);
+
+  useEffect(() => {
+    fetchInquiries({ append: false, offset: 0, query: debouncedSearchQuery });
+  }, [fetchInquiries, debouncedSearchQuery]);
 
   useEffect(() => {
     if (!focusLeadId || view !== "list" || inquiries.length === 0) return;
@@ -326,54 +370,34 @@ export function OperationsLeadsInquiryPanel({
     return () => clearInterval(timer);
   }, [view, selectedInquiry, fetchLeadChat]);
 
-  const filteredInquiries = inquiries.filter((inq) => {
-    if (!searchQuery.trim()) return true;
-    const s = searchQuery.toLowerCase();
-    return (
-      (inq.leads?.lead_id_formatted || "").toLowerCase().includes(s) ||
-      (inq.leads?.name || "").toLowerCase().includes(s) ||
-      (inq.leads?.number || "").toLowerCase().includes(s) ||
-      (inq.leads?.source || "").toLowerCase().includes(s) ||
-      (inq.leads?.sales_agents?.name || "").toLowerCase().includes(s) ||
-      (inq.product_name || "").toLowerCase().includes(s) ||
-      (inq.description || "").toLowerCase().includes(s) ||
-      inq.status.toLowerCase().includes(s)
-    );
-  });
-
   async function openDetail(inquiry: LeadInquiryWithLead) {
     setSelectedInquiry(inquiry);
     setView("detail");
     setShowForm(false);
     resetForm();
-    // Prefill calculator from persisted inquiry config with safe defaults fallback.
+    // Calculator must start empty/zero for each inquiry (manual-only entry).
     const defaults = getDefaultCalculatorValues();
-    const sharedResult = await getSharedInquiryCalculatorValues();
-    const sharedValues =
-      !("error" in sharedResult) && sharedResult.values && typeof sharedResult.values === "object"
-        ? sharedResult.values
-        : {};
-    const resolvedValues = { ...defaults, ...sharedValues };
-    applyCalculatorValues(resolvedValues);
-    // Load full confirmation history from server (always fresh)
-    try {
-      const result = await getConfirmationsForInquiry(inquiry.id);
+    applyCalculatorValues(defaults);
+    // Load secondary detail data in parallel to reduce perceived latency.
+    const [confirmResult] = await Promise.allSettled([
+      getConfirmationsForInquiry(inquiry.id),
+      refreshInquiryLogs(inquiry.lead_id),
+    ]);
+    if (confirmResult.status === "fulfilled") {
+      const result = confirmResult.value;
       if ("error" in result) {
         setConfirmations([]);
       } else {
         setConfirmations(result.confirmations || []);
       }
-    } catch {
+    } else {
       setConfirmations([]);
     }
-    await refreshInquiryLogs(inquiry.lead_id);
-    setLastCalcSnapshot(resolvedValues);
+    setLastCalcSnapshot(defaults);
     setActiveRightTab("send_message");
     setLogNoteText("");
     setChatInput("");
     setChatMessages([]);
-    // Also re-fetch all inquiries in background so list data stays fresh
-    fetchInquiries();
   }
 
   function backToList() {
@@ -386,7 +410,6 @@ export function OperationsLeadsInquiryPanel({
     setChatInput("");
     setChatMessages([]);
     resetForm();
-    fetchInquiries();
   }
 
   async function handleSendChatMessage() {
@@ -560,7 +583,7 @@ export function OperationsLeadsInquiryPanel({
         if (view === "detail" && selectedInquiry?.id === deleteTarget.id) {
           backToList();
         } else {
-          fetchInquiries();
+          setInquiries((prev) => prev.filter((row) => row.id !== deleteTarget.id));
         }
       }
     } catch {
@@ -808,6 +831,9 @@ export function OperationsLeadsInquiryPanel({
           clearance_expense: calcClearanceExpense,
         },
         original_image_url: selectedInquiry.image_url,
+        sales_additional_image_urls: Array.isArray(selectedInquiry.additional_image_urls)
+          ? selectedInquiry.additional_image_urls
+          : [],
         additional_image_1_url: img1Url,
         additional_image_2_url: img2Url,
       });
@@ -856,12 +882,15 @@ export function OperationsLeadsInquiryPanel({
       setActiveUploadSlot(slot);
       const input = inputRef.current as (HTMLInputElement & { showPicker?: () => void }) | null;
       if (!input) return;
+      input.value = "";
       try {
-        if (typeof input.showPicker === "function") {
-          input.showPicker();
-          return;
-        }
-        input.click();
+        requestAnimationFrame(() => {
+          if (typeof input.showPicker === "function") {
+            input.showPicker();
+            return;
+          }
+          input.click();
+        });
       } catch {
         // Some browsers throw on showPicker for hidden inputs; fallback keeps file picker reliable.
         input.click();
@@ -943,7 +972,7 @@ export function OperationsLeadsInquiryPanel({
           ref={inputRef}
           type="file"
           accept="image/*"
-          className="sr-only"
+          className="absolute -left-[9999px] h-px w-px opacity-0"
           onChange={(e) => handleFileInputChange(e, slot)}
         />
       </div>
@@ -1977,6 +2006,11 @@ export function OperationsLeadsInquiryPanel({
                           Submitted by {conf.submitted_by} on{" "}
                           {new Date(conf.created_at).toLocaleString()}
                         </p>
+                        {conf.status === "rejected" && conf.rejection_reason ? (
+                          <p className="text-xs text-red-700 mt-1">
+                            Reason: {conf.rejection_reason}
+                          </p>
+                        ) : null}
                       </div>
                     </div>
                     <Badge variant="outline" className={`text-xs ${statusColor(conf.status)}`}>
@@ -2014,22 +2048,38 @@ export function OperationsLeadsInquiryPanel({
               className="pl-9 w-60"
             />
           </div>
-          <Button variant="outline" size="sm" onClick={fetchInquiries} disabled={isLoading}>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => fetchInquiries({ append: false, offset: 0, query: debouncedSearchQuery })}
+            disabled={isLoading}
+          >
             <RefreshCcw className={`h-4 w-4 mr-1 ${isLoading ? "animate-spin" : ""}`} />
             Refresh
           </Button>
           <span className="text-sm text-slate-500">
-            {filteredInquiries.length} record{filteredInquiries.length !== 1 ? "s" : ""}
+            Showing {inquiries.length} record{inquiries.length !== 1 ? "s" : ""}
+            {hasMore ? "+" : ""}
           </span>
         </div>
       </div>
+      <p className="text-xs text-slate-500 -mt-2">
+        Keep this list simple: open a lead and follow the right-side steps to complete operations.
+      </p>
 
       {/* Table */}
       <Card className="border shadow-sm">
         <CardContent className="p-0">
           {isLoading ? (
-            <div className="py-16 text-center text-slate-400">Loading inquiries...</div>
-          ) : filteredInquiries.length === 0 ? (
+            <div className="px-4 py-4 space-y-2">
+              {Array.from({ length: 8 }).map((_, idx) => (
+                <div
+                  key={`inquiry-skeleton-${idx}`}
+                  className="h-10 w-full rounded-md bg-slate-100 animate-pulse"
+                />
+              ))}
+            </div>
+          ) : inquiries.length === 0 ? (
             <div className="py-16 text-center text-slate-400">
               {searchQuery
                 ? "No inquiries match your search."
@@ -2043,17 +2093,15 @@ export function OperationsLeadsInquiryPanel({
                     <TableHead className="font-semibold">Lead #</TableHead>
                     <TableHead className="font-semibold">Lead Name</TableHead>
                     <TableHead className="font-semibold">Product Name</TableHead>
-                    <TableHead className="font-semibold">Total Weight</TableHead>
-                    <TableHead className="font-semibold">CBM</TableHead>
-                    <TableHead className="font-semibold">Quantity</TableHead>
                     <TableHead className="font-semibold">Sales Agent</TableHead>
+                    <TableHead className="font-semibold">Status</TableHead>
                     <TableHead className="font-semibold">Confirmation</TableHead>
                     <TableHead className="font-semibold">Sent At</TableHead>
                     <TableHead className="text-right font-semibold">Actions</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {filteredInquiries.map((inquiry) => (
+                  {inquiries.map((inquiry) => (
                     <TableRow
                       key={inquiry.id}
                       className="cursor-pointer hover:bg-slate-50 transition-colors"
@@ -2069,16 +2117,12 @@ export function OperationsLeadsInquiryPanel({
                         {inquiry.product_name || "-"}
                       </TableCell>
                       <TableCell className="text-slate-600">
-                        {inquiry.total_weight || "-"}
-                      </TableCell>
-                      <TableCell className="text-slate-600">
-                        {inquiry.cbm || "-"}
-                      </TableCell>
-                      <TableCell className="text-slate-600">
-                        {inquiry.quantity || "-"}
-                      </TableCell>
-                      <TableCell className="text-slate-600">
                         {inquiry.leads?.sales_agents?.name || "-"}
+                      </TableCell>
+                      <TableCell>
+                        <Badge variant="outline" className={`text-xs ${statusColor(inquiry.status)}`}>
+                          {formatStatus(inquiry.status)}
+                        </Badge>
                       </TableCell>
                       <TableCell>
                         {(() => {
@@ -2147,6 +2191,22 @@ export function OperationsLeadsInquiryPanel({
                   ))}
                 </TableBody>
               </Table>
+            </div>
+          )}
+          {!isLoading && inquiries.length > 0 && (
+            <div className="border-t px-4 py-3 flex items-center justify-center">
+              {hasMore ? (
+                <Button
+                  variant="outline"
+                  onClick={() => fetchInquiries({ append: true, offset: nextOffset, query: debouncedSearchQuery })}
+                  disabled={isLoadingMore}
+                >
+                  {isLoadingMore ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : null}
+                  {isLoadingMore ? "Loading..." : "Load More"}
+                </Button>
+              ) : (
+                <span className="text-xs text-slate-500">You have reached the end of results.</span>
+              )}
             </div>
           )}
         </CardContent>

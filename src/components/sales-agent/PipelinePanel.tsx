@@ -118,40 +118,40 @@ function LeadCard({
   // Determine dropdown options based on current board
   const isInSpecialBoard = SPECIAL_BOARDS.includes(lead.status);
   const dropdownOptions: LeadStatus[] = isInSpecialBoard ? NORMAL_BOARDS : SPECIAL_BOARDS;
-  const statusBadge = inquiryTracking?.status === "approved"
-    ? "Sent"
-    : inquiryTracking?.status === "sent"
-      ? "Sent"
-      : inquiryTracking?.status === "draft"
-        ? "Draft"
-        : "Pending";
 
   function renderLeadBody() {
-    return (
-      <CardContent className="p-2.5">
-          <div className="space-y-2">
-            <div className="flex items-start justify-between gap-1">
+    // For Inquiry Received board, show detailed inquiry stats
+    if (showInquiryButton) {
+      return (
+        <CardContent className="p-5">
+          <div className="space-y-4">
+            {/* Header Section */}
+            <div className="flex items-start justify-between gap-3">
               <div className="min-w-0 flex-1">
                 {lead.lead_id_formatted && (
-                  <span className="font-mono text-[10px] text-primary-accent font-semibold">#{lead.lead_id_formatted}</span>
+                  <div className="font-mono text-sm text-blue-600 font-bold mb-2 px-2 py-1 bg-blue-50 rounded-md inline-block">
+                    #{lead.lead_id_formatted}
+                  </div>
                 )}
-                <h4 className="font-semibold text-xs text-primary-dark leading-tight truncate">{lead.name || "Unnamed Lead"}</h4>
-                <p className="text-[10px] text-secondary-muted truncate">{lead.number}</p>
+                <h3 className="font-bold text-base text-gray-900 leading-tight mb-2">
+                  {lead.name || "Unnamed Lead"}
+                </h3>
+                <p className="text-sm text-gray-600 font-medium">{lead.number}</p>
               </div>
-              {/* Three-dot menu */}
+              {/* Actions Menu */}
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
                   <Button
                     variant="ghost"
                     size="sm"
-                    className="h-6 w-6 p-0 flex-shrink-0"
+                    className="h-7 w-7 p-0 hover:bg-gray-100"
                     onClick={(e) => e.stopPropagation()}
                     onPointerDown={(e) => e.stopPropagation()}
                   >
-                    <MoreVertical className="h-3.5 w-3.5 text-secondary-muted" />
+                    <MoreVertical className="h-4 w-4 text-gray-400" />
                   </Button>
                 </DropdownMenuTrigger>
-                <DropdownMenuContent align="end" className="w-44">
+                <DropdownMenuContent align="end" className="w-48">
                   {dropdownOptions.map((status) => (
                     <DropdownMenuItem
                       key={status}
@@ -160,9 +160,9 @@ function LeadCard({
                         onMoveToStatus?.(lead, status);
                       }}
                       onPointerDown={(e) => e.stopPropagation()}
-                      className="text-xs cursor-pointer"
+                      className="text-sm cursor-pointer"
                     >
-                      {status}
+                      Move to {status}
                     </DropdownMenuItem>
                   ))}
                   <DropdownMenuItem
@@ -171,133 +171,299 @@ function LeadCard({
                       onOpenTransferDialog?.(lead);
                     }}
                     onPointerDown={(e) => e.stopPropagation()}
-                    className="text-xs cursor-pointer text-orange-700"
+                    className="text-sm cursor-pointer text-orange-600"
                   >
-                    Send Lead to Other Sales Agent
+                    Transfer Lead
                   </DropdownMenuItem>
                 </DropdownMenuContent>
               </DropdownMenu>
             </div>
-            <div className="flex items-center justify-between gap-1">
-              <div className="flex flex-wrap items-center gap-1 flex-1 min-w-0">
-                <span className="px-1.5 py-0.5 bg-blue-100 text-blue-800 rounded text-[10px] truncate">
-                  {lead.source}
-                </span>
-                <Badge
-                  variant="outline"
-                  className={lead.created_by_sales_agent_id === lead.sales_agent_id
-                    ? "h-5 text-[10px] px-1.5 bg-emerald-50 text-emerald-700 border-emerald-200"
-                    : "h-5 text-[10px] px-1.5 bg-violet-50 text-violet-700 border-violet-200"}
-                >
-                  {lead.created_by_sales_agent_id === lead.sales_agent_id ? "Own Lead" : "Received Lead"}
-                </Badge>
-                {showInquiryButton && (
-                  <Badge
-                    variant="outline"
-                    className={`h-5 text-[10px] px-1.5 ${
-                      statusBadge === "Sent"
-                        ? "bg-emerald-50 text-emerald-700 border-emerald-200"
-                        : statusBadge === "Draft"
-                          ? "bg-amber-50 text-amber-700 border-amber-200"
-                          : "bg-slate-50 text-slate-700 border-slate-200"
-                    }`}
-                  >
-                    {statusBadge}
-                  </Badge>
-                )}
-              </div>
-              <div className="flex gap-0.5 flex-shrink-0">
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="h-6 w-6 p-0"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onOpenComments(lead);
-                  }}
-                  title="Comments"
-                >
-                  <MessageSquare className="h-3 w-3" />
-                </Button>
-              </div>
+
+            {/* Lead Status Badges */}
+            <div className="flex flex-wrap gap-2">
+              <Badge className="bg-blue-100 text-blue-800 border-0 hover:bg-blue-200 text-sm font-semibold px-3 py-1.5 rounded-full">
+                {lead.source}
+              </Badge>
+              <Badge
+                className={
+                  lead.created_by_sales_agent_id === lead.sales_agent_id
+                    ? "bg-emerald-100 text-emerald-800 border-0 hover:bg-emerald-200 text-sm font-semibold px-3 py-1.5 rounded-full"
+                    : "bg-purple-100 text-purple-800 border-0 hover:bg-purple-200 text-sm font-semibold px-3 py-1.5 rounded-full"
+                }
+              >
+                {lead.created_by_sales_agent_id === lead.sales_agent_id ? "Own Lead" : "Received Lead"}
+              </Badge>
             </div>
+
+            {/* Inquiry Stats Section */}
+            {inquiryTracking ? (
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-semibold text-gray-700">Inquiry Status</span>
+                  <div className={`px-2 py-1 rounded-full text-xs font-medium flex items-center gap-1 ${
+                    inquiryTracking.status === 'approved'
+                      ? 'bg-green-100 text-green-700'
+                      : inquiryTracking.status === 'sent'
+                      ? 'bg-blue-100 text-blue-700'
+                      : inquiryTracking.status === 'draft'
+                      ? 'bg-amber-100 text-amber-700'
+                      : 'bg-gray-100 text-gray-700'
+                  }`}>
+                    {inquiryTracking.status === 'approved' && (
+                      <><CheckCircle2 className="h-3 w-3" /> Approved</>
+                    )}
+                    {inquiryTracking.status === 'sent' && (
+                      <><Clock className="h-3 w-3" /> Sent</>
+                    )}
+                    {inquiryTracking.status === 'draft' && (
+                      <><AlertCircle className="h-3 w-3" /> Draft</>
+                    )}
+                    {!inquiryTracking.status || inquiryTracking.status === 'none' && (
+                      <><FileText className="h-3 w-3" /> Pending</>
+                    )}
+                  </div>
+                </div>
+                
+                {/* Inquiry Metrics Grid */}
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="bg-gradient-to-br from-gray-50 to-gray-100 rounded-xl p-3 text-center border border-gray-200">
+                    <div className="text-2xl font-bold text-gray-900 mb-1">
+                      {inquiryTracking.total_inquiry_count || 0}
+                    </div>
+                    <div className="text-xs font-semibold text-gray-600 uppercase tracking-wide">Total Inquiries</div>
+                  </div>
+                  <div className="bg-gradient-to-br from-blue-50 to-blue-100 rounded-xl p-3 text-center border border-blue-200">
+                    <div className="text-2xl font-bold text-blue-800 mb-1">
+                      {inquiryTracking.sent_inquiry_count || 0}
+                    </div>
+                    <div className="text-xs font-semibold text-blue-700 uppercase tracking-wide">Sent</div>
+                  </div>
+                  <div className="bg-gradient-to-br from-green-50 to-green-100 rounded-xl p-3 text-center border border-green-200">
+                    <div className="text-2xl font-bold text-green-800 mb-1">
+                      {inquiryTracking.approved_inquiry_count || 0}
+                    </div>
+                    <div className="text-xs font-semibold text-green-700 uppercase tracking-wide">Approved</div>
+                  </div>
+                  <div className="bg-gradient-to-br from-amber-50 to-amber-100 rounded-xl p-3 text-center border border-amber-200">
+                    <div className="text-2xl font-bold text-amber-800 mb-1">
+                      {inquiryTracking.pending_inquiry_count || 0}
+                    </div>
+                    <div className="text-xs font-semibold text-amber-700 uppercase tracking-wide">Pending</div>
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <div className="bg-gradient-to-br from-blue-25 to-blue-50 border-2 border-dashed border-blue-200 rounded-xl p-6 text-center">
+                <div className="w-12 h-12 mx-auto mb-3 bg-blue-200 rounded-full flex items-center justify-center">
+                  <div className="w-6 h-6 bg-blue-500 rounded-full"></div>
+                </div>
+                <div className="text-sm font-bold text-blue-800 mb-2">Ready for Inquiry</div>
+                <div className="text-xs text-blue-600">Click this lead to start the inquiry process</div>
+              </div>
+            )}
+
+            {/* Action Buttons - Only available in Inquiry Received board */}
+            <div className="flex gap-3 pt-3 border-t border-gray-100">
+              <Button
+                variant="outline"
+                size="sm"
+                className="flex-1 h-10 text-sm font-semibold bg-white border-2 border-gray-200 hover:bg-gray-50 hover:border-gray-300 transition-all duration-200"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onOpenComments(lead);
+                }}
+              >
+                <MessageSquare className="h-4 w-4 mr-2" />
+                Add Comment
+              </Button>
+            </div>
+
+            {/* Convert Button for Win status */}
             {showConvertButton && !lead.converted && onConvert && (
               <Button
                 variant="default"
                 size="sm"
-                className="w-full mt-1.5 h-7 text-xs"
+                className="w-full h-8 text-xs font-medium bg-green-600 hover:bg-green-700"
                 onClick={(e) => {
                   e.stopPropagation();
                   onConvert(lead);
                 }}
               >
-                <UserPlus className="h-3 w-3 mr-1" />
-                <span className="truncate">Create Customer</span>
+                <UserPlus className="h-3 w-3 mr-1.5" />
+                Create Customer
               </Button>
             )}
             {lead.converted && (
-              <div className="mt-1.5 px-1.5 py-0.5 bg-green-100 text-green-800 rounded text-[10px] text-center">
-                Converted
-              </div>
-            )}
-            {/* Inquiry Tracking Badge for non inquiry board */}
-            {!showInquiryButton && inquiryTracking && (
-              <div className="mt-1.5 space-y-1">
-                <div className={`px-1.5 py-0.5 rounded text-[10px] text-center flex items-center justify-center gap-1 ${
-                  inquiryTracking.status === 'approved'
-                    ? 'bg-emerald-100 text-emerald-800'
-                    : inquiryTracking.status === 'sent'
-                    ? 'bg-blue-100 text-blue-800'
-                    : inquiryTracking.status === 'draft'
-                    ? 'bg-yellow-100 text-yellow-800'
-                    : ''
-                }`}>
-                  {inquiryTracking.status === 'approved' && (
-                    <><CheckCircle2 className="h-3 w-3" /> Inquiry Approved</>
-                  )}
-                  {inquiryTracking.status === 'sent' && (
-                    <><Clock className="h-3 w-3" /> Inquiry Sent</>
-                  )}
-                  {inquiryTracking.status === 'draft' && (
-                    <><AlertCircle className="h-3 w-3" /> Inquiry Draft</>
-                  )}
-                </div>
-                <div className="px-1.5 py-0.5 rounded text-[10px] text-center bg-slate-100 text-slate-700">
-                  Total Inquiries: {inquiryTracking.total_inquiry_count || 0}
-                </div>
-                <div className="px-1.5 py-0.5 rounded text-[10px] text-center bg-slate-100 text-slate-700">
-                  Draft Inquiries: {inquiryTracking.draft_inquiry_count || 0}
-                </div>
-                <div className="px-1.5 py-0.5 rounded text-[10px] text-center bg-slate-100 text-slate-700">
-                  Sent Inquiries: {inquiryTracking.sent_inquiry_count || 0}
-                </div>
-              </div>
-            )}
-            {/* Show "No Inquiry" for leads in Inquiry Received that have no tracking */}
-            {showInquiryButton && !inquiryTracking && (
-              <div className="mt-1.5 px-1.5 py-0.5 bg-slate-100 text-slate-500 rounded text-[10px] text-center flex items-center justify-center gap-1">
-                <FileText className="h-3 w-3" /> No Inquiry Sent
+              <div className="bg-green-100 border border-green-200 text-green-800 rounded-lg p-2 text-xs text-center font-medium">
+                ✅ Converted to Customer
               </div>
             )}
           </div>
         </CardContent>
+      );
+    }
+
+    // For other boards, show compact but premium design
+    return (
+      <CardContent className="p-4">
+        <div className="space-y-3">
+          {/* Header Section */}
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0 flex-1">
+              {lead.lead_id_formatted && (
+                <div className="font-mono text-sm text-indigo-600 font-bold mb-2 px-2 py-1 bg-indigo-50 rounded-md inline-block">
+                  #{lead.lead_id_formatted}
+                </div>
+              )}
+              <h3 className="font-bold text-sm text-gray-900 leading-tight mb-2">
+                {lead.name || "Unnamed Lead"}
+              </h3>
+              <p className="text-sm text-gray-600 font-medium">{lead.number}</p>
+            </div>
+            {/* Actions Menu */}
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-6 w-6 p-0 hover:bg-gray-100"
+                  onClick={(e) => e.stopPropagation()}
+                  onPointerDown={(e) => e.stopPropagation()}
+                >
+                  <MoreVertical className="h-3.5 w-3.5 text-gray-400" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-48">
+                {dropdownOptions.map((status) => (
+                  <DropdownMenuItem
+                    key={status}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onMoveToStatus?.(lead, status);
+                    }}
+                    onPointerDown={(e) => e.stopPropagation()}
+                    className="text-xs cursor-pointer"
+                  >
+                    Move to {status}
+                  </DropdownMenuItem>
+                ))}
+                <DropdownMenuItem
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onOpenTransferDialog?.(lead);
+                  }}
+                  onPointerDown={(e) => e.stopPropagation()}
+                  className="text-xs cursor-pointer text-orange-600"
+                >
+                  Transfer Lead
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
+
+          {/* Status Badges */}
+          <div className="flex flex-wrap gap-2">
+            <Badge className="bg-blue-100 text-blue-800 border-0 text-xs font-semibold px-2.5 py-1 rounded-full">
+              {lead.source}
+            </Badge>
+            <Badge
+              className={
+                lead.created_by_sales_agent_id === lead.sales_agent_id
+                  ? "bg-emerald-100 text-emerald-800 border-0 text-xs font-semibold px-2.5 py-1 rounded-full"
+                  : "bg-purple-100 text-purple-800 border-0 text-xs font-semibold px-2.5 py-1 rounded-full"
+              }
+            >
+              {lead.created_by_sales_agent_id === lead.sales_agent_id ? "Own" : "Received"}
+            </Badge>
+          </div>
+
+          {/* Inquiry Status for other boards */}
+          {inquiryTracking && (
+            <div className="space-y-1.5">
+              <div className={`px-2 py-1 rounded text-xs text-center font-medium flex items-center justify-center gap-1 ${
+                inquiryTracking.status === 'approved'
+                  ? 'bg-green-100 text-green-700 border border-green-200'
+                  : inquiryTracking.status === 'sent'
+                  ? 'bg-blue-100 text-blue-700 border border-blue-200'
+                  : inquiryTracking.status === 'draft'
+                  ? 'bg-amber-100 text-amber-700 border border-amber-200'
+                  : 'bg-gray-100 text-gray-700 border border-gray-200'
+              }`}>
+                {inquiryTracking.status === 'approved' && (
+                  <><CheckCircle2 className="h-3 w-3" /> Inquiry Approved</>
+                )}
+                {inquiryTracking.status === 'sent' && (
+                  <><Clock className="h-3 w-3" /> Inquiry Sent</>
+                )}
+                {inquiryTracking.status === 'draft' && (
+                  <><AlertCircle className="h-3 w-3" /> Inquiry Draft</>
+                )}
+                {(!inquiryTracking.status || inquiryTracking.status === 'none') && (
+                  <><FileText className="h-3 w-3" /> No Inquiry</>
+                )}
+              </div>
+              
+              {inquiryTracking.total_inquiry_count > 0 && (
+                <div className="flex gap-1 text-xs">
+                  <span className="bg-gray-100 text-gray-700 px-1.5 py-0.5 rounded font-medium">
+                    {inquiryTracking.total_inquiry_count} Total
+                  </span>
+                  <span className="bg-green-100 text-green-700 px-1.5 py-0.5 rounded font-medium">
+                    {inquiryTracking.approved_inquiry_count} Approved
+                  </span>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Visual indicator for drag-only cards */}
+          <div className="pt-3 border-t border-gray-100">
+            <div className="flex items-center justify-center gap-2 text-xs text-gray-500 bg-gray-50 py-2 rounded-lg">
+              <GripVertical className="h-3 w-3" />
+              <span className="font-medium">Drag to move pipeline stage</span>
+            </div>
+          </div>
+
+          {/* Convert Button for Win status */}
+          {showConvertButton && !lead.converted && onConvert && (
+            <Button
+              variant="default"
+              size="sm"
+              className="w-full h-7 text-xs font-medium bg-green-600 hover:bg-green-700"
+              onClick={(e) => {
+                e.stopPropagation();
+                onConvert(lead);
+              }}
+            >
+              <UserPlus className="h-3 w-3 mr-1" />
+              Create Customer
+            </Button>
+          )}
+          {lead.converted && (
+            <div className="bg-green-100 border border-green-200 text-green-800 rounded p-1.5 text-xs text-center font-medium">
+              ✅ Converted
+            </div>
+          )}
+        </div>
+      </CardContent>
     );
   }
 
   if (showInquiryButton) {
+    // Inquiry Received board - leads are clickable for inquiry workflow
     return (
-      <div ref={setNodeRef} style={style} {...attributes} className="mb-2">
-        <div className="flex gap-0 items-stretch min-w-0">
+      <div ref={setNodeRef} style={style} {...attributes} className="mb-4">
+        <div className="flex gap-0 items-stretch min-w-0 group">
           <button
             type="button"
             {...listeners}
-            className="rounded-l-md border border-r-0 border-slate-200 bg-slate-50 px-1 cursor-grab active:cursor-grabbing touch-none shrink-0 flex items-center justify-center self-stretch hover:bg-slate-100 min-w-[28px]"
+            className="rounded-l-xl border border-r-0 border-blue-200 bg-gradient-to-b from-blue-50 to-blue-100 px-2 cursor-grab active:cursor-grabbing touch-none shrink-0 flex items-center justify-center self-stretch hover:from-blue-100 hover:to-blue-200 min-w-[36px] transition-all duration-200"
             aria-label="Drag to move lead"
           >
-            <GripVertical className="h-4 w-4 text-slate-400" />
+            <GripVertical className="h-4 w-4 text-blue-500 group-hover:text-blue-600" />
           </button>
           <Card
-            className="flex-1 min-w-0 rounded-l-none rounded-r-xl border-slate-200 cursor-pointer hover:shadow-md transition-shadow shadow-sm mb-0"
+            className="flex-1 min-w-0 rounded-l-none rounded-r-xl border-blue-200 cursor-pointer hover:shadow-2xl hover:border-blue-300 hover:bg-blue-25 transition-all duration-300 shadow-lg mb-0 bg-white"
             onClick={() => onOpenLeadDetail?.(lead)}
           >
             {renderLeadBody()}
@@ -307,20 +473,20 @@ function LeadCard({
     );
   }
 
+  // All other boards - leads are NOT clickable, only draggable
   return (
-    <div ref={setNodeRef} style={style} {...attributes} className="mb-2">
-      <div className="flex gap-0 items-stretch min-w-0">
+    <div ref={setNodeRef} style={style} {...attributes} className="mb-4">
+      <div className="flex gap-0 items-stretch min-w-0 group">
         <button
           type="button"
           {...listeners}
-          className="rounded-l-md border border-r-0 border-slate-200 bg-slate-50 px-1 cursor-grab active:cursor-grabbing touch-none shrink-0 flex items-center justify-center self-stretch hover:bg-slate-100 min-w-[28px]"
+          className="rounded-l-xl border border-r-0 border-gray-200 bg-gradient-to-b from-gray-50 to-gray-100 px-2 cursor-grab active:cursor-grabbing touch-none shrink-0 flex items-center justify-center self-stretch hover:from-gray-100 hover:to-gray-200 min-w-[36px] transition-all duration-200"
           aria-label="Drag to move lead"
         >
-          <GripVertical className="h-4 w-4 text-slate-400" />
+          <GripVertical className="h-4 w-4 text-gray-500 group-hover:text-gray-600" />
         </button>
         <Card
-          className="flex-1 min-w-0 rounded-l-none rounded-r-xl border-slate-200 cursor-pointer hover:shadow-md transition-shadow shadow-sm mb-0"
-          onClick={() => onOpenLeadDetail?.(lead)}
+          className="flex-1 min-w-0 rounded-l-none rounded-r-xl border-gray-200 cursor-default hover:shadow-lg hover:border-gray-300 transition-all duration-300 shadow-md mb-0 bg-white"
         >
           {renderLeadBody()}
         </Card>
@@ -379,41 +545,136 @@ function KanbanColumn({
   const showInquiryButton = status === 'Inquiry Received';
 
   return (
-    <div ref={setNodeRef} className="flex-1 min-w-[200px] sm:min-w-[240px] md:min-w-[280px]">
-      <Card className="h-full flex flex-col">
-        <CardHeader className="pb-2 px-3 pt-3 space-y-2">
-          <div>
-            <CardTitle className="text-sm md:text-base leading-tight">{status}</CardTitle>
-            <CardDescription className="text-[10px] md:text-xs">
-              {filteredLeads.length} {filteredLeads.length === 1 ? "lead" : "leads"}
-            </CardDescription>
+    <div ref={setNodeRef} className="flex-1 min-w-[280px] sm:min-w-[320px] md:min-w-[350px] lg:min-w-[380px]">
+      <Card className="h-full flex flex-col bg-white shadow-lg border-0 rounded-xl overflow-hidden">
+        <CardHeader className={`pb-4 px-6 pt-5 space-y-4 ${
+          status === "Leads" ? "bg-gradient-to-r from-gray-50 to-gray-100 border-b border-gray-200" :
+          status === "Inquiry Received" ? "bg-gradient-to-r from-blue-50 to-blue-100 border-b border-blue-200" :
+          status === "Quotation Sent" ? "bg-gradient-to-r from-purple-50 to-purple-100 border-b border-purple-200" :
+          status === "Negotiation" ? "bg-gradient-to-r from-amber-50 to-amber-100 border-b border-amber-200" :
+          status === "Win" ? "bg-gradient-to-r from-green-50 to-green-100 border-b border-green-200" :
+          status === "Follow up" ? "bg-gradient-to-r from-orange-50 to-orange-100 border-b border-orange-200" :
+          status === "Lose" ? "bg-gradient-to-r from-red-50 to-red-100 border-b border-red-200" :
+          "bg-gradient-to-r from-gray-50 to-gray-100 border-b border-gray-200"
+        }`}>
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div className={`w-4 h-4 rounded-full flex items-center justify-center ${
+                status === "Leads" ? "bg-gray-500" :
+                status === "Inquiry Received" ? "bg-blue-600" :
+                status === "Quotation Sent" ? "bg-purple-600" :
+                status === "Negotiation" ? "bg-amber-600" :
+                status === "Win" ? "bg-green-600" :
+                status === "Follow up" ? "bg-orange-600" :
+                status === "Lose" ? "bg-red-600" :
+                "bg-gray-500"
+              }`}>
+                <div className="w-2 h-2 bg-white rounded-full"></div>
+              </div>
+              <div>
+                <CardTitle className={`text-base md:text-lg font-bold leading-tight ${
+                  status === "Leads" ? "text-gray-900" :
+                  status === "Inquiry Received" ? "text-blue-900" :
+                  status === "Quotation Sent" ? "text-purple-900" :
+                  status === "Negotiation" ? "text-amber-900" :
+                  status === "Win" ? "text-green-900" :
+                  status === "Follow up" ? "text-orange-900" :
+                  status === "Lose" ? "text-red-900" :
+                  "text-gray-900"
+                }`}>
+                  {status}
+                </CardTitle>
+                <CardDescription className={`text-sm font-medium mt-1 ${
+                  status === "Leads" ? "text-gray-600" :
+                  status === "Inquiry Received" ? "text-blue-600" :
+                  status === "Quotation Sent" ? "text-purple-600" :
+                  status === "Negotiation" ? "text-amber-600" :
+                  status === "Win" ? "text-green-600" :
+                  status === "Follow up" ? "text-orange-600" :
+                  status === "Lose" ? "text-red-600" :
+                  "text-gray-600"
+                }`}>
+                  {filteredLeads.length} {filteredLeads.length === 1 ? "Lead" : "Leads"}
+                </CardDescription>
+              </div>
+            </div>
+            <div className={`px-3 py-1.5 rounded-full text-xs font-bold ${
+              status === "Leads" ? "bg-gray-200 text-gray-800" :
+              status === "Inquiry Received" ? "bg-blue-200 text-blue-800" :
+              status === "Quotation Sent" ? "bg-purple-200 text-purple-800" :
+              status === "Negotiation" ? "bg-amber-200 text-amber-800" :
+              status === "Win" ? "bg-green-200 text-green-800" :
+              status === "Follow up" ? "bg-orange-200 text-orange-800" :
+              status === "Lose" ? "bg-red-200 text-red-800" :
+              "bg-gray-200 text-gray-800"
+            }`}>
+              {filteredLeads.length}
+            </div>
           </div>
           <div className="relative">
-            <Search className="absolute left-2 top-1/2 transform -translate-y-1/2 h-3 w-3 text-secondary-muted pointer-events-none" />
+            <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-500 pointer-events-none" />
             <Input
               type="text"
-              placeholder="Search..."
+              placeholder={`Search in ${status}...`}
               value={columnSearchQuery}
               onChange={(e) => setColumnSearchQuery(e.target.value)}
-              className="pl-7 pr-6 h-7 text-xs"
+              className="pl-10 pr-10 h-10 text-sm bg-white border-2 border-gray-200 rounded-lg focus:bg-white focus:border-blue-400 focus:ring-2 focus:ring-blue-100 transition-all duration-200"
             />
             {columnSearchQuery && (
               <Button
                 variant="ghost"
                 size="sm"
-                className="absolute right-0.5 top-1/2 transform -translate-y-1/2 h-6 w-6 p-0 hover:bg-transparent"
+                className="absolute right-2 top-1/2 transform -translate-y-1/2 h-6 w-6 p-0 hover:bg-gray-100 rounded-full"
                 onClick={() => setColumnSearchQuery("")}
               >
-                <X className="h-2.5 w-2.5 text-secondary-muted" />
+                <X className="h-3.5 w-3.5 text-gray-500" />
               </Button>
             )}
           </div>
         </CardHeader>
-        <CardContent className="flex-1 overflow-y-auto max-h-[calc(100vh-360px)] sm:max-h-[calc(100vh-380px)] px-2 pb-2">
+        <CardContent className="flex-1 overflow-y-auto max-h-[calc(100vh-320px)] sm:max-h-[calc(100vh-340px)] px-4 pb-4">
           <SortableContext items={filteredLeads.map((l) => l.id)} strategy={verticalListSortingStrategy}>
             {filteredLeads.length === 0 ? (
-              <div className="text-center py-6 text-[10px] md:text-xs text-secondary-muted">
-                {columnSearchQuery || searchQuery ? "No matching leads" : "No leads"}
+              <div className={`text-center py-12 rounded-xl border-2 border-dashed ${
+                status === "Leads" ? "bg-gray-25 border-gray-200 text-gray-500" :
+                status === "Inquiry Received" ? "bg-blue-25 border-blue-200 text-blue-500" :
+                status === "Quotation Sent" ? "bg-purple-25 border-purple-200 text-purple-500" :
+                status === "Negotiation" ? "bg-amber-25 border-amber-200 text-amber-500" :
+                status === "Win" ? "bg-green-25 border-green-200 text-green-500" :
+                status === "Follow up" ? "bg-orange-25 border-orange-200 text-orange-500" :
+                status === "Lose" ? "bg-red-25 border-red-200 text-red-500" :
+                "bg-gray-25 border-gray-200 text-gray-500"
+              }`}>
+                <div className="space-y-3">
+                  <div className={`text-4xl opacity-50 ${
+                    status === "Leads" ? "text-gray-400" :
+                    status === "Inquiry Received" ? "text-blue-400" :
+                    status === "Quotation Sent" ? "text-purple-400" :
+                    status === "Negotiation" ? "text-amber-400" :
+                    status === "Win" ? "text-green-400" :
+                    status === "Follow up" ? "text-orange-400" :
+                    status === "Lose" ? "text-red-400" : "text-gray-400"
+                  }`}>
+                    ●
+                  </div>
+                  <div className="space-y-1">
+                    <div className="font-semibold text-sm">
+                      {columnSearchQuery || searchQuery ? "No matching leads found" : `No leads in ${status}`}
+                    </div>
+                    {!columnSearchQuery && !searchQuery && (
+                      <div className="text-xs opacity-75">
+                        {status === "Leads" ? "New leads will appear here first" :
+                         status === "Inquiry Received" ? "Leads ready for inquiry will show here" :
+                         status === "Quotation Sent" ? "Leads with sent quotations appear here" :
+                         status === "Negotiation" ? "Leads in active negotiations show here" :
+                         status === "Win" ? "Successfully won leads appear here" :
+                         status === "Follow up" ? "Leads requiring follow-up show here" :
+                         status === "Lose" ? "Lost leads are moved here" :
+                         "Leads will appear here as they progress"}
+                      </div>
+                    )}
+                  </div>
+                </div>
               </div>
             ) : (
               filteredLeads.map((lead) => (
@@ -782,8 +1043,17 @@ export function PipelinePanel() {
   }
 
   function navigateToLeadDetail(lead: Lead, tab?: "create" | "view" | "status") {
-    const q = tab ? `?tab=${tab}` : "";
-    router.push(`/sales-agent/leads/${lead.id}${q}`);
+    // Enforce workflow constraint: Only allow Send Inquiry flow on "Inquiry Received" board
+    const allowInquiry = lead.status === "Inquiry Received";
+    
+    // Build query params
+    const params = new URLSearchParams();
+    if (tab) params.set("tab", tab);
+    params.set("allowInquiry", allowInquiry.toString());
+    params.set("boardStatus", lead.status);
+    
+    const queryString = params.toString();
+    router.push(`/sales-agent/leads/${lead.id}${queryString ? `?${queryString}` : ""}`);
   }
 
   function handleMoveToStatus(lead: Lead, newStatus: LeadStatus) {
@@ -863,42 +1133,48 @@ export function PipelinePanel() {
   const activeLead = activeId ? leads.find((l) => l.id === activeId) : null;
 
   return (
-    <div className="space-y-4 md:space-y-6">
-      <Card className="bg-white border shadow-sm">
-        <CardHeader className="pb-3">
-          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+    <div className="space-y-6 md:space-y-8">
+      <Card className="bg-white border-0 shadow-2xl rounded-2xl overflow-hidden">
+        <CardHeader className="pb-6 bg-gradient-to-r from-indigo-50 via-white to-purple-50 border-b border-gray-200">
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
             <div>
-              <CardTitle className="text-lg md:text-xl">Pipeline</CardTitle>
-              <CardDescription className="text-xs md:text-sm">
-                Manage your leads across different stages. Drag and drop leads between boards.
+              <CardTitle className="text-lg md:text-xl font-semibold text-gray-900 mb-2">
+                Sales Pipeline
+              </CardTitle>
+              <CardDescription className="text-sm md:text-base text-gray-600 font-medium">
+                Track and manage your leads through every stage of the sales journey. Drag cards between boards to update progress.
               </CardDescription>
             </div>
-            <div className="relative w-full sm:w-auto sm:min-w-[250px]">
-              <Search className="absolute left-2.5 top-1/2 transform -translate-y-1/2 h-4 w-4 text-secondary-muted pointer-events-none" />
+            <div className="relative w-full sm:w-auto sm:min-w-[320px]">
+              <Search className="absolute left-4 top-1/2 transform -translate-y-1/2 h-5 w-5 text-gray-400 pointer-events-none" />
               <Input
                 type="text"
-                placeholder="Search leads..."
+                placeholder="Search across all pipeline stages..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                className="pl-8 pr-8 h-9 text-sm"
+                className="pl-12 pr-12 h-12 text-sm bg-white border-2 border-gray-200 rounded-xl focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100 font-medium transition-all duration-200"
               />
               {searchQuery && (
                 <Button
                   variant="ghost"
                   size="sm"
-                  className="absolute right-1 top-1/2 transform -translate-y-1/2 h-7 w-7 p-0 hover:bg-transparent"
+                  className="absolute right-2 top-1/2 transform -translate-y-1/2 h-8 w-8 p-0 hover:bg-gray-100 rounded-full transition-colors duration-200"
                   onClick={() => setSearchQuery("")}
                 >
-                  <X className="h-3.5 w-3.5 text-secondary-muted" />
+                  <X className="h-4 w-4 text-gray-500" />
                 </Button>
               )}
             </div>
           </div>
         </CardHeader>
-        <CardContent className="px-2 sm:px-6">
+        <CardContent className="px-4 sm:px-8 py-6">
           {isLoading ? (
-            <div className="py-16 text-center text-secondary-muted text-sm">
-              Loading pipeline...
+            <div className="py-20 text-center">
+              <div className="w-16 h-16 mx-auto mb-4 bg-gradient-to-r from-indigo-200 to-purple-200 rounded-full flex items-center justify-center">
+                <div className="w-8 h-8 bg-gradient-to-r from-indigo-500 to-purple-500 rounded-full animate-pulse"></div>
+              </div>
+              <div className="text-lg font-semibold text-gray-600">Loading pipeline...</div>
+              <div className="text-sm text-gray-500 mt-1">Please wait while we fetch your leads</div>
             </div>
           ) : (
             <DndContext
@@ -907,9 +1183,9 @@ export function PipelinePanel() {
               onDragStart={handleDragStart}
               onDragEnd={handleDragEnd}
             >
-              <div className="space-y-4">
+              <div className="space-y-6">
                 {/* First Row: Original Statuses */}
-                <div className="flex gap-2 sm:gap-3 md:gap-4 overflow-x-auto pb-4 scrollbar-thin">
+                <div className="flex gap-4 sm:gap-5 md:gap-6 lg:gap-8 overflow-x-auto pb-6 scrollbar-thin">
                   {STATUSES.map((status) => (
                     <KanbanColumn
                       key={status}
@@ -926,7 +1202,7 @@ export function PipelinePanel() {
                   ))}
                 </div>
                 {/* Second Row: Follow up and Lose */}
-                <div className="flex gap-2 sm:gap-3 md:gap-4 overflow-x-auto pb-4 scrollbar-thin">
+                <div className="flex gap-4 sm:gap-5 md:gap-6 lg:gap-8 overflow-x-auto pb-6 scrollbar-thin">
                   {STATUSES_ROW_2.map((status) => (
                     <KanbanColumn
                       key={status}

@@ -15,6 +15,7 @@ import {
   ArrowLeft,
   List,
   Activity,
+  Clock,
 } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -38,6 +39,7 @@ import {
   type InquiryLog,
   type InquiryQuotation,
 } from "@/app/actions/inquiries";
+import { getConfirmationsForInquiry } from "@/app/actions/inquiry_confirmations";
 import {
   Dialog,
   DialogContent,
@@ -46,7 +48,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 
 export type LeadInquiryWorkspaceTab = "create" | "view" | "status";
 type MainTab = LeadInquiryWorkspaceTab;
@@ -80,7 +81,12 @@ function isDecimalString(value: string) {
   return /^(?:\d+|\d+\.\d+|\d*\.\d+)$/.test(value.trim());
 }
 
-function buildApprovedInquiryDetailText(inq: LeadInquiry, quotations: InquiryQuotation[]): string {
+function buildApprovedInquiryDetailText(
+  inq: LeadInquiry, 
+  quotations: InquiryQuotation[], 
+  pricingData?: { quotation_number: string; unit_price: number; total_amount: number; notes: string | null },
+  calculatorValues?: Record<string, unknown>
+): string {
   const lines: string[] = [];
   lines.push("INQUIRY");
   lines.push(`Product: ${inq.product_name?.trim() || "—"}`);
@@ -92,10 +98,71 @@ function buildApprovedInquiryDetailText(inq: LeadInquiry, quotations: InquiryQuo
     lines.push("Other details:");
     lines.push(inq.description.trim());
   }
+  
   const q = pickPrimaryQuotation(quotations);
   lines.push("");
   lines.push("FINAL RATES (FROM ADMIN)");
-  if (q) {
+  
+  // Helper function to parse amount from calculator values
+  const parseAmount = (value: unknown) => {
+    if (!value) return 0;
+    const cleaned = String(value).replace(/[^0-9.,]/g, '').replace(/,/g, '');
+    return parseFloat(cleaned) || 0;
+  };
+  
+  // Check calculator values first for rates
+  if (calculatorValues && Object.keys(calculatorValues).length > 0) {
+    let totalAmount = 0;
+    let unitPrice = 0;
+    
+    // Extract total amount from calculator
+    if (calculatorValues['PKR Value']) {
+      totalAmount = parseAmount(calculatorValues['PKR Value']);
+    } else if (calculatorValues['Assessed Value']) {
+      totalAmount = parseAmount(calculatorValues['Assessed Value']);
+    } else if (calculatorValues['Total Duty Cost']) {
+      totalAmount = parseAmount(calculatorValues['Total Duty Cost']);
+    }
+    
+    // Calculate unit price
+    const quantity = parseFloat(inq.quantity || '1');
+    if (quantity > 0 && totalAmount > 0) {
+      unitPrice = totalAmount / quantity;
+    }
+    
+    if (totalAmount > 0) {
+      lines.push(`Product / service: ${inq.product_name?.trim() || "—"}`);
+      lines.push(`Quantity: ${inq.quantity || "1"}`);
+      if (unitPrice > 0) {
+        lines.push(`Unit price: ${formatInquiryMoney(unitPrice)}`);
+      }
+      lines.push(`Total amount: ${formatInquiryMoney(totalAmount)}`);
+      
+      // Show detailed calculator breakdown
+      lines.push("");
+      lines.push("RATE BREAKDOWN:");
+      for (const [k, v] of Object.entries(calculatorValues)) {
+        if (v !== null && v !== undefined && String(v).trim() !== '' && String(v) !== '0') {
+          lines.push(`${k}: ${v}`);
+        }
+      }
+      return lines.join("\n");
+    }
+  }
+  
+  // Fallback to existing logic for pricing data and quotations
+  if (pricingData) {
+    lines.push(`Quotation #: ${pricingData.quotation_number}`);
+    lines.push(`Product / service: ${inq.product_name?.trim() || "—"}`);
+    lines.push(`Quantity: ${inq.quantity || "1"}`);
+    lines.push(`Unit price: ${formatInquiryMoney(pricingData.unit_price)}`);
+    lines.push(`Total: ${formatInquiryMoney(pricingData.total_amount)}`);
+    if (pricingData.notes?.trim()) {
+      lines.push("");
+      lines.push("Admin notes:");
+      lines.push(pricingData.notes.trim());
+    }
+  } else if (q) {
     lines.push(`Quotation #: ${q.quotation_number}`);
     lines.push(`Product / service: ${q.product_service?.trim() || "—"}`);
     lines.push(`Quantity: ${q.quantity}`);
@@ -107,8 +174,14 @@ function buildApprovedInquiryDetailText(inq: LeadInquiry, quotations: InquiryQuo
       lines.push(q.notes.trim());
     }
   } else {
-    lines.push("No quotation is on file yet. If you expected rates here, contact Operations.");
+    lines.push("✅ Inquiry has been approved by admin!");
+    lines.push("");
+    lines.push("🔄 Pricing information is being processed.");
+    lines.push("📋 You will receive detailed rates soon.");
+    lines.push("");
+    lines.push("💡 Contact Operations team if you need immediate pricing information.");
   }
+  
   if (inq.calculator_values && Object.keys(inq.calculator_values).length > 0) {
     lines.push("");
     lines.push("OPERATIONS CALCULATOR");
@@ -126,6 +199,8 @@ export function LeadInquiryWorkspace({
   layout,
   onRequestClose,
   initialMainTab,
+  allowInquiry = true,
+  boardStatus,
 }: {
   lead: Lead | null;
   mode?: "create" | "view";
@@ -134,6 +209,10 @@ export function LeadInquiryWorkspace({
   onRequestClose?: () => void;
   /** When set on the lead detail page, selects this sidebar tab once on load. */
   initialMainTab?: MainTab;
+  /** Whether to allow Send Inquiry workflow based on board status */
+  allowInquiry?: boolean;
+  /** The board status from which this lead was accessed */
+  boardStatus?: string;
 }) {
   const router = useRouter();
   const inquiryImageInputId = "sales-inquiry-image-input";
@@ -171,7 +250,13 @@ export function LeadInquiryWorkspace({
     image_count: 0,
   });
 
-  const [mainTab, setMainTab] = useState<MainTab>(() => initialMainTab ?? "create");
+  const [mainTab, setMainTab] = useState<MainTab>(() => {
+    // If Create tab is requested but not allowed, default to View tab
+    if (initialMainTab === "create" && !allowInquiry) {
+      return "view";
+    }
+    return initialMainTab ?? (allowInquiry ? "create" : "view");
+  });
   const [approvedDetailOpen, setApprovedDetailOpen] = useState(false);
   const [approvedDetailLoading, setApprovedDetailLoading] = useState(false);
   const [approvedDetailText, setApprovedDetailText] = useState("");
@@ -340,25 +425,66 @@ export function LeadInquiryWorkspace({
     });
   }, []);
 
-  // Handle image files (from drop, paste, or file input)
-  const handleImageFiles = useCallback(async (files: File[]) => {
+  // Handle all file types (images and documents)
+  const handleFiles = useCallback(async (files: File[]) => {
+    const allowedTypes = [
+      'image/', // All image types
+      'application/pdf',
+      'application/msword',
+      'application/vnd.openxmlformats-officedocument.wordprocessingml.document', // .docx
+      'application/vnd.ms-excel',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', // .xlsx
+      'text/plain', // .txt
+      'text/csv'
+    ];
+
     const validFiles = files.filter((file) => {
       if (file.size > 5 * 1024 * 1024) {
         toast.error(`"${file.name}" is larger than 5MB`);
         return false;
       }
-      if (!file.type.startsWith("image/")) {
-        toast.error(`"${file.name}" is not an image file`);
+      
+      const isAllowedType = allowedTypes.some(type => 
+        file.type.startsWith(type) || 
+        (type === 'application/msword' && file.name.toLowerCase().endsWith('.doc')) ||
+        (type === 'application/vnd.ms-excel' && file.name.toLowerCase().endsWith('.xls'))
+      );
+      
+      if (!isAllowedType) {
+        toast.error(`"${file.name}" is not a supported file type`);
         return false;
       }
       return true;
     });
+
     if (validFiles.length === 0) return;
+
     try {
-      const urls = await Promise.all(validFiles.map((file) => readImageAsDataUrl(file)));
-      setImageDataList((prev) => [...prev, ...urls.filter((u) => u.length > 0)]);
+      const fileDataPromises = validFiles.map(async (file) => {
+        if (file.type.startsWith("image/")) {
+          // For images, create data URL for preview
+          return await readImageAsDataUrl(file);
+        } else {
+          // For documents, create a file representation
+          return `data:${file.type};name=${encodeURIComponent(file.name)};size=${file.size}`;
+        }
+      });
+      
+      const fileData = await Promise.all(fileDataPromises);
+      setImageDataList((prev) => [...prev, ...fileData.filter((data) => data.length > 0)]);
+      
+      const documentCount = validFiles.filter(f => !f.type.startsWith("image/")).length;
+      const imageCount = validFiles.filter(f => f.type.startsWith("image/")).length;
+      
+      if (documentCount > 0 && imageCount > 0) {
+        toast.success(`Added ${imageCount} image(s) and ${documentCount} document(s)`);
+      } else if (documentCount > 0) {
+        toast.success(`Added ${documentCount} document(s)`);
+      } else if (imageCount > 0) {
+        toast.success(`Added ${imageCount} image(s)`);
+      }
     } catch {
-      toast.error("Failed to process selected image(s)");
+      toast.error("Failed to process selected files");
     }
   }, [readImageAsDataUrl]);
 
@@ -373,7 +499,7 @@ export function LeadInquiryWorkspace({
           e.preventDefault();
           const file = item.getAsFile();
           if (file) {
-            void handleImageFiles([file]);
+            void handleFiles([file]);
           }
           break;
         }
@@ -381,7 +507,7 @@ export function LeadInquiryWorkspace({
     }
     document.addEventListener("paste", handlePaste);
     return () => document.removeEventListener("paste", handlePaste);
-  }, [active, handleImageFiles]);
+  }, [active, handleFiles]);
 
   function handleDragOver(e: React.DragEvent) {
     e.preventDefault();
@@ -401,14 +527,14 @@ export function LeadInquiryWorkspace({
     setIsDragging(false);
     const files = e.dataTransfer.files;
     if (files.length > 0) {
-      void handleImageFiles(Array.from(files));
+      void handleFiles(Array.from(files));
     }
   }
 
   function handleFileSelect(e: React.ChangeEvent<HTMLInputElement>) {
     const files = e.target.files;
     if (files && files.length > 0) {
-      void handleImageFiles(Array.from(files));
+      void handleFiles(Array.from(files));
     }
     // Reset input so the same file can be selected again
     if (fileInputRef.current) fileInputRef.current.value = "";
@@ -416,6 +542,41 @@ export function LeadInquiryWorkspace({
 
   function removeImage(index: number) {
     setImageDataList((prev) => prev.filter((_, i) => i !== index));
+  }
+
+  // Helper function to check if file data is an image
+  function isImageData(data: string): boolean {
+    return data.startsWith('data:image/');
+  }
+
+  // Helper function to extract document info from data string
+  function getDocumentInfo(data: string): { name: string; size: number; type: string } | null {
+    if (isImageData(data)) return null;
+    
+    const match = data.match(/^data:([^;]+);name=([^;]+);size=(\d+)$/);
+    if (!match) return null;
+    
+    const [, type, encodedName, sizeStr] = match;
+    const name = decodeURIComponent(encodedName);
+    const size = parseInt(sizeStr, 10);
+    
+    return { name, size, type };
+  }
+
+  // Helper function to get file icon based on type
+  function getFileIcon(type: string): string {
+    if (type.includes('pdf')) return '📄';
+    if (type.includes('word') || type.includes('document')) return '📝';
+    if (type.includes('excel') || type.includes('sheet')) return '📊';
+    if (type.includes('text')) return '📃';
+    return '📎';
+  }
+
+  // Helper function to format file size
+  function formatFileSize(bytes: number): string {
+    if (bytes < 1024) return bytes + ' B';
+    if (bytes < 1024 * 1024) return Math.round(bytes / 1024) + ' KB';
+    return Math.round(bytes / (1024 * 1024)) + ' MB';
   }
 
   function isIntegerString(value: string) {
@@ -541,18 +702,67 @@ export function LeadInquiryWorkspace({
       setApprovedDetailOpen(true);
       setApprovedDetailLoading(true);
       setApprovedDetailText("");
-      const result = await getQuotationsForInquiry(inq.id);
-      setApprovedDetailLoading(false);
-      if ("error" in result) {
-        toast.error(result.error);
-        setApprovedDetailText(
-          `${buildApprovedInquiryDetailText(inq, [])}\n\n---\nCould not load quotation: ${result.error}`
-        );
-        return;
+      
+      try {
+        let calculatorValues: Record<string, unknown> | undefined;
+        
+        // First, check if calculator values exist in the inquiry itself
+        if (inq.calculator_values && typeof inq.calculator_values === 'object' && Object.keys(inq.calculator_values).length > 0) {
+          calculatorValues = inq.calculator_values as Record<string, unknown>;
+        } else {
+          // Try to get calculator values from inquiry confirmation  
+          const confirmationResult = await getConfirmationsForInquiry(inq.id);
+          
+          if (!("error" in confirmationResult) && confirmationResult.confirmations.length > 0) {
+            // Find the approved confirmation with calculator values
+            const approvedConfirmation = confirmationResult.confirmations.find(
+              (conf: { status: string; calculator_values?: Record<string, unknown> }) => conf.status === 'approved'
+            );
+            
+            if (approvedConfirmation && approvedConfirmation.calculator_values) {
+              calculatorValues = approvedConfirmation.calculator_values;
+            }
+          }
+        }
+        
+        // Check if we already have pricing data for this inquiry
+        let pricingData = pricingByInquiryId[inq.id];
+        
+        // If no pricing data in state, try to fetch it specifically for this inquiry
+        if (!pricingData) {
+          const pricingResult = await getLatestQuotationPricingByInquiryIds([inq.id]);
+          if (!("error" in pricingResult) && pricingResult.pricing && pricingResult.pricing[inq.id]) {
+            pricingData = pricingResult.pricing[inq.id];
+            // Update the state with the newly fetched pricing
+            setPricingByInquiryId(prev => ({ ...prev, [inq.id]: pricingData! }));
+          }
+        }
+        
+        // Display with calculator values prioritized
+        if (calculatorValues || pricingData) {
+          setApprovedDetailLoading(false);
+          setApprovedDetailText(buildApprovedInquiryDetailText(inq, [], pricingData, calculatorValues));
+          return;
+        }
+        
+        // Fallback to API call if still no data available
+        const result = await getQuotationsForInquiry(inq.id);
+        setApprovedDetailLoading(false);
+        if ("error" in result) {
+          toast.error(result.error);
+          setApprovedDetailText(
+            `${buildApprovedInquiryDetailText(inq, [], undefined, undefined)}\n\n---\nCould not load quotation: ${result.error}`
+          );
+          return;
+        }
+        setApprovedDetailText(buildApprovedInquiryDetailText(inq, result.quotations || [], undefined, undefined));
+      } catch {
+        setApprovedDetailLoading(false);
+        toast.error("Failed to load inquiry details");
+        setApprovedDetailText(buildApprovedInquiryDetailText(inq, [], undefined, undefined));
       }
-      setApprovedDetailText(buildApprovedInquiryDetailText(inq, result.quotations || []));
     },
-    [approvedInquiryId]
+    [approvedInquiryId, pricingByInquiryId]
   );
 
   useEffect(() => {
@@ -912,49 +1122,54 @@ export function LeadInquiryWorkspace({
   );
 
   const renderFormColumn = (opts: { showInquiryList: boolean }) => (
-    <div className="space-y-5">
+    <div className="space-y-6">
       {opts.showInquiryList && mode === "view" && leadInquiries.length > 0 && (
-        <div className="rounded-sm border border-slate-200 bg-white p-3 space-y-2">
-          <p className="text-xs font-medium text-slate-600">Open an inquiry</p>
-          <div className="flex flex-wrap gap-2">
-            {leadInquiries.map((inq) => {
-              const isApproved = salesInquiryIsApproved(inq, approvedInquiryId);
-              return (
-                <Button
-                  key={inq.id}
-                  type="button"
-                  variant={selectedInquiryId === inq.id ? "default" : "outline"}
-                  size="sm"
-                  className="h-8 text-xs rounded-sm"
-                  onClick={() => handleSelectInquiry(inq)}
-                >
-                  {inq.product_name?.trim() || "Inquiry"}
-                  {isApproved ? " · Approved" : ""}
-                </Button>
-              );
-            })}
+        <Card className="bg-white shadow-sm border border-gray-200 rounded-xl overflow-hidden">
+          <div className="bg-gradient-to-r from-purple-50 to-blue-50 px-4 py-3 border-b border-gray-200">
+            <h3 className="text-sm font-semibold text-gray-900">Available Inquiries</h3>
+            <p className="text-xs text-gray-600 mt-1">Select an inquiry to view or edit</p>
           </div>
-        </div>
+          <div className="p-4">
+            <div className="flex flex-wrap gap-2">
+              {leadInquiries.map((inq) => {
+                const isApproved = salesInquiryIsApproved(inq, approvedInquiryId);
+                return (
+                  <Button
+                    key={inq.id}
+                    type="button"
+                    variant={selectedInquiryId === inq.id ? "default" : "outline"}
+                    size="sm"
+                    className="h-9 text-sm rounded-lg font-medium"
+                    onClick={() => handleSelectInquiry(inq)}
+                  >
+                    {inq.product_name?.trim() || "Inquiry"}
+                    {isApproved ? " · Approved" : ""}
+                  </Button>
+                );
+              })}
+            </div>
+          </div>
+        </Card>
       )}
 
       {inquiry &&
         ((mode === "view" && !tabbedPage) || (tabbedPage && mainTab === "view")) && (
-        <div className="flex justify-end gap-2">
+        <div className="flex justify-end gap-3">
           {isViewEditing ? (
             <>
-              <Button type="button" variant="outline" size="sm" onClick={handleCancelViewEdit} disabled={isPending}>
+              <Button type="button" variant="outline" size="sm" onClick={handleCancelViewEdit} disabled={isPending} className="h-10 px-4 rounded-lg">
                 Cancel
               </Button>
-              <Button type="button" size="sm" className="bg-slate-900 hover:bg-slate-800 text-white" onClick={handleSaveViewEdit} disabled={isPending}>
-                {isPending ? "Saving..." : "Save changes"}
+              <Button type="button" size="sm" className="h-10 px-4 rounded-lg bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white" onClick={handleSaveViewEdit} disabled={isPending}>
+                {isPending ? "Saving..." : "Save Changes"}
               </Button>
             </>
           ) : (
             <>
-              <Button type="button" variant="outline" size="sm" onClick={handleStartViewEdit}>
+              <Button type="button" variant="outline" size="sm" onClick={handleStartViewEdit} className="h-10 px-4 rounded-lg">
                 Edit
               </Button>
-              <Button type="button" variant="destructive" size="sm" onClick={() => setDeleteDialogOpen(true)}>
+              <Button type="button" variant="destructive" size="sm" onClick={() => setDeleteDialogOpen(true)} className="h-10 px-4 rounded-lg">
                 Delete
               </Button>
             </>
@@ -963,232 +1178,420 @@ export function LeadInquiryWorkspace({
       )}
 
       {confirmationStatus === "approved" && (
-        <div className="flex items-center gap-2 p-3 bg-emerald-50 border border-emerald-200 rounded-sm">
-          <CheckCircle2 className="h-5 w-5 text-emerald-600 shrink-0" />
-          <div>
-            <p className="text-sm font-semibold text-emerald-800">Inquiry approved</p>
-            <p className="text-xs text-emerald-700">This inquiry has been approved by the admin. You may proceed.</p>
+        <Card className="bg-gradient-to-r from-emerald-50 to-green-50 border-emerald-200 rounded-xl overflow-hidden">
+          <div className="p-4 flex items-center gap-3">
+            <div className="w-10 h-10 bg-emerald-100 rounded-full flex items-center justify-center">
+              <CheckCircle2 className="h-6 w-6 text-emerald-600" />
+            </div>
+            <div>
+              <p className="text-sm font-semibold text-emerald-900">Inquiry Approved</p>
+              <p className="text-xs text-emerald-700 mt-1">This inquiry has been approved by the admin. You may proceed with next steps.</p>
+            </div>
           </div>
-        </div>
+        </Card>
       )}
 
       {mode === "view" && inquiry?.sent_to_accounting && (
         <div className="flex items-center gap-2 flex-wrap">
-          <Badge variant="outline" className="bg-emerald-50 text-emerald-800 border-emerald-200 rounded-sm text-xs">
-            Sent to accounting
+          <Badge className="bg-emerald-100 text-emerald-800 border-0 rounded-full px-3 py-1 text-xs font-semibold">
+            Sent to Accounting
           </Badge>
-          <Badge variant="outline" className="bg-slate-50 text-slate-700 border-slate-200 rounded-sm text-xs">
-            Sent to operations
+          <Badge className="bg-blue-100 text-blue-800 border-0 rounded-full px-3 py-1 text-xs font-semibold">
+            Sent to Operations
           </Badge>
           {inquiry.sent_at && (
-            <span className="text-xs text-secondary-muted">on {new Date(inquiry.sent_at).toLocaleString()}</span>
+            <span className="text-xs text-gray-500 font-medium">on {new Date(inquiry.sent_at).toLocaleString()}</span>
           )}
         </div>
       )}
 
-      <div className="space-y-1.5">
-        <label className="text-sm font-medium text-slate-700">
-          Product name <span className="text-red-500">*</span>
-        </label>
-        <Input
-          placeholder="e.g. Steel pipes, cotton fabric..."
-          value={productName}
-          onChange={(e) => setProductName(e.target.value)}
-          disabled={!canEditForm}
-          className="h-10 rounded-sm border-slate-200 bg-white"
-        />
-      </div>
-
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-        <div className="space-y-1.5">
-          <label className="text-sm font-medium text-slate-700">Total weight (kg)</label>
-          <Input
-            placeholder="e.g. 500"
-            value={totalWeight}
-            inputMode={canEditForm ? "numeric" : "text"}
-            pattern={canEditForm ? "[0-9]*" : undefined}
-            onChange={(e) => setTotalWeight(canEditForm ? toDigitsOnly(e.target.value) : e.target.value)}
-            disabled={!canEditForm}
-            className="h-10 rounded-sm border-slate-200 bg-white"
-          />
+      {/* Product Information Section */}
+      <Card className="bg-white shadow-sm border border-gray-200 rounded-xl overflow-hidden">
+        <div className="bg-gradient-to-r from-blue-50 to-indigo-50 px-4 py-3 border-b border-gray-200">
+          <h3 className="text-sm font-semibold text-gray-900">Product Information</h3>
+          <p className="text-xs text-gray-600 mt-1">Provide details about the product you&rsquo;re inquiring about</p>
         </div>
-        <div className="space-y-1.5">
-          <label className="text-sm font-medium text-slate-700">CBM (cubic meter)</label>
-          <Input
-            placeholder="e.g. 12"
-            value={cbm}
-            inputMode={canEditForm ? "decimal" : "text"}
-            pattern={canEditForm ? "^[0-9]*\\.?[0-9]*$" : undefined}
-            onChange={(e) => setCbm(canEditForm ? toDecimalInput(e.target.value) : e.target.value)}
-            disabled={!canEditForm}
-            className="h-10 rounded-sm border-slate-200 bg-white"
-          />
-        </div>
-      </div>
-
-      <div className="space-y-1.5">
-        <label className="text-sm font-medium text-slate-700">Quantity</label>
-        <Input
-          placeholder="e.g. 1000"
-          value={quantity}
-          inputMode={canEditForm ? "numeric" : "text"}
-          pattern={canEditForm ? "[0-9]*" : undefined}
-          onChange={(e) => setQuantity(canEditForm ? toDigitsOnly(e.target.value) : e.target.value)}
-          disabled={!canEditForm}
-          className="h-10 rounded-sm border-slate-200 bg-white"
-        />
-      </div>
-
-      {canEditForm ? (
-        <div className="space-y-1.5">
-          <label className="text-sm font-medium flex items-center gap-1">
-            <ImageIcon className="h-4 w-4" /> Images
-          </label>
-          <div
-            className={`border border-dashed rounded-sm p-4 transition-colors ${
-              isDragging ? "border-slate-500 bg-slate-50" : "border-slate-300 hover:border-slate-400"
-            }`}
-            onDragOver={handleDragOver}
-            onDragLeave={handleDragLeave}
-            onDrop={handleDrop}
-          >
-            {imageDataList.length === 0 ? (
-              <label htmlFor={inquiryImageInputId} className="block cursor-pointer text-center">
-                <ImageIcon className="h-8 w-8 mx-auto text-slate-400 mb-2" />
-                <p className="text-sm text-slate-600 font-medium">
-                  {isDragging ? "Drop image(s) here..." : "Drag and drop images here"}
-                </p>
-                <p className="text-xs text-slate-400 mt-1">
-                  or click to browse · Paste with{" "}
-                  <kbd className="px-1 py-0.5 bg-slate-100 rounded text-[10px] font-mono">Ctrl+V</kbd>
-                </p>
-                <p className="text-[10px] text-slate-400 mt-1">Max 5MB each</p>
-              </label>
-            ) : (
-              <div className="space-y-3">
-                <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-                  {imageDataList.map((img, idx) => (
-                    <div key={`${img.slice(0, 30)}-${idx}`} className="relative border rounded-sm p-1.5 bg-white">
-                      <img
-                        src={img}
-                        alt={`Inquiry attachment ${idx + 1}`}
-                        className="h-28 w-full rounded-sm object-contain bg-slate-50"
-                      />
-                      <Button
-                        variant="destructive"
-                        size="sm"
-                        className="absolute top-1 right-1 h-6 w-6 p-0"
-                        onClick={() => removeImage(idx)}
-                        type="button"
-                      >
-                        <X className="h-3 w-3" />
-                      </Button>
-                    </div>
-                  ))}
-                  <label
-                    htmlFor={inquiryImageInputId}
-                    className="h-28 border rounded-sm border-dashed bg-white hover:bg-slate-50 transition-colors cursor-pointer flex flex-col items-center justify-center text-slate-500"
-                    title="Add more images"
-                  >
-                    <Plus className="h-5 w-5 mb-1" />
-                    <span className="text-xs font-medium">Add</span>
-                  </label>
-                </div>
-                <p className="text-[10px] text-slate-400">Drag, drop, or paste to add more.</p>
-              </div>
-            )}
-            <input
-              id={inquiryImageInputId}
-              ref={fileInputRef}
-              type="file"
-              accept="image/*"
-              multiple
-              className="sr-only"
-              onChange={handleFileSelect}
+        <div className="p-4 space-y-4">
+          <div className="space-y-2">
+            <label className="text-sm font-semibold text-gray-900 flex items-center gap-1">
+              Product Name <span className="text-red-500">*</span>
+            </label>
+            <Input
+              placeholder="e.g. Steel pipes, cotton fabric, electronics components..."
+              value={productName}
+              onChange={(e) => setProductName(e.target.value)}
+              disabled={!canEditForm}
+              className="h-11 rounded-lg border-gray-200 bg-white focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
             />
           </div>
-        </div>
-      ) : (
-        imageDataList.length > 0 && (
-          <div className="space-y-1.5">
-            <label className="text-sm font-medium flex items-center gap-1">
-              <ImageIcon className="h-4 w-4" /> Images
-            </label>
-            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-              {imageDataList.map((img, idx) => (
-                <div key={`${img.slice(0, 30)}-${idx}`} className="border rounded-sm p-1.5 bg-white">
-                  <img
-                    src={img}
-                    alt={`Inquiry attachment ${idx + 1}`}
-                    className="h-28 w-full rounded-sm object-contain bg-slate-50"
-                  />
-                </div>
-              ))}
+
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            <div className="space-y-2">
+              <label className="text-sm font-semibold text-gray-900">Total Weight</label>
+              <div className="relative">
+                <Input
+                  placeholder="500"
+                  value={totalWeight}
+                  inputMode={canEditForm ? "numeric" : "text"}
+                  pattern={canEditForm ? "[0-9]*" : undefined}
+                  onChange={(e) => setTotalWeight(canEditForm ? toDigitsOnly(e.target.value) : e.target.value)}
+                  disabled={!canEditForm}
+                  className="h-11 rounded-lg border-gray-200 bg-white focus:border-blue-400 focus:ring-2 focus:ring-blue-100 pr-12"
+                />
+                <span className="absolute right-3 top-1/2 transform -translate-y-1/2 text-sm text-gray-500 font-medium">kg</span>
+              </div>
+            </div>
+            <div className="space-y-2">
+              <label className="text-sm font-semibold text-gray-900">Total CBM</label>
+              <div className="relative">
+                <Input
+                  placeholder="12.5"
+                  value={cbm}
+                  inputMode={canEditForm ? "decimal" : "text"}
+                  pattern={canEditForm ? "^[0-9]*\\.?[0-9]*$" : undefined}
+                  onChange={(e) => setCbm(canEditForm ? toDecimalInput(e.target.value) : e.target.value)}
+                  disabled={!canEditForm}
+                  className="h-11 rounded-lg border-gray-200 bg-white focus:border-blue-400 focus:ring-2 focus:ring-blue-100 pr-12"
+                />
+                <span className="absolute right-3 top-1/2 transform -translate-y-1/2 text-sm text-gray-500 font-medium">CBM</span>
+              </div>
+            </div>
+            <div className="space-y-2">
+              <label className="text-sm font-semibold text-gray-900">Quantity</label>
+              <Input
+                placeholder="1000"
+                value={quantity}
+                inputMode={canEditForm ? "numeric" : "text"}
+                pattern={canEditForm ? "[0-9]*" : undefined}
+                onChange={(e) => setQuantity(canEditForm ? toDigitsOnly(e.target.value) : e.target.value)}
+                disabled={!canEditForm}
+                className="h-11 rounded-lg border-gray-200 bg-white focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
+              />
             </div>
           </div>
-        )
-      )}
-
-      <div className="space-y-1.5">
-        <label className="text-sm font-medium text-slate-700">Other details</label>
-        <Textarea
-          placeholder="Specifications, notes..."
-          value={otherDetails}
-          onChange={(e) => setOtherDetails(e.target.value)}
-          rows={3}
-          className="resize-none rounded-sm border-slate-200 bg-white"
-          disabled={!canEditForm}
-        />
-      </div>
-
-      {isCreateFlow && (
-        <div className="flex flex-col sm:flex-row gap-2 pt-2">
-          <Button onClick={handleSaveInquiry} disabled={isPending} variant="outline" className="flex-1 h-10 rounded-sm">
-            {isPending ? "Saving..." : "Save draft"}
-          </Button>
-          <Button
-            onClick={handleSendInquiry}
-            disabled={isPending || !isFormValid}
-            className="flex-1 h-10 rounded-sm bg-slate-900 hover:bg-slate-800 text-white"
-          >
-            <Send className="h-4 w-4 mr-2" />
-            {isPending ? "Sending..." : "Send inquiry"}
-          </Button>
         </div>
+      </Card>
+
+      {/* Attachments Section */}
+      <Card className="bg-white shadow-sm border border-gray-200 rounded-xl overflow-hidden">
+        <div className="bg-gradient-to-r from-green-50 to-emerald-50 px-4 py-3 border-b border-gray-200">
+          <h3 className="text-sm font-semibold text-gray-900 flex items-center gap-2">
+            <ImageIcon className="h-4 w-4" />
+            Attachments
+          </h3>
+          <p className="text-xs text-gray-600 mt-1">Upload images or documents to support your inquiry</p>
+        </div>
+        <div className="p-4">
+          {canEditForm ? (
+            <div
+              className={`border-2 border-dashed rounded-xl p-6 transition-all duration-200 ${
+                isDragging 
+                  ? "border-blue-400 bg-blue-50" 
+                  : "border-gray-300 hover:border-gray-400 hover:bg-gray-50"
+              }`}
+              onDragOver={handleDragOver}
+              onDragLeave={handleDragLeave}
+              onDrop={handleDrop}
+            >
+              {imageDataList.length === 0 ? (
+                <label htmlFor={inquiryImageInputId} className="block cursor-pointer text-center">
+                  <div className="w-16 h-16 mx-auto mb-4 bg-gray-100 rounded-full flex items-center justify-center">
+                    <ImageIcon className="h-8 w-8 text-gray-400" />
+                  </div>
+                  <p className="text-base font-semibold text-gray-700 mb-2">
+                    {isDragging ? "Drop files here..." : "Upload Files & Documents"}
+                  </p>
+                  <p className="text-sm text-gray-500 mb-4">
+                    Drag and drop files here, or click to browse
+                  </p>
+                  <div className="flex flex-wrap justify-center gap-2 mb-4">
+                    <Badge className="bg-blue-100 text-blue-700 border-0 px-3 py-1 text-xs font-semibold">📷 Images</Badge>
+                    <Badge className="bg-green-100 text-green-700 border-0 px-3 py-1 text-xs font-semibold">📄 PDF</Badge>
+                    <Badge className="bg-purple-100 text-purple-700 border-0 px-3 py-1 text-xs font-semibold">📝 Word</Badge>
+                    <Badge className="bg-orange-100 text-orange-700 border-0 px-3 py-1 text-xs font-semibold">📊 Excel</Badge>
+                    <Badge className="bg-gray-100 text-gray-700 border-0 px-3 py-1 text-xs">Max 5MB each</Badge>
+                  </div>
+                  <p className="text-xs text-gray-400">
+                    Paste with <kbd className="px-2 py-1 bg-gray-100 rounded text-xs font-mono">Ctrl+V</kbd>
+                  </p>
+                </label>
+              ) : (
+                <div className="space-y-4">
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
+                    {imageDataList.map((fileData, idx) => {
+                      const isImage = isImageData(fileData);
+                      const docInfo = !isImage ? getDocumentInfo(fileData) : null;
+                      
+                      return (
+                        <div key={`${fileData.slice(0, 30)}-${idx}`} className="relative group">
+                          <div className="aspect-square border-2 border-gray-200 rounded-lg p-2 bg-white flex items-center justify-center">
+                            {isImage ? (
+                              <img
+                                src={fileData}
+                                alt={`Image ${idx + 1}`}
+                                className="w-full h-full rounded-md object-cover"
+                              />
+                            ) : docInfo ? (
+                              <div className="text-center p-2">
+                                <div className="text-4xl mb-2">
+                                  {getFileIcon(docInfo.type)}
+                                </div>
+                                <div className="text-xs font-semibold text-gray-700 truncate mb-1">
+                                  {docInfo.name}
+                                </div>
+                                <div className="text-xs text-gray-500">
+                                  {formatFileSize(docInfo.size)}
+                                </div>
+                              </div>
+                            ) : (
+                              <div className="text-center p-2">
+                                <div className="text-4xl mb-2">📎</div>
+                                <div className="text-xs text-gray-500">Unknown File</div>
+                              </div>
+                            )}
+                          </div>
+                          <Button
+                            variant="destructive"
+                            size="sm"
+                            className="absolute -top-2 -right-2 h-7 w-7 p-0 rounded-full shadow-lg opacity-0 group-hover:opacity-100 transition-opacity"
+                            onClick={() => removeImage(idx)}
+                            type="button"
+                          >
+                            <X className="h-4 w-4" />
+                          </Button>
+                        </div>
+                      );
+                    })}
+                    <label
+                      htmlFor={inquiryImageInputId}
+                      className="aspect-square border-2 border-dashed border-gray-300 rounded-lg bg-gray-50 hover:bg-gray-100 transition-colors cursor-pointer flex flex-col items-center justify-center text-gray-500 hover:text-gray-600"
+                      title="Add more files"
+                    >
+                      <Plus className="h-6 w-6 mb-2" />
+                      <span className="text-xs font-semibold">Add More</span>
+                    </label>
+                  </div>
+                  <p className="text-xs text-gray-500 text-center">Drag, drop, or paste to add more files</p>
+                </div>
+              )}
+              <input
+                id={inquiryImageInputId}
+                ref={fileInputRef}
+                type="file"
+                accept="image/*,application/pdf,.doc,.docx,.xlsx,.xls"
+                multiple
+                className="sr-only"
+                onChange={handleFileSelect}
+              />
+            </div>
+          ) : (
+            imageDataList.length > 0 && (
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
+                {imageDataList.map((fileData, idx) => {
+                  const isImage = isImageData(fileData);
+                  const docInfo = !isImage ? getDocumentInfo(fileData) : null;
+                  
+                  return (
+                    <div key={`${fileData.slice(0, 30)}-${idx}`} className="aspect-square border-2 border-gray-200 rounded-lg p-2 bg-white flex items-center justify-center">
+                      {isImage ? (
+                        <img
+                          src={fileData}
+                          alt={`Image ${idx + 1}`}
+                          className="w-full h-full rounded-md object-cover"
+                        />
+                      ) : docInfo ? (
+                        <div className="text-center p-2">
+                          <div className="text-4xl mb-2">
+                            {getFileIcon(docInfo.type)}
+                          </div>
+                          <div className="text-xs font-semibold text-gray-700 truncate mb-1">
+                            {docInfo.name}
+                          </div>
+                          <div className="text-xs text-gray-500">
+                            {formatFileSize(docInfo.size)}
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="text-center p-2">
+                          <div className="text-4xl mb-2">📎</div>
+                          <div className="text-xs text-gray-500">File</div>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )
+          )}
+        </div>
+      </Card>
+
+      {/* Additional Details Section */}
+      <Card className="bg-white shadow-sm border border-gray-200 rounded-xl overflow-hidden">
+        <div className="bg-gradient-to-r from-purple-50 to-pink-50 px-4 py-3 border-b border-gray-200">
+          <h3 className="text-sm font-semibold text-gray-900">Additional Details</h3>
+          <p className="text-xs text-gray-600 mt-1">Provide any additional specifications, requirements, or notes</p>
+        </div>
+        <div className="p-4">
+          <Textarea
+            placeholder="Enter specifications, quality requirements, delivery preferences, or any other relevant details..."
+            value={otherDetails}
+            onChange={(e) => setOtherDetails(e.target.value)}
+            rows={4}
+            className="resize-none rounded-lg border-gray-200 bg-white focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
+            disabled={!canEditForm}
+          />
+        </div>
+      </Card>
+
+      {/* Action Buttons */}
+      {isCreateFlow && (
+        <Card className="bg-gradient-to-r from-gray-50 to-white shadow-sm border border-gray-200 rounded-xl overflow-hidden">
+          <div className="p-4">
+            <div className="flex flex-col sm:flex-row gap-3">
+              <Button 
+                onClick={handleSaveInquiry} 
+                disabled={isPending} 
+                variant="outline" 
+                className="flex-1 h-12 rounded-lg border-2 font-semibold"
+              >
+                {isPending ? "Saving..." : "Save as Draft"}
+              </Button>
+              <Button
+                onClick={handleSendInquiry}
+                disabled={isPending || !isFormValid}
+                className="flex-1 h-12 rounded-lg bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white font-semibold shadow-lg"
+              >
+                <Send className="h-5 w-5 mr-2" />
+                {isPending ? "Sending..." : "Send Inquiry"}
+              </Button>
+            </div>
+            {!isFormValid && (
+              <p className="text-xs text-red-500 mt-2 text-center">Please fill in the product name to send the inquiry</p>
+            )}
+          </div>
+        </Card>
       )}
     </div>
   );
 
   const pageSideNav = tabbedPage ? (
     <nav
-      aria-label="Inquiry sections"
-      className="flex lg:flex-col gap-1 w-full lg:w-52 shrink-0 rounded-sm border border-slate-200 bg-white p-2"
+      aria-label="Inquiry workflow navigation"
+      className="flex lg:flex-col gap-2 w-full lg:w-64 shrink-0"
     >
-      {(
-        [
-          { id: "create" as const, label: "Create New Inquiry", icon: Plus },
-          { id: "view" as const, label: "View Inquiries", icon: List },
-          { id: "status" as const, label: "Inquiry Status", icon: Activity },
-        ] as const
-      ).map((t) => {
-        const Icon = t.icon;
-        const activeTab = mainTab === t.id;
-        return (
-          <button
-            key={t.id}
-            type="button"
-            onClick={() => setMainTab(t.id)}
-            className={
-              activeTab
-                ? "flex items-center gap-2 rounded-sm px-3 py-2.5 text-left text-sm font-medium transition-colors bg-slate-900 text-white shadow-sm [&_span]:!text-white [&_svg]:!text-white"
-                : "flex items-center gap-2 rounded-sm px-3 py-2.5 text-left text-sm font-medium transition-colors !text-slate-700 hover:bg-slate-100 [&_span]:!text-slate-700 [&_svg]:!text-slate-600 hover:!text-slate-900 hover:[&_span]:!text-slate-900 hover:[&_svg]:!text-slate-900"
-            }
-          >
-            <Icon className="h-4 w-4 shrink-0" aria-hidden />
-            <span className="leading-snug">{t.label}</span>
-          </button>
-        );
-      })}
+      <div className="bg-white rounded-xl shadow-lg border border-gray-200 overflow-hidden">
+        <div className="bg-gradient-to-r from-indigo-50 to-purple-50 px-4 py-3 border-b border-gray-200">
+          <h3 className="text-sm font-semibold text-gray-900">Inquiry Workflow</h3>
+          <p className="text-xs text-gray-600 mt-1">Manage lead inquiries and track progress</p>
+        </div>
+        <div className="p-2 space-y-1">
+          {(
+            [
+              { 
+                id: "create" as const, 
+                label: "Create New Inquiry", 
+                icon: Plus,
+                description: "Start a new inquiry for this lead",
+                color: "blue"
+              },
+              { 
+                id: "view" as const, 
+                label: "View Inquiries", 
+                icon: List,
+                description: "Browse all existing inquiries",
+                color: "purple"
+              },
+              { 
+                id: "status" as const, 
+                label: "Inquiry Status", 
+                icon: Activity,
+                description: "Track inquiry progress and updates",
+                color: "green"
+              },
+            ] as const
+          ).map((t) => {
+            const Icon = t.icon;
+            const activeTab = mainTab === t.id;
+            const isCreateTab = t.id === "create";
+            const isDisabled = isCreateTab && !allowInquiry;
+            
+            return (
+              <button
+                key={t.id}
+                type="button"
+                onClick={() => {
+                  if (isDisabled) {
+                    toast.error(`Send Inquiry is only available from the "Inquiry Received" board. Current board: ${boardStatus || lead?.status}`);
+                    return;
+                  }
+                  setMainTab(t.id);
+                }}
+                disabled={isDisabled}
+                className={`
+                  w-full text-left p-3 rounded-lg transition-all duration-200 group relative
+                  ${isDisabled 
+                    ? "bg-gray-50 text-gray-400 cursor-not-allowed opacity-60" 
+                    : activeTab
+                    ? `bg-gradient-to-r ${
+                        t.color === "blue" ? "from-blue-500 to-blue-600" :
+                        t.color === "purple" ? "from-purple-500 to-purple-600" :
+                        "from-green-500 to-green-600"
+                      } text-white shadow-lg transform scale-[1.02]`
+                    : "bg-gray-50 hover:bg-gray-100 text-gray-700 hover:text-gray-900"
+                  }
+                `}
+              >
+                <div className="flex items-start gap-3">
+                  <div className={`
+                    w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0
+                    ${activeTab && !isDisabled
+                      ? "bg-white/20" 
+                      : isDisabled 
+                      ? "bg-gray-200" 
+                      : `bg-${t.color}-100`
+                    }
+                  `}>
+                    <Icon className={`h-4 w-4 ${
+                      activeTab && !isDisabled 
+                        ? "text-white" 
+                        : isDisabled 
+                        ? "text-gray-400" 
+                        : `text-${t.color}-600`
+                    }`} />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className={`font-semibold text-sm leading-tight ${
+                      activeTab && !isDisabled ? "text-white" : ""
+                    }`}>
+                      {t.label}
+                    </div>
+                    <div className={`text-xs mt-1 leading-relaxed ${
+                      activeTab && !isDisabled 
+                        ? "text-white/80" 
+                        : isDisabled 
+                        ? "text-gray-400" 
+                        : "text-gray-500"
+                    }`}>
+                      {t.description}
+                    </div>
+                    {isCreateTab && !allowInquiry && (
+                      <Badge className="mt-2 bg-orange-100 text-orange-700 text-xs px-2 py-1 font-medium">
+                        Inquiry Received Only
+                      </Badge>
+                    )}
+                  </div>
+                </div>
+                {activeTab && !isDisabled && (
+                  <div className="absolute right-3 top-1/2 transform -translate-y-1/2">
+                    <div className="w-2 h-2 bg-white rounded-full"></div>
+                  </div>
+                )}
+              </button>
+            );
+          })}
+        </div>
+      </div>
     </nav>
   ) : null;
 
@@ -1278,154 +1681,280 @@ export function LeadInquiryWorkspace({
               )}
               {mainTab === "view" && (
                 <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                  <div className="lg:col-span-1 space-y-3">
-                    <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Inquiries</p>
-                    {leadInquiries.length === 0 ? (
-                      <p className="text-sm text-slate-500 rounded-sm border border-dashed border-slate-200 bg-white p-4">
-                        No inquiries yet. Use Create New Inquiry to add one.
-                      </p>
-                    ) : (
-                      <div className="rounded-sm border border-slate-200 bg-white divide-y divide-slate-100">
-                        {leadInquiries.map((inq) => {
-                          const isApproved = salesInquiryIsApproved(inq, approvedInquiryId);
-                          return (
-                            <button
-                              key={inq.id}
-                              type="button"
-                              onClick={() => handleSelectInquiry(inq)}
-                              className={`w-full text-left px-3 py-3 text-sm transition-colors ${
-                                selectedInquiryId === inq.id ? "bg-slate-50" : "hover:bg-slate-50/80"
-                              }`}
-                            >
-                              <span className="font-medium text-slate-900 block truncate">
-                                {inq.product_name?.trim() || "Inquiry"}
-                              </span>
-                              <span className={`text-xs mt-0.5 ${isApproved ? "text-emerald-700" : "text-slate-500"}`}>
-                                {isApproved ? "Approved" : "Pending"}
-                              </span>
-                            </button>
-                          );
-                        })}
+                  {/* Inquiries Sidebar */}
+                  <div className="lg:col-span-1 space-y-4">
+                    <Card className="bg-white shadow-sm border border-gray-200 rounded-xl overflow-hidden">
+                      <div className="bg-gradient-to-r from-purple-50 to-blue-50 px-4 py-3 border-b border-gray-200">
+                        <h3 className="text-sm font-semibold text-gray-900 flex items-center gap-2">
+                          <List className="h-4 w-4" />
+                          All Inquiries
+                        </h3>
+                        <p className="text-xs text-gray-600 mt-1">Select an inquiry to view details</p>
                       </div>
-                    )}
+                      <div className="p-2">
+                        {/* Workflow constraint notification */}
+                        {!allowInquiry && (
+                          <div className="rounded-lg border border-orange-200 bg-orange-50 p-3 mb-3">
+                            <div className="flex items-start gap-2">
+                              <div className="w-6 h-6 bg-orange-200 rounded-full flex items-center justify-center flex-shrink-0">
+                                <History className="h-3 w-3 text-orange-600" />
+                              </div>
+                              <div>
+                                <h4 className="text-xs font-semibold text-orange-800 mb-1">
+                                  Limited Access
+                                </h4>
+                                <p className="text-xs text-orange-700 leading-relaxed">
+                                  New inquiries can only be created from the &ldquo;Inquiry Received&rdquo; board.
+                                  Current: <span className="font-semibold">{boardStatus || lead?.status}</span>
+                                </p>
+                              </div>
+                            </div>
+                          </div>
+                        )}
+                        
+                        {leadInquiries.length === 0 ? (
+                          <div className="text-center py-8">
+                            <div className="w-12 h-12 mx-auto mb-3 bg-gray-100 rounded-full flex items-center justify-center">
+                              <Inbox className="h-6 w-6 text-gray-400" />
+                            </div>
+                            <p className="text-sm font-semibold text-gray-700 mb-1">No Inquiries Yet</p>
+                            <p className="text-xs text-gray-500 leading-relaxed">
+                              {!allowInquiry 
+                                ? "Move this lead to 'Inquiry Received' board to create inquiries."
+                                : "Use 'Create New Inquiry' to get started."
+                              }
+                            </p>
+                          </div>
+                        ) : (
+                          <div className="space-y-2">
+                            {leadInquiries.map((inq) => {
+                              const isApproved = salesInquiryIsApproved(inq, approvedInquiryId);
+                              return (
+                                <button
+                                  key={inq.id}
+                                  type="button"
+                                  onClick={() => handleSelectInquiry(inq)}
+                                  className={`w-full text-left p-3 rounded-lg border transition-all duration-200 ${
+                                    selectedInquiryId === inq.id 
+                                      ? "bg-gradient-to-r from-blue-50 to-purple-50 border-blue-200 shadow-sm" 
+                                      : "bg-white border-gray-200 hover:border-gray-300 hover:shadow-sm"
+                                  }`}
+                                >
+                                  <div className="flex items-start justify-between gap-2">
+                                    <div className="flex-1 min-w-0">
+                                      <p className="font-semibold text-sm text-gray-900 truncate mb-1">
+                                        {inq.product_name?.trim() || "Unnamed Inquiry"}
+                                      </p>
+                                      <p className="text-xs text-gray-500 mb-2">
+                                        {inq.created_at && new Date(inq.created_at).toLocaleDateString()}
+                                      </p>
+                                      <Badge 
+                                        className={`text-xs px-2 py-1 rounded-full border-0 font-semibold ${
+                                          isApproved 
+                                            ? "bg-emerald-100 text-emerald-800" 
+                                            : "bg-amber-100 text-amber-800"
+                                        }`}
+                                      >
+                                        {isApproved ? "Approved" : "Pending"}
+                                      </Badge>
+                                    </div>
+                                    {selectedInquiryId === inq.id && (
+                                      <div className="w-2 h-2 bg-blue-500 rounded-full flex-shrink-0 mt-1"></div>
+                                    )}
+                                  </div>
+                                </button>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </div>
+                    </Card>
                   </div>
+
+                  {/* Inquiry Details */}
                   <div className="lg:col-span-2 space-y-4">
                     {leadInquiries.length > 0 && inquiry ? (
                       <>
                         {renderFormColumn({ showInquiryList: false })}
                         {renderInquiryLogsPanel(true)}
                       </>
+                    ) : leadInquiries.length > 0 ? (
+                      <Card className="bg-white shadow-sm border border-gray-200 rounded-xl overflow-hidden">
+                        <div className="p-8 text-center">
+                          <div className="w-16 h-16 mx-auto mb-4 bg-gray-100 rounded-full flex items-center justify-center">
+                            <FileText className="h-8 w-8 text-gray-400" />
+                          </div>
+                          <h3 className="text-lg font-semibold text-gray-900 mb-2">Select an Inquiry</h3>
+                          <p className="text-sm text-gray-600">
+                            Choose an inquiry from the sidebar to view its details and make edits.
+                          </p>
+                        </div>
+                      </Card>
                     ) : null}
                   </div>
                 </div>
               )}
               {mainTab === "status" && (
-                <div className="space-y-4">
-                  <p className="text-sm text-slate-600 max-w-2xl">
-                    Each numbered inquiry shows whether admin has approved it. Tap an approved inquiry to see full
-                    details and final rates. Pending means it is still with Operations or Admin.
-                  </p>
-                  {statusTabInquiries.length === 0 ? (
-                    <p className="text-sm text-slate-500 rounded-sm border border-dashed border-slate-200 bg-white p-6">
-                      No inquiries yet. Create and send an inquiry from the Create tab.
-                    </p>
-                  ) : (
-                    <div className="rounded-sm border border-slate-200 bg-white overflow-hidden">
-                      <Table>
-                        <TableHeader>
-                          <TableRow className="hover:bg-transparent border-slate-200">
-                            <TableHead className="text-xs font-semibold uppercase tracking-wide text-slate-500 whitespace-normal w-[min(220px,32vw)]">
-                              Lead
-                            </TableHead>
-                            <TableHead className="text-xs font-semibold uppercase tracking-wide text-slate-500 whitespace-normal">
-                              Inquiries on this lead
-                            </TableHead>
-                          </TableRow>
-                        </TableHeader>
-                        <TableBody>
-                          <TableRow className="hover:bg-slate-50/80 align-top border-slate-100">
-                            <TableCell className="whitespace-normal align-top py-4 text-sm text-slate-900">
-                              <span className="font-medium block">{lead.name || "Lead"}</span>
-                              <span className="text-xs font-mono text-slate-500 mt-1 block">
-                                {lead.lead_id_formatted ? `#${lead.lead_id_formatted}` : `ID ${lead.id.slice(0, 8)}…`}
-                              </span>
-                            </TableCell>
-                            <TableCell className="whitespace-normal align-top py-3">
-                              <div className="flex flex-wrap gap-2">
-                                {statusTabInquiries.map((inq, idx) => {
-                                  const isApproved = salesInquiryIsApproved(inq, approvedInquiryId);
-                                  const title = inq.product_name?.trim() || "Product TBD";
-                                  const body = (
-                                    <>
-                                      <div className="flex items-start justify-between gap-2">
-                                        <span className="text-xs font-semibold text-slate-700">Inquiry {idx + 1}</span>
-                                        <Badge
-                                          className={
-                                            isApproved
-                                              ? "shrink-0 text-[10px] h-5 border-0 bg-emerald-600 text-white hover:bg-emerald-600"
-                                              : "shrink-0 text-[10px] h-5 border-0 bg-amber-500 text-white hover:bg-amber-500"
-                                          }
-                                        >
-                                          {isApproved ? "Approved" : "Pending"}
-                                        </Badge>
-                                      </div>
-                                      <p className="text-xs text-slate-700 line-clamp-2 leading-snug">{title}</p>
-                                      {isApproved ? (
-                                        <p className="text-[10px] font-medium text-emerald-800">Tap to view details and rates</p>
-                                      ) : (
-                                        <p className="text-[10px] text-slate-500">Awaiting approval</p>
-                                      )}
-                                      {isApproved && pricingByInquiryId[inq.id] ? (
-                                        <div className="rounded-sm border border-emerald-200 bg-white px-2 py-1 text-[10px] leading-tight">
-                                          <p className="font-semibold text-emerald-900">
-                                            Unit: {formatInquiryMoney(pricingByInquiryId[inq.id].unit_price)}
-                                          </p>
-                                          <p className="font-medium text-emerald-800">
-                                            Total: {formatInquiryMoney(pricingByInquiryId[inq.id].total_amount)}
-                                          </p>
-                                        </div>
-                                      ) : null}
-                                    </>
-                                  );
-                                  return isApproved ? (
-                                    <button
-                                      key={inq.id}
-                                      type="button"
-                                      onClick={() => void openApprovedInquiryDetail(inq)}
-                                      className="min-w-[140px] max-w-[220px] rounded-sm border-2 border-emerald-400 bg-emerald-50/90 shadow-sm p-3 flex flex-col gap-2 text-left cursor-pointer transition-colors hover:bg-emerald-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-600"
-                                    >
-                                      {body}
-                                    </button>
-                                  ) : (
-                                    <div
-                                      key={inq.id}
-                                      className="min-w-[140px] max-w-[220px] rounded-sm border border-slate-200 bg-slate-50/50 p-3 flex flex-col gap-2"
-                                    >
-                                      {body}
-                                    </div>
-                                  );
-                                })}
-                              </div>
-                            </TableCell>
-                          </TableRow>
-                        </TableBody>
-                      </Table>
+                <div className="space-y-6">
+                  {/* Header Section */}
+                  <Card className="bg-gradient-to-r from-indigo-50 to-purple-50 shadow-sm border border-gray-200 rounded-xl overflow-hidden">
+                    <div className="p-4">
+                      <h3 className="text-lg font-semibold text-gray-900 mb-2 flex items-center gap-2">
+                        <Activity className="h-5 w-5" />
+                        Inquiry Progress Tracker
+                      </h3>
+                      <p className="text-sm text-gray-600 leading-relaxed">
+                        Track the status of all your inquiries. Approved inquiries show final rates and can be acted upon. 
+                        Pending inquiries are being reviewed by Operations and Admin teams.
+                      </p>
                     </div>
-                  )}
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs text-slate-600">
-                    <div className="rounded-sm border border-slate-200 bg-white px-3 py-2">
-                      <span className="font-medium text-slate-800">Total on file: </span>
-                      {leadInquiries.length}
-                    </div>
-                    <div className="rounded-sm border border-emerald-100 bg-emerald-50/40 px-3 py-2">
-                      <span className="font-medium text-emerald-900">Approved: </span>
-                      {approvedRows.length}
-                    </div>
-                    <div className="rounded-sm border border-amber-100 bg-amber-50/40 px-3 py-2">
-                      <span className="font-medium text-amber-900">Pending: </span>
-                      {Math.max(leadInquiries.length - approvedRows.length, 0)}
-                    </div>
+                  </Card>
+
+                  {/* Statistics Cards */}
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                    <Card className="bg-white shadow-sm border border-gray-200 rounded-xl overflow-hidden">
+                      <div className="p-4 text-center">
+                        <div className="w-12 h-12 mx-auto mb-3 bg-gray-100 rounded-full flex items-center justify-center">
+                          <div className="w-6 h-6 bg-gray-500 rounded-full"></div>
+                        </div>
+                        <div className="text-2xl font-bold text-gray-900 mb-1">{leadInquiries.length}</div>
+                        <div className="text-sm font-semibold text-gray-600">Total Inquiries</div>
+                      </div>
+                    </Card>
+                    <Card className="bg-white shadow-sm border border-gray-200 rounded-xl overflow-hidden">
+                      <div className="p-4 text-center">
+                        <div className="w-12 h-12 mx-auto mb-3 bg-emerald-100 rounded-full flex items-center justify-center">
+                          <CheckCircle2 className="h-6 w-6 text-emerald-600" />
+                        </div>
+                        <div className="text-2xl font-bold text-emerald-700 mb-1">{approvedRows.length}</div>
+                        <div className="text-sm font-semibold text-emerald-600">Approved</div>
+                      </div>
+                    </Card>
+                    <Card className="bg-white shadow-sm border border-gray-200 rounded-xl overflow-hidden">
+                      <div className="p-4 text-center">
+                        <div className="w-12 h-12 mx-auto mb-3 bg-amber-100 rounded-full flex items-center justify-center">
+                          <Clock className="h-6 w-6 text-amber-600" />
+                        </div>
+                        <div className="text-2xl font-bold text-amber-700 mb-1">
+                          {Math.max(leadInquiries.length - approvedRows.length, 0)}
+                        </div>
+                        <div className="text-sm font-semibold text-amber-600">Pending Review</div>
+                      </div>
+                    </Card>
                   </div>
+
+                  {/* Inquiries List */}
+                  {statusTabInquiries.length === 0 ? (
+                    <Card className="bg-white shadow-sm border border-gray-200 rounded-xl overflow-hidden">
+                      <div className="p-8 text-center">
+                        <div className="w-16 h-16 mx-auto mb-4 bg-gray-100 rounded-full flex items-center justify-center">
+                          <Inbox className="h-8 w-8 text-gray-400" />
+                        </div>
+                        <h3 className="text-lg font-semibold text-gray-900 mb-2">No Inquiries Yet</h3>
+                        <p className="text-sm text-gray-600 max-w-md mx-auto leading-relaxed">
+                          Create and send your first inquiry from the &ldquo;Create New Inquiry&rdquo; tab to start tracking progress here.
+                        </p>
+                      </div>
+                    </Card>
+                  ) : (
+                    <Card className="bg-white shadow-sm border border-gray-200 rounded-xl overflow-hidden">
+                      <div className="bg-gradient-to-r from-gray-50 to-gray-100 px-6 py-4 border-b border-gray-200">
+                        <div className="flex items-center justify-between">
+                          <div>
+                            <h3 className="text-sm font-semibold text-gray-900">Lead: {lead.name || "Unnamed Lead"}</h3>
+                            <p className="text-xs text-gray-600 mt-1">
+                              {lead.lead_id_formatted ? `#${lead.lead_id_formatted}` : `ID ${lead.id.slice(0, 8)}…`}
+                            </p>
+                          </div>
+                          <Badge className="bg-blue-100 text-blue-800 border-0 px-3 py-1 text-xs font-semibold">
+                            {statusTabInquiries.length} {statusTabInquiries.length === 1 ? 'Inquiry' : 'Inquiries'}
+                          </Badge>
+                        </div>
+                      </div>
+                      <div className="p-6">
+                        <div className="grid gap-4">
+                          {statusTabInquiries.map((inq, idx) => {
+                            const isApproved = salesInquiryIsApproved(inq, approvedInquiryId);
+                            const title = inq.product_name?.trim() || "Product TBD";
+                            const createdDate = inq.created_at ? new Date(inq.created_at).toLocaleDateString() : 'Unknown date';
+                            
+                            const cardContent = (
+                              <div className="p-4">
+                                <div className="flex items-start justify-between mb-3">
+                                  <div className="flex-1 min-w-0">
+                                    <h4 className="text-sm font-semibold text-gray-900 mb-1">
+                                      Inquiry #{idx + 1}
+                                    </h4>
+                                    <p className="text-xs text-gray-600">{createdDate}</p>
+                                  </div>
+                                  <Badge
+                                    className={`text-xs px-3 py-1 rounded-full border-0 font-semibold ${
+                                      isApproved
+                                        ? "bg-emerald-100 text-emerald-800"
+                                        : "bg-amber-100 text-amber-800"
+                                    }`}
+                                  >
+                                    {isApproved ? "Approved" : "Pending"}
+                                  </Badge>
+                                </div>
+                                
+                                <p className="text-sm font-semibold text-gray-800 mb-3">{title}</p>
+                                
+                                {isApproved ? (
+                                  <div className="space-y-3">
+                                    <p className="text-xs text-emerald-700 font-medium">
+                                      ✓ Ready for next steps - Click to view pricing details
+                                    </p>
+                                    {pricingByInquiryId[inq.id] && (
+                                      <div className="bg-emerald-50 rounded-lg p-3 border border-emerald-200">
+                                        <div className="grid grid-cols-2 gap-3 text-xs">
+                                          <div>
+                                            <p className="text-emerald-600 font-medium">Unit Price</p>
+                                            <p className="text-emerald-900 font-semibold">
+                                              {formatInquiryMoney(pricingByInquiryId[inq.id].unit_price)}
+                                            </p>
+                                          </div>
+                                          <div>
+                                            <p className="text-emerald-600 font-medium">Total Amount</p>
+                                            <p className="text-emerald-900 font-semibold">
+                                              {formatInquiryMoney(pricingByInquiryId[inq.id].total_amount)}
+                                            </p>
+                                          </div>
+                                        </div>
+                                      </div>
+                                    )}
+                                  </div>
+                                ) : (
+                                  <div className="flex items-center gap-2 text-xs text-amber-700">
+                                    <div className="w-2 h-2 bg-amber-400 rounded-full animate-pulse"></div>
+                                    <p className="font-medium">Under review by Operations and Admin</p>
+                                  </div>
+                                )}
+                              </div>
+                            );
+
+                            return isApproved ? (
+                              <button
+                                key={inq.id}
+                                type="button"
+                                onClick={() => void openApprovedInquiryDetail(inq)}
+                                className="w-full text-left border-2 border-emerald-300 bg-gradient-to-r from-emerald-50 to-green-50 rounded-xl shadow-sm hover:shadow-lg hover:border-emerald-400 transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:ring-offset-2"
+                              >
+                                {cardContent}
+                              </button>
+                            ) : (
+                              <div
+                                key={inq.id}
+                                className="w-full border-2 border-amber-200 bg-gradient-to-r from-amber-50 to-orange-50 rounded-xl shadow-sm"
+                              >
+                                {cardContent}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    </Card>
+                  )}
                 </div>
               )}
             </div>

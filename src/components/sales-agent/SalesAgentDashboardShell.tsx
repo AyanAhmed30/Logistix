@@ -338,7 +338,7 @@ export function SalesAgentDashboardShell({ username, permissions }: Props) {
             <div className="flex items-center gap-3">
               {mounted ? (
                 <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
+                  <DropdownMenuTrigger asChild suppressHydrationWarning>
                     <button
                       className="relative inline-flex h-10 w-10 items-center justify-center rounded-full bg-slate-100/80 hover:bg-slate-200/80 text-slate-700"
                       aria-label="Notifications"
@@ -422,8 +422,9 @@ export function SalesAgentDashboardShell({ username, permissions }: Props) {
                 </button>
               )}
 
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
+              {mounted ? (
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild suppressHydrationWarning>
                   <button className="inline-flex items-center gap-2 rounded-full pl-0.5 pr-2 py-0.5 bg-slate-100/60 hover:bg-slate-200/70">
                     <span className="inline-flex h-9 w-9 items-center justify-center rounded-full bg-gradient-to-br from-[#2DA79F] to-[#1d6e7a] text-white text-xs font-semibold">
                       {initials}
@@ -448,7 +449,10 @@ export function SalesAgentDashboardShell({ username, permissions }: Props) {
                     </button>
                   </form>
                 </DropdownMenuContent>
-              </DropdownMenu>
+                </DropdownMenu>
+              ) : (
+                <div className="h-9 w-20 bg-gray-200 rounded-full animate-pulse"></div>
+              )}
             </div>
           </header>
 

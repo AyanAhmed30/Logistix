@@ -355,17 +355,47 @@ export async function getAllInquiryConfirmations() {
 export async function getConfirmationsForInquiry(inquiryId: string) {
   try {
     const session = await getSession();
-    if (!session || (session.role !== 'admin' && session.role !== 'operations')) {
+    if (!session) {
       return { error: 'Unauthorized' };
     }
 
     const supabase = await createAdminClient();
+
+    // For sales agents, check if the inquiry belongs to their leads
+    if (session.role === 'sales_agent') {
+      // First get the lead_id for this inquiry
+      const { data: inquiry } = await supabase
+        .from('lead_inquiries')
+        .select('lead_id')
+        .eq('id', inquiryId)
+        .single();
+      
+      if (!inquiry) {
+        return { error: 'Inquiry not found' };
+      }
+      
+      // Then check if this lead belongs to the sales agent
+      const { data: lead } = await supabase
+        .from('leads')
+        .select('sales_agents!inner(username)')
+        .eq('id', inquiry.lead_id)
+        .single();
+      
+      if (!lead || 
+          !((lead as { sales_agents?: { username?: string } }).sales_agents?.username) || 
+          ((lead as { sales_agents?: { username?: string } }).sales_agents?.username !== session.username)) {
+        return { error: 'Unauthorized - not your inquiry' };
+      }
+    } else if (session.role !== 'admin' && session.role !== 'operations') {
+      return { error: 'Unauthorized' };
+    }
 
     const { data, error } = await supabase
       .from('inquiry_confirmations')
       .select('*')
       .eq('inquiry_id', inquiryId)
       .order('created_at', { ascending: false });
+
 
     if (error) return { error: error.message };
     const rows = (data || []) as InquiryConfirmation[];
@@ -412,6 +442,18 @@ export async function approveInquiryConfirmation(confirmationId: string) {
 
     const supabase = await createAdminClient();
 
+    // First, get the full confirmation data including calculator values
+    const { data: confirmationData, error: fetchError } = await supabase
+      .from('inquiry_confirmations')
+      .select('*')
+      .eq('id', confirmationId)
+      .single();
+
+    if (fetchError || !confirmationData) {
+      return { error: fetchError?.message || 'Inquiry confirmation not found' };
+    }
+
+    // Update the confirmation status
     const { data, error } = await supabase
       .from('inquiry_confirmations')
       .update({
@@ -434,6 +476,8 @@ export async function approveInquiryConfirmation(confirmationId: string) {
         updated_at: new Date().toISOString(),
       })
       .eq('id', data.inquiry_id);
+
+    // No need to create quotation - calculator values are sufficient
 
     // Notify Sales Agent + Operations submitter about approval.
     const { data: lead } = await supabase

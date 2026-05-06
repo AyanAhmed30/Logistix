@@ -45,6 +45,9 @@ export default function LoginPage() {
                     <CardDescription className="text-center text-secondary-muted font-medium text-lg">
                         Logistics Portal Login
                     </CardDescription>
+                    <p className="text-center text-sm text-secondary-muted/80">
+                        Use your assigned credentials to continue.
+                    </p>
                 </CardHeader>
                 <form onSubmit={handleSubmit}>
                     <CardContent className="space-y-6 pt-2">

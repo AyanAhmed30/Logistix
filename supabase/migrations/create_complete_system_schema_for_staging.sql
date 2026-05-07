@@ -814,12 +814,25 @@ BEGIN
 END $$;
 
 -- STEP 4: Update customer_id_formatted for converted leads
--- Set customer_id_formatted = lead's lead_id_formatted
-UPDATE customers c
-SET customer_id_formatted = l.lead_id_formatted
-FROM leads l
-WHERE c.lead_id = l.id
-  AND l.lead_id_formatted IS NOT NULL;
+-- Guard this block because customers.lead_id is added in a later migration.
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1
+    FROM information_schema.columns
+    WHERE table_schema = 'public'
+      AND table_name = 'customers'
+      AND column_name = 'lead_id'
+  ) THEN
+    EXECUTE $sql$
+      UPDATE customers c
+      SET customer_id_formatted = l.lead_id_formatted
+      FROM leads l
+      WHERE c.lead_id = l.id
+        AND l.lead_id_formatted IS NOT NULL
+    $sql$;
+  END IF;
+END $$;
 
 
 
@@ -3554,7 +3567,11 @@ set is_active = excluded.is_active,
 -- 2) Journal line currency integrity
 -- =====================================================
 alter table public.journal_entry_lines
-  add column if not exists currency_id uuid null references public.currencies(id) on delete restrict;
+  add column if not exists currency_id uuid null references public.currencies(id) on delete restrict,
+  add column if not exists base_currency_amount numeric(15,2),
+  add column if not exists foreign_currency text,
+  add column if not exists foreign_amount numeric(15,2),
+  add column if not exists exchange_rate numeric(18,8);
 
 update public.journal_entry_lines
 set base_currency_amount = greatest(debit_amount, credit_amount)
@@ -3707,6 +3724,24 @@ grant execute on function public.convert_to_base(numeric, numeric) to service_ro
 -- =====================================================
 -- 4) Strengthen mapped event posting (base balance check)
 -- =====================================================
+create table if not exists public.event_logs (
+  id uuid primary key default gen_random_uuid(),
+  event_id uuid not null unique,
+  event_type text not null,
+  reference_id text not null,
+  idempotency_key text not null unique,
+  source_module text not null,
+  processed boolean not null default false,
+  processed_at timestamptz null,
+  journal_entry_id uuid null references public.journal_entries(id) on delete set null,
+  processing_error text null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create index if not exists idx_event_logs_lookup
+  on public.event_logs(event_type, reference_id, processed);
+
 create or replace function public.process_mapped_journal_event(
   p_event_id uuid,
   p_event_type text,

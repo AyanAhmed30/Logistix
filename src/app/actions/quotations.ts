@@ -3,7 +3,7 @@
 import { createAdminClient } from '@/utils/supabase/server';
 import { getSession } from '@/lib/auth/session';
 import { revalidatePath } from 'next/cache';
-import { sendWhatsAppMessage } from '@/lib/whatsapp';
+import { sendWhatsAppDocument } from '@/lib/whatsapp';
 
 export type QuotationStatus = 'quotation' | 'quotation_sent' | 'sales_order';
 
@@ -485,7 +485,12 @@ export async function deleteQuotation(id: string) {
 
 export async function sendQuotation(
   id: string,
-  messageData?: { phone_number?: string; whatsapp_message?: string }
+  messageData?: {
+    phone_number?: string;
+    whatsapp_message?: string;
+    pdf_base64?: string;
+    pdf_filename?: string;
+  }
 ) {
   try {
     const session = await getSession();
@@ -513,11 +518,15 @@ export async function sendQuotation(
 
     // ── Try sending via WhatsApp Business Cloud API (if configured) ──
     let whatsappMessageId: string | null = null;
+    let whatsappMediaId: string | null = null;
     let sendMethod = 'whatsapp_web';
 
-    if (messageData?.phone_number && messageData?.whatsapp_message) {
-      const whatsappResult = await sendWhatsAppMessage(
+    if (messageData?.phone_number && messageData?.whatsapp_message && messageData?.pdf_base64) {
+      const pdfBuffer = Buffer.from(messageData.pdf_base64, 'base64');
+      const whatsappResult = await sendWhatsAppDocument(
         messageData.phone_number.trim(),
+        pdfBuffer,
+        (messageData.pdf_filename || 'Quotation.pdf').trim(),
         messageData.whatsapp_message.trim()
       );
 
@@ -532,6 +541,7 @@ export async function sendQuotation(
         // API sent successfully
         sendMethod = 'whatsapp_api';
         whatsappMessageId = whatsappResult.messageId || null;
+        whatsappMediaId = whatsappResult.mediaId || null;
       }
     }
 
@@ -569,12 +579,14 @@ export async function sendQuotation(
         phone_number: messageData?.phone_number || null,
         whatsapp_message: messageData?.whatsapp_message || null,
         whatsapp_message_id: whatsappMessageId,
+        whatsapp_media_id: whatsappMediaId,
+        pdf_filename: messageData?.pdf_filename || null,
       }
     );
 
     revalidatePath('/admin/dashboard');
     revalidatePath('/sales-agent/dashboard');
-    return { quotation: updatedData as Quotation };
+    return { quotation: updatedData as Quotation, send_method: sendMethod };
   } catch (err) {
     const message = err instanceof Error ? err.message : 'An unexpected error occurred';
     return { error: message };

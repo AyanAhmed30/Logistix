@@ -25,6 +25,7 @@ type CalcValues = {
   freight: string;
   shipping_line_charges: string;
   clearance_expense: string;
+  sales_tax_rate: string;
 };
 
 const EMPTY_CALC: CalcValues = {
@@ -42,6 +43,7 @@ const EMPTY_CALC: CalcValues = {
   freight: "0",
   shipping_line_charges: "0",
   clearance_expense: "0",
+  sales_tax_rate: "18",
 };
 
 function toNum(v: string | null | undefined) {
@@ -100,6 +102,7 @@ export function AdminCalculatorPanel() {
   const freight = toNum(calcValues.freight);
   const shippingLineCharges = toNum(calcValues.shipping_line_charges);
   const clearanceExpense = toNum(calcValues.clearance_expense);
+  const salesTaxRate = toNum(calcValues.sales_tax_rate);
   const weightKg = 0;
 
   const pkrValue = invValue * exchangeRate;
@@ -112,7 +115,7 @@ export function AdminCalculatorPanel() {
   const excise = (assessedValue * exciseRate) / 100;
   const regularDuty = (assessedValue * regularDutyRate) / 100;
   const stampDuty = (assessedValue * stampDutyRate) / 100;
-  const totalDutyCost =
+  const subTotalDutyCost =
     assessedValue +
     customDuty +
     addCd +
@@ -126,6 +129,8 @@ export function AdminCalculatorPanel() {
     freight +
     shippingLineCharges +
     clearanceExpense;
+  const salesTaxAmount = (subTotalDutyCost * salesTaxRate) / 100;
+  const totalDutyCost = subTotalDutyCost + salesTaxAmount;
   const costPerWeight = weightKg > 0 ? totalDutyCost / weightKg : 0;
 
   return (
@@ -210,6 +215,19 @@ export function AdminCalculatorPanel() {
                   <div className="col-span-4 px-3 py-2 text-right text-sm font-semibold">{fmtMoney(row.amount)}</div>
                 </div>
               ))}
+
+              <div className="grid grid-cols-12 border-b">
+                <div className="col-span-5 px-3 py-2 border-r text-sm">Sales Tax (ST)</div>
+                <div className="col-span-3 px-2 py-1.5 border-r">
+                  <Input
+                    value={calcValues.sales_tax_rate}
+                    onChange={(e) => setCalcValues((p) => ({ ...p, sales_tax_rate: e.target.value }))}
+                    onBlur={() => void persistField("sales_tax_rate", calcValues.sales_tax_rate)}
+                    className="h-8 text-xs"
+                  />
+                </div>
+                <div className="col-span-4 px-3 py-2 text-right text-sm font-semibold">{fmtMoney(salesTaxAmount)}</div>
+              </div>
 
               {[
                 { key: "inv_fine", label: "INV Fine", amount: invFine },

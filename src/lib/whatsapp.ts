@@ -15,6 +15,7 @@ const GRAPH_API_VERSION = 'v21.0';
 export interface WhatsAppSendResult {
   success: boolean;
   messageId?: string;
+  mediaId?: string;
   /** When true, the API isn't configured — frontend should open WhatsApp Web instead */
   useWebFallback?: boolean;
   error?: string;
@@ -106,5 +107,94 @@ export async function sendWhatsAppMessage(
       success: false,
       error: `Failed to connect to WhatsApp API: ${errMsg}`,
     };
+  }
+}
+
+/**
+ * Upload a document to WhatsApp media endpoint and send it with caption.
+ * Returns { useWebFallback: true } if credentials are not configured.
+ */
+export async function sendWhatsAppDocument(
+  to: string,
+  fileBuffer: Buffer,
+  filename: string,
+  caption?: string
+): Promise<WhatsAppSendResult> {
+  const phoneNumberId = process.env.WHATSAPP_PHONE_NUMBER_ID;
+  const accessToken = process.env.WHATSAPP_ACCESS_TOKEN;
+
+  if (!phoneNumberId || !accessToken) {
+    return { success: true, useWebFallback: true };
+  }
+
+  const cleanPhone = to.replace(/[^0-9]/g, '');
+  if (!cleanPhone || cleanPhone.length < 10) {
+    return {
+      success: false,
+      error: `Invalid phone number: "${to}". Provide a number with country code (e.g. 923001234567).`,
+    };
+  }
+
+  try {
+    const form = new FormData();
+    const blob = new Blob([fileBuffer], { type: 'application/pdf' });
+    form.append('messaging_product', 'whatsapp');
+    form.append('type', 'application/pdf');
+    form.append('file', blob, filename);
+
+    const uploadUrl = `https://graph.facebook.com/${GRAPH_API_VERSION}/${phoneNumberId}/media`;
+    const uploadRes = await fetch(uploadUrl, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${accessToken}` },
+      body: form,
+    });
+    const uploadData = await uploadRes.json();
+
+    if (!uploadRes.ok || !uploadData?.id) {
+      const apiError =
+        uploadData?.error?.message ||
+        uploadData?.error?.error_user_msg ||
+        `HTTP ${uploadRes.status}: ${uploadRes.statusText}`;
+      return { success: false, error: `WhatsApp media upload failed: ${apiError}` };
+    }
+
+    const mediaId = String(uploadData.id);
+    const sendUrl = `https://graph.facebook.com/${GRAPH_API_VERSION}/${phoneNumberId}/messages`;
+    const sendBody = {
+      messaging_product: 'whatsapp',
+      recipient_type: 'individual',
+      to: cleanPhone,
+      type: 'document',
+      document: {
+        id: mediaId,
+        filename,
+        caption: caption || undefined,
+      },
+    };
+    const sendRes = await fetch(sendUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${accessToken}`,
+      },
+      body: JSON.stringify(sendBody),
+    });
+    const sendData = await sendRes.json();
+    if (!sendRes.ok) {
+      const apiError =
+        sendData?.error?.message ||
+        sendData?.error?.error_user_msg ||
+        `HTTP ${sendRes.status}: ${sendRes.statusText}`;
+      return { success: false, error: `WhatsApp document send failed: ${apiError}` };
+    }
+
+    return {
+      success: true,
+      mediaId,
+      messageId: sendData?.messages?.[0]?.id || undefined,
+    };
+  } catch (err) {
+    const errMsg = err instanceof Error ? err.message : 'Unknown network error';
+    return { success: false, error: `Failed to connect to WhatsApp API: ${errMsg}` };
   }
 }

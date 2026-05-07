@@ -12,6 +12,7 @@ import {
   addInquiryActivity,
   addInquiryCalculatorFieldLog,
   saveInquiryCalculatorField,
+  getSharedInquiryCalculatorValues,
   getLeadChatMessages,
   sendLeadChatMessage,
   type LeadInquiryWithLead,
@@ -45,6 +46,13 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Textarea } from "@/components/ui/textarea";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import {
   FileText,
   ClipboardList,
@@ -122,10 +130,12 @@ const PAGE_SIZE = 20;
 
 export function OperationsLeadsInquiryPanel({
   focusLeadId,
+  focusInquiryId,
   onFocusHandled,
   adminCalculatorMode = false,
 }: {
   focusLeadId?: string | null;
+  focusInquiryId?: string | null;
   onFocusHandled?: () => void;
   adminCalculatorMode?: boolean;
 } = {}) {
@@ -142,7 +152,6 @@ export function OperationsLeadsInquiryPanel({
   // Lead Management Form state
   const [showForm, setShowForm] = useState(false);
   const [formProductName, setFormProductName] = useState("");
-  const [formHsCode, setFormHsCode] = useState("");
   const [formWeight, setFormWeight] = useState("");
   const [formCbm, setFormCbm] = useState("");
   const [formQuantity, setFormQuantity] = useState("");
@@ -200,6 +209,10 @@ export function OperationsLeadsInquiryPanel({
   const [calcFreight, setCalcFreight] = useState("0");
   const [calcShippingLineCharges, setCalcShippingLineCharges] = useState("0");
   const [calcClearanceExpense, setCalcClearanceExpense] = useState("0");
+  const [calcSalesTaxRate, setCalcSalesTaxRate] = useState("18");
+  const [calcUom, setCalcUom] = useState("KG");
+  const [calcQuantity, setCalcQuantity] = useState("0");
+  const [calcHsCode, setCalcHsCode] = useState("");
   const [lastCalcSnapshot, setLastCalcSnapshot] = useState<Record<string, string>>({});
 
   const getDefaultCalculatorValues = useCallback(() => ({
@@ -217,6 +230,10 @@ export function OperationsLeadsInquiryPanel({
     freight: "0",
     shipping_line_charges: "0",
     clearance_expense: "0",
+    sales_tax_rate: "18",
+    uom: "KG",
+    quantity: "0",
+    hs_code: "",
   }), []);
 
   const applyCalculatorValues = useCallback((values: Record<string, string>) => {
@@ -234,6 +251,10 @@ export function OperationsLeadsInquiryPanel({
     setCalcFreight(values.freight ?? "0");
     setCalcShippingLineCharges(values.shipping_line_charges ?? "0");
     setCalcClearanceExpense(values.clearance_expense ?? "0");
+    setCalcSalesTaxRate(values.sales_tax_rate ?? "18");
+    setCalcUom(values.uom ?? "KG");
+    setCalcQuantity(values.quantity ?? "0");
+    setCalcHsCode(values.hs_code ?? "");
   }, []);
 
   const refreshInquiryLogs = useCallback(async (leadId: string) => {
@@ -339,20 +360,22 @@ export function OperationsLeadsInquiryPanel({
   }, [fetchInquiries, debouncedSearchQuery]);
 
   useEffect(() => {
-    if (!focusLeadId || view !== "list" || inquiries.length === 0) return;
-    const target = inquiries
-      .filter((i) => i.lead_id === focusLeadId)
-      .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())[0];
+    if ((!focusLeadId && !focusInquiryId) || view !== "list" || inquiries.length === 0) return;
+    const target = focusInquiryId
+      ? inquiries.find((i) => i.id === focusInquiryId)
+      : inquiries
+          .filter((i) => i.lead_id === focusLeadId)
+          .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())[0];
     if (target) {
       openDetail(target);
     }
     onFocusHandled?.();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [focusLeadId, inquiries, view]);
+  }, [focusLeadId, focusInquiryId, inquiries, view]);
 
-  const fetchLeadChat = useCallback(async (leadId: string) => {
+  const fetchLeadChat = useCallback(async (leadId: string, inquiryId: string) => {
     try {
-      const result = await getLeadChatMessages(leadId);
+      const result = await getLeadChatMessages(leadId, inquiryId);
       if (!("error" in result)) {
         setChatMessages(result.messages || []);
       }
@@ -363,9 +386,9 @@ export function OperationsLeadsInquiryPanel({
 
   useEffect(() => {
     if (view !== "detail" || !selectedInquiry) return;
-    fetchLeadChat(selectedInquiry.lead_id);
+    fetchLeadChat(selectedInquiry.lead_id, selectedInquiry.id);
     const timer = setInterval(() => {
-      fetchLeadChat(selectedInquiry.lead_id);
+      fetchLeadChat(selectedInquiry.lead_id, selectedInquiry.id);
     }, 5000);
     return () => clearInterval(timer);
   }, [view, selectedInquiry, fetchLeadChat]);
@@ -377,7 +400,12 @@ export function OperationsLeadsInquiryPanel({
     resetForm();
     // Calculator must start empty/zero for each inquiry (manual-only entry).
     const defaults = getDefaultCalculatorValues();
-    applyCalculatorValues(defaults);
+    const sharedResult = await getSharedInquiryCalculatorValues();
+    const mergedDefaults =
+      "error" in sharedResult
+        ? defaults
+        : { ...defaults, ...(sharedResult.values || {}) };
+    applyCalculatorValues(mergedDefaults);
     // Load secondary detail data in parallel to reduce perceived latency.
     const [confirmResult] = await Promise.allSettled([
       getConfirmationsForInquiry(inquiry.id),
@@ -393,7 +421,7 @@ export function OperationsLeadsInquiryPanel({
     } else {
       setConfirmations([]);
     }
-    setLastCalcSnapshot(defaults);
+    setLastCalcSnapshot(mergedDefaults);
     setActiveRightTab("send_message");
     setLogNoteText("");
     setChatInput("");
@@ -417,13 +445,13 @@ export function OperationsLeadsInquiryPanel({
     if (!chatInput.trim()) return;
     setIsSendingChat(true);
     try {
-      const result = await sendLeadChatMessage(selectedInquiry.lead_id, chatInput);
+      const result = await sendLeadChatMessage(selectedInquiry.lead_id, chatInput, selectedInquiry.id);
       if ("error" in result) {
         toast.error(result.error || "Failed to send message.");
         return;
       }
       setChatInput("");
-      await fetchLeadChat(selectedInquiry.lead_id);
+      await fetchLeadChat(selectedInquiry.lead_id, selectedInquiry.id);
     } catch {
       toast.error("Failed to send message.");
     } finally {
@@ -434,7 +462,6 @@ export function OperationsLeadsInquiryPanel({
   function openLeadManagementForm() {
     if (!selectedInquiry) return;
     setFormProductName(selectedInquiry.product_name || "");
-    setFormHsCode("");
     setFormWeight(selectedInquiry.total_weight || "");
     setFormCbm(selectedInquiry.cbm || "");
     setFormQuantity(selectedInquiry.quantity || "");
@@ -496,7 +523,6 @@ export function OperationsLeadsInquiryPanel({
 
   function resetForm() {
     setFormProductName("");
-    setFormHsCode("");
     setFormWeight("");
     setFormCbm("");
     setFormQuantity("");
@@ -812,8 +838,8 @@ export function OperationsLeadsInquiryPanel({
         product_name: formProductName,
         total_weight: formWeight,
         cbm: formCbm,
-        quantity: formQuantity,
-        hs_code: formHsCode,
+        quantity: formQuantity || calcQuantity,
+        hs_code: calcHsCode,
         calculator_values: {
           inv_value: calcInvValue,
           exchange_rate: calcExchangeRate,
@@ -829,6 +855,10 @@ export function OperationsLeadsInquiryPanel({
           freight: calcFreight,
           shipping_line_charges: calcShippingLineCharges,
           clearance_expense: calcClearanceExpense,
+          sales_tax_rate: calcSalesTaxRate,
+          uom: calcUom,
+          quantity: calcQuantity,
+          hs_code: calcHsCode,
         },
         original_image_url: selectedInquiry.image_url,
         sales_additional_image_urls: Array.isArray(selectedInquiry.additional_image_urls)
@@ -1018,6 +1048,7 @@ export function OperationsLeadsInquiryPanel({
     const freight = toNum(calcFreight);
     const shippingLineCharges = toNum(calcShippingLineCharges);
     const clearanceExpense = toNum(calcClearanceExpense);
+    const salesTaxRate = toNum(calcSalesTaxRate);
 
     const pkrValue = invValue * exchangeRate;
     const assessedValue = pkrValue;
@@ -1031,7 +1062,7 @@ export function OperationsLeadsInquiryPanel({
     const regularDuty = (assessedValue * regularDutyRate) / 100;
     const stampDuty = (assessedValue * stampDutyRate) / 100;
 
-    const totalDutyCost =
+    const subTotalDutyCost =
       assessedValue +
       customDuty +
       addCd +
@@ -1045,6 +1076,8 @@ export function OperationsLeadsInquiryPanel({
       freight +
       shippingLineCharges +
       clearanceExpense;
+    const salesTaxAmount = (subTotalDutyCost * salesTaxRate) / 100;
+    const totalDutyCost = subTotalDutyCost + salesTaxAmount;
 
     const costPerWeight = weightKg > 0 ? totalDutyCost / weightKg : 0;
 
@@ -1064,6 +1097,7 @@ export function OperationsLeadsInquiryPanel({
       freight,
       shippingLineCharges,
       clearanceExpense,
+      salesTaxAmount,
       totalDutyCost,
       costPerWeight,
     };
@@ -1093,6 +1127,8 @@ export function OperationsLeadsInquiryPanel({
       { label: "Freight", value: calc.freight, format: "money" as const },
       { label: "Shipping Line Charges", value: calc.shippingLineCharges, format: "money" as const },
       { label: "Clearance Expense", value: calc.clearanceExpense, format: "money" as const },
+      { label: "Sales Tax (ST) %", value: salesTaxRate, format: "percent" as const },
+      { label: "Sales Tax Amount", value: calc.salesTaxAmount, format: "money" as const },
       { label: "Total Duty Cost", value: calc.totalDutyCost, format: "money" as const },
       { label: "Cost per Weight", value: calc.costPerWeight, format: "number" as const },
     ].filter((item) => Math.abs(item.value) > 0);
@@ -1121,6 +1157,9 @@ export function OperationsLeadsInquiryPanel({
       freight: "Freight",
       shipping_line_charges: "Shipping Line Charges",
       clearance_expense: "Clearance Expense",
+      sales_tax_rate: "Sales Tax (ST) %",
+      uom: "UOM",
+      hs_code: "HS Code",
       additional_image_1: "Additional Image 1",
       additional_image_2: "Additional Image 2",
       status: "Status",
@@ -1423,6 +1462,67 @@ export function OperationsLeadsInquiryPanel({
                     <div className="col-span-4 px-3 py-2 text-right text-sm font-semibold">{fmtMoney(row.amount)}</div>
                   </div>
                 ))}
+
+                <div className="grid grid-cols-12 border-b">
+                  <div className="col-span-5 px-3 py-2 border-r text-sm">Sales Tax (ST)</div>
+                  <div className="col-span-3 px-2 py-1.5 border-r">
+                    <Input
+                      value={calcSalesTaxRate}
+                      onChange={(e) => setCalcSalesTaxRate(e.target.value)}
+                      onBlur={() => void logCalculatorFieldChange("sales_tax_rate", calcSalesTaxRate)}
+                      className="h-8 text-xs"
+                    />
+                    <div className="text-[10px] text-slate-500 mt-0.5">{fmtRate(calcSalesTaxRate)}</div>
+                  </div>
+                  <div className="col-span-4 px-3 py-2 text-right text-sm font-semibold">{fmtMoney(calc.salesTaxAmount)}</div>
+                </div>
+
+                <div className="grid grid-cols-12 border-b">
+                  <div className="col-span-5 px-3 py-2 border-r text-sm">UOM</div>
+                  <div className="col-span-7 px-2 py-1.5">
+                    <Select
+                      value={calcUom}
+                      onValueChange={(value) => {
+                        setCalcUom(value);
+                        void logCalculatorFieldChange("uom", value);
+                      }}
+                    >
+                      <SelectTrigger className="h-8 text-xs">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="KG">KG</SelectItem>
+                        <SelectItem value="M³">M³</SelectItem>
+                        <SelectItem value="PCS/U">PCS/U</SelectItem>
+                        <SelectItem value="Pairs (2U)">Pairs (2U)</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-12 border-b">
+                  <div className="col-span-5 px-3 py-2 border-r text-sm">Quantity</div>
+                  <div className="col-span-7 px-2 py-1.5">
+                    <Input
+                      value={calcQuantity}
+                      onChange={(e) => setCalcQuantity(e.target.value.replace(/\D/g, ""))}
+                      onBlur={() => void logCalculatorFieldChange("quantity", calcQuantity)}
+                      className="h-8 text-xs"
+                    />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-12 border-b">
+                  <div className="col-span-5 px-3 py-2 border-r text-sm">HS Code</div>
+                  <div className="col-span-7 px-2 py-1.5">
+                    <Input
+                      value={calcHsCode}
+                      onChange={(e) => setCalcHsCode(e.target.value)}
+                      onBlur={() => void logCalculatorFieldChange("hs_code", calcHsCode)}
+                      className="h-8 text-xs"
+                    />
+                  </div>
+                </div>
 
                 {[
                   { field: "inv_fine", label: "INV Fine", value: calcInvFine, setValue: setCalcInvFine, amount: calc.invFine },
@@ -1816,14 +1916,6 @@ export function OperationsLeadsInquiryPanel({
                   />
                 </div>
                 <div className="space-y-1.5">
-                  <label className="text-sm font-medium text-slate-700">HS Code</label>
-                  <Input
-                    value={formHsCode}
-                    onChange={(e) => setFormHsCode(e.target.value)}
-                    placeholder="e.g. 3923.10"
-                  />
-                </div>
-                <div className="space-y-1.5">
                   <label className="text-sm font-medium text-slate-700">Total Weight</label>
                   <Input
                     value={formWeight}
@@ -1843,7 +1935,7 @@ export function OperationsLeadsInquiryPanel({
                   <label className="text-sm font-medium text-slate-700">Quantity</label>
                   <Input
                     value={formQuantity}
-                    onChange={(e) => setFormQuantity(e.target.value)}
+                    onChange={(e) => setFormQuantity(e.target.value.replace(/\D/g, ""))}
                     placeholder="e.g. 100"
                   />
                 </div>

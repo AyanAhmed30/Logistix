@@ -34,6 +34,7 @@ export function OperationsDashboardShell({ username }: Props) {
   const [notifications, setNotifications] = useState<LeadChatNotification[]>([]);
   const [unreadCount, setUnreadCount] = useState(0);
   const [focusLeadId, setFocusLeadId] = useState<string | null>(null);
+  const [focusInquiryId, setFocusInquiryId] = useState<string | null>(null);
   const [notificationsError, setNotificationsError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -79,6 +80,7 @@ export function OperationsDashboardShell({ username }: Props) {
     }
     setActiveSubTab("leads-inquiry");
     setFocusLeadId(notification.lead_id);
+    setFocusInquiryId(notification.inquiry_id || null);
   }
 
   return (
@@ -259,7 +261,11 @@ export function OperationsDashboardShell({ username }: Props) {
           {activeSubTab === "leads-inquiry" && (
             <OperationsLeadsInquiryPanel
               focusLeadId={focusLeadId}
-              onFocusHandled={() => setFocusLeadId(null)}
+              focusInquiryId={focusInquiryId}
+              onFocusHandled={() => {
+                setFocusLeadId(null);
+                setFocusInquiryId(null);
+              }}
             />
           )}
         </section>

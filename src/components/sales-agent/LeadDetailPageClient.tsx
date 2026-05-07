@@ -14,6 +14,7 @@ function tabFromSearchParams(searchParams: URLSearchParams): LeadInquiryWorkspac
 export function LeadDetailPageClient({ lead }: { lead: Lead }) {
   const searchParams = useSearchParams();
   const initialTab = tabFromSearchParams(searchParams);
+  const initialInquiryId = searchParams.get("inquiryId") || undefined;
   const remountKey = `${lead.id}-${initialTab ?? "default"}`;
   
   // Get workflow constraint information from URL params
@@ -28,6 +29,7 @@ export function LeadDetailPageClient({ lead }: { lead: Lead }) {
       active
       layout="page"
       initialMainTab={initialTab}
+      initialInquiryId={initialInquiryId}
       allowInquiry={allowInquiry}
       boardStatus={boardStatus}
     />

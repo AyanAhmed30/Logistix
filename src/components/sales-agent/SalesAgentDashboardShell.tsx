@@ -188,7 +188,8 @@ export function SalesAgentDashboardShell({ username, permissions }: Props) {
       );
       setUnreadCount((prev) => Math.max(0, prev - 1));
     }
-    router.push(`/sales-agent/leads/${notification.lead_id}`);
+    const inquiryQuery = notification.inquiry_id ? `&inquiryId=${notification.inquiry_id}` : "";
+    router.push(`/sales-agent/leads/${notification.lead_id}?tab=view${inquiryQuery}`);
   }
 
   const initials = useMemo(() => {

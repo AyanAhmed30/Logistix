@@ -35,9 +35,12 @@ import {
   updateInquiryForAccounting,
   getQuotationsForInquiry,
   getLatestQuotationPricingByInquiryIds,
+  getLeadChatMessages,
+  sendLeadChatMessage,
   type LeadInquiry,
   type InquiryLog,
   type InquiryQuotation,
+  type LeadChatMessage,
 } from "@/app/actions/inquiries";
 import { getConfirmationsForInquiry } from "@/app/actions/inquiry_confirmations";
 import {
@@ -199,6 +202,7 @@ export function LeadInquiryWorkspace({
   layout,
   onRequestClose,
   initialMainTab,
+  initialInquiryId,
   allowInquiry = true,
   boardStatus,
 }: {
@@ -209,6 +213,7 @@ export function LeadInquiryWorkspace({
   onRequestClose?: () => void;
   /** When set on the lead detail page, selects this sidebar tab once on load. */
   initialMainTab?: MainTab;
+  initialInquiryId?: string;
   /** Whether to allow Send Inquiry workflow based on board status */
   allowInquiry?: boolean;
   /** The board status from which this lead was accessed */
@@ -230,7 +235,7 @@ export function LeadInquiryWorkspace({
   const [confirmationStatus, setConfirmationStatus] = useState<'none' | 'approved'>('none');
   const [leadInquiries, setLeadInquiries] = useState<LeadInquiry[]>([]);
   const [approvedInquiryId, setApprovedInquiryId] = useState<string | null>(null);
-  const [selectedInquiryId, setSelectedInquiryId] = useState<string>("");
+  const [selectedInquiryId, setSelectedInquiryId] = useState<string>(initialInquiryId || "");
   const [inquiryLogs, setInquiryLogs] = useState<InquiryLog[]>([]);
   const [isLoadingLogs, setIsLoadingLogs] = useState(false);
   const [isViewEditing, setIsViewEditing] = useState(false);
@@ -266,6 +271,9 @@ export function LeadInquiryWorkspace({
   const [pricingByInquiryId, setPricingByInquiryId] = useState<
     Record<string, { quotation_number: string; unit_price: number; total_amount: number; notes: string | null }>
   >({});
+  const [chatMessages, setChatMessages] = useState<LeadChatMessage[]>([]);
+  const [chatInput, setChatInput] = useState("");
+  const [isSendingChat, setIsSendingChat] = useState(false);
 
   const fetchInquiryData = useCallback(async () => {
     if (!lead) return;
@@ -405,6 +413,9 @@ export function LeadInquiryWorkspace({
       setApprovedDetailText("");
       setApprovedDetailTitle("");
       setPricingByInquiryId({});
+      setChatMessages([]);
+      setChatInput("");
+      setIsSendingChat(false);
       setBaselineDraftState({
         product_name: "",
         total_weight: "",
@@ -663,6 +674,19 @@ export function LeadInquiryWorkspace({
     }
   }
 
+  async function fetchChatForInquiry(leadId: string, inquiryId: string) {
+    try {
+      const result = await getLeadChatMessages(leadId, inquiryId);
+      if ("error" in result) {
+        setChatMessages([]);
+      } else {
+        setChatMessages(result.messages || []);
+      }
+    } catch {
+      setChatMessages([]);
+    }
+  }
+
   const handleSelectInquiry = useCallback(
     (inquiryItem: LeadInquiry) => {
       setIsViewEditing(false);
@@ -690,9 +714,36 @@ export function LeadInquiryWorkspace({
       setConfirmationStatus(hasApproved ? "approved" : "none");
       void recordInquiryViewed(inquiryItem.id);
       void fetchLogsForInquiry(inquiryItem.id);
+      void fetchChatForInquiry(inquiryItem.lead_id, inquiryItem.id);
     },
     [approvedInquiryId]
   );
+
+  useEffect(() => {
+    if (!inquiry?.id || !lead?.id) return;
+    void fetchChatForInquiry(lead.id, inquiry.id);
+    const timer = setInterval(() => {
+      void fetchChatForInquiry(lead.id, inquiry.id);
+    }, 5000);
+    return () => clearInterval(timer);
+  }, [inquiry?.id, lead?.id]);
+
+  async function handleSendChatMessage() {
+    if (!inquiry?.id || !lead?.id) return;
+    if (!chatInput.trim()) return;
+    setIsSendingChat(true);
+    try {
+      const result = await sendLeadChatMessage(lead.id, chatInput, inquiry.id);
+      if ("error" in result) {
+        toast.error(result.error || "Failed to send message.");
+      } else {
+        setChatInput("");
+        await fetchChatForInquiry(lead.id, inquiry.id);
+      }
+    } finally {
+      setIsSendingChat(false);
+    }
+  }
 
   const openApprovedInquiryDetail = useCallback(
     async (inq: LeadInquiry) => {
@@ -1443,6 +1494,72 @@ export function LeadInquiryWorkspace({
           />
         </div>
       </Card>
+
+      {inquiry?.id && (
+        <Card className="bg-white shadow-sm border border-gray-200 rounded-xl overflow-hidden">
+          <div className="bg-gradient-to-r from-orange-50 to-amber-50 px-4 py-3 border-b border-gray-200">
+            <h3 className="text-sm font-semibold text-gray-900">Inquiry Conversation</h3>
+            <p className="text-xs text-gray-600 mt-1">Messages are shown only for this inquiry.</p>
+          </div>
+          <div className="p-4 space-y-3">
+            <div className="max-h-56 overflow-y-auto space-y-2 pr-1">
+              {chatMessages.length === 0 ? (
+                <p className="text-xs text-gray-500 text-center py-4">No messages yet.</p>
+              ) : (
+                chatMessages.map((message) => (
+                  <div
+                    key={message.id}
+                    className={`rounded-lg border p-2.5 text-sm ${
+                      message.sender_role === "sales_agent"
+                        ? "bg-blue-50 border-blue-200"
+                        : "bg-white border-slate-200"
+                    }`}
+                  >
+                    <div className="flex items-center justify-between gap-2 mb-1">
+                      <span className="text-xs font-semibold text-slate-700">
+                        {message.sender_role === "sales_agent"
+                          ? "Sales"
+                          : message.sender_role === "operations"
+                            ? "Operations"
+                            : "Admin"}{" "}
+                        · {message.sender_username}
+                      </span>
+                      <span className="text-[10px] text-slate-400">
+                        {new Date(message.created_at).toLocaleString([], {
+                          month: "short",
+                          day: "numeric",
+                          hour: "2-digit",
+                          minute: "2-digit",
+                        })}
+                      </span>
+                    </div>
+                    <p className="text-slate-700 whitespace-pre-wrap">{message.message}</p>
+                  </div>
+                ))
+              )}
+            </div>
+            <div className="space-y-2">
+              <Textarea
+                value={chatInput}
+                onChange={(e) => setChatInput(e.target.value)}
+                placeholder="Type a message for Operations..."
+                rows={2}
+                className="bg-white text-sm resize-none"
+              />
+              <div className="flex justify-end">
+                <Button
+                  type="button"
+                  onClick={() => void handleSendChatMessage()}
+                  disabled={isSendingChat || !chatInput.trim()}
+                  className="h-9 rounded-lg bg-orange-500 hover:bg-orange-600 text-white"
+                >
+                  {isSendingChat ? "Sending..." : "Send Message"}
+                </Button>
+              </div>
+            </div>
+          </div>
+        </Card>
+      )}
 
       {/* Action Buttons */}
       {isCreateFlow && (

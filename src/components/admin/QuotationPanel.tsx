@@ -135,6 +135,16 @@ function computeAmounts(quantity: string, unitPrice: string, taxes: string) {
   return { untaxed, tax, total, taxRate };
 }
 
+async function blobToBase64(blob: Blob): Promise<string> {
+  const dataUrl = await new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ""));
+    reader.onerror = () => reject(new Error("Failed to convert PDF to base64"));
+    reader.readAsDataURL(blob);
+  });
+  return dataUrl.split(",")[1] || "";
+}
+
 function getQAmounts(q: Quotation) {
   const untaxed = q.quantity * q.unit_price;
   const taxRate = q.taxes || 0;
@@ -246,7 +256,11 @@ function renderLogContent(log: QuotationLog) {
   }
 
   if (log.action === "status_changed") {
-    const isWhatsApp = d && d.send_method === "whatsapp";
+    const isWhatsApp =
+      d &&
+      (d.send_method === "whatsapp" ||
+        d.send_method === "whatsapp_api" ||
+        d.send_method === "whatsapp_web");
 
     if (isWhatsApp) {
       return (
@@ -369,7 +383,23 @@ function renderLogContent(log: QuotationLog) {
 
 // ─── PDF Generator ───────────────────────────────────────────────────
 
-function generateQuotationPdf(q: Quotation) {
+async function loadImageAsDataUrl(url: string): Promise<string | null> {
+  try {
+    const response = await fetch(url);
+    if (!response.ok) return null;
+    const blob = await response.blob();
+    return await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result || ""));
+      reader.onerror = () => reject(new Error("Failed to read image"));
+      reader.readAsDataURL(blob);
+    });
+  } catch {
+    return null;
+  }
+}
+
+async function generateQuotationPdf(q: Quotation, options?: { download?: boolean }) {
   const doc = new jsPDF();
   const pageWidth = doc.internal.pageSize.getWidth();
   const margin = 20;
@@ -379,10 +409,14 @@ function generateQuotationPdf(q: Quotation) {
   const amounts = getQAmounts(q);
 
   // Header
+  const logoDataUrl = await loadImageAsDataUrl("/logo.jpg");
+  if (logoDataUrl) {
+    doc.addImage(logoDataUrl, "JPEG", margin, y - 4, 24, 12);
+  }
   doc.setFontSize(16);
   doc.setFont(undefined, "bold");
   doc.setTextColor(0, 128, 128);
-  doc.text("LOGISTIX", margin, y);
+  doc.text("LOGISTIX", margin + (logoDataUrl ? 28 : 0), y);
 
   doc.setFontSize(10);
   doc.setFont(undefined, "normal");
@@ -476,7 +510,14 @@ function generateQuotationPdf(q: Quotation) {
   y += 5;
   doc.text(`Generated on: ${new Date().toLocaleString()}`, margin, y);
 
-  doc.save(`Quotation - ${qNum}.pdf`);
+  const safeDate = new Date(q.created_at).toISOString().slice(0, 10);
+  const fileName = `Quotation_${qNum}_${safeDate}.pdf`;
+  if (options?.download) {
+    doc.save(fileName);
+  }
+  const pdfArrayBuffer = doc.output("arraybuffer");
+  const pdfBlob = new Blob([pdfArrayBuffer], { type: "application/pdf" });
+  return { blob: pdfBlob, fileName, quotationNumber: qNum };
 }
 
 // ─── Main Component ──────────────────────────────────────────────────
@@ -832,33 +873,44 @@ export function QuotationPanel({
       return;
     }
 
-    // First: open WhatsApp Web IMMEDIATELY (preserves user-gesture for popup)
-    const encodedMsg = encodeURIComponent(sendWhatsAppMessage);
-    const waUrl = `https://web.whatsapp.com/send?phone=${phone}&text=${encodedMsg}`;
-    window.open(waUrl, "_blank");
-
-    // Close modal and show success
     setSendModalOpen(false);
-    toast.success("WhatsApp Web opened — the message is ready, just press Send!");
-
-    // Then: update status + log on the server in background
     startTransition(async () => {
-      const result = await sendQuotation(selectedQuotation.id, {
-        phone_number: phone,
-        whatsapp_message: sendWhatsAppMessage,
-      });
+      try {
+        const pdf = await generateQuotationPdf(selectedQuotation);
+        const pdfBase64 = await blobToBase64(pdf.blob);
 
-      if ("error" in result) {
-        toast.error(result.error || "Failed to update quotation status");
-        return;
+        const result = await sendQuotation(selectedQuotation.id, {
+          phone_number: phone,
+          whatsapp_message: sendWhatsAppMessage,
+          pdf_base64: pdfBase64,
+          pdf_filename: pdf.fileName,
+        });
+
+        if ("error" in result) {
+          toast.error(result.error || "Failed to send quotation");
+          return;
+        }
+
+        const details =
+          "quotation" in result ? ((result as { quotation: Quotation; send_method?: string }).send_method || "") : "";
+        if (details === "whatsapp_web") {
+          const encodedMsg = encodeURIComponent(sendWhatsAppMessage);
+          const waUrl = `https://web.whatsapp.com/send?phone=${phone}&text=${encodedMsg}`;
+          window.open(waUrl, "_blank");
+          toast.success("WhatsApp Web opened. PDF API is not configured yet, so message is opened in chat.");
+        } else {
+          toast.success("Quotation PDF sent on WhatsApp successfully.");
+        }
+
+        const res = result as { quotation: Quotation };
+        const q = res.quotation;
+        setSelectedQuotation(q);
+        fetchLogs(q.id);
+        fetchQuotations();
+        router.refresh();
+      } catch {
+        toast.error("Failed to generate quotation PDF.");
       }
-
-      const res = result as { quotation: Quotation };
-      const q = res.quotation;
-      setSelectedQuotation(q);
-      fetchLogs(q.id);
-      fetchQuotations();
-      router.refresh();
     });
   }
 
@@ -915,7 +967,7 @@ export function QuotationPanel({
     if (!selectedQuotation) return;
     startTransition(async () => {
       await logQuotationPrint(selectedQuotation.id);
-      generateQuotationPdf(selectedQuotation);
+      await generateQuotationPdf(selectedQuotation, { download: true });
       fetchLogs(selectedQuotation.id);
     });
   }
@@ -1693,7 +1745,8 @@ export function QuotationPanel({
               <div className="flex items-center gap-2 text-xs text-green-600 bg-green-50 p-2 rounded-md">
                 <Phone className="h-3.5 w-3.5 shrink-0" />
                 <span>
-                  WhatsApp Web will open with this message pre-filled in the chat. Just press <strong>Enter</strong> or click <strong>Send</strong> to deliver it.
+                  This sends the quotation as a PDF attachment with caption through WhatsApp API.
+                  If API is not configured, WhatsApp Web opens as fallback.
                 </span>
               </div>
             </div>
@@ -1704,7 +1757,7 @@ export function QuotationPanel({
                 className="bg-green-600 hover:bg-green-700 text-white"
               >
                 <Phone className="h-3.5 w-3.5 mr-1" />
-                {isPending ? "Opening WhatsApp..." : "Send to WhatsApp"}
+                {isPending ? "Sending PDF..." : "Send to WhatsApp"}
               </Button>
               <Button variant="outline" onClick={() => setSendModalOpen(false)} disabled={isPending}>
                 Discard

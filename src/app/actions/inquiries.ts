@@ -115,6 +115,7 @@ export type LeadActivityLog = {
 export type LeadChatMessage = {
   id: string;
   lead_id: string;
+  inquiry_id: string | null;
   message: string;
   sender_role: 'sales_agent' | 'operations' | 'admin';
   sender_username: string;
@@ -125,6 +126,7 @@ export type LeadChatNotification = {
   id: string;
   chat_message_id: string;
   lead_id: string;
+  inquiry_id: string | null;
   sender_role: 'sales_agent' | 'operations' | 'admin';
   sender_username: string;
   recipient_role: 'sales_agent' | 'operations' | 'admin';
@@ -2005,18 +2007,33 @@ export async function getSharedInquiryCalculatorValues() {
   }
 }
 
-export async function getLeadChatMessages(leadId: string) {
+export async function getLeadChatMessages(leadId: string, inquiryId?: string) {
   try {
     const session = await getSession();
     const supabase = await createAdminClient();
     const access = await canAccessLeadChat(supabase, session, leadId);
     if (!access.allowed) return { error: access.error || 'Unauthorized' };
 
-    const { data, error } = await supabase
+    let query = supabase
       .from('lead_chat_messages')
       .select('*')
       .eq('lead_id', leadId)
       .order('created_at', { ascending: true });
+    if (inquiryId) {
+      query = query.eq('inquiry_id', inquiryId);
+    }
+
+    let { data, error } = await query;
+    if (error && inquiryId && /inquiry_id/i.test(error.message || '')) {
+      // Backward compatibility when DB migration is not applied yet.
+      const fallback = await supabase
+        .from('lead_chat_messages')
+        .select('*')
+        .eq('lead_id', leadId)
+        .order('created_at', { ascending: true });
+      data = fallback.data;
+      error = fallback.error;
+    }
 
     if (error) return { error: error.message };
     return { messages: (data || []) as LeadChatMessage[] };
@@ -2025,7 +2042,7 @@ export async function getLeadChatMessages(leadId: string) {
   }
 }
 
-export async function sendLeadChatMessage(leadId: string, message: string) {
+export async function sendLeadChatMessage(leadId: string, message: string, inquiryId?: string) {
   try {
     const session = await getSession();
     const supabase = await createAdminClient();
@@ -2042,11 +2059,12 @@ export async function sendLeadChatMessage(leadId: string, message: string) {
           ? 'operations'
           : 'admin';
 
-    const { data, error } = await supabase
+    let { data, error } = await supabase
       .from('lead_chat_messages')
       .insert([
         {
           lead_id: leadId,
+          inquiry_id: inquiryId || null,
           message: clean,
           sender_role: senderRole,
           sender_username: session?.username || 'user',
@@ -2054,6 +2072,24 @@ export async function sendLeadChatMessage(leadId: string, message: string) {
       ])
       .select()
       .single();
+
+    if (error && /inquiry_id/i.test(error.message || '')) {
+      // Backward compatibility when DB migration is not applied yet.
+      const fallback = await supabase
+        .from('lead_chat_messages')
+        .insert([
+          {
+            lead_id: leadId,
+            message: clean,
+            sender_role: senderRole,
+            sender_username: session?.username || 'user',
+          },
+        ])
+        .select()
+        .single();
+      data = fallback.data;
+      error = fallback.error;
+    }
 
     if (error || !data) return { error: error?.message || 'Failed to send message' };
 
@@ -2068,16 +2104,30 @@ export async function sendLeadChatMessage(leadId: string, message: string) {
         .filter((u): u is string => !!u && u !== (session?.username || ''));
 
       if (recipients.length > 0) {
-        const { error: notifInsertError } = await supabase.from('lead_chat_notifications').insert(
+        let { error: notifInsertError } = await supabase.from('lead_chat_notifications').insert(
           recipients.map((username) => ({
             chat_message_id: data.id,
             lead_id: leadId,
+            inquiry_id: inquiryId || null,
             sender_role: senderRole,
             sender_username: session?.username || 'user',
             recipient_role: 'operations',
             recipient_username: username,
           }))
         );
+        if (notifInsertError && /inquiry_id/i.test(notifInsertError.message || '')) {
+          const fallback = await supabase.from('lead_chat_notifications').insert(
+            recipients.map((username) => ({
+              chat_message_id: data.id,
+              lead_id: leadId,
+              sender_role: senderRole,
+              sender_username: session?.username || 'user',
+              recipient_role: 'operations',
+              recipient_username: username,
+            }))
+          );
+          notifInsertError = fallback.error;
+        }
         if (notifInsertError) {
           console.error('[sendLeadChatMessage] notification insert failed:', notifInsertError.message);
         }
@@ -2097,16 +2147,30 @@ export async function sendLeadChatMessage(leadId: string, message: string) {
           .maybeSingle();
 
         if (salesAgent?.username && salesAgent.username !== (session?.username || '')) {
-          const { error: notifInsertError } = await supabase.from('lead_chat_notifications').insert([
+          let { error: notifInsertError } = await supabase.from('lead_chat_notifications').insert([
             {
               chat_message_id: data.id,
               lead_id: leadId,
+              inquiry_id: inquiryId || null,
               sender_role: senderRole,
               sender_username: session?.username || 'user',
               recipient_role: 'sales_agent',
               recipient_username: salesAgent.username,
             },
           ]);
+          if (notifInsertError && /inquiry_id/i.test(notifInsertError.message || '')) {
+            const fallback = await supabase.from('lead_chat_notifications').insert([
+              {
+                chat_message_id: data.id,
+                lead_id: leadId,
+                sender_role: senderRole,
+                sender_username: session?.username || 'user',
+                recipient_role: 'sales_agent',
+                recipient_username: salesAgent.username,
+              },
+            ]);
+            notifInsertError = fallback.error;
+          }
           if (notifInsertError) {
             console.error('[sendLeadChatMessage] notification insert failed:', notifInsertError.message);
           }

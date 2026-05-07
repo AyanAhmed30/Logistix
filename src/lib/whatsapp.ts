@@ -137,7 +137,8 @@ export async function sendWhatsAppDocument(
 
   try {
     const form = new FormData();
-    const blob = new Blob([fileBuffer], { type: 'application/pdf' });
+    const fileBytes = Uint8Array.from(fileBuffer);
+    const blob = new Blob([fileBytes], { type: 'application/pdf' });
     form.append('messaging_product', 'whatsapp');
     form.append('type', 'application/pdf');
     form.append('file', blob, filename);

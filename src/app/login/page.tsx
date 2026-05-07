@@ -80,7 +80,7 @@ export default function LoginPage() {
                             type="submit"
                             disabled={isLoading}
                         >
-                            {isLoading ? 'Authenticating...' : 'Sign In to Portal'}
+                            {isLoading ? 'Authenticating...' : 'Sign In Securely'}
                         </Button>
                     </CardFooter>
                 </form>

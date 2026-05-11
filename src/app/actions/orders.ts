@@ -78,14 +78,32 @@ export async function createOrderWithCartons(order: OrderInput, cartons: CartonI
     const cartonsPayload = cartons.map((carton) => ({
       ...carton,
       order_id: orderData.id,
+      tracking_id: `TRK-${carton.carton_serial_number}`,
+      scan_token: crypto.randomUUID(),
+      sticker_identifier: carton.carton_serial_number,
     }));
 
-    const { data: cartonData, error: cartonError } = await supabase
+    let { data: cartonData, error: cartonError } = await supabase
       .from("cartons")
       .insert(cartonsPayload)
       .select(
-        "id, carton_serial_number, weight, length, width, height, carton_index, order_id"
+        "id, carton_serial_number, weight, length, width, height, carton_index, order_id, tracking_id, scan_token, sticker_identifier"
       );
+
+    if (cartonError && /(tracking_id|scan_token|sticker_identifier)/i.test(cartonError.message || "")) {
+      const legacyPayload = cartons.map((carton) => ({
+        ...carton,
+        order_id: orderData.id,
+      }));
+
+      const legacyInsert = await supabase
+        .from("cartons")
+        .insert(legacyPayload)
+        .select("id, carton_serial_number, weight, length, width, height, carton_index, order_id");
+
+      cartonData = legacyInsert.data as typeof cartonData;
+      cartonError = legacyInsert.error;
+    }
 
     if (cartonError) {
       await supabase.from("orders").delete().eq("id", orderData.id);
@@ -233,7 +251,7 @@ export async function getCartonBySerial(serial: string) {
     const { data, error } = await supabase
       .from("cartons")
       .select(
-        "id, carton_serial_number, weight, length, width, height, dimension_unit, carton_index, item_description, destination_country, created_at, orders!inner(id, shipping_mark, item_description, destination_country, total_cartons, created_at, username)"
+        "id, carton_serial_number, tracking_id, sticker_identifier, weight, length, width, height, dimension_unit, carton_index, item_description, destination_country, created_at, orders!inner(id, shipping_mark, item_description, destination_country, total_cartons, created_at, username)"
       )
       .eq("carton_serial_number", serial.trim())
       .single();
@@ -252,20 +270,162 @@ export async function getCartonBySerial(serial: string) {
   }
 }
 
-export async function recordCartonScan(serial: string) {
+export async function getCartonScanPreview(scanIdentifier: string) {
   try {
-    if (!serial?.trim()) {
-      return { error: "Serial number is required" };
+    if (!scanIdentifier?.trim()) {
+      return { error: "Scan token is required" };
     }
 
-    const trimmed = serial.trim();
+    const trimmed = scanIdentifier.trim();
     const supabase = await createAdminClient();
 
-    const { data: carton, error: cartonError } = await supabase
+    const selectQuery =
+      "id, carton_serial_number, order_id, tracking_id, sticker_identifier, scan_token, scan_status, scanned_at, orders(id, shipping_mark, destination_country, item_description, total_cartons, created_at, username)";
+
+    type PreviewLookupCarton = {
+      id: string;
+      carton_serial_number: string;
+      order_id: string;
+      tracking_id?: string | null;
+      sticker_identifier?: string | null;
+      scan_token?: string | null;
+      scan_status?: string | null;
+      scanned_at?: string | null;
+      orders:
+        | { id: string; shipping_mark: string; destination_country: string; item_description: string | null; total_cartons: number; created_at: string; username: string }[]
+        | { id: string; shipping_mark: string; destination_country: string; item_description: string | null; total_cartons: number; created_at: string; username: string }
+        | null;
+    };
+
+    let carton: PreviewLookupCarton | null = null;
+    let lookupError: { message?: string } | null = null;
+
+    const tokenLookup = await supabase.from("cartons").select(selectQuery).eq("scan_token", trimmed).maybeSingle();
+    if (!tokenLookup.error && tokenLookup.data) {
+      carton = tokenLookup.data as PreviewLookupCarton;
+    } else {
+      lookupError = tokenLookup.error;
+      const serialLookup = await supabase
+        .from("cartons")
+        .select(selectQuery)
+        .eq("carton_serial_number", trimmed)
+        .maybeSingle();
+      carton = serialLookup.data as PreviewLookupCarton;
+      lookupError = serialLookup.error;
+    }
+
+    // Backward compatibility if scan_status/scanned_at columns are not available yet
+    if (lookupError && /(scan_status|scanned_at)/i.test(lookupError.message || "")) {
+      const legacySelect =
+        "id, carton_serial_number, order_id, tracking_id, sticker_identifier, scan_token, orders(id, shipping_mark, destination_country, item_description, total_cartons, created_at, username)";
+
+      const tokenLookupLegacy = await supabase
+        .from("cartons")
+        .select(legacySelect)
+        .eq("scan_token", trimmed)
+        .maybeSingle();
+      if (!tokenLookupLegacy.error && tokenLookupLegacy.data) {
+        carton = tokenLookupLegacy.data as PreviewLookupCarton;
+        lookupError = null;
+      } else {
+        const serialLookupLegacy = await supabase
+          .from("cartons")
+          .select(legacySelect)
+          .eq("carton_serial_number", trimmed)
+          .maybeSingle();
+        carton = serialLookupLegacy.data as PreviewLookupCarton;
+        lookupError = serialLookupLegacy.error;
+      }
+    }
+
+    if (lookupError || !carton) {
+      return { error: lookupError?.message || "Carton not found" };
+    }
+
+    const ordersValue = carton.orders;
+    const order =
+      Array.isArray(ordersValue) && ordersValue.length > 0
+        ? ordersValue[0]
+        : !Array.isArray(ordersValue)
+        ? ordersValue
+        : null;
+    if (!order) {
+      return { error: "Order not found for this carton" };
+    }
+
+    const { data: latestScan } = await supabase
+      .from("carton_scans")
+      .select("scanned_at")
+      .eq("carton_id", carton.id)
+      .order("scanned_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    const resolvedScannedAt = carton.scanned_at ?? latestScan?.scanned_at ?? null;
+    const alreadyScanned = Boolean(resolvedScannedAt);
+
+    return {
+      preview: {
+        scan_identifier: trimmed,
+        order_id: order.id,
+        shipping_mark: order.shipping_mark,
+        destination_country: order.destination_country,
+        item_description: order.item_description,
+        total_cartons: order.total_cartons,
+        carton_serial_number: carton.carton_serial_number,
+        tracking_id: carton.tracking_id ?? `TRK-${carton.carton_serial_number}`,
+        sticker_identifier: carton.sticker_identifier ?? carton.carton_serial_number,
+        scan_status: carton.scan_status ?? (alreadyScanned ? "scanned" : "pending"),
+        scanned_at: resolvedScannedAt,
+        already_scanned: alreadyScanned,
+      },
+    };
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : "Unable to load scan preview" };
+  }
+}
+
+export async function recordCartonScan(scanIdentifier: string) {
+  try {
+    if (!scanIdentifier?.trim()) {
+      return { error: "Scan token is required" };
+    }
+
+    const trimmed = scanIdentifier.trim();
+    const supabase = await createAdminClient();
+
+    // Prefer token lookup (secure / non-guessable), then fallback to serial for backward compatibility.
+    type CartonLookup = {
+      id: string;
+      carton_serial_number: string;
+      order_id: string;
+      tracking_id?: string | null;
+      sticker_identifier?: string | null;
+      scan_token?: string | null;
+      orders: { id: string; username: string }[] | { id: string; username: string } | null;
+    };
+
+    let carton: CartonLookup | null = null;
+    let cartonError: { message?: string } | null = null;
+
+    const tokenLookup = await supabase
       .from("cartons")
-      .select("id, carton_serial_number, order_id, orders(id, username)")
-      .eq("carton_serial_number", trimmed)
-      .single();
+      .select("id, carton_serial_number, order_id, tracking_id, sticker_identifier, scan_token, orders(id, username)")
+      .eq("scan_token", trimmed)
+      .maybeSingle();
+
+    if (!tokenLookup.error && tokenLookup.data) {
+      carton = tokenLookup.data as CartonLookup;
+    } else {
+      cartonError = tokenLookup.error;
+      const serialLookup = await supabase
+        .from("cartons")
+        .select("id, carton_serial_number, order_id, tracking_id, sticker_identifier, scan_token, orders(id, username)")
+        .eq("carton_serial_number", trimmed)
+        .single();
+      carton = serialLookup.data as CartonLookup;
+      cartonError = serialLookup.error;
+    }
 
     if (cartonError || !carton) {
       return { error: cartonError?.message || "Carton not found" };
@@ -275,6 +435,9 @@ export async function recordCartonScan(serial: string) {
       id: string;
       carton_serial_number: string;
       order_id: string;
+      tracking_id?: string | null;
+      sticker_identifier?: string | null;
+      scan_token?: string | null;
       orders: { id: string; username: string }[] | { id: string; username: string } | null;
     };
 
@@ -290,6 +453,27 @@ export async function recordCartonScan(serial: string) {
       return { error: "Order not found for this carton" };
     }
 
+    const { data: existingScan } = await supabase
+      .from("carton_scans")
+      .select("id")
+      .eq("carton_id", carton.id)
+      .eq("username", order.username)
+      .order("scanned_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (existingScan?.id) {
+      return {
+        success: true,
+        duplicate: true,
+        carton: {
+          serial: typedCarton.carton_serial_number,
+          tracking_id: typedCarton.tracking_id ?? `TRK-${typedCarton.carton_serial_number}`,
+          sticker_identifier: typedCarton.sticker_identifier ?? typedCarton.carton_serial_number,
+        },
+      };
+    }
+
     const { error: insertError } = await supabase.from("carton_scans").insert({
       carton_id: carton.id,
       order_id: order.id,
@@ -301,7 +485,27 @@ export async function recordCartonScan(serial: string) {
       return { error: insertError.message };
     }
 
-    return { success: true };
+    const statusUpdate = await supabase
+      .from("cartons")
+      .update({
+        scan_status: "scanned",
+        scanned_at: new Date().toISOString(),
+        scanned_by: order.username,
+      })
+      .eq("id", carton.id);
+    if (statusUpdate.error && !/(scan_status|scanned_at|scanned_by)/i.test(statusUpdate.error.message || "")) {
+      return { error: statusUpdate.error.message };
+    }
+
+    return {
+      success: true,
+      duplicate: false,
+      carton: {
+        serial: typedCarton.carton_serial_number,
+        tracking_id: typedCarton.tracking_id ?? `TRK-${typedCarton.carton_serial_number}`,
+        sticker_identifier: typedCarton.sticker_identifier ?? typedCarton.carton_serial_number,
+      },
+    };
   } catch (err) {
     return { error: err instanceof Error ? err.message : "Unable to record carton scan" };
   }
@@ -338,11 +542,11 @@ export async function getScannedCartonsForUser() {
     const cartonIds = Array.from(new Set(scanRows.map((row) => row.carton_id)));
     const orderIds = Array.from(new Set(scanRows.map((row) => row.order_id)));
 
-    const [{ data: cartonsData }, { data: ordersData }] = await Promise.all([
+    const [{ data: cartonsData, error: cartonsError }, { data: ordersData }] = await Promise.all([
       supabase
         .from("cartons")
         .select(
-          "id, carton_serial_number, weight, length, width, height, dimension_unit, carton_index, created_at, item_description, destination_country"
+          "id, carton_serial_number, tracking_id, sticker_identifier, scan_token, weight, length, width, height, dimension_unit, carton_index, created_at, item_description, destination_country"
         )
         .in("id", cartonIds),
       supabase
@@ -353,11 +557,22 @@ export async function getScannedCartonsForUser() {
         .in("id", orderIds),
     ]);
 
+    let normalizedCartonsData = cartonsData;
+    if (cartonsError && /(tracking_id|sticker_identifier|scan_token)/i.test(cartonsError.message || "")) {
+      const legacyCartonsResult = await supabase
+        .from("cartons")
+        .select(
+          "id, carton_serial_number, weight, length, width, height, dimension_unit, carton_index, created_at, item_description, destination_country"
+        )
+        .in("id", cartonIds);
+      normalizedCartonsData = legacyCartonsResult.data as typeof cartonsData;
+    }
+
     const cartonByIdMap = new Map(
-      (cartonsData ?? []).map((c) => [c.id as string, c])
+      (normalizedCartonsData ?? []).map((c) => [c.id as string, c])
     );
     const cartonBySerialMap = new Map(
-      (cartonsData ?? []).map((c) => [c.carton_serial_number as string, c])
+      (normalizedCartonsData ?? []).map((c) => [c.carton_serial_number as string, c])
     );
     const orderMap = new Map(
       (ordersData ?? []).map((o) => [o.id as string, o])

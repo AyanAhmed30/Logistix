@@ -14,6 +14,9 @@ type ScanRow = {
   scanned_at: string;
   cartons: {
     id: string;
+    tracking_id: string | null;
+    sticker_identifier: string | null;
+    scan_token: string | null;
     weight: number | null;
     length: number | null;
     width: number | null;
@@ -35,6 +38,7 @@ type ScanRow = {
 export function UserScannedStickersPanel() {
   const [scans, setScans] = useState<ScanRow[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [hasLoadedOnce, setHasLoadedOnce] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
 
@@ -42,7 +46,9 @@ export function UserScannedStickersPanel() {
     let isMounted = true;
 
     const fetchScans = async () => {
-      setIsLoading(true);
+      if (!hasLoadedOnce) {
+        setIsLoading(true);
+      }
       const result = await getScannedCartonsForUser();
 
       if (!isMounted) return;
@@ -56,14 +62,17 @@ export function UserScannedStickersPanel() {
       }
 
       setIsLoading(false);
+      setHasLoadedOnce(true);
     };
 
     fetchScans();
+    const interval = window.setInterval(fetchScans, 15000);
 
     return () => {
       isMounted = false;
+      window.clearInterval(interval);
     };
-  }, []);
+  }, [hasLoadedOnce]);
 
   async function handleDelete(id: string) {
     if (deletingId) return;
@@ -116,7 +125,7 @@ export function UserScannedStickersPanel() {
       <CardHeader>
         <CardTitle>Scanned Stickers</CardTitle>
         <CardDescription>
-          Every time a barcode is scanned from any device, the corresponding carton appears here.
+          Every time a QR sticker is scanned from any device, the corresponding carton appears here.
         </CardDescription>
       </CardHeader>
       <CardContent>
@@ -126,6 +135,9 @@ export function UserScannedStickersPanel() {
               <TableRow>
                 <TableHead>Scanned At</TableHead>
                 <TableHead>Carton Serial</TableHead>
+                <TableHead>Tracking ID</TableHead>
+                <TableHead>QR Identifier</TableHead>
+                <TableHead>Scan Status</TableHead>
                 <TableHead>Shipping Mark</TableHead>
                 <TableHead>Destination</TableHead>
                 <TableHead>Item Description</TableHead>
@@ -157,6 +169,9 @@ export function UserScannedStickersPanel() {
                   <TableRow key={scan.id}>
                     <TableCell>{scannedAt}</TableCell>
                     <TableCell>{scan.carton_serial_number}</TableCell>
+                    <TableCell>{carton?.tracking_id ?? `TRK-${scan.carton_serial_number}`}</TableCell>
+                    <TableCell>{carton?.sticker_identifier ?? scan.carton_serial_number}</TableCell>
+                    <TableCell>Scanned</TableCell>
                     <TableCell>{order?.shipping_mark ?? "-"}</TableCell>
                     <TableCell>{order?.destination_country ?? "-"}</TableCell>
                     <TableCell>{order?.item_description ?? "-"}</TableCell>

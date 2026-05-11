@@ -21,7 +21,7 @@ export async function middleware(request: NextRequest) {
     const session = await getSessionFromRequest(request);
     const { pathname } = request.nextUrl;
 
-    // 1. Allow public access to carton scan/details pages (for barcode scanning)
+    // 1. Allow public access to carton scan/details pages (for QR scanning)
     if (pathname.startsWith('/carton/') || pathname.startsWith('/scan/')) {
         return NextResponse.next();
     }

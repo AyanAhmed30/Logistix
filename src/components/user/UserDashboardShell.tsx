@@ -4,7 +4,7 @@ import { useState } from "react";
 import { logout } from "@/app/actions/auth";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Menu, PackagePlus, History, MapPin, LogOut, Bell, X, Barcode } from "lucide-react";
+import { Menu, PackagePlus, History, MapPin, LogOut, Bell, X, QrCode } from "lucide-react";
 import Image from "next/image";
 import { BookOrderModal } from "@/components/user/BookOrderModal";
 import { OrderHistoryPanel } from "@/components/user/OrderHistoryPanel";
@@ -20,7 +20,7 @@ const tabs: { key: TabKey; label: string; icon: React.ReactNode }[] = [
   { key: "book", label: "Book a New Order", icon: <PackagePlus className="h-4 w-4" /> },
   { key: "history", label: "History", icon: <History className="h-4 w-4" /> },
   { key: "tracking", label: "Tracking", icon: <MapPin className="h-4 w-4" /> },
-  { key: "scanned", label: "Scanned Stickers", icon: <Barcode className="h-4 w-4" /> },
+  { key: "scanned", label: "Scanned Stickers", icon: <QrCode className="h-4 w-4" /> },
 ];
 
 export function UserDashboardShell({ username }: Props) {

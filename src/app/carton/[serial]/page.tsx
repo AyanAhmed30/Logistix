@@ -51,7 +51,7 @@ export default async function CartonDetailsPage({ params }: Props) {
       <div className="max-w-2xl mx-auto">
         <div className="mb-6 text-center">
           <h1 className="text-3xl font-bold text-gray-900 mb-2">Carton Details</h1>
-          <p className="text-gray-600">Scanned from barcode</p>
+          <p className="text-gray-600">Scanned from QR sticker</p>
         </div>
 
         <Card className="p-6 shadow-lg">
@@ -133,6 +133,20 @@ export default async function CartonDetailsPage({ params }: Props) {
                     Dimensions
                   </label>
                   <p className="text-gray-900 mt-1">{formatDimensions()}</p>
+                </div>
+
+                <div>
+                  <label className="text-sm font-semibold text-gray-500 uppercase tracking-wide">
+                    Tracking ID
+                  </label>
+                  <p className="text-gray-900 mt-1">{carton.tracking_id || `TRK-${carton.carton_serial_number}`}</p>
+                </div>
+
+                <div>
+                  <label className="text-sm font-semibold text-gray-500 uppercase tracking-wide">
+                    QR Identifier
+                  </label>
+                  <p className="text-gray-900 mt-1">{carton.sticker_identifier || carton.carton_serial_number}</p>
                 </div>
 
                 <div>

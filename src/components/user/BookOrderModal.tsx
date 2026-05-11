@@ -3,7 +3,7 @@
 import { useEffect, useState, useTransition, useRef } from "react";
 import { toast } from "sonner";
 import jsPDF from "jspdf";
-import JsBarcode from "jsbarcode";
+import QRCode from "qrcode";
 import { getNextCartonSerial, createOrderWithCartons } from "@/app/actions/orders";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -41,10 +41,13 @@ function toNumber(value: string) {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
-function generateBarcodeDataUrl(serial: string) {
+async function generateQrCodeDataUrl(input: {
+  serial: string;
+  token: string;
+}) {
   try {
     // Generate URL that points to the scan endpoint, which will record the scan and redirect.
-    // IMPORTANT: Use a configurable base URL so that barcodes work from other devices too.
+    // IMPORTANT: Use a configurable base URL so that QR codes work from other devices too.
     // If NEXT_PUBLIC_APP_BASE_URL is set, we use that (recommended for production / LAN).
     // Otherwise, we fall back to window.location.origin (works only on the same device).
     const envBase =
@@ -54,28 +57,21 @@ function generateBarcodeDataUrl(serial: string) {
     const runtimeOrigin =
       typeof window !== "undefined" ? window.location.origin : "";
     const baseUrl = (envBase && envBase.trim()) || runtimeOrigin;
-    const cartonUrl = `${baseUrl.replace(/\/+$/, "")}/scan/${serial}`;
+    const scanIdentifier = input.token || input.serial;
+    const cartonUrl = `${baseUrl.replace(/\/+$/, "")}/scan/${encodeURIComponent(scanIdentifier)}`;
 
-    // Create a high-resolution canvas. We will render into a roughly square area so the
-    // final barcode on the sticker is more compact and closer to a square.
-    const canvas = document.createElement("canvas");
-    canvas.width = 500;
-    canvas.height = 500;
-
-    // Generate Code128 barcode with the URL.
-    // Use a smaller bar width so the graphic stays closer to square.
-    JsBarcode(canvas, cartonUrl, {
-      format: "CODE128",
-      width: 1.8,
-      height: 320,
-      displayValue: true,
-      fontSize: 22,
-      margin: 18,
+    const qrDataUrl = await QRCode.toDataURL(cartonUrl, {
+      width: 600,
+      margin: 1,
+      errorCorrectionLevel: "H",
+      color: {
+        dark: "#000000",
+        light: "#FFFFFF",
+      },
     });
-
-    return canvas.toDataURL("image/png");
+    return qrDataUrl;
   } catch (error) {
-    console.error("Error generating barcode:", error);
+    console.error("Error generating QR code:", error);
     return "";
   }
 }
@@ -293,8 +289,17 @@ export function BookOrderModal({ open, onOpenChange, onOrderSaved }: Props) {
       className: "bg-green-400 text-white border-green-400",
     });
     onOrderSaved?.();
-    const printable = cartonPayload.map((carton) => ({
-      serial: carton.carton_serial_number,
+    const printable = (result.cartons || []).map((carton) => ({
+      serial: carton.carton_serial_number as string,
+      orderId: result.orderId as string,
+      trackingId:
+        (typeof carton.tracking_id === "string" && carton.tracking_id) ||
+        `TRK-${String(carton.carton_serial_number)}`,
+      stickerId:
+        (typeof carton.sticker_identifier === "string" && carton.sticker_identifier) ||
+        String(carton.carton_serial_number),
+      token:
+        (typeof carton.scan_token === "string" && carton.scan_token) || "",
       weight: order.weight,
       length: order.length,
       width: order.width,
@@ -374,11 +379,16 @@ export function BookOrderModal({ open, onOpenChange, onOrderSaved }: Props) {
       pdf.text("Total Cartons:", boxLeft + 2, startY + rowHeight * 5 + 6);
       pdf.text(`${cartonsToPrint.length}-${i + 1}`, boxLeft + 2, startY + rowHeight * 5 + 11);
 
-      const barcodeDataUrl = generateBarcodeDataUrl(carton.serial || "");
-      if (barcodeDataUrl) {
-        // Draw barcode in a compact, nearly square area
-        pdf.addImage(barcodeDataUrl, "PNG", 30, 110, 40, 40);
+      const qrCodeDataUrl = await generateQrCodeDataUrl({
+        serial: carton.serial || "",
+        token: carton.token || "",
+      });
+      if (qrCodeDataUrl) {
+        pdf.addImage(qrCodeDataUrl, "PNG", 28, 108, 44, 44);
       }
+      pdf.setFontSize(7);
+      pdf.text(`Tracking: ${carton.trackingId || "-"}`, 10, 106);
+      pdf.text(`QR ID: ${carton.stickerId || "-"}`, 10, 110);
     }
 
     // Calculate order totals
@@ -763,6 +773,10 @@ export function BookOrderModal({ open, onOpenChange, onOrderSaved }: Props) {
     // First, save all orders and collect all cartons to print
     const allCartons: {
       serial: string;
+      orderId: string;
+      trackingId: string;
+      stickerId: string;
+      token: string;
       weight: string;
       length: string;
       width: string;
@@ -844,11 +858,16 @@ export function BookOrderModal({ open, onOpenChange, onOrderSaved }: Props) {
       // Continuous numbering across all orders, e.g. 4-1, 4-2, 4-3, 4-4
       pdf.text(`${totalCartons}-${i + 1}`, boxLeft + 2, startY + rowHeight * 5 + 11);
 
-      const barcodeDataUrl = generateBarcodeDataUrl(carton.serial || "");
-      if (barcodeDataUrl) {
-        // Draw barcode in a compact, nearly square area
-        pdf.addImage(barcodeDataUrl, "PNG", 30, 110, 40, 40);
+      const qrCodeDataUrl = await generateQrCodeDataUrl({
+        serial: carton.serial || "",
+        token: carton.token || "",
+      });
+      if (qrCodeDataUrl) {
+        pdf.addImage(qrCodeDataUrl, "PNG", 28, 108, 44, 44);
       }
+      pdf.setFontSize(7);
+      pdf.text(`Tracking: ${carton.trackingId || "-"}`, 10, 106);
+      pdf.text(`QR ID: ${carton.stickerId || "-"}`, 10, 110);
     }
 
     // Calculate combined totals across all cartons

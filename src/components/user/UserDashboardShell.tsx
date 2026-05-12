@@ -9,6 +9,7 @@ import Image from "next/image";
 import { BookOrderModal } from "@/components/user/BookOrderModal";
 import { OrderHistoryPanel } from "@/components/user/OrderHistoryPanel";
 import { UserScannedStickersPanel } from "@/components/user/UserScannedStickersPanel";
+import { UserScanProgressPanel } from "@/components/user/UserScanProgressPanel";
 
 type Props = {
   username: string;
@@ -19,7 +20,7 @@ type TabKey = "book" | "history" | "tracking" | "scanned";
 const tabs: { key: TabKey; label: string; icon: React.ReactNode }[] = [
   { key: "book", label: "Book a New Order", icon: <PackagePlus className="h-4 w-4" /> },
   { key: "history", label: "History", icon: <History className="h-4 w-4" /> },
-  { key: "tracking", label: "Tracking", icon: <MapPin className="h-4 w-4" /> },
+  { key: "tracking", label: "Scan Progress", icon: <MapPin className="h-4 w-4" /> },
   { key: "scanned", label: "Scanned Stickers", icon: <QrCode className="h-4 w-4" /> },
 ];
 
@@ -28,6 +29,7 @@ export function UserDashboardShell({ username }: Props) {
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [isOrderModalOpen, setIsOrderModalOpen] = useState(false);
   const [historyRefreshKey, setHistoryRefreshKey] = useState(0);
+  const [scanProgressRefreshKey, setScanProgressRefreshKey] = useState(0);
 
   function selectTab(tab: TabKey) {
     setActiveTab(tab);
@@ -36,8 +38,6 @@ export function UserDashboardShell({ username }: Props) {
       setIsOrderModalOpen(true);
     }
   }
-
-  const activeLabel = tabs.find((tab) => tab.key === activeTab)?.label ?? "Dashboard";
 
   return (
     <div className="min-h-screen bg-white">
@@ -116,7 +116,7 @@ export function UserDashboardShell({ username }: Props) {
           ))}
         </div>
         <div className="rounded-xl bg-slate-50 p-4 text-xs text-secondary-muted">
-          View booked orders, history, tracking, and all stickers scanned from any device.
+          View booked orders, live scan progress per order, history, and all stickers scanned from any device.
         </div>
       </aside>
 
@@ -145,29 +145,20 @@ export function UserDashboardShell({ username }: Props) {
           </Card>
         ) : activeTab === "history" ? (
           <OrderHistoryPanel refreshKey={historyRefreshKey} />
+        ) : activeTab === "tracking" ? (
+          <UserScanProgressPanel refreshKey={scanProgressRefreshKey} username={username} />
         ) : activeTab === "scanned" ? (
           <UserScannedStickersPanel />
-        ) : (
-          <Card className="bg-white border shadow-sm">
-            <CardHeader>
-              <CardTitle>{activeLabel}</CardTitle>
-              <CardDescription>
-                This section is a placeholder. Content will be added soon.
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              <div className="text-secondary-muted text-sm">
-                You are viewing the {activeLabel} page.
-              </div>
-            </CardContent>
-          </Card>
-        )}
+        ) : null}
       </main>
 
       <BookOrderModal
         open={isOrderModalOpen}
         onOpenChange={setIsOrderModalOpen}
-        onOrderSaved={() => setHistoryRefreshKey((prev) => prev + 1)}
+        onOrderSaved={() => {
+          setHistoryRefreshKey((prev) => prev + 1);
+          setScanProgressRefreshKey((prev) => prev + 1);
+        }}
       />
     </div>
   );

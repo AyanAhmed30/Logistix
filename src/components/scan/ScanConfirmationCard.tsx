@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
+import { notifyCartonScanned } from "@/lib/scan-progress-broadcast";
 
 type PreviewData = {
   scan_identifier: string;
@@ -52,6 +53,7 @@ export function ScanConfirmationCard({ preview }: Props) {
         success?: boolean;
         duplicate?: boolean;
         error?: string;
+        carton?: { id?: string; order_id?: string };
       };
 
       if (!response.ok || !result.success) {
@@ -59,9 +61,16 @@ export function ScanConfirmationCard({ preview }: Props) {
         return;
       }
 
+      const scannedAt = new Date().toISOString();
       setIsScanned(true);
-      setResolvedScannedAt(new Date().toISOString());
+      setResolvedScannedAt(scannedAt);
       setMessage(result.duplicate ? "Already scanned earlier. No duplicate was created." : "Scanned successfully.");
+
+      const cid = result.carton?.id;
+      const oid = result.carton?.order_id ?? preview.order_id;
+      if (cid && oid) {
+        notifyCartonScanned({ order_id: oid, carton_id: cid, scanned_at: scannedAt });
+      }
     } catch {
       setError("Network issue while saving scan. Please retry.");
     } finally {

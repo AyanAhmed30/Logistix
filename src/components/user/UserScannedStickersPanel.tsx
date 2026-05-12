@@ -1,12 +1,13 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { getScannedCartonsForUser, deleteCartonScan } from "@/app/actions/orders";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
 import { Trash2 } from "lucide-react";
 import { toast } from "sonner";
+import { createClient } from "@/utils/supabase/client";
 
 type ScanRow = {
   id: string;
@@ -41,18 +42,16 @@ export function UserScannedStickersPanel() {
   const [hasLoadedOnce, setHasLoadedOnce] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const supabase = useMemo(() => createClient(), []);
 
-  useEffect(() => {
-    let isMounted = true;
-
-    const fetchScans = async () => {
-      if (!hasLoadedOnce) {
+  const fetchScans = useCallback(
+    async (options?: { showLoader?: boolean }) => {
+      const shouldShowLoader = options?.showLoader ?? false;
+      if (shouldShowLoader) {
         setIsLoading(true);
       }
+
       const result = await getScannedCartonsForUser();
-
-      if (!isMounted) return;
-
       if ("error" in result) {
         setError(result.error ?? "Unable to load scanned stickers");
         setScans([]);
@@ -61,18 +60,56 @@ export function UserScannedStickersPanel() {
         setScans((result.scans as ScanRow[]) || []);
       }
 
-      setIsLoading(false);
+      if (shouldShowLoader) {
+        setIsLoading(false);
+      }
       setHasLoadedOnce(true);
-    };
+    },
+    []
+  );
 
-    fetchScans();
-    const interval = window.setInterval(fetchScans, 15000);
+  useEffect(() => {
+    let isMounted = true;
+    const runInitialFetch = async () => {
+      await fetchScans({ showLoader: !hasLoadedOnce });
+      if (!isMounted && !hasLoadedOnce) {
+        setIsLoading(false);
+      }
+    };
+    runInitialFetch();
 
     return () => {
       isMounted = false;
-      window.clearInterval(interval);
     };
-  }, [hasLoadedOnce]);
+  }, [fetchScans, hasLoadedOnce]);
+
+  useEffect(() => {
+    const interval = window.setInterval(() => {
+      void fetchScans();
+    }, 5000);
+
+    const handleVisibility = () => {
+      if (document.visibilityState === "visible") {
+        void fetchScans();
+      }
+    };
+    window.addEventListener("focus", handleVisibility);
+    document.addEventListener("visibilitychange", handleVisibility);
+
+    const channel = supabase
+      .channel("carton-scans-live")
+      .on("postgres_changes", { event: "*", schema: "public", table: "carton_scans" }, () => {
+        void fetchScans();
+      })
+      .subscribe();
+
+    return () => {
+      window.clearInterval(interval);
+      window.removeEventListener("focus", handleVisibility);
+      document.removeEventListener("visibilitychange", handleVisibility);
+      void supabase.removeChannel(channel);
+    };
+  }, [fetchScans, supabase]);
 
   async function handleDelete(id: string) {
     if (deletingId) return;
@@ -141,8 +178,6 @@ export function UserScannedStickersPanel() {
                 <TableHead>Shipping Mark</TableHead>
                 <TableHead>Destination</TableHead>
                 <TableHead>Item Description</TableHead>
-                <TableHead>Weight</TableHead>
-                <TableHead>Dimensions</TableHead>
                 <TableHead className="w-28 text-right">Actions</TableHead>
               </TableRow>
             </TableHeader>
@@ -152,18 +187,6 @@ export function UserScannedStickersPanel() {
                 const carton = scan.cartons;
 
                 const scannedAt = new Date(scan.scanned_at).toLocaleString();
-                const weight =
-                  carton && carton.weight != null
-                    ? `${carton.weight} kg`
-                    : "-";
-                const hasDimensions =
-                  carton &&
-                  carton.length != null &&
-                  carton.width != null &&
-                  carton.height != null;
-                const dimensions = hasDimensions
-                  ? `${carton.length} x ${carton.width} x ${carton.height} ${carton.dimension_unit || "cm"}`
-                  : "-";
 
                 return (
                   <TableRow key={scan.id}>
@@ -175,8 +198,6 @@ export function UserScannedStickersPanel() {
                     <TableCell>{order?.shipping_mark ?? "-"}</TableCell>
                     <TableCell>{order?.destination_country ?? "-"}</TableCell>
                     <TableCell>{order?.item_description ?? "-"}</TableCell>
-                    <TableCell>{weight}</TableCell>
-                    <TableCell>{dimensions}</TableCell>
                     <TableCell className="text-right">
                       <Button
                         variant="outline"

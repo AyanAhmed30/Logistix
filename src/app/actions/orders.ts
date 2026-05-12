@@ -467,6 +467,8 @@ export async function recordCartonScan(scanIdentifier: string) {
         success: true,
         duplicate: true,
         carton: {
+          id: typedCarton.id,
+          order_id: typedCarton.order_id,
           serial: typedCarton.carton_serial_number,
           tracking_id: typedCarton.tracking_id ?? `TRK-${typedCarton.carton_serial_number}`,
           sticker_identifier: typedCarton.sticker_identifier ?? typedCarton.carton_serial_number,
@@ -501,6 +503,8 @@ export async function recordCartonScan(scanIdentifier: string) {
       success: true,
       duplicate: false,
       carton: {
+        id: typedCarton.id,
+        order_id: typedCarton.order_id,
         serial: typedCarton.carton_serial_number,
         tracking_id: typedCarton.tracking_id ?? `TRK-${typedCarton.carton_serial_number}`,
         sticker_identifier: typedCarton.sticker_identifier ?? typedCarton.carton_serial_number,
@@ -508,6 +512,131 @@ export async function recordCartonScan(scanIdentifier: string) {
     };
   } catch (err) {
     return { error: err instanceof Error ? err.message : "Unable to record carton scan" };
+  }
+}
+
+export type OrderScanProgressCarton = {
+  id: string;
+  carton_serial_number: string;
+  carton_index: number;
+  sticker_label: string;
+  scanned: boolean;
+  scanned_at: string | null;
+  state: "pending" | "scanned" | "missing";
+};
+
+export type OrderScanProgressRow = {
+  id: string;
+  shipping_mark: string;
+  destination_country: string;
+  total_cartons: number;
+  item_description: string | null;
+  created_at: string;
+  scanned_count: number;
+  pending_count: number;
+  cartons: OrderScanProgressCarton[];
+};
+
+export async function getOrderScanProgressForUser() {
+  try {
+    const session = await getSession();
+    if (!session || session.role !== "user") {
+      return { error: "Unauthorized" };
+    }
+
+    const supabase = await createAdminClient();
+    const orderLimit = 40;
+
+    const { data: orders, error: ordersError } = await supabase
+      .from("orders")
+      .select(
+        "id, shipping_mark, destination_country, total_cartons, item_description, created_at, cartons(id, carton_serial_number, carton_index)"
+      )
+      .eq("username", session.username)
+      .order("created_at", { ascending: false })
+      .order("carton_index", { ascending: true, referencedTable: "cartons" })
+      .limit(orderLimit);
+
+    if (ordersError) {
+      return { error: ordersError.message };
+    }
+
+    if (!orders || orders.length === 0) {
+      return { orders: [] as OrderScanProgressRow[] };
+    }
+
+    const orderIds = orders.map((o) => o.id as string);
+
+    const { data: scanRows, error: scansError } = await supabase
+      .from("carton_scans")
+      .select("carton_id, scanned_at")
+      .eq("username", session.username)
+      .in("order_id", orderIds);
+
+    if (scansError) {
+      return { error: scansError.message };
+    }
+
+    const scannedAtByCartonId = new Map<string, string>();
+    for (const row of scanRows ?? []) {
+      const cid = row.carton_id as string;
+      const at = row.scanned_at as string;
+      const prev = scannedAtByCartonId.get(cid);
+      if (!prev || new Date(at) > new Date(prev)) {
+        scannedAtByCartonId.set(cid, at);
+      }
+    }
+
+    const lateHours = 24;
+    const now = Date.now();
+
+    const rows: OrderScanProgressRow[] = orders.map((order) => {
+      const total = order.total_cartons as number;
+      const rawCartons = (order.cartons ?? []) as {
+        id: string;
+        carton_serial_number: string;
+        carton_index: number;
+      }[];
+      const sorted = [...rawCartons].sort((a, b) => a.carton_index - b.carton_index);
+
+      let scannedCount = 0;
+      const cartons: OrderScanProgressCarton[] = sorted.map((c) => {
+        const scannedAt = scannedAtByCartonId.get(c.id) ?? null;
+        const scanned = Boolean(scannedAt);
+        if (scanned) scannedCount += 1;
+
+        const hoursSinceOrder =
+          (now - new Date(order.created_at as string).getTime()) / (1000 * 60 * 60);
+        const isLate = !scanned && hoursSinceOrder >= lateHours;
+        const state: OrderScanProgressCarton["state"] = scanned ? "scanned" : isLate ? "missing" : "pending";
+
+        return {
+          id: c.id,
+          carton_serial_number: c.carton_serial_number,
+          carton_index: c.carton_index,
+          sticker_label: `${total}-${c.carton_index}`,
+          scanned,
+          scanned_at: scannedAt,
+          state,
+        };
+      });
+
+      return {
+        id: order.id as string,
+        shipping_mark: order.shipping_mark as string,
+        destination_country: order.destination_country as string,
+        total_cartons: total,
+        item_description: (order.item_description as string | null) ?? null,
+        created_at: order.created_at as string,
+        scanned_count: scannedCount,
+        pending_count: Math.max(0, total - scannedCount),
+        cartons,
+      };
+    });
+
+    return { orders: rows };
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : "Unable to load scan progress" };
   }
 }
 

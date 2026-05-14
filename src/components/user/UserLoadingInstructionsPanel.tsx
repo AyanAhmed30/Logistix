@@ -2,11 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { getLoadingInstructionsForUser } from "@/app/actions/orders";
-import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { downloadLoadingInstructionPdf } from "@/lib/loading-instruction-pdf";
-import { FileDown, Loader2 } from "lucide-react";
-import { toast } from "sonner";
 import type { LoadingInstructionPdfConsole, LoadingInstructionPdfOrder } from "@/lib/loading-instruction-pdf";
 
 type InstructionRow = {
@@ -22,7 +18,6 @@ export function UserLoadingInstructionsPanel({ refreshKey }: Props) {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [rows, setRows] = useState<InstructionRow[]>([]);
-  const [downloadingKey, setDownloadingKey] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setIsLoading(true);
@@ -40,27 +35,6 @@ export function UserLoadingInstructionsPanel({ refreshKey }: Props) {
   useEffect(() => {
     void load();
   }, [load, refreshKey]);
-
-  async function handleDownload(consoleId: string) {
-    const entry = rows.find((r) => r.console?.id === consoleId);
-    if (!entry?.console) {
-      toast.error("Instruction not found.");
-      return;
-    }
-    setDownloadingKey(consoleId);
-    try {
-      await downloadLoadingInstructionPdf({
-        console: entry.console,
-        orders: entry.orders,
-      });
-      toast.success("PDF downloaded.");
-    } catch (e) {
-      console.error(e);
-      toast.error("Could not generate PDF. Please try again.");
-    } finally {
-      setDownloadingKey(null);
-    }
-  }
 
   if (isLoading) {
     return (
@@ -90,8 +64,8 @@ export function UserLoadingInstructionsPanel({ refreshKey }: Props) {
         <CardHeader>
           <CardTitle>Loading Instructions</CardTitle>
           <CardDescription>
-            When an admin marks your console as ready for loading, it appears here with your orders. Download the PDF
-            to scan carton QRs as outward (loading) scans.
+            When an admin marks your console as ready for loading, it appears here. Use the same carton stickers from
+            when you booked the order: scan each QR again to record loading (outward) — no new labels required.
           </CardDescription>
         </CardHeader>
       </Card>
@@ -104,18 +78,17 @@ export function UserLoadingInstructionsPanel({ refreshKey }: Props) {
         <CardHeader>
           <CardTitle>Loading Instructions</CardTitle>
           <CardDescription>
-            Consoles that are open for loading and include your orders. PDF QR links register scans as outward loading
-            (inward receipt must already be complete per carton).
+            Consoles open for loading that include your orders. Scan the original book-order stickers on each carton
+            again to record outward when you are ready — the QR does not change.
           </CardDescription>
         </CardHeader>
       </Card>
 
       {rows.map(({ console: cons, orders }) => {
         const cid = cons.id;
-        const busy = downloadingKey === cid;
         return (
           <Card key={cid} className="bg-white border shadow-sm">
-            <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+            <CardHeader>
               <div>
                 <CardTitle className="text-lg">Console {cons.console_number}</CardTitle>
                 <p className="text-sm text-secondary-muted mt-1">
@@ -125,16 +98,6 @@ export function UserLoadingInstructionsPanel({ refreshKey }: Props) {
                 </p>
                 <p className="text-xs text-secondary-muted mt-0.5">Status: ready for loading</p>
               </div>
-              <Button
-                type="button"
-                variant="default"
-                className="shrink-0 gap-2"
-                disabled={busy}
-                onClick={() => void handleDownload(cid)}
-              >
-                {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileDown className="h-4 w-4" />}
-                Download PDF
-              </Button>
             </CardHeader>
             <CardContent className="space-y-3">
               <p className="text-xs font-semibold text-primary-dark uppercase tracking-wide">Your orders on this console</p>

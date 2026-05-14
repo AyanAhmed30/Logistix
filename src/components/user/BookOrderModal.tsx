@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import jsPDF from "jspdf";
 import QRCode from "qrcode";
 import { getNextCartonSerial, createOrderWithCartons } from "@/app/actions/orders";
+import { buildStickerScanUrl } from "@/lib/scan-sticker-url";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -46,19 +47,8 @@ async function generateQrCodeDataUrl(input: {
   token: string;
 }) {
   try {
-    // Generate URL that points to the scan endpoint, which will record the scan and redirect.
-    // IMPORTANT: Use a configurable base URL so that QR codes work from other devices too.
-    // If NEXT_PUBLIC_APP_BASE_URL is set, we use that (recommended for production / LAN).
-    // Otherwise, we fall back to window.location.origin (works only on the same device).
-    const envBase =
-      typeof process !== "undefined"
-        ? (process.env.NEXT_PUBLIC_APP_BASE_URL as string | undefined)
-        : undefined;
-    const runtimeOrigin =
-      typeof window !== "undefined" ? window.location.origin : "";
-    const baseUrl = (envBase && envBase.trim()) || runtimeOrigin;
     const scanIdentifier = input.token || input.serial;
-    const cartonUrl = `${baseUrl.replace(/\/+$/, "")}/scan/${encodeURIComponent(scanIdentifier)}`;
+    const cartonUrl = buildStickerScanUrl(scanIdentifier);
 
     const qrDataUrl = await QRCode.toDataURL(cartonUrl, {
       width: 600,

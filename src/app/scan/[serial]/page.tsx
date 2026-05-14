@@ -1,36 +1,18 @@
-import { getCartonScanPreview, type ScanPreviewContext } from "@/app/actions/orders";
+import { getCartonScanPreview } from "@/app/actions/orders";
 import { ScanConfirmationCard } from "@/components/scan/ScanConfirmationCard";
 
 type Props = {
   params: Promise<{ serial: string }>;
-  searchParams?: Promise<Record<string, string | string[] | undefined>>;
 };
 
-function firstParam(v: string | string[] | undefined): string | undefined {
-  if (v === undefined) return undefined;
-  return Array.isArray(v) ? v[0] : v;
-}
-
-export default async function ScanRedirectPage({ params, searchParams }: Props) {
+export default async function ScanRedirectPage({ params }: Props) {
   const { serial } = await params;
-  const sp = (await searchParams) ?? {};
 
   if (!serial) {
     return null;
   }
 
-  const outwardRaw = firstParam(sp.outward);
-  const outward =
-    outwardRaw === "1" ||
-    outwardRaw === "true" ||
-    outwardRaw === "yes" ||
-    outwardRaw === "outward";
-  const consoleId = firstParam(sp.console)?.trim() ?? "";
-
-  const context: ScanPreviewContext | undefined =
-    outward && consoleId ? { scanMode: "outward", consoleId } : undefined;
-
-  const previewResult = await getCartonScanPreview(serial, context);
+  const previewResult = await getCartonScanPreview(serial);
   if ("error" in previewResult || !previewResult.preview) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100 py-10 px-4">

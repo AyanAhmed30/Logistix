@@ -6,10 +6,9 @@ export function getScanStickerBaseUrl(): string {
   return ((envBase && envBase.trim()) || runtimeOrigin || "").replace(/\/+$/, "");
 }
 
-/** Same token as inward; outward mode is encoded in query params (loading PDF only). */
-export function buildOutwardScanUrl(scanIdentifier: string, consoleId: string): string {
+/** Single URL for every carton sticker: inward on first scan, outward on later scans when loading is open (server decides). */
+export function buildStickerScanUrl(scanIdentifier: string): string {
   const base = getScanStickerBaseUrl();
   const id = encodeURIComponent(scanIdentifier.trim());
-  const cid = encodeURIComponent(consoleId.trim());
-  return `${base}/scan/${id}?outward=1&console=${cid}`;
+  return `${base}/scan/${id}`;
 }

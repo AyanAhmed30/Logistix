@@ -9,6 +9,7 @@ type PreviewData = {
   scan_mode?: "inward" | "outward";
   console_id?: string | null;
   console_number?: string | null;
+  blocking_message?: string | null;
   order_id: string;
   shipping_mark: string;
   destination_country: string;
@@ -28,11 +29,16 @@ type Props = {
 
 export function ScanConfirmationCard({ preview }: Props) {
   const isOutward = preview.scan_mode === "outward";
+  const blocked = Boolean(preview.blocking_message);
+  const cannotSubmit = blocked || preview.already_scanned;
+
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isScanned, setIsScanned] = useState(preview.already_scanned);
-  const [message, setMessage] = useState<string>(
-    preview.already_scanned ? "This sticker is already scanned." : "Pending scan confirmation."
-  );
+  const [message, setMessage] = useState<string>(() => {
+    if (preview.blocking_message) return preview.blocking_message;
+    if (preview.already_scanned) return "This sticker is already scanned.";
+    return "Pending scan confirmation.";
+  });
   const [error, setError] = useState<string | null>(null);
   const [resolvedScannedAt, setResolvedScannedAt] = useState<string | null>(preview.scanned_at);
 
@@ -42,7 +48,7 @@ export function ScanConfirmationCard({ preview }: Props) {
   }, [isScanned]);
 
   async function handleMarkAsScanned() {
-    if (isSubmitting || isScanned) return;
+    if (isSubmitting || isScanned || blocked || preview.already_scanned) return;
 
     setIsSubmitting(true);
     setError(null);
@@ -50,11 +56,7 @@ export function ScanConfirmationCard({ preview }: Props) {
       const response = await fetch("/api/scan", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          scanIdentifier: preview.scan_identifier,
-          scanType: isOutward ? "outward" : "inward",
-          consoleId: isOutward ? preview.console_id ?? "" : "",
-        }),
+        body: JSON.stringify({ scanIdentifier: preview.scan_identifier }),
       });
 
       const result = (await response.json()) as {
@@ -83,8 +85,8 @@ export function ScanConfirmationCard({ preview }: Props) {
           order_id: oid,
           carton_id: cid,
           scanned_at: scannedAt,
-          scan_type: result.scanType ?? (isOutward ? "outward" : "inward"),
-          console_id: (result.consoleId ?? preview.console_id) ?? null,
+          scan_type: result.scanType ?? "inward",
+          console_id: result.consoleId ?? preview.console_id ?? null,
         });
       }
     } catch {
@@ -94,26 +96,29 @@ export function ScanConfirmationCard({ preview }: Props) {
     }
   }
 
+  const title = blocked ? "Scan on hold" : isOutward ? "Loading (outward) scan" : "Sticker scan";
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100 py-10 px-4">
       <div className="max-w-md mx-auto rounded-xl border bg-white shadow-sm p-6 space-y-5">
         <div className="text-center space-y-1">
-          <h1 className="text-2xl font-bold text-primary-dark">
-            {isOutward ? "Loading (outward) scan" : "Sticker scan"}
-          </h1>
+          <h1 className="text-2xl font-bold text-primary-dark">{title}</h1>
           <p className="text-sm text-secondary-muted">
-            {isOutward
-              ? "Confirm to register this carton for loading against the assigned console. Inward receipt must already be complete."
-              : "Confirm scan to register this sticker in the warehouse system."}
+            {blocked
+              ? "Use the same sticker on the carton. Scan again after admin opens loading for this order."
+              : isOutward
+                ? "Confirm to record loading for this carton. The same QR was used for inward receipt; no reprint needed."
+                : "Confirm scan to register this sticker in the warehouse system."}
           </p>
-          {isOutward && preview.console_number ? (
+          {!blocked && isOutward && preview.console_number ? (
             <p className="text-xs font-semibold text-primary-dark">Console {preview.console_number}</p>
           ) : null}
         </div>
 
         <div className="rounded-lg border bg-slate-50 p-3 text-sm space-y-1">
           <div>
-            <span className="font-semibold">Scan type:</span> {isOutward ? "Outward (loading)" : "Inward (receipt)"}
+            <span className="font-semibold">Next record:</span>{" "}
+            {blocked ? "—" : isOutward ? "Outward (loading)" : "Inward (receipt)"}
           </div>
           <div>
             <span className="font-semibold">Order ID:</span> {preview.order_id}
@@ -144,7 +149,7 @@ export function ScanConfirmationCard({ preview }: Props) {
 
         <Button
           className="w-full h-11 text-base font-semibold"
-          disabled={isSubmitting || isScanned}
+          disabled={isSubmitting || isScanned || cannotSubmit}
           onClick={handleMarkAsScanned}
         >
           {isSubmitting ? "Marking..." : isScanned ? "Scanned" : "MARK AS SCANNED"}

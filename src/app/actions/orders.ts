@@ -270,12 +270,37 @@ export async function getCartonBySerial(serial: string) {
   }
 }
 
-export type ScanPreviewContext = {
-  scanMode?: "inward" | "outward";
-  consoleId?: string;
-};
+type AdminSupabase = Awaited<ReturnType<typeof createAdminClient>>;
 
-export async function getCartonScanPreview(scanIdentifier: string, context?: ScanPreviewContext) {
+/** One QR URL for all scans: server picks outward when inward exists and this order is on a ready-for-loading console. */
+async function resolveReadyLoadingConsoleForOrder(
+  supabase: AdminSupabase,
+  orderId: string
+): Promise<{ id: string; console_number: string } | null> {
+  const { data, error } = await supabase
+    .from("console_orders")
+    .select("console_id, consoles(id, console_number, status, created_at)")
+    .eq("order_id", orderId);
+
+  if (error || !data?.length) {
+    return null;
+  }
+
+  type Cons = { id: string; console_number: string; status: string; created_at: string };
+  const candidates: Cons[] = [];
+  for (const row of data) {
+    const raw = row.consoles as Cons[] | Cons | null;
+    const cons = Array.isArray(raw) ? raw[0] : raw;
+    if (!cons || cons.status !== "ready_for_loading") continue;
+    candidates.push(cons);
+  }
+  if (candidates.length === 0) return null;
+  candidates.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+  const best = candidates[0];
+  return { id: best.id, console_number: best.console_number };
+}
+
+export async function getCartonScanPreview(scanIdentifier: string) {
   try {
     if (!scanIdentifier?.trim()) {
       return { error: "Scan token is required" };
@@ -283,8 +308,6 @@ export async function getCartonScanPreview(scanIdentifier: string, context?: Sca
 
     const trimmed = scanIdentifier.trim();
     const supabase = await createAdminClient();
-    const scanMode = context?.scanMode === "outward" ? ("outward" as const) : ("inward" as const);
-    const consoleId = context?.consoleId?.trim() || "";
 
     const selectQuery =
       "id, carton_serial_number, order_id, tracking_id, sticker_identifier, scan_token, scan_status, scanned_at, orders(id, shipping_mark, destination_country, item_description, total_cartons, created_at, username)";
@@ -354,46 +377,34 @@ export async function getCartonScanPreview(scanIdentifier: string, context?: Sca
       Array.isArray(ordersValue) && ordersValue.length > 0
         ? ordersValue[0]
         : !Array.isArray(ordersValue)
-        ? ordersValue
-        : null;
+          ? ordersValue
+          : null;
     if (!order) {
       return { error: "Order not found for this carton" };
     }
 
+    const { data: inwardRow } = await supabase
+      .from("carton_scans")
+      .select("id, scanned_at")
+      .eq("carton_id", carton.id)
+      .eq("username", order.username)
+      .or("scan_type.eq.inward,scan_type.is.null")
+      .order("scanned_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    const inwardDone = Boolean(inwardRow?.id);
+    const targetConsole = inwardDone ? await resolveReadyLoadingConsoleForOrder(supabase, order.id) : null;
+
+    let scanMode: "inward" | "outward" = "inward";
     let consoleNumber: string | null = null;
-    if (scanMode === "outward") {
-      if (!consoleId) {
-        return { error: "Loading console is required for outward scan" };
-      }
-      const { data: consoleRow, error: consoleErr } = await supabase
-        .from("consoles")
-        .select("id, console_number, status")
-        .eq("id", consoleId)
-        .maybeSingle();
-      if (consoleErr || !consoleRow) {
-        return { error: consoleErr?.message || "Console not found" };
-      }
-      if (consoleRow.status !== "ready_for_loading") {
-        return { error: "This console is not open for loading scans" };
-      }
-      consoleNumber = consoleRow.console_number as string;
-
-      const { data: linkRow, error: linkErr } = await supabase
-        .from("console_orders")
-        .select("order_id")
-        .eq("console_id", consoleId)
-        .eq("order_id", order.id)
-        .maybeSingle();
-      if (linkErr || !linkRow) {
-        return { error: "This order is not assigned to this loading console" };
-      }
-    }
-
+    let resolvedConsoleId: string | null = null;
     let alreadyScanned = false;
     let resolvedScannedAt: string | null = null;
     let scanStatusLabel = carton.scan_status ?? "pending";
+    let blockingMessage: string | null = null;
 
-    if (scanMode === "inward") {
+    if (!inwardDone) {
       const { data: latestInward } = await supabase
         .from("carton_scans")
         .select("scanned_at")
@@ -407,12 +418,23 @@ export async function getCartonScanPreview(scanIdentifier: string, context?: Sca
       resolvedScannedAt = carton.scanned_at ?? latestInward?.scanned_at ?? null;
       alreadyScanned = Boolean(resolvedScannedAt);
       scanStatusLabel = carton.scan_status ?? (alreadyScanned ? "scanned" : "pending");
+      scanMode = "inward";
+    } else if (!targetConsole) {
+      scanMode = "outward";
+      resolvedScannedAt = inwardRow?.scanned_at ?? null;
+      alreadyScanned = false;
+      blockingMessage =
+        "Receipt (inward) is already recorded. There is no open loading console for this order yet. Use this same QR again after admin marks your console as ready for loading.";
+      scanStatusLabel = "inward_complete";
     } else {
+      resolvedConsoleId = targetConsole.id;
+      consoleNumber = targetConsole.console_number;
+
       const { data: outwardRow } = await supabase
         .from("carton_scans")
         .select("scanned_at")
         .eq("carton_id", carton.id)
-        .eq("console_id", consoleId)
+        .eq("console_id", resolvedConsoleId)
         .eq("scan_type", "outward")
         .order("scanned_at", { ascending: false })
         .limit(1)
@@ -420,26 +442,17 @@ export async function getCartonScanPreview(scanIdentifier: string, context?: Sca
 
       resolvedScannedAt = outwardRow?.scanned_at ?? null;
       alreadyScanned = Boolean(resolvedScannedAt);
-
-      const { data: inwardRow } = await supabase
-        .from("carton_scans")
-        .select("id")
-        .eq("carton_id", carton.id)
-        .eq("username", order.username)
-        .or("scan_type.eq.inward,scan_type.is.null")
-        .limit(1)
-        .maybeSingle();
-      if (!inwardRow?.id) {
-        return { error: "Inward scan must be completed before outward loading scan" };
-      }
+      scanMode = "outward";
+      scanStatusLabel = alreadyScanned ? "outward_scanned" : "outward_pending";
     }
 
     return {
       preview: {
         scan_identifier: trimmed,
         scan_mode: scanMode,
-        console_id: scanMode === "outward" ? consoleId : null,
-        console_number: scanMode === "outward" ? consoleNumber : null,
+        console_id: resolvedConsoleId,
+        console_number: consoleNumber,
+        blocking_message: blockingMessage,
         order_id: order.id,
         shipping_mark: order.shipping_mark,
         destination_country: order.destination_country,
@@ -459,11 +472,13 @@ export async function getCartonScanPreview(scanIdentifier: string, context?: Sca
 }
 
 export type RecordCartonScanOptions = {
+  /** @deprecated Server auto-detects inward vs outward from the same QR. */
   scanType?: "inward" | "outward";
+  /** @deprecated Console is resolved from open loading assignments. */
   consoleId?: string;
 };
 
-export async function recordCartonScan(scanIdentifier: string, options?: RecordCartonScanOptions) {
+export async function recordCartonScan(scanIdentifier: string, _options?: RecordCartonScanOptions) {
   try {
     if (!scanIdentifier?.trim()) {
       return { error: "Scan token is required" };
@@ -471,8 +486,6 @@ export async function recordCartonScan(scanIdentifier: string, options?: RecordC
 
     const trimmed = scanIdentifier.trim();
     const supabase = await createAdminClient();
-    const scanType = options?.scanType === "outward" ? "outward" : "inward";
-    const consoleId = options?.consoleId?.trim() || "";
 
     // Prefer token lookup (secure / non-guessable), then fallback to serial for backward compatibility.
     type CartonLookup = {
@@ -541,94 +554,6 @@ export async function recordCartonScan(scanIdentifier: string, options?: RecordC
       sticker_identifier: typedCarton.sticker_identifier ?? typedCarton.carton_serial_number,
     });
 
-    if (scanType === "outward") {
-      if (!consoleId) {
-        return { error: "Console ID is required for outward scan" };
-      }
-
-      const { data: consoleRow, error: consoleErr } = await supabase
-        .from("consoles")
-        .select("id, status")
-        .eq("id", consoleId)
-        .maybeSingle();
-      if (consoleErr || !consoleRow) {
-        return { error: consoleErr?.message || "Console not found" };
-      }
-      if (consoleRow.status !== "ready_for_loading") {
-        return { error: "This console is not open for loading scans" };
-      }
-
-      const { data: linkRow, error: linkErr } = await supabase
-        .from("console_orders")
-        .select("order_id")
-        .eq("console_id", consoleId)
-        .eq("order_id", order.id)
-        .maybeSingle();
-      if (linkErr || !linkRow) {
-        return { error: "This order is not assigned to this loading console" };
-      }
-
-      const { data: inwardRow } = await supabase
-        .from("carton_scans")
-        .select("id")
-        .eq("carton_id", carton.id)
-        .eq("username", order.username)
-        .or("scan_type.eq.inward,scan_type.is.null")
-        .limit(1)
-        .maybeSingle();
-      if (!inwardRow?.id) {
-        return { error: "Inward scan must be completed before outward loading scan" };
-      }
-
-      const { data: existingOutward } = await supabase
-        .from("carton_scans")
-        .select("id")
-        .eq("carton_id", carton.id)
-        .eq("console_id", consoleId)
-        .eq("scan_type", "outward")
-        .maybeSingle();
-
-      if (existingOutward?.id) {
-        return {
-          success: true,
-          duplicate: true,
-          scanType: "outward" as const,
-          carton: buildCartonPayload(),
-        };
-      }
-
-      const outwardInsert = {
-        carton_id: carton.id,
-        order_id: order.id,
-        username: order.username,
-        carton_serial_number: carton.carton_serial_number,
-        scan_type: "outward" as const,
-        console_id: consoleId,
-      };
-
-      let insertRes = await supabase.from("carton_scans").insert(outwardInsert);
-      if (insertRes.error && /(scan_type|console_id)/i.test(insertRes.error.message || "")) {
-        return {
-          error:
-            "Database is missing outward scan columns (scan_type / console_id). Apply the latest migration on Supabase, then retry.",
-        };
-      }
-      if (insertRes.error) {
-        if (insertRes.error.code === "23505") {
-          return { success: true, duplicate: true, scanType: "outward" as const, carton: buildCartonPayload() };
-        }
-        return { error: insertRes.error.message };
-      }
-
-      return {
-        success: true,
-        duplicate: false,
-        scanType: "outward" as const,
-        carton: buildCartonPayload(),
-      };
-    }
-
-    // ----- INWARD (default) -----
     const { data: existingInward } = await supabase
       .from("carton_scans")
       .select("id")
@@ -639,53 +564,119 @@ export async function recordCartonScan(scanIdentifier: string, options?: RecordC
       .limit(1)
       .maybeSingle();
 
-    if (existingInward?.id) {
-      return {
-        success: true,
-        duplicate: true,
-        scanType: "inward" as const,
-        carton: buildCartonPayload(),
-      };
-    }
-
-    const inwardInsert = {
-      carton_id: carton.id,
-      order_id: order.id,
-      username: order.username,
-      carton_serial_number: carton.carton_serial_number,
-      scan_type: "inward" as const,
-      console_id: null as string | null,
-    };
-
-    let ins = await supabase.from("carton_scans").insert(inwardInsert);
-    if (ins.error && /scan_type/i.test(ins.error.message || "")) {
-      ins = await supabase.from("carton_scans").insert({
+    if (!existingInward?.id) {
+      const inwardInsert = {
         carton_id: carton.id,
         order_id: order.id,
         username: order.username,
         carton_serial_number: carton.carton_serial_number,
-      });
-    }
-    if (ins.error) {
-      return { error: ins.error.message };
+        scan_type: "inward" as const,
+        console_id: null as string | null,
+      };
+
+      let ins = await supabase.from("carton_scans").insert(inwardInsert);
+      if (ins.error && /scan_type/i.test(ins.error.message || "")) {
+        ins = await supabase.from("carton_scans").insert({
+          carton_id: carton.id,
+          order_id: order.id,
+          username: order.username,
+          carton_serial_number: carton.carton_serial_number,
+        });
+      }
+      if (ins.error) {
+        if (ins.error.code === "23505") {
+          return {
+            success: true,
+            duplicate: true,
+            scanType: "inward" as const,
+            consoleId: null as string | null,
+            carton: buildCartonPayload(),
+          };
+        }
+        return { error: ins.error.message };
+      }
+
+      const statusUpdate = await supabase
+        .from("cartons")
+        .update({
+          scan_status: "scanned",
+          scanned_at: new Date().toISOString(),
+          scanned_by: order.username,
+        })
+        .eq("id", carton.id);
+      if (statusUpdate.error && !/(scan_status|scanned_at|scanned_by)/i.test(statusUpdate.error.message || "")) {
+        return { error: statusUpdate.error.message };
+      }
+
+      return {
+        success: true,
+        duplicate: false,
+        scanType: "inward" as const,
+        consoleId: null as string | null,
+        carton: buildCartonPayload(),
+      };
     }
 
-    const statusUpdate = await supabase
-      .from("cartons")
-      .update({
-        scan_status: "scanned",
-        scanned_at: new Date().toISOString(),
-        scanned_by: order.username,
-      })
-      .eq("id", carton.id);
-    if (statusUpdate.error && !/(scan_status|scanned_at|scanned_by)/i.test(statusUpdate.error.message || "")) {
-      return { error: statusUpdate.error.message };
+    const targetConsole = await resolveReadyLoadingConsoleForOrder(supabase, order.id);
+    if (!targetConsole) {
+      return {
+        error:
+          "Receipt (inward) is already recorded. There is no open loading console for this order yet. Keep using this same QR after admin marks your console as ready for loading.",
+      };
+    }
+
+    const { data: existingOutward } = await supabase
+      .from("carton_scans")
+      .select("id")
+      .eq("carton_id", carton.id)
+      .eq("console_id", targetConsole.id)
+      .eq("scan_type", "outward")
+      .maybeSingle();
+
+    if (existingOutward?.id) {
+      return {
+        success: true,
+        duplicate: true,
+        scanType: "outward" as const,
+        consoleId: targetConsole.id,
+        carton: buildCartonPayload(),
+      };
+    }
+
+    const outwardInsert = {
+      carton_id: carton.id,
+      order_id: order.id,
+      username: order.username,
+      carton_serial_number: carton.carton_serial_number,
+      scan_type: "outward" as const,
+      console_id: targetConsole.id,
+    };
+
+    let insertRes = await supabase.from("carton_scans").insert(outwardInsert);
+    if (insertRes.error && /(scan_type|console_id)/i.test(insertRes.error.message || "")) {
+      return {
+        error:
+          "Database is missing outward scan columns (scan_type / console_id). Apply the latest migration on Supabase, then retry.",
+      };
+    }
+    if (insertRes.error) {
+      if (insertRes.error.code === "23505") {
+        return {
+          success: true,
+          duplicate: true,
+          scanType: "outward" as const,
+          consoleId: targetConsole.id,
+          carton: buildCartonPayload(),
+        };
+      }
+      return { error: insertRes.error.message };
     }
 
     return {
       success: true,
       duplicate: false,
-      scanType: "inward" as const,
+      scanType: "outward" as const,
+      consoleId: targetConsole.id,
       carton: buildCartonPayload(),
     };
   } catch (err) {

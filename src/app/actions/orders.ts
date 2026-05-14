@@ -471,14 +471,7 @@ export async function getCartonScanPreview(scanIdentifier: string) {
   }
 }
 
-export type RecordCartonScanOptions = {
-  /** @deprecated Server auto-detects inward vs outward from the same QR. */
-  scanType?: "inward" | "outward";
-  /** @deprecated Console is resolved from open loading assignments. */
-  consoleId?: string;
-};
-
-export async function recordCartonScan(scanIdentifier: string, _options?: RecordCartonScanOptions) {
+export async function recordCartonScan(scanIdentifier: string) {
   try {
     if (!scanIdentifier?.trim()) {
       return { error: "Scan token is required" };
@@ -652,7 +645,7 @@ export async function recordCartonScan(scanIdentifier: string, _options?: Record
       console_id: targetConsole.id,
     };
 
-    let insertRes = await supabase.from("carton_scans").insert(outwardInsert);
+    const insertRes = await supabase.from("carton_scans").insert(outwardInsert);
     if (insertRes.error && /(scan_type|console_id)/i.test(insertRes.error.message || "")) {
       return {
         error:

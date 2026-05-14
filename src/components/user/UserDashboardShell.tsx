@@ -156,7 +156,7 @@ export function UserDashboardShell({ username }: Props) {
         ) : activeTab === "scanned" ? (
           <UserScannedStickersPanel />
         ) : activeTab === "loading" ? (
-          <UserLoadingInstructionsPanel refreshKey={loadingInstructionsRefreshKey} />
+          <UserLoadingInstructionsPanel key={loadingInstructionsRefreshKey} />
         ) : null}
       </main>
 

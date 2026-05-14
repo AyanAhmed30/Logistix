@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { getLoadingInstructionsForUser } from "@/app/actions/orders";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import type { LoadingInstructionPdfConsole, LoadingInstructionPdfOrder } from "@/lib/loading-instruction-pdf";
@@ -10,31 +10,30 @@ type InstructionRow = {
   orders: LoadingInstructionPdfOrder[];
 };
 
-type Props = {
-  refreshKey: number;
-};
-
-export function UserLoadingInstructionsPanel({ refreshKey }: Props) {
+/** Parent should set `key={...}` when this list must refetch (e.g. tab revisit). Avoids setState-in-effect lint issues. */
+export function UserLoadingInstructionsPanel() {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [rows, setRows] = useState<InstructionRow[]>([]);
 
-  const load = useCallback(async () => {
-    setIsLoading(true);
-    const res = await getLoadingInstructionsForUser();
-    if ("error" in res) {
-      setError(res.error ?? "Unable to load loading instructions");
-      setRows([]);
-    } else {
-      setError(null);
-      setRows((res.instructions ?? []) as InstructionRow[]);
-    }
-    setIsLoading(false);
-  }, []);
-
   useEffect(() => {
-    void load();
-  }, [load, refreshKey]);
+    let cancelled = false;
+    (async () => {
+      const res = await getLoadingInstructionsForUser();
+      if (cancelled) return;
+      if ("error" in res) {
+        setError(res.error ?? "Unable to load loading instructions");
+        setRows([]);
+      } else {
+        setError(null);
+        setRows((res.instructions ?? []) as InstructionRow[]);
+      }
+      setIsLoading(false);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   if (isLoading) {
     return (

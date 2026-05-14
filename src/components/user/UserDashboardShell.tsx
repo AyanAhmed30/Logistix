@@ -4,24 +4,26 @@ import { useState } from "react";
 import { logout } from "@/app/actions/auth";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Menu, PackagePlus, History, MapPin, LogOut, Bell, X, QrCode } from "lucide-react";
+import { Menu, PackagePlus, History, MapPin, LogOut, Bell, X, QrCode, ClipboardList } from "lucide-react";
 import Image from "next/image";
 import { BookOrderModal } from "@/components/user/BookOrderModal";
 import { OrderHistoryPanel } from "@/components/user/OrderHistoryPanel";
 import { UserScannedStickersPanel } from "@/components/user/UserScannedStickersPanel";
 import { UserScanProgressPanel } from "@/components/user/UserScanProgressPanel";
+import { UserLoadingInstructionsPanel } from "@/components/user/UserLoadingInstructionsPanel";
 
 type Props = {
   username: string;
 };
 
-type TabKey = "book" | "history" | "tracking" | "scanned";
+type TabKey = "book" | "history" | "tracking" | "scanned" | "loading";
 
 const tabs: { key: TabKey; label: string; icon: React.ReactNode }[] = [
   { key: "book", label: "Book a New Order", icon: <PackagePlus className="h-4 w-4" /> },
   { key: "history", label: "History", icon: <History className="h-4 w-4" /> },
   { key: "tracking", label: "Scan Progress", icon: <MapPin className="h-4 w-4" /> },
   { key: "scanned", label: "Scanned Stickers", icon: <QrCode className="h-4 w-4" /> },
+  { key: "loading", label: "Loading Instructions", icon: <ClipboardList className="h-4 w-4" /> },
 ];
 
 export function UserDashboardShell({ username }: Props) {
@@ -30,12 +32,16 @@ export function UserDashboardShell({ username }: Props) {
   const [isOrderModalOpen, setIsOrderModalOpen] = useState(false);
   const [historyRefreshKey, setHistoryRefreshKey] = useState(0);
   const [scanProgressRefreshKey, setScanProgressRefreshKey] = useState(0);
+  const [loadingInstructionsRefreshKey, setLoadingInstructionsRefreshKey] = useState(0);
 
   function selectTab(tab: TabKey) {
     setActiveTab(tab);
     setIsSidebarOpen(false);
     if (tab === "book") {
       setIsOrderModalOpen(true);
+    }
+    if (tab === "loading") {
+      setLoadingInstructionsRefreshKey((k) => k + 1);
     }
   }
 
@@ -116,7 +122,7 @@ export function UserDashboardShell({ username }: Props) {
           ))}
         </div>
         <div className="rounded-xl bg-slate-50 p-4 text-xs text-secondary-muted">
-          View booked orders, live scan progress per order, history, and all stickers scanned from any device.
+          View booked orders, live scan progress, loading instructions when your console is ready, and scanned stickers.
         </div>
       </aside>
 
@@ -149,6 +155,8 @@ export function UserDashboardShell({ username }: Props) {
           <UserScanProgressPanel refreshKey={scanProgressRefreshKey} username={username} />
         ) : activeTab === "scanned" ? (
           <UserScannedStickersPanel />
+        ) : activeTab === "loading" ? (
+          <UserLoadingInstructionsPanel refreshKey={loadingInstructionsRefreshKey} />
         ) : null}
       </main>
 

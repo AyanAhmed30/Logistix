@@ -6,6 +6,9 @@ import { notifyCartonScanned } from "@/lib/scan-progress-broadcast";
 
 type PreviewData = {
   scan_identifier: string;
+  scan_mode?: "inward" | "outward";
+  console_id?: string | null;
+  console_number?: string | null;
   order_id: string;
   shipping_mark: string;
   destination_country: string;
@@ -24,6 +27,7 @@ type Props = {
 };
 
 export function ScanConfirmationCard({ preview }: Props) {
+  const isOutward = preview.scan_mode === "outward";
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isScanned, setIsScanned] = useState(preview.already_scanned);
   const [message, setMessage] = useState<string>(
@@ -46,13 +50,19 @@ export function ScanConfirmationCard({ preview }: Props) {
       const response = await fetch("/api/scan", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ scanIdentifier: preview.scan_identifier }),
+        body: JSON.stringify({
+          scanIdentifier: preview.scan_identifier,
+          scanType: isOutward ? "outward" : "inward",
+          consoleId: isOutward ? preview.console_id ?? "" : "",
+        }),
       });
 
       const result = (await response.json()) as {
         success?: boolean;
         duplicate?: boolean;
         error?: string;
+        scanType?: "inward" | "outward";
+        consoleId?: string | null;
         carton?: { id?: string; order_id?: string };
       };
 
@@ -69,7 +79,13 @@ export function ScanConfirmationCard({ preview }: Props) {
       const cid = result.carton?.id;
       const oid = result.carton?.order_id ?? preview.order_id;
       if (cid && oid) {
-        notifyCartonScanned({ order_id: oid, carton_id: cid, scanned_at: scannedAt });
+        notifyCartonScanned({
+          order_id: oid,
+          carton_id: cid,
+          scanned_at: scannedAt,
+          scan_type: result.scanType ?? (isOutward ? "outward" : "inward"),
+          console_id: (result.consoleId ?? preview.console_id) ?? null,
+        });
       }
     } catch {
       setError("Network issue while saving scan. Please retry.");
@@ -82,20 +98,44 @@ export function ScanConfirmationCard({ preview }: Props) {
     <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100 py-10 px-4">
       <div className="max-w-md mx-auto rounded-xl border bg-white shadow-sm p-6 space-y-5">
         <div className="text-center space-y-1">
-          <h1 className="text-2xl font-bold text-primary-dark">Sticker Scan</h1>
+          <h1 className="text-2xl font-bold text-primary-dark">
+            {isOutward ? "Loading (outward) scan" : "Sticker scan"}
+          </h1>
           <p className="text-sm text-secondary-muted">
-            Confirm scan to register this sticker in the warehouse system.
+            {isOutward
+              ? "Confirm to register this carton for loading against the assigned console. Inward receipt must already be complete."
+              : "Confirm scan to register this sticker in the warehouse system."}
           </p>
+          {isOutward && preview.console_number ? (
+            <p className="text-xs font-semibold text-primary-dark">Console {preview.console_number}</p>
+          ) : null}
         </div>
 
         <div className="rounded-lg border bg-slate-50 p-3 text-sm space-y-1">
-          <div><span className="font-semibold">Order ID:</span> {preview.order_id}</div>
-          <div><span className="font-semibold">Carton:</span> {preview.carton_serial_number}</div>
-          <div><span className="font-semibold">Tracking:</span> {preview.tracking_id}</div>
-          <div><span className="font-semibold">QR ID:</span> {preview.sticker_identifier}</div>
-          <div><span className="font-semibold">Shipping Mark:</span> {preview.shipping_mark || "-"}</div>
-          <div><span className="font-semibold">Destination:</span> {preview.destination_country || "-"}</div>
-          <div><span className="font-semibold">Status:</span> {statusLabel}</div>
+          <div>
+            <span className="font-semibold">Scan type:</span> {isOutward ? "Outward (loading)" : "Inward (receipt)"}
+          </div>
+          <div>
+            <span className="font-semibold">Order ID:</span> {preview.order_id}
+          </div>
+          <div>
+            <span className="font-semibold">Carton:</span> {preview.carton_serial_number}
+          </div>
+          <div>
+            <span className="font-semibold">Tracking:</span> {preview.tracking_id}
+          </div>
+          <div>
+            <span className="font-semibold">QR ID:</span> {preview.sticker_identifier}
+          </div>
+          <div>
+            <span className="font-semibold">Shipping Mark:</span> {preview.shipping_mark || "-"}
+          </div>
+          <div>
+            <span className="font-semibold">Destination:</span> {preview.destination_country || "-"}
+          </div>
+          <div>
+            <span className="font-semibold">Status:</span> {statusLabel}
+          </div>
           <div>
             <span className="font-semibold">Scanned At:</span>{" "}
             {resolvedScannedAt ? new Date(resolvedScannedAt).toLocaleString() : "-"}

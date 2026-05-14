@@ -6,6 +6,8 @@ export type ScanProgressBroadcastMessage = {
   order_id: string;
   carton_id: string;
   scanned_at: string;
+  scan_type?: "inward" | "outward";
+  console_id?: string | null;
 };
 
 export function notifyCartonScanned(payload: Omit<ScanProgressBroadcastMessage, "type">) {

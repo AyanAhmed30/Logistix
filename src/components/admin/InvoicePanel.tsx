@@ -688,13 +688,13 @@ export function InvoicePanel({
 
     // Header: Company name (top-left)
     doc.setFontSize(16);
-    doc.setFont(undefined, "bold");
+    doc.setFont("helvetica", "bold");
     doc.setTextColor(0, 128, 128); // Teal color
     doc.text("LOGISTIX", margin, y);
     
     // Tagline (top-right)
     doc.setFontSize(10);
-    doc.setFont(undefined, "normal");
+    doc.setFont("helvetica", "normal");
     doc.setTextColor(0, 0, 0);
     doc.text(
       "Seamless, Strategic Logistics & Financing",
@@ -718,14 +718,14 @@ export function InvoicePanel({
 
     // Document Title: INVOICE
     doc.setFontSize(18);
-    doc.setFont(undefined, "bold");
+    doc.setFont("helvetica", "bold");
     doc.setTextColor(0, 128, 128);
     doc.text("INVOICE", pageWidth / 2, y, { align: "center" });
     y += 10;
 
     // Invoice Number and Date
     doc.setFontSize(10);
-    doc.setFont(undefined, "normal");
+    doc.setFont("helvetica", "normal");
     doc.setTextColor(0, 0, 0);
     doc.text(`Invoice Number: ${invoice.invoice_number}`, margin, y);
     const invoiceDate = new Date(invoice.invoice_date).toLocaleDateString();
@@ -734,11 +734,11 @@ export function InvoicePanel({
 
     // Customer Details Section
     doc.setFontSize(11);
-    doc.setFont(undefined, "bold");
+    doc.setFont("helvetica", "bold");
     doc.text("Customer Details:", margin, y);
     y += 7;
     doc.setFontSize(10);
-    doc.setFont(undefined, "normal");
+    doc.setFont("helvetica", "normal");
     doc.text(`Customer Name: ${invoice.customer_name}`, margin + 5, y);
     y += 6;
     doc.text("Customer Contact: [To be filled]", margin + 5, y);
@@ -752,7 +752,7 @@ export function InvoicePanel({
 
     // Product/Service Table Header
     doc.setFontSize(10);
-    doc.setFont(undefined, "bold");
+    doc.setFont("helvetica", "bold");
     const descX = margin;
     const qtyX = margin + 90;
     const unitX = margin + 130;
@@ -771,7 +771,7 @@ export function InvoicePanel({
     y += 7;
 
     // Product/Service Row
-    doc.setFont(undefined, "normal");
+    doc.setFont("helvetica", "normal");
     doc.text(invoice.product_service, descX, y);
     doc.text(String(invoice.quantity), qtyX, y);
     doc.text(`Rs. ${invoice.unit_price.toFixed(2)}`, unitX, y);
@@ -784,14 +784,14 @@ export function InvoicePanel({
 
     // Total Amount (right-aligned)
     doc.setFontSize(12);
-    doc.setFont(undefined, "bold");
+    doc.setFont("helvetica", "bold");
     doc.text("Total Amount:", pageWidth - margin - 50, y);
     doc.text(`Rs. ${invoice.total_amount.toFixed(2)}`, totalX, y, { align: "right" });
     y += 12;
 
     // Payment Status and Invoice Status
     doc.setFontSize(10);
-    doc.setFont(undefined, "normal");
+    doc.setFont("helvetica", "normal");
     doc.text(`Payment Status: ${formatPaymentStatus(invoice.payment_status)}`, margin, y);
     y += 6;
     doc.text(`Invoice Status: ${formatStatus(invoice.invoice_status)}`, margin, y);

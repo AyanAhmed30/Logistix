@@ -239,12 +239,12 @@ export function AdminInvoicePanel() {
 
     // Header logo text (top-left)
     doc.setFontSize(12);
-    doc.setFont(undefined, "bold");
+    doc.setFont("helvetica", "bold");
     doc.text("LOGISTIX", margin, y);
 
     // Tagline (top-right)
     doc.setFontSize(9);
-    doc.setFont(undefined, "normal");
+    doc.setFont("helvetica", "normal");
     doc.text(
       "Seamless, Strategic Logistics & Financing",
       pageWidth - margin,
@@ -267,20 +267,20 @@ export function AdminInvoicePanel() {
     // Cache Tech centered
     y += 16;
     doc.setFontSize(9);
-    doc.setFont(undefined, "normal");
+    doc.setFont("helvetica", "normal");
     doc.text("Cache Tech", pageWidth / 2, y, { align: "center" });
     y += 16;
 
     // Title: PROFORMA Invoice INV/...
     doc.setFontSize(14);
-    doc.setFont(undefined, "bold");
+    doc.setFont("helvetica", "bold");
     const title = `PROFORMA Invoice ${invoice.invoice_number}`;
     doc.text(title, margin, y);
     y += 16;
 
     // Meta row labels
     doc.setFontSize(8);
-    doc.setFont(undefined, "bold");
+    doc.setFont("helvetica", "bold");
     const col1 = margin;
     const col2 = margin + 80;
     const col3 = margin + 160;
@@ -290,7 +290,7 @@ export function AdminInvoicePanel() {
     y += 5;
 
     // Meta values
-    doc.setFont(undefined, "normal");
+    doc.setFont("helvetica", "normal");
     doc.text(invoice.invoice_date || "", col1, y);
     doc.text(invoice.due_date || "", col2, y);
     doc.text(invoice.source || "", col3, y);
@@ -304,7 +304,7 @@ export function AdminInvoicePanel() {
 
     // Column headers
     doc.setFontSize(8);
-    doc.setFont(undefined, "bold");
+    doc.setFont("helvetica", "bold");
     const descX = margin;
     const qtyX = margin + 90;
     const unitX = margin + 125;
@@ -318,7 +318,7 @@ export function AdminInvoicePanel() {
     y += 8;
 
     // Single line item
-    doc.setFont(undefined, "normal");
+    doc.setFont("helvetica", "normal");
     doc.text(invoice.description || "", descX, y);
     doc.text(invoice.quantity || "", qtyX, y);
     doc.text(invoice.unit_price || "", unitX, y);
@@ -333,7 +333,7 @@ export function AdminInvoicePanel() {
     // Untaxed amount & total section (right side)
     const labelX = pageWidth - margin - 60;
     const valueX = pageWidth - margin;
-    doc.setFont(undefined, "normal");
+    doc.setFont("helvetica", "normal");
     doc.text("Untaxed Amount", labelX, y);
     doc.text(invoice.untaxed_amount || "", valueX, y, { align: "right" });
     y += 6;
@@ -343,7 +343,7 @@ export function AdminInvoicePanel() {
 
     // Payment communication (two-line style)
     doc.setFontSize(8);
-    doc.setFont(undefined, "normal");
+    doc.setFont("helvetica", "normal");
     const paymentText =
       invoice.payment_communication ||
       `Payment Communication: ${invoice.invoice_number} on this account: MEEZAN BANK - Meezan Bank`;

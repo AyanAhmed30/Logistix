@@ -414,7 +414,7 @@ export function BookOrderModal({ open, onOpenChange, onOrderSaved }: Props) {
     });
 
     // Add Order Summary Page (same format as stickers)
-    pdf.addPage([101, 152], 'mm');
+    pdf.addPage([101, 152], "p");
     pdf.setLineWidth(0.2);
     pdf.rect(6, 6, 89, 140);
     
@@ -433,11 +433,11 @@ export function BookOrderModal({ open, onOpenChange, onOrderSaved }: Props) {
     }
 
     pdf.setFontSize(12);
-    pdf.setFont(undefined, 'bold');
+    pdf.setFont("helvetica", 'bold');
     pdf.text("ORDER SUMMARY", 50, 35, { align: 'center' });
     
     pdf.setFontSize(9);
-    pdf.setFont(undefined, 'normal');
+    pdf.setFont("helvetica", 'normal');
     const summaryStartY = 45;
     const summaryBoxLeft = 10;
     const summaryBoxWidth = 81;
@@ -488,7 +488,7 @@ export function BookOrderModal({ open, onOpenChange, onOrderSaved }: Props) {
 
     // Top Half: Terms & Conditions Header
     pdf.setFontSize(16);
-    pdf.setFont(undefined, 'bold');
+    pdf.setFont("helvetica", 'bold');
     pdf.text("TERMS & CONDITIONS", a4Width / 2, margin + 8, { align: 'center' });
     
     pdf.setLineWidth(0.5);
@@ -502,11 +502,11 @@ export function BookOrderModal({ open, onOpenChange, onOrderSaved }: Props) {
     const lineHeight = 5;
 
     pdf.setFontSize(9);
-    pdf.setFont(undefined, 'normal');
+    pdf.setFont("helvetica", 'normal');
 
     // English Terms Column
     let englishY = termsStartY;
-    pdf.setFont(undefined, 'bold');
+    pdf.setFont("helvetica", 'bold');
     pdf.setFontSize(10);
     pdf.text("ENGLISH", margin + colWidth / 2, englishY, { align: 'center' });
     englishY += 8;
@@ -515,7 +515,7 @@ export function BookOrderModal({ open, onOpenChange, onOrderSaved }: Props) {
     englishY += 5;
     
     pdf.setFontSize(8);
-    pdf.setFont(undefined, 'normal');
+    pdf.setFont("helvetica", 'normal');
     const englishTerms = [
       "1. All shipments are subject to inspection.",
       "2. Carrier not responsible for damage due to improper packaging.",
@@ -534,7 +534,7 @@ export function BookOrderModal({ open, onOpenChange, onOrderSaved }: Props) {
 
     // Urdu Terms Column - Using HTML for proper Unicode rendering
     let urduY = termsStartY;
-    pdf.setFont(undefined, 'bold');
+    pdf.setFont("helvetica", 'bold');
     pdf.setFontSize(10);
     pdf.text("URDU", margin + colWidth + colSpacing + colWidth / 2, urduY, { align: 'center' });
     urduY += 8;
@@ -542,7 +542,7 @@ export function BookOrderModal({ open, onOpenChange, onOrderSaved }: Props) {
     urduY += 5;
     
     pdf.setFontSize(8);
-    pdf.setFont(undefined, 'normal');
+    pdf.setFont("helvetica", 'normal');
     const urduTerms = [
       "1. تمام شپمنٹس معائنہ کے تابع ہیں۔",
       "2. کیریئر غلط پیکیجنگ کی وجہ سے نقصان کا ذمہ دار نہیں ہے۔",
@@ -588,7 +588,7 @@ export function BookOrderModal({ open, onOpenChange, onOrderSaved }: Props) {
 
     // Chinese Terms Column - Using HTML for proper Unicode rendering
     let chineseY = termsStartY;
-    pdf.setFont(undefined, 'bold');
+    pdf.setFont("helvetica", 'bold');
     pdf.setFontSize(10);
     pdf.text("CHINESE", margin + 2 * colWidth + 2 * colSpacing + colWidth / 2, chineseY, { align: 'center' });
     chineseY += 8;
@@ -596,7 +596,7 @@ export function BookOrderModal({ open, onOpenChange, onOrderSaved }: Props) {
     chineseY += 5;
     
     pdf.setFontSize(8);
-    pdf.setFont(undefined, 'normal');
+    pdf.setFont("helvetica", 'normal');
     const chineseTerms = [
       "1. 所有货物均需接受检查。",
       "2. 承运人不承担因包装不当造成的损坏责任。",
@@ -646,7 +646,7 @@ export function BookOrderModal({ open, onOpenChange, onOrderSaved }: Props) {
 
     // Bottom Half: Signature Section
     pdf.setFontSize(16);
-    pdf.setFont(undefined, 'bold');
+    pdf.setFont("helvetica", 'bold');
     pdf.text("SIGNATURE SECTION", a4Width / 2, bottomSectionStartY + 8, { align: 'center' });
     
     pdf.setLineWidth(0.3);
@@ -657,7 +657,7 @@ export function BookOrderModal({ open, onOpenChange, onOrderSaved }: Props) {
     // Shipper Signature Box (Left)
     pdf.rect(margin, sigY, sigBoxWidth, sigBoxHeight);
     pdf.setFontSize(9);
-    pdf.setFont(undefined, 'bold');
+    pdf.setFont("helvetica", 'bold');
     pdf.text("SHIPPER", margin + sigBoxWidth / 2, sigY + 6, { align: 'center' });
     // Shipper subtitle with proper Unicode rendering using canvas
     const shipperSubtitleCanvas = document.createElement('canvas');
@@ -680,7 +680,7 @@ export function BookOrderModal({ open, onOpenChange, onOrderSaved }: Props) {
     }
     
     pdf.setFontSize(8);
-    pdf.setFont(undefined, 'normal');
+    pdf.setFont("helvetica", 'normal');
     // Signature, Name, Date labels with proper Unicode using canvas
     const labelTexts = [
       { text: 'Signature / 签名 / دستخط:', y: sigY + 18 },
@@ -715,7 +715,7 @@ export function BookOrderModal({ open, onOpenChange, onOrderSaved }: Props) {
     // Receiver Signature Box (Right)
     pdf.rect(margin + sigBoxWidth + 10, sigY, sigBoxWidth, sigBoxHeight);
     pdf.setFontSize(9);
-    pdf.setFont(undefined, 'bold');
+    pdf.setFont("helvetica", 'bold');
     pdf.text("RECEIVER", margin + sigBoxWidth + 10 + sigBoxWidth / 2, sigY + 6, { align: 'center' });
     // Receiver subtitle with proper Unicode rendering using canvas
     const receiverSubtitleCanvas = document.createElement('canvas');
@@ -738,7 +738,7 @@ export function BookOrderModal({ open, onOpenChange, onOrderSaved }: Props) {
     }
     
     pdf.setFontSize(8);
-    pdf.setFont(undefined, 'normal');
+    pdf.setFont("helvetica", 'normal');
     // Render labels for receiver using canvas
     labelTexts.forEach(({ text, y }) => {
       const labelCanvas = document.createElement('canvas');
@@ -937,14 +937,14 @@ export function BookOrderModal({ open, onOpenChange, onOrderSaved }: Props) {
 
     // Order Summary title
     pdf.setFontSize(14);
-    pdf.setFont(undefined, "bold");
+    pdf.setFont("helvetica", "bold");
     pdf.text("ORDER SUMMARY", leftX + halfWidth / 2, margin + 28, {
       align: "center",
     });
 
     // Summary content in table format
     pdf.setFontSize(9);
-    pdf.setFont(undefined, "normal");
+    pdf.setFont("helvetica", "normal");
     const summaryStartY = margin + 38;
     const summaryRowHeight = 9;
 
@@ -994,7 +994,7 @@ export function BookOrderModal({ open, onOpenChange, onOrderSaved }: Props) {
 
     // ----- Signature Section (bottom of left half) -----
     pdf.setFontSize(12);
-    pdf.setFont(undefined, "bold");
+    pdf.setFont("helvetica", "bold");
     pdf.text("SIGNATURE SECTION", leftX + halfWidth / 2, leftBottomY + 10, {
       align: "center",
     });
@@ -1007,7 +1007,7 @@ export function BookOrderModal({ open, onOpenChange, onOrderSaved }: Props) {
     const sigLabels = ["Authorized Signature", "Company Stamp", "Date"];
 
     pdf.setFontSize(9);
-    pdf.setFont(undefined, "normal");
+    pdf.setFont("helvetica", "normal");
 
     sigLabels.forEach((label, index) => {
       const colX = leftX + 10 + index * sigColWidth;
@@ -1022,7 +1022,7 @@ export function BookOrderModal({ open, onOpenChange, onOrderSaved }: Props) {
 
     // ----- RIGHT HALF: Terms & Conditions in 3 languages -----
     pdf.setFontSize(14);
-    pdf.setFont(undefined, "bold");
+    pdf.setFont("helvetica", "bold");
     pdf.text("TERMS & CONDITIONS", rightX + halfWidth / 2, margin + 8, {
       align: "center",
     });
@@ -1042,11 +1042,11 @@ export function BookOrderModal({ open, onOpenChange, onOrderSaved }: Props) {
     const lineHeight = 5;
 
     pdf.setFontSize(9);
-    pdf.setFont(undefined, "normal");
+    pdf.setFont("helvetica", "normal");
 
     // English Terms Column
     let englishY = termsStartY;
-    pdf.setFont(undefined, "bold");
+    pdf.setFont("helvetica", "bold");
     pdf.setFontSize(10);
     pdf.text("ENGLISH", rightX + colWidth / 2, englishY, { align: "center" });
     englishY += 8;
@@ -1055,7 +1055,7 @@ export function BookOrderModal({ open, onOpenChange, onOrderSaved }: Props) {
     englishY += 5;
 
     pdf.setFontSize(8);
-    pdf.setFont(undefined, "normal");
+    pdf.setFont("helvetica", "normal");
     const englishTerms = [
       "1. All shipments are subject to inspection.",
       "2. Carrier not responsible for damage due to improper packaging.",
@@ -1076,7 +1076,7 @@ export function BookOrderModal({ open, onOpenChange, onOrderSaved }: Props) {
 
     // Urdu Terms Column - rendered via canvas for proper Unicode
     let urduY = termsStartY;
-    pdf.setFont(undefined, "bold");
+    pdf.setFont("helvetica", "bold");
     pdf.setFontSize(10);
     const urduColX = rightX + colWidth + colSpacing;
     pdf.text("URDU", urduColX + colWidth / 2, urduY, {
@@ -1087,7 +1087,7 @@ export function BookOrderModal({ open, onOpenChange, onOrderSaved }: Props) {
     urduY += 5;
 
     pdf.setFontSize(8);
-    pdf.setFont(undefined, "normal");
+    pdf.setFont("helvetica", "normal");
     const urduTerms = [
       "1. تمام شپمنٹس معائنہ کے تابع ہیں۔",
       "2. کیریئر غلط پیکیجنگ کی وجہ سے نقصان کا ذمہ دار نہیں ہے۔",
@@ -1142,7 +1142,7 @@ export function BookOrderModal({ open, onOpenChange, onOrderSaved }: Props) {
 
     // Chinese Terms Column - Using HTML for proper Unicode rendering
     let chineseY = termsStartY;
-    pdf.setFont(undefined, "bold");
+    pdf.setFont("helvetica", "bold");
     pdf.setFontSize(10);
     const chineseColX = rightX + 2 * colWidth + 2 * colSpacing;
     pdf.text("CHINESE", chineseColX + colWidth / 2, chineseY, {
@@ -1153,7 +1153,7 @@ export function BookOrderModal({ open, onOpenChange, onOrderSaved }: Props) {
     chineseY += 5;
 
     pdf.setFontSize(8);
-    pdf.setFont(undefined, "normal");
+    pdf.setFont("helvetica", "normal");
     const chineseTerms = [
       "1. 所有货物均需接受检查。",
       "2. 承运人不承担因包装不当造成的损坏责任。",

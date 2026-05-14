@@ -63,6 +63,56 @@ function applyCartonScanned(
   });
 }
 
+function applyOutwardCartonScanned(
+  orders: OrderScanProgressRow[],
+  orderId: string,
+  cartonId: string,
+  consoleId: string,
+  scannedAt: string
+): OrderScanProgressRow[] {
+  return orders.map((order) => {
+    if (order.id !== orderId || !order.outward || order.outward.console_id !== consoleId) {
+      return order;
+    }
+
+    const hoursSinceOrder =
+      (Date.now() - new Date(order.created_at).getTime()) / (1000 * 60 * 60);
+
+    const o = order.outward;
+    const cartons = o.cartons.map((c) => {
+      if (c.id !== cartonId) return c;
+      return {
+        ...c,
+        scanned: true,
+        scanned_at: scannedAt,
+        state: "scanned" as const,
+      };
+    });
+
+    const scanned_count = cartons.filter((c) => c.scanned).length;
+    const pending_count = Math.max(0, order.total_cartons - scanned_count);
+
+    const cartonsWithState = cartons.map((c) => {
+      if (c.scanned) return c;
+      const isLate = hoursSinceOrder >= LATE_HOURS;
+      return {
+        ...c,
+        state: (isLate ? "missing" : "pending") as OrderScanProgressCarton["state"],
+      };
+    });
+
+    return {
+      ...order,
+      outward: {
+        ...o,
+        cartons: cartonsWithState,
+        scanned_count,
+        pending_count,
+      },
+    };
+  });
+}
+
 function CartonSlot({ carton }: { carton: OrderScanProgressCarton }) {
   const base =
     "inline-flex min-w-[4.5rem] flex-col items-center justify-center rounded-lg border px-2 py-2 text-xs font-semibold transition-colors duration-300 sm:min-w-[5.25rem] sm:px-3 sm:text-sm";
@@ -126,8 +176,22 @@ export function UserScanProgressPanel({ refreshKey, username }: Props) {
   }, [fetchProgress]);
 
   const patchFromScan = useCallback(
-    (orderId: string, cartonId: string, scannedAt: string) => {
-      setOrders((prev) => applyCartonScanned(prev, orderId, cartonId, scannedAt));
+    (
+      orderId: string,
+      cartonId: string,
+      scannedAt: string,
+      meta?: { scan_type?: string | null; console_id?: string | null }
+    ) => {
+      if (meta?.scan_type === "outward") {
+        const cid = meta.console_id;
+        if (cid) {
+          setOrders((prev) => applyOutwardCartonScanned(prev, orderId, cartonId, cid, scannedAt));
+        } else {
+          setOrders((prev) => applyCartonScanned(prev, orderId, cartonId, scannedAt));
+        }
+      } else {
+        setOrders((prev) => applyCartonScanned(prev, orderId, cartonId, scannedAt));
+      }
       scheduleServerResync();
     },
     [scheduleServerResync]
@@ -167,13 +231,18 @@ export function UserScanProgressPanel({ refreshKey, username }: Props) {
             carton_id?: string;
             scanned_at?: string;
             username?: string;
+            scan_type?: string | null;
+            console_id?: string | null;
           };
           if (!row?.order_id || !row?.carton_id || !row?.scanned_at) {
             void fetchProgress();
             return;
           }
           if (row.username && row.username !== username) return;
-          patchFromScan(row.order_id, row.carton_id, row.scanned_at);
+          patchFromScan(row.order_id, row.carton_id, row.scanned_at, {
+            scan_type: row.scan_type,
+            console_id: row.console_id,
+          });
         }
       )
       .on(
@@ -198,7 +267,10 @@ export function UserScanProgressPanel({ refreshKey, username }: Props) {
       bc.onmessage = (event: MessageEvent<ScanProgressBroadcastMessage>) => {
         const data = event.data;
         if (!data || data.type !== "carton_scanned") return;
-        patchFromScan(data.order_id, data.carton_id, data.scanned_at);
+        patchFromScan(data.order_id, data.carton_id, data.scanned_at, {
+          scan_type: data.scan_type,
+          console_id: data.console_id,
+        });
       };
     } catch {
       bc = null;
@@ -265,15 +337,18 @@ export function UserScanProgressPanel({ refreshKey, username }: Props) {
         <CardHeader>
           <CardTitle>Scan Progress</CardTitle>
           <CardDescription>
-            Live view of which carton stickers are scanned (✓) vs pending (○). Orders update automatically when scans
-            are recorded.
-          </CardDescription>
+          Live view of inward receipt scans and, when a console is ready for loading, outward loading progress per
+          order. Updates automatically when scans are recorded.
+        </CardDescription>
         </CardHeader>
       </Card>
 
       {orders.map((order) => {
         const pct =
           order.total_cartons > 0 ? Math.round((order.scanned_count / order.total_cartons) * 100) : 0;
+        const out = order.outward;
+        const outPct =
+          out && order.total_cartons > 0 ? Math.round((out.scanned_count / order.total_cartons) * 100) : 0;
         const orderLabel = `Order ${String(order.id).slice(0, 8).toUpperCase()}`;
         const created = new Date(order.created_at).toLocaleString();
 
@@ -315,6 +390,34 @@ export function UserScanProgressPanel({ refreshKey, username }: Props) {
                   order.cartons.map((c) => <CartonSlot key={c.id} carton={c} />)
                 )}
               </div>
+
+              {out ? (
+                <div className="mt-5 border-t border-slate-200 pt-4 space-y-2">
+                  <p className="text-xs font-semibold text-primary-dark uppercase tracking-wide">
+                    Outward (loading) — Console {out.console_number}
+                    {out.container_number ? ` · ${out.container_number}` : ""}
+                  </p>
+                  <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between text-sm">
+                    <span className="text-secondary-muted">Loading scan progress</span>
+                    <span className="font-semibold text-primary-dark sm:text-right">
+                      {out.scanned_count}/{order.total_cartons} · Remaining {out.pending_count}
+                    </span>
+                  </div>
+                  <div className="h-2 w-full overflow-hidden rounded-full bg-slate-100">
+                    <div
+                      className="h-full rounded-full bg-sky-500 transition-all duration-200 ease-out"
+                      style={{ width: `${outPct}%` }}
+                    />
+                  </div>
+                  <div className="flex flex-wrap gap-2 pt-1">
+                    {out.cartons.length === 0 ? (
+                      <p className="text-sm text-secondary-muted">No carton rows for outward tracking.</p>
+                    ) : (
+                      out.cartons.map((c) => <CartonSlot key={`out-${c.id}`} carton={c} />)
+                    )}
+                  </div>
+                </div>
+              ) : null}
             </CardContent>
           </Card>
         );

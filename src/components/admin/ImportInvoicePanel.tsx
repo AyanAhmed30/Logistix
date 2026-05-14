@@ -126,11 +126,11 @@ export function ImportInvoicePanel() {
 
     // Company Header (Top Center)
     doc.setFontSize(16);
-    doc.setFont(undefined, "bold");
+    doc.setFont("helvetica", "bold");
     doc.text("DJS EXPORT CO., LIMITED", pageWidth / 2, y, { align: "center" });
     y += 7;
     doc.setFontSize(10);
-    doc.setFont(undefined, "normal");
+    doc.setFont("helvetica", "normal");
     doc.text("FLAT/RM 504,5/F HO KING COMMERCIAL CENTER", pageWidth / 2, y, { align: "center" });
     y += 5;
     doc.text("2-16 FA YUEN STREET MONG KOK KOWLOON, HONG KONG", pageWidth / 2, y, { align: "center" });
@@ -138,13 +138,13 @@ export function ImportInvoicePanel() {
 
     // Document Title (Centered)
     doc.setFontSize(18);
-    doc.setFont(undefined, "bold");
+    doc.setFont("helvetica", "bold");
     doc.text("COMMERCIAL INVOICE", pageWidth / 2, y, { align: "center" });
     y += 10;
 
     // Invoice No and Date (Top Right)
     doc.setFontSize(10);
-    doc.setFont(undefined, "normal");
+    doc.setFont("helvetica", "normal");
     const invoiceNo = invoice.invoice_no || `INV-${invoice.id.substring(0, 8).toUpperCase()}`;
     const date = new Date(invoice.created_at).toLocaleDateString('en-GB', {
       day: 'numeric',
@@ -163,11 +163,11 @@ export function ImportInvoicePanel() {
 
     // Bill To Section (Left)
     doc.setFontSize(11);
-    doc.setFont(undefined, "bold");
+    doc.setFont("helvetica", "bold");
     doc.text("Bill To:", leftColumnX, y);
     y += 6;
     doc.setFontSize(10);
-    doc.setFont(undefined, "normal");
+    doc.setFont("helvetica", "normal");
     const billToName = invoice.bill_to_name || "";
     const billToAddress = invoice.bill_to_address || "";
     const billToNtn = invoice.bill_to_ntn || "";
@@ -199,11 +199,11 @@ export function ImportInvoicePanel() {
     // Ship To Section (Right)
     let shipToY = billToStartY;
     doc.setFontSize(11);
-    doc.setFont(undefined, "bold");
+    doc.setFont("helvetica", "bold");
     doc.text("Ship To:", rightColumnX, shipToY);
     shipToY += 6;
     doc.setFontSize(10);
-    doc.setFont(undefined, "normal");
+    doc.setFont("helvetica", "normal");
     const shipToName = invoice.ship_to_name || "";
     const shipToAddress = invoice.ship_to_address || "";
     const shipToNtn = invoice.ship_to_ntn || "";
@@ -236,7 +236,7 @@ export function ImportInvoicePanel() {
     y = Math.max(y, shipToY) + 8;
     const detailsStartY = y;
     doc.setFontSize(10);
-    doc.setFont(undefined, "normal");
+    doc.setFont("helvetica", "normal");
     const paymentTerms = invoice.payment_terms || "";
     const shippedVia = invoice.shipped_via || "";
     const coo = invoice.coo || "";
@@ -294,7 +294,7 @@ export function ImportInvoicePanel() {
 
     // Table Header
     doc.setFontSize(9);
-    doc.setFont(undefined, "bold");
+    doc.setFont("helvetica", "bold");
     let x = tableStartX;
     colHeaders.forEach((header, idx) => {
       doc.text(header, x + colWidths[idx] / 2, tableStartY - rowHeight / 2, { align: "center" });
@@ -303,7 +303,7 @@ export function ImportInvoicePanel() {
 
     // Table Data Rows
     doc.setFontSize(8);
-    doc.setFont(undefined, "normal");
+    doc.setFont("helvetica", "normal");
     let currentY = tableStartY;
     let totalAmount = 0;
     
@@ -314,7 +314,7 @@ export function ImportInvoicePanel() {
         currentY = margin;
         // Redraw table header on new page
         doc.setFontSize(9);
-        doc.setFont(undefined, "bold");
+        doc.setFont("helvetica", "bold");
         x = tableStartX;
         colHeaders.forEach((header, headerIdx) => {
           doc.text(header, x + colWidths[headerIdx] / 2, currentY - rowHeight / 2, { align: "center" });
@@ -365,25 +365,25 @@ export function ImportInvoicePanel() {
     // Totals Section
     currentY += 5;
     doc.setFontSize(10);
-    doc.setFont(undefined, "bold");
+    doc.setFont("helvetica", "bold");
     doc.text("TOTAL:", tableStartX + colWidths[0] + colWidths[1] + colWidths[2] + colWidths[3] + colWidths[4] + colWidths[5], currentY);
     doc.text(`$${totalAmount.toFixed(2)}`, tableStartX + colWidths[0] + colWidths[1] + colWidths[2] + colWidths[3] + colWidths[4] + colWidths[5] + colWidths[6], currentY, { align: "right" });
     currentY += 6;
     doc.setFontSize(9);
     doc.text("SAY TOTAL US DOLLARS VALUE IN WORDS:", tableStartX, currentY);
     currentY += 5;
-    doc.setFont(undefined, "bold");
+    doc.setFont("helvetica", "bold");
     doc.text(numberToWords(totalAmount).toUpperCase() + " ONLY.", tableStartX, currentY);
     currentY += 10;
 
     // Exporter Bank Details
     if (invoice.exporter_account_name || invoice.exporter_bank_name) {
       doc.setFontSize(11);
-      doc.setFont(undefined, "bold");
+      doc.setFont("helvetica", "bold");
       doc.text("Exporter Bank Details:", margin, currentY);
       currentY += 6;
       doc.setFontSize(9);
-      doc.setFont(undefined, "normal");
+      doc.setFont("helvetica", "normal");
       if (invoice.exporter_account_name) {
         doc.text(`Beneficiary's A/C Name: ${invoice.exporter_account_name}`, margin, currentY);
         currentY += 5;
@@ -420,11 +420,11 @@ export function ImportInvoicePanel() {
     // Importer Bank Details
     if (invoice.importer_account_name || invoice.importer_bank_name) {
       doc.setFontSize(11);
-      doc.setFont(undefined, "bold");
+      doc.setFont("helvetica", "bold");
       doc.text("Importer Bank Details:", margin, currentY);
       currentY += 6;
       doc.setFontSize(9);
-      doc.setFont(undefined, "normal");
+      doc.setFont("helvetica", "normal");
       if (invoice.importer_account_name) {
         doc.text(`Beneficiary's A/C Name: ${invoice.importer_account_name}`, margin, currentY);
         currentY += 5;
@@ -465,20 +465,20 @@ export function ImportInvoicePanel() {
     // Signature Section (Bottom Right)
     const signatureY = pageHeight - margin - 20;
     doc.setFontSize(8);
-    doc.setFont(undefined, "normal");
+    doc.setFont("helvetica", "normal");
     doc.text("For and on behalf of", pageWidth - margin, signatureY, { align: "right" });
     doc.setFontSize(10);
-    doc.setFont(undefined, "bold");
+    doc.setFont("helvetica", "bold");
     doc.text("DJS EXPORT CO., LIMITED", pageWidth - margin, signatureY + 5, { align: "right" });
     doc.setLineWidth(0.5);
     doc.line(pageWidth - margin - 60, signatureY + 10, pageWidth - margin, signatureY + 10);
     doc.setFontSize(7);
-    doc.setFont(undefined, "normal");
+    doc.setFont("helvetica", "normal");
     doc.text("Authorized Signatory(s)", pageWidth - margin, signatureY + 15, { align: "right" });
 
     // Footer
     doc.setFontSize(9);
-    doc.setFont(undefined, "bold");
+    doc.setFont("helvetica", "bold");
     doc.text("FOR: DJS EXPORT CO, LIMITED", margin, pageHeight - margin);
 
     // Generate filename

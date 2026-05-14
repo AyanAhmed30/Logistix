@@ -270,7 +270,12 @@ export async function getCartonBySerial(serial: string) {
   }
 }
 
-export async function getCartonScanPreview(scanIdentifier: string) {
+export type ScanPreviewContext = {
+  scanMode?: "inward" | "outward";
+  consoleId?: string;
+};
+
+export async function getCartonScanPreview(scanIdentifier: string, context?: ScanPreviewContext) {
   try {
     if (!scanIdentifier?.trim()) {
       return { error: "Scan token is required" };
@@ -278,6 +283,8 @@ export async function getCartonScanPreview(scanIdentifier: string) {
 
     const trimmed = scanIdentifier.trim();
     const supabase = await createAdminClient();
+    const scanMode = context?.scanMode === "outward" ? ("outward" as const) : ("inward" as const);
+    const consoleId = context?.consoleId?.trim() || "";
 
     const selectQuery =
       "id, carton_serial_number, order_id, tracking_id, sticker_identifier, scan_token, scan_status, scanned_at, orders(id, shipping_mark, destination_country, item_description, total_cartons, created_at, username)";
@@ -353,20 +360,86 @@ export async function getCartonScanPreview(scanIdentifier: string) {
       return { error: "Order not found for this carton" };
     }
 
-    const { data: latestScan } = await supabase
-      .from("carton_scans")
-      .select("scanned_at")
-      .eq("carton_id", carton.id)
-      .order("scanned_at", { ascending: false })
-      .limit(1)
-      .maybeSingle();
+    let consoleNumber: string | null = null;
+    if (scanMode === "outward") {
+      if (!consoleId) {
+        return { error: "Loading console is required for outward scan" };
+      }
+      const { data: consoleRow, error: consoleErr } = await supabase
+        .from("consoles")
+        .select("id, console_number, status")
+        .eq("id", consoleId)
+        .maybeSingle();
+      if (consoleErr || !consoleRow) {
+        return { error: consoleErr?.message || "Console not found" };
+      }
+      if (consoleRow.status !== "ready_for_loading") {
+        return { error: "This console is not open for loading scans" };
+      }
+      consoleNumber = consoleRow.console_number as string;
 
-    const resolvedScannedAt = carton.scanned_at ?? latestScan?.scanned_at ?? null;
-    const alreadyScanned = Boolean(resolvedScannedAt);
+      const { data: linkRow, error: linkErr } = await supabase
+        .from("console_orders")
+        .select("order_id")
+        .eq("console_id", consoleId)
+        .eq("order_id", order.id)
+        .maybeSingle();
+      if (linkErr || !linkRow) {
+        return { error: "This order is not assigned to this loading console" };
+      }
+    }
+
+    let alreadyScanned = false;
+    let resolvedScannedAt: string | null = null;
+    let scanStatusLabel = carton.scan_status ?? "pending";
+
+    if (scanMode === "inward") {
+      const { data: latestInward } = await supabase
+        .from("carton_scans")
+        .select("scanned_at")
+        .eq("carton_id", carton.id)
+        .eq("username", order.username)
+        .or("scan_type.eq.inward,scan_type.is.null")
+        .order("scanned_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      resolvedScannedAt = carton.scanned_at ?? latestInward?.scanned_at ?? null;
+      alreadyScanned = Boolean(resolvedScannedAt);
+      scanStatusLabel = carton.scan_status ?? (alreadyScanned ? "scanned" : "pending");
+    } else {
+      const { data: outwardRow } = await supabase
+        .from("carton_scans")
+        .select("scanned_at")
+        .eq("carton_id", carton.id)
+        .eq("console_id", consoleId)
+        .eq("scan_type", "outward")
+        .order("scanned_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      resolvedScannedAt = outwardRow?.scanned_at ?? null;
+      alreadyScanned = Boolean(resolvedScannedAt);
+
+      const { data: inwardRow } = await supabase
+        .from("carton_scans")
+        .select("id")
+        .eq("carton_id", carton.id)
+        .eq("username", order.username)
+        .or("scan_type.eq.inward,scan_type.is.null")
+        .limit(1)
+        .maybeSingle();
+      if (!inwardRow?.id) {
+        return { error: "Inward scan must be completed before outward loading scan" };
+      }
+    }
 
     return {
       preview: {
         scan_identifier: trimmed,
+        scan_mode: scanMode,
+        console_id: scanMode === "outward" ? consoleId : null,
+        console_number: scanMode === "outward" ? consoleNumber : null,
         order_id: order.id,
         shipping_mark: order.shipping_mark,
         destination_country: order.destination_country,
@@ -375,7 +448,7 @@ export async function getCartonScanPreview(scanIdentifier: string) {
         carton_serial_number: carton.carton_serial_number,
         tracking_id: carton.tracking_id ?? `TRK-${carton.carton_serial_number}`,
         sticker_identifier: carton.sticker_identifier ?? carton.carton_serial_number,
-        scan_status: carton.scan_status ?? (alreadyScanned ? "scanned" : "pending"),
+        scan_status: scanStatusLabel,
         scanned_at: resolvedScannedAt,
         already_scanned: alreadyScanned,
       },
@@ -385,7 +458,12 @@ export async function getCartonScanPreview(scanIdentifier: string) {
   }
 }
 
-export async function recordCartonScan(scanIdentifier: string) {
+export type RecordCartonScanOptions = {
+  scanType?: "inward" | "outward";
+  consoleId?: string;
+};
+
+export async function recordCartonScan(scanIdentifier: string, options?: RecordCartonScanOptions) {
   try {
     if (!scanIdentifier?.trim()) {
       return { error: "Scan token is required" };
@@ -393,6 +471,8 @@ export async function recordCartonScan(scanIdentifier: string) {
 
     const trimmed = scanIdentifier.trim();
     const supabase = await createAdminClient();
+    const scanType = options?.scanType === "outward" ? "outward" : "inward";
+    const consoleId = options?.consoleId?.trim() || "";
 
     // Prefer token lookup (secure / non-guessable), then fallback to serial for backward compatibility.
     type CartonLookup = {
@@ -447,44 +527,147 @@ export async function recordCartonScan(scanIdentifier: string) {
       Array.isArray(ordersValue) && ordersValue.length > 0
         ? ordersValue[0]
         : !Array.isArray(ordersValue)
-        ? ordersValue
-        : null;
+          ? ordersValue
+          : null;
     if (!order) {
       return { error: "Order not found for this carton" };
     }
 
-    const { data: existingScan } = await supabase
+    const buildCartonPayload = () => ({
+      id: typedCarton.id,
+      order_id: typedCarton.order_id,
+      serial: typedCarton.carton_serial_number,
+      tracking_id: typedCarton.tracking_id ?? `TRK-${typedCarton.carton_serial_number}`,
+      sticker_identifier: typedCarton.sticker_identifier ?? typedCarton.carton_serial_number,
+    });
+
+    if (scanType === "outward") {
+      if (!consoleId) {
+        return { error: "Console ID is required for outward scan" };
+      }
+
+      const { data: consoleRow, error: consoleErr } = await supabase
+        .from("consoles")
+        .select("id, status")
+        .eq("id", consoleId)
+        .maybeSingle();
+      if (consoleErr || !consoleRow) {
+        return { error: consoleErr?.message || "Console not found" };
+      }
+      if (consoleRow.status !== "ready_for_loading") {
+        return { error: "This console is not open for loading scans" };
+      }
+
+      const { data: linkRow, error: linkErr } = await supabase
+        .from("console_orders")
+        .select("order_id")
+        .eq("console_id", consoleId)
+        .eq("order_id", order.id)
+        .maybeSingle();
+      if (linkErr || !linkRow) {
+        return { error: "This order is not assigned to this loading console" };
+      }
+
+      const { data: inwardRow } = await supabase
+        .from("carton_scans")
+        .select("id")
+        .eq("carton_id", carton.id)
+        .eq("username", order.username)
+        .or("scan_type.eq.inward,scan_type.is.null")
+        .limit(1)
+        .maybeSingle();
+      if (!inwardRow?.id) {
+        return { error: "Inward scan must be completed before outward loading scan" };
+      }
+
+      const { data: existingOutward } = await supabase
+        .from("carton_scans")
+        .select("id")
+        .eq("carton_id", carton.id)
+        .eq("console_id", consoleId)
+        .eq("scan_type", "outward")
+        .maybeSingle();
+
+      if (existingOutward?.id) {
+        return {
+          success: true,
+          duplicate: true,
+          scanType: "outward" as const,
+          carton: buildCartonPayload(),
+        };
+      }
+
+      const outwardInsert = {
+        carton_id: carton.id,
+        order_id: order.id,
+        username: order.username,
+        carton_serial_number: carton.carton_serial_number,
+        scan_type: "outward" as const,
+        console_id: consoleId,
+      };
+
+      let insertRes = await supabase.from("carton_scans").insert(outwardInsert);
+      if (insertRes.error && /(scan_type|console_id)/i.test(insertRes.error.message || "")) {
+        return {
+          error:
+            "Database is missing outward scan columns (scan_type / console_id). Apply the latest migration on Supabase, then retry.",
+        };
+      }
+      if (insertRes.error) {
+        if (insertRes.error.code === "23505") {
+          return { success: true, duplicate: true, scanType: "outward" as const, carton: buildCartonPayload() };
+        }
+        return { error: insertRes.error.message };
+      }
+
+      return {
+        success: true,
+        duplicate: false,
+        scanType: "outward" as const,
+        carton: buildCartonPayload(),
+      };
+    }
+
+    // ----- INWARD (default) -----
+    const { data: existingInward } = await supabase
       .from("carton_scans")
       .select("id")
       .eq("carton_id", carton.id)
       .eq("username", order.username)
+      .or("scan_type.eq.inward,scan_type.is.null")
       .order("scanned_at", { ascending: false })
       .limit(1)
       .maybeSingle();
 
-    if (existingScan?.id) {
+    if (existingInward?.id) {
       return {
         success: true,
         duplicate: true,
-        carton: {
-          id: typedCarton.id,
-          order_id: typedCarton.order_id,
-          serial: typedCarton.carton_serial_number,
-          tracking_id: typedCarton.tracking_id ?? `TRK-${typedCarton.carton_serial_number}`,
-          sticker_identifier: typedCarton.sticker_identifier ?? typedCarton.carton_serial_number,
-        },
+        scanType: "inward" as const,
+        carton: buildCartonPayload(),
       };
     }
 
-    const { error: insertError } = await supabase.from("carton_scans").insert({
+    const inwardInsert = {
       carton_id: carton.id,
       order_id: order.id,
       username: order.username,
       carton_serial_number: carton.carton_serial_number,
-    });
+      scan_type: "inward" as const,
+      console_id: null as string | null,
+    };
 
-    if (insertError) {
-      return { error: insertError.message };
+    let ins = await supabase.from("carton_scans").insert(inwardInsert);
+    if (ins.error && /scan_type/i.test(ins.error.message || "")) {
+      ins = await supabase.from("carton_scans").insert({
+        carton_id: carton.id,
+        order_id: order.id,
+        username: order.username,
+        carton_serial_number: carton.carton_serial_number,
+      });
+    }
+    if (ins.error) {
+      return { error: ins.error.message };
     }
 
     const statusUpdate = await supabase
@@ -502,13 +685,8 @@ export async function recordCartonScan(scanIdentifier: string) {
     return {
       success: true,
       duplicate: false,
-      carton: {
-        id: typedCarton.id,
-        order_id: typedCarton.order_id,
-        serial: typedCarton.carton_serial_number,
-        tracking_id: typedCarton.tracking_id ?? `TRK-${typedCarton.carton_serial_number}`,
-        sticker_identifier: typedCarton.sticker_identifier ?? typedCarton.carton_serial_number,
-      },
+      scanType: "inward" as const,
+      carton: buildCartonPayload(),
     };
   } catch (err) {
     return { error: err instanceof Error ? err.message : "Unable to record carton scan" };
@@ -535,7 +713,105 @@ export type OrderScanProgressRow = {
   scanned_count: number;
   pending_count: number;
   cartons: OrderScanProgressCarton[];
+  outward?: {
+    console_id: string;
+    console_number: string;
+    container_number: string | null;
+    scanned_count: number;
+    pending_count: number;
+    cartons: OrderScanProgressCarton[];
+  } | null;
 };
+
+export async function getLoadingInstructionsForUser() {
+  try {
+    const session = await getSession();
+    if (!session || session.role !== "user") {
+      return { error: "Unauthorized" };
+    }
+
+    const supabase = await createAdminClient();
+
+    const { data: consoles, error: cErr } = await supabase
+      .from("consoles")
+      .select(
+        "id, console_number, container_number, date, bl_number, carrier, so, total_cartons, total_cbm, status, created_at"
+      )
+      .eq("status", "ready_for_loading")
+      .order("created_at", { ascending: false });
+
+    if (cErr) {
+      return { error: cErr.message };
+    }
+
+    type InstructionOrder = {
+      id: string;
+      shipping_mark: string;
+      destination_country: string;
+      total_cartons: number;
+      item_description: string | null;
+      created_at: string;
+      cartons: Array<{
+        id: string;
+        carton_serial_number: string;
+        carton_index: number;
+        scan_token: string | null;
+        tracking_id?: string | null;
+        sticker_identifier?: string | null;
+        weight: number | null;
+        length: number | null;
+        width: number | null;
+        height: number | null;
+        dimension_unit: string | null;
+      }>;
+    };
+
+    const instructions: Array<{
+      console: (typeof consoles)[0];
+      orders: InstructionOrder[];
+    }> = [];
+
+    for (const cons of consoles || []) {
+      const { data: links } = await supabase.from("console_orders").select("order_id").eq("console_id", cons.id);
+      const oids = (links || []).map((l) => l.order_id as string).filter(Boolean);
+      if (!oids.length) continue;
+
+      let { data: ordRows, error: ordErr } = await supabase
+        .from("orders")
+        .select(
+          "id, shipping_mark, destination_country, total_cartons, item_description, created_at, cartons(id, carton_serial_number, carton_index, scan_token, tracking_id, sticker_identifier, weight, length, width, height, dimension_unit)"
+        )
+        .eq("username", session.username)
+        .in("id", oids)
+        .order("created_at", { ascending: false })
+        .order("carton_index", { ascending: true, referencedTable: "cartons" });
+
+      if (ordErr && /scan_token|tracking_id|sticker_identifier/i.test(ordErr.message || "")) {
+        const legacy = await supabase
+          .from("orders")
+          .select(
+            "id, shipping_mark, destination_country, total_cartons, item_description, created_at, cartons(id, carton_serial_number, carton_index, scan_token, weight, length, width, height, dimension_unit)"
+          )
+          .eq("username", session.username)
+          .in("id", oids)
+          .order("created_at", { ascending: false })
+          .order("carton_index", { ascending: true, referencedTable: "cartons" });
+        ordRows = legacy.data as typeof ordRows;
+        ordErr = legacy.error;
+      }
+      if (ordErr || !ordRows?.length) continue;
+
+      instructions.push({
+        console: cons,
+        orders: ordRows as InstructionOrder[],
+      });
+    }
+
+    return { instructions };
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : "Unable to load loading instructions" };
+  }
+}
 
 export async function getOrderScanProgressForUser() {
   try {
@@ -567,23 +843,93 @@ export async function getOrderScanProgressForUser() {
 
     const orderIds = orders.map((o) => o.id as string);
 
-    const { data: scanRows, error: scansError } = await supabase
+    let scanRows: { carton_id: string; scanned_at: string; scan_type?: string | null; console_id?: string | null; order_id?: string }[] =
+      [];
+    const scanSelect = await supabase
       .from("carton_scans")
-      .select("carton_id, scanned_at")
+      .select("carton_id, scanned_at, scan_type, console_id, order_id")
       .eq("username", session.username)
       .in("order_id", orderIds);
 
-    if (scansError) {
-      return { error: scansError.message };
+    if (scanSelect.error && /(scan_type|console_id)/i.test(scanSelect.error.message || "")) {
+      const legacy = await supabase
+        .from("carton_scans")
+        .select("carton_id, scanned_at, order_id")
+        .eq("username", session.username)
+        .in("order_id", orderIds);
+      if (legacy.error) {
+        return { error: legacy.error.message };
+      }
+      scanRows = (legacy.data || []).map((r) => ({
+        carton_id: r.carton_id as string,
+        scanned_at: r.scanned_at as string,
+        scan_type: "inward",
+        console_id: null,
+        order_id: r.order_id as string,
+      }));
+    } else if (scanSelect.error) {
+      return { error: scanSelect.error.message };
+    } else {
+      scanRows = (scanSelect.data || []) as typeof scanRows;
     }
 
-    const scannedAtByCartonId = new Map<string, string>();
-    for (const row of scanRows ?? []) {
-      const cid = row.carton_id as string;
-      const at = row.scanned_at as string;
-      const prev = scannedAtByCartonId.get(cid);
+    const scannedAtByCartonIdInward = new Map<string, string>();
+    for (const row of scanRows) {
+      if (row.scan_type === "outward") continue;
+      const cid = row.carton_id;
+      const at = row.scanned_at;
+      const prev = scannedAtByCartonIdInward.get(cid);
       if (!prev || new Date(at) > new Date(prev)) {
-        scannedAtByCartonId.set(cid, at);
+        scannedAtByCartonIdInward.set(cid, at);
+      }
+    }
+
+    const { data: coRows, error: coErr } = await supabase
+      .from("console_orders")
+      .select("order_id, console_id, consoles(id, console_number, container_number, status)")
+      .in("order_id", orderIds);
+
+    if (coErr) {
+      return { error: coErr.message };
+    }
+
+    type ConsoleMeta = { console_id: string; console_number: string; container_number: string | null };
+    const outwardConsoleByOrder = new Map<string, ConsoleMeta>();
+    for (const row of coRows || []) {
+      const oid = row.order_id as string;
+      const rawCons = row.consoles;
+      const cons = Array.isArray(rawCons) ? rawCons[0] : rawCons;
+      const c = cons as { id: string; console_number: string; container_number: string; status: string } | null;
+      if (!c || c.status !== "ready_for_loading") continue;
+      if (!outwardConsoleByOrder.has(oid)) {
+        outwardConsoleByOrder.set(oid, {
+          console_id: c.id,
+          console_number: c.console_number,
+          container_number: c.container_number ?? null,
+        });
+      }
+    }
+
+    const outwardKeys = Array.from(new Set(Array.from(outwardConsoleByOrder.values()).map((v) => v.console_id)));
+    const outwardScannedAt = new Map<string, string>();
+    if (outwardKeys.length > 0) {
+      const outSel = await supabase
+        .from("carton_scans")
+        .select("carton_id, scanned_at, console_id, order_id, scan_type")
+        .eq("username", session.username)
+        .eq("scan_type", "outward")
+        .in("order_id", orderIds)
+        .in("console_id", outwardKeys);
+
+      if (!outSel.error && outSel.data) {
+        for (const r of outSel.data) {
+          const key = `${r.order_id}:${r.console_id}:${r.carton_id}`;
+          const at = r.scanned_at as string;
+          const prev = outwardScannedAt.get(key);
+          if (!prev || new Date(at) > new Date(prev)) {
+            outwardScannedAt.set(key, at);
+          }
+        }
       }
     }
 
@@ -601,7 +947,7 @@ export async function getOrderScanProgressForUser() {
 
       let scannedCount = 0;
       const cartons: OrderScanProgressCarton[] = sorted.map((c) => {
-        const scannedAt = scannedAtByCartonId.get(c.id) ?? null;
+        const scannedAt = scannedAtByCartonIdInward.get(c.id) ?? null;
         const scanned = Boolean(scannedAt);
         if (scanned) scannedCount += 1;
 
@@ -621,6 +967,39 @@ export async function getOrderScanProgressForUser() {
         };
       });
 
+      const oMeta = outwardConsoleByOrder.get(order.id as string);
+      let outward: OrderScanProgressRow["outward"] = null;
+      if (oMeta) {
+        let outScanned = 0;
+        const outCartons: OrderScanProgressCarton[] = sorted.map((c) => {
+          const key = `${order.id}:${oMeta.console_id}:${c.id}`;
+          const scannedAt = outwardScannedAt.get(key) ?? null;
+          const scanned = Boolean(scannedAt);
+          if (scanned) outScanned += 1;
+          const hoursSinceOrder =
+            (now - new Date(order.created_at as string).getTime()) / (1000 * 60 * 60);
+          const isLate = !scanned && hoursSinceOrder >= lateHours;
+          const state: OrderScanProgressCarton["state"] = scanned ? "scanned" : isLate ? "missing" : "pending";
+          return {
+            id: c.id,
+            carton_serial_number: c.carton_serial_number,
+            carton_index: c.carton_index,
+            sticker_label: `${total}-${c.carton_index}`,
+            scanned,
+            scanned_at: scannedAt,
+            state,
+          };
+        });
+        outward = {
+          console_id: oMeta.console_id,
+          console_number: oMeta.console_number,
+          container_number: oMeta.container_number,
+          scanned_count: outScanned,
+          pending_count: Math.max(0, total - outScanned),
+          cartons: outCartons,
+        };
+      }
+
       return {
         id: order.id as string,
         shipping_mark: order.shipping_mark as string,
@@ -631,6 +1010,7 @@ export async function getOrderScanProgressForUser() {
         scanned_count: scannedCount,
         pending_count: Math.max(0, total - scannedCount),
         cartons,
+        outward,
       };
     });
 
@@ -653,23 +1033,49 @@ export async function getScannedCartonsForUser() {
     const { data: scanRows, error } = await supabase
       .from("carton_scans")
       .select(
-        "id, carton_serial_number, scanned_at, carton_id, order_id"
+        "id, carton_serial_number, scanned_at, carton_id, order_id, scan_type, console_id"
       )
       .eq("username", session.username)
       .order("scanned_at", { ascending: false })
       .limit(200);
 
-    if (error) {
+    type NormalizedUserScan = {
+      id: string;
+      carton_serial_number: string;
+      scanned_at: string;
+      carton_id: string;
+      order_id: string;
+      scan_type: string | null;
+      console_id: string | null;
+    };
+
+    let normalizedScanRows: NormalizedUserScan[] = (scanRows ?? []) as NormalizedUserScan[];
+    if (error && /(scan_type|console_id)/i.test(error.message || "")) {
+      const legacy = await supabase
+        .from("carton_scans")
+        .select("id, carton_serial_number, scanned_at, carton_id, order_id")
+        .eq("username", session.username)
+        .order("scanned_at", { ascending: false })
+        .limit(200);
+      if (legacy.error) {
+        return { error: legacy.error.message };
+      }
+      normalizedScanRows = (legacy.data || []).map((r) => ({
+        ...(r as NormalizedUserScan),
+        scan_type: "inward",
+        console_id: null,
+      }));
+    } else if (error) {
       return { error: error.message };
     }
 
-    if (!scanRows || scanRows.length === 0) {
+    const rows = normalizedScanRows;
+    if (rows.length === 0) {
       return { scans: [] };
     }
 
-    // 2) Load related cartons and orders in bulk
-    const cartonIds = Array.from(new Set(scanRows.map((row) => row.carton_id)));
-    const orderIds = Array.from(new Set(scanRows.map((row) => row.order_id)));
+    const cartonIds = Array.from(new Set(rows.map((row) => row.carton_id)));
+    const orderIds = Array.from(new Set(rows.map((row) => row.order_id)));
 
     const [{ data: cartonsData, error: cartonsError }, { data: ordersData }] = await Promise.all([
       supabase
@@ -707,7 +1113,7 @@ export async function getScannedCartonsForUser() {
       (ordersData ?? []).map((o) => [o.id as string, o])
     );
 
-    const scans = scanRows.map((row) => {
+    const scans = rows.map((row) => {
       const serial = row.carton_serial_number as string;
       const cartonFromId = cartonByIdMap.get(row.carton_id as string);
       const cartonFromSerial = cartonBySerialMap.get(serial);
@@ -716,6 +1122,8 @@ export async function getScannedCartonsForUser() {
         id: row.id as string,
         carton_serial_number: serial,
         scanned_at: row.scanned_at as string,
+        scan_type: (row.scan_type as string | null) ?? "inward",
+        console_id: (row.console_id as string | null) ?? null,
         cartons: cartonFromId ?? cartonFromSerial ?? null,
         orders: orderMap.get(row.order_id as string) ?? null,
       };

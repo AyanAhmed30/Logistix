@@ -105,11 +105,11 @@ export function ImportPackingListPanel() {
 
     // Company Header (Top Left)
     doc.setFontSize(14);
-    doc.setFont(undefined, "bold");
+    doc.setFont("helvetica", "bold");
     doc.text("DJS EXPORT CO., LIMITED", margin, y);
     y += 6;
     doc.setFontSize(10);
-    doc.setFont(undefined, "normal");
+    doc.setFont("helvetica", "normal");
     doc.text("FLAT/RM 504,5/F HO KING COMMERCIAL CENTER", margin, y);
     y += 5;
     doc.text("2-16 FA YUEN STREET, MONG KOK, KOWLOON, HONG KONG", margin, y);
@@ -117,13 +117,13 @@ export function ImportPackingListPanel() {
 
     // Document Title (Centered)
     doc.setFontSize(16);
-    doc.setFont(undefined, "bold");
+    doc.setFont("helvetica", "bold");
     doc.text("PACKING LIST", pageWidth / 2, y, { align: "center" });
     y += 10;
 
     // Invoice No and Date (Right aligned, same line as title)
     doc.setFontSize(10);
-    doc.setFont(undefined, "normal");
+    doc.setFont("helvetica", "normal");
     const invoiceNo = packingList.invoice_no || `INV-${packingList.id.substring(0, 8).toUpperCase()}`;
     const date = new Date(packingList.created_at).toLocaleDateString('en-GB', {
       day: 'numeric',
@@ -137,11 +137,11 @@ export function ImportPackingListPanel() {
     // Bill To Section (Left side)
     const billToStartY = y;
     doc.setFontSize(11);
-    doc.setFont(undefined, "bold");
+    doc.setFont("helvetica", "bold");
     doc.text("Bill To:", margin, y);
     y += 6;
     doc.setFontSize(10);
-    doc.setFont(undefined, "normal");
+    doc.setFont("helvetica", "normal");
     const billToName = packingList.bill_to_name || packingList.build_to || "";
     const billToAddress = packingList.bill_to_address || "";
     const billToNtn = packingList.bill_to_ntn || "";
@@ -173,11 +173,11 @@ export function ImportPackingListPanel() {
 
     // Ship To Section (Left side, below Bill To)
     doc.setFontSize(11);
-    doc.setFont(undefined, "bold");
+    doc.setFont("helvetica", "bold");
     doc.text("Ship To:", margin, y);
     y += 6;
     doc.setFontSize(10);
-    doc.setFont(undefined, "normal");
+    doc.setFont("helvetica", "normal");
     const shipToName = packingList.ship_to_name || packingList.ship_to || "";
     const shipToAddress = packingList.ship_to_address || "";
     const shipToNtn = packingList.ship_to_ntn || "";
@@ -210,7 +210,7 @@ export function ImportPackingListPanel() {
     const detailsStartX = pageWidth / 2 + 10;
     let detailsY = billToStartY;
     doc.setFontSize(10);
-    doc.setFont(undefined, "normal");
+    doc.setFont("helvetica", "normal");
     const paymentTerms = packingList.payment_terms || "";
     const shippedVia = packingList.shipped_via || "";
     const coo = packingList.coo || "";
@@ -264,7 +264,7 @@ export function ImportPackingListPanel() {
 
     // Table Header
     doc.setFontSize(10);
-    doc.setFont(undefined, "bold");
+    doc.setFont("helvetica", "bold");
     let x = tableStartX;
     colHeaders.forEach((header, idx) => {
       doc.text(header, x + colWidths[idx] / 2, tableStartY - rowHeight / 2, { align: "center" });
@@ -299,7 +299,7 @@ export function ImportPackingListPanel() {
 
     // Table Data Rows
     doc.setFontSize(9);
-    doc.setFont(undefined, "normal");
+    doc.setFont("helvetica", "normal");
     let currentY = tableStartY;
     
     products.forEach((product: ProductItem, idx: number) => {
@@ -309,7 +309,7 @@ export function ImportPackingListPanel() {
         currentY = margin;
         // Redraw table header on new page
         doc.setFontSize(10);
-        doc.setFont(undefined, "bold");
+        doc.setFont("helvetica", "bold");
         x = tableStartX;
         colHeaders.forEach((header, headerIdx) => {
           doc.text(header, x + colWidths[headerIdx] / 2, currentY - rowHeight / 2, { align: "center" });
@@ -370,7 +370,7 @@ export function ImportPackingListPanel() {
     }
 
     doc.setFontSize(9);
-    doc.setFont(undefined, "bold");
+    doc.setFont("helvetica", "bold");
     x = tableStartX;
     doc.text("", x + colWidths[0] / 2, currentY + rowHeight / 2, { align: "center" });
     x += colWidths[0];
@@ -387,7 +387,7 @@ export function ImportPackingListPanel() {
 
     // Overall Totals (below table)
     doc.setFontSize(11);
-    doc.setFont(undefined, "bold");
+    doc.setFont("helvetica", "bold");
     doc.text(`TOTAL NET WEIGHT: ${totalNetWeight.toFixed(2)}KGS`, margin, currentY);
     currentY += 6;
     doc.text(`TOTAL GROSS WEIGHT: ${totalWeight.toFixed(2)} KGS`, margin, currentY);

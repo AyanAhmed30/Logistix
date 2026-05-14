@@ -414,12 +414,12 @@ async function generateQuotationPdf(q: Quotation, options?: { download?: boolean
     doc.addImage(logoDataUrl, "JPEG", margin, y - 4, 24, 12);
   }
   doc.setFontSize(16);
-  doc.setFont(undefined, "bold");
+  doc.setFont("helvetica", "bold");
   doc.setTextColor(0, 128, 128);
   doc.text("LOGISTIX", margin + (logoDataUrl ? 28 : 0), y);
 
   doc.setFontSize(10);
-  doc.setFont(undefined, "normal");
+  doc.setFont("helvetica", "normal");
   doc.setTextColor(0, 0, 0);
   doc.text("Seamless, Strategic Logistics & Financing", pageWidth - margin, y, { align: "right" });
   y += 8;
@@ -432,14 +432,14 @@ async function generateQuotationPdf(q: Quotation, options?: { download?: boolean
 
   // Title
   doc.setFontSize(20);
-  doc.setFont(undefined, "bold");
+  doc.setFont("helvetica", "bold");
   doc.setTextColor(0, 128, 128);
   doc.text(`Quotation # ${qNum}`, pageWidth / 2, y, { align: "center" });
   y += 12;
 
   // Info
   doc.setFontSize(10);
-  doc.setFont(undefined, "normal");
+  doc.setFont("helvetica", "normal");
   doc.setTextColor(0, 0, 0);
   doc.text(`Customer: ${q.customer_name}`, margin, y);
   doc.text(`Date: ${new Date(q.created_at).toLocaleDateString()}`, pageWidth - margin, y, { align: "right" });
@@ -456,7 +456,7 @@ async function generateQuotationPdf(q: Quotation, options?: { download?: boolean
   doc.line(margin, y, pageWidth - margin, y);
   y += 6;
 
-  doc.setFont(undefined, "bold");
+  doc.setFont("helvetica", "bold");
   const cols = { desc: margin, qty: margin + 65, uom: margin + 90, price: margin + 115, tax: margin + 143, amt: pageWidth - margin };
   doc.text("Product/Service", cols.desc, y);
   doc.text("Quantity", cols.qty, y);
@@ -470,7 +470,7 @@ async function generateQuotationPdf(q: Quotation, options?: { download?: boolean
   y += 7;
 
   // Table row
-  doc.setFont(undefined, "normal");
+  doc.setFont("helvetica", "normal");
   doc.text(q.product_service, cols.desc, y);
   doc.text(q.quantity.toFixed(2), cols.qty, y);
   doc.text(q.uom || "pcs / u", cols.uom, y);
@@ -483,20 +483,20 @@ async function generateQuotationPdf(q: Quotation, options?: { download?: boolean
 
   // Amounts
   doc.text("Untaxed Amount:", pageWidth - margin - 55, y);
-  doc.setFont(undefined, "bold");
+  doc.setFont("helvetica", "bold");
   doc.text(`${amounts.untaxed.toFixed(2)} Rs.`, pageWidth - margin, y, { align: "right" });
   y += 6;
 
   if (amounts.taxRate > 0) {
-    doc.setFont(undefined, "normal");
+    doc.setFont("helvetica", "normal");
     doc.text(`Tax ${amounts.taxRate}%:`, pageWidth - margin - 55, y);
-    doc.setFont(undefined, "bold");
+    doc.setFont("helvetica", "bold");
     doc.text(`${amounts.tax.toFixed(2)} Rs.`, pageWidth - margin, y, { align: "right" });
     y += 6;
   }
 
   doc.setFontSize(13);
-  doc.setFont(undefined, "bold");
+  doc.setFont("helvetica", "bold");
   doc.text("Total:", pageWidth - margin - 55, y + 2);
   doc.setTextColor(0, 128, 128);
   doc.text(`${amounts.total.toFixed(2)} Rs.`, pageWidth - margin, y + 2, { align: "right" });
@@ -504,7 +504,7 @@ async function generateQuotationPdf(q: Quotation, options?: { download?: boolean
 
   // Footer
   doc.setFontSize(8);
-  doc.setFont(undefined, "normal");
+  doc.setFont("helvetica", "normal");
   doc.setTextColor(100, 100, 100);
   doc.text("This quotation is valid for 30 days from the date of issue.", margin, y);
   y += 5;

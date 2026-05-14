@@ -13,6 +13,8 @@ type ScanRow = {
   id: string;
   carton_serial_number: string;
   scanned_at: string;
+  scan_type: string;
+  console_id: string | null;
   cartons: {
     id: string;
     tracking_id: string | null;
@@ -162,7 +164,7 @@ export function UserScannedStickersPanel() {
       <CardHeader>
         <CardTitle>Scanned Stickers</CardTitle>
         <CardDescription>
-          Every time a QR sticker is scanned from any device, the corresponding carton appears here.
+          Inward receipt scans and outward loading scans from any device. Scan type shows how each row was recorded.
         </CardDescription>
       </CardHeader>
       <CardContent>
@@ -171,6 +173,8 @@ export function UserScannedStickersPanel() {
             <TableHeader>
               <TableRow>
                 <TableHead>Scanned At</TableHead>
+                <TableHead>Scan type</TableHead>
+                <TableHead>Console</TableHead>
                 <TableHead>Carton Serial</TableHead>
                 <TableHead>Tracking ID</TableHead>
                 <TableHead>QR Identifier</TableHead>
@@ -188,9 +192,15 @@ export function UserScannedStickersPanel() {
 
                 const scannedAt = new Date(scan.scanned_at).toLocaleString();
 
+                const scanKind = scan.scan_type === "outward" ? "Outward" : "Inward";
+                const consoleCell =
+                  scan.scan_type === "outward" && scan.console_id ? scan.console_id.slice(0, 8) + "…" : "—";
+
                 return (
                   <TableRow key={scan.id}>
                     <TableCell>{scannedAt}</TableCell>
+                    <TableCell>{scanKind}</TableCell>
+                    <TableCell title={scan.console_id ?? undefined}>{consoleCell}</TableCell>
                     <TableCell>{scan.carton_serial_number}</TableCell>
                     <TableCell>{carton?.tracking_id ?? `TRK-${scan.carton_serial_number}`}</TableCell>
                     <TableCell>{carton?.sticker_identifier ?? scan.carton_serial_number}</TableCell>

@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
-import { notifyCartonScanned } from "@/lib/scan-progress-broadcast";
+import { submitCartonScan } from "@/lib/submit-carton-scan";
 
 type PreviewData = {
   scan_identifier: string;
@@ -53,42 +53,16 @@ export function ScanConfirmationCard({ preview }: Props) {
     setIsSubmitting(true);
     setError(null);
     try {
-      const response = await fetch("/api/scan", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ scanIdentifier: preview.scan_identifier }),
-      });
+      const result = await submitCartonScan(preview.scan_identifier);
 
-      const result = (await response.json()) as {
-        success?: boolean;
-        duplicate?: boolean;
-        error?: string;
-        scanType?: "inward" | "outward";
-        consoleId?: string | null;
-        carton?: { id?: string; order_id?: string };
-      };
-
-      if (!response.ok || !result.success) {
-        setError(result.error || "Unable to mark sticker as scanned.");
+      if (!result.success) {
+        setError(result.error);
         return;
       }
 
-      const scannedAt = new Date().toISOString();
       setIsScanned(true);
-      setResolvedScannedAt(scannedAt);
+      setResolvedScannedAt(result.scannedAt);
       setMessage(result.duplicate ? "Already scanned earlier. No duplicate was created." : "Scanned successfully.");
-
-      const cid = result.carton?.id;
-      const oid = result.carton?.order_id ?? preview.order_id;
-      if (cid && oid) {
-        notifyCartonScanned({
-          order_id: oid,
-          carton_id: cid,
-          scanned_at: scannedAt,
-          scan_type: result.scanType ?? "inward",
-          console_id: result.consoleId ?? preview.console_id ?? null,
-        });
-      }
     } catch {
       setError("Network issue while saving scan. Please retry.");
     } finally {

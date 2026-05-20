@@ -20,6 +20,43 @@ type OrderInput = {
   item_description: string;
 };
 
+type SupabaseAdmin = Awaited<ReturnType<typeof createAdminClient>>;
+
+/** scan_token → carton_serial_number → sticker_identifier (USB numeric barcodes). */
+async function lookupCartonByScanIdentifier(
+  supabase: SupabaseAdmin,
+  trimmed: string,
+  select: string
+): Promise<{ data: Record<string, unknown> | null; error: { message?: string } | null }> {
+  const byToken = await supabase.from("cartons").select(select).eq("scan_token", trimmed).maybeSingle();
+  if (!byToken.error && byToken.data) {
+    return { data: byToken.data as Record<string, unknown>, error: null };
+  }
+
+  const bySerial = await supabase
+    .from("cartons")
+    .select(select)
+    .eq("carton_serial_number", trimmed)
+    .maybeSingle();
+  if (!bySerial.error && bySerial.data) {
+    return { data: bySerial.data as Record<string, unknown>, error: null };
+  }
+
+  const bySticker = await supabase
+    .from("cartons")
+    .select(select)
+    .eq("sticker_identifier", trimmed)
+    .maybeSingle();
+  if (!bySticker.error && bySticker.data) {
+    return { data: bySticker.data as Record<string, unknown>, error: null };
+  }
+
+  return {
+    data: null,
+    error: bySticker.error ?? bySerial.error ?? byToken.error ?? { message: "Carton not found" },
+  };
+}
+
 export async function getNextCartonSerial() {
   try {
     const supabase = await createAdminClient();
@@ -330,19 +367,9 @@ export async function getCartonScanPreview(scanIdentifier: string) {
     let carton: PreviewLookupCarton | null = null;
     let lookupError: { message?: string } | null = null;
 
-    const tokenLookup = await supabase.from("cartons").select(selectQuery).eq("scan_token", trimmed).maybeSingle();
-    if (!tokenLookup.error && tokenLookup.data) {
-      carton = tokenLookup.data as PreviewLookupCarton;
-    } else {
-      lookupError = tokenLookup.error;
-      const serialLookup = await supabase
-        .from("cartons")
-        .select(selectQuery)
-        .eq("carton_serial_number", trimmed)
-        .maybeSingle();
-      carton = serialLookup.data as PreviewLookupCarton;
-      lookupError = serialLookup.error;
-    }
+    const previewLookup = await lookupCartonByScanIdentifier(supabase, trimmed, selectQuery);
+    carton = previewLookup.data as PreviewLookupCarton | null;
+    lookupError = previewLookup.error;
 
     // Backward compatibility if scan_status/scanned_at columns are not available yet
     if (lookupError && /(scan_status|scanned_at)/i.test(lookupError.message || "")) {
@@ -491,27 +518,11 @@ export async function recordCartonScan(scanIdentifier: string) {
       orders: { id: string; username: string }[] | { id: string; username: string } | null;
     };
 
-    let carton: CartonLookup | null = null;
-    let cartonError: { message?: string } | null = null;
-
-    const tokenLookup = await supabase
-      .from("cartons")
-      .select("id, carton_serial_number, order_id, tracking_id, sticker_identifier, scan_token, orders(id, username)")
-      .eq("scan_token", trimmed)
-      .maybeSingle();
-
-    if (!tokenLookup.error && tokenLookup.data) {
-      carton = tokenLookup.data as CartonLookup;
-    } else {
-      cartonError = tokenLookup.error;
-      const serialLookup = await supabase
-        .from("cartons")
-        .select("id, carton_serial_number, order_id, tracking_id, sticker_identifier, scan_token, orders(id, username)")
-        .eq("carton_serial_number", trimmed)
-        .single();
-      carton = serialLookup.data as CartonLookup;
-      cartonError = serialLookup.error;
-    }
+    const recordSelect =
+      "id, carton_serial_number, order_id, tracking_id, sticker_identifier, scan_token, orders(id, username)";
+    const recordLookup = await lookupCartonByScanIdentifier(supabase, trimmed, recordSelect);
+    const carton = recordLookup.data as CartonLookup | null;
+    const cartonError = recordLookup.error;
 
     if (cartonError || !carton) {
       return { error: cartonError?.message || "Carton not found" };

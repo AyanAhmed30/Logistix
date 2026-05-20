@@ -10,108 +10,17 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { createClient } from "@/utils/supabase/client";
 import {
   SCAN_PROGRESS_CHANNEL,
+  SCAN_PROGRESS_DOM_EVENT,
   type ScanProgressBroadcastMessage,
 } from "@/lib/scan-progress-broadcast";
+import { mergeScanProgressOrders } from "@/lib/scan-progress-merge";
+import { patchScanProgressOrders } from "@/lib/scan-progress-patch";
+import { usbScannerLog } from "@/lib/usb-scanner-debug";
 
 type Props = {
   refreshKey: number;
   username: string;
 };
-
-const LATE_HOURS = 24;
-
-function applyCartonScanned(
-  orders: OrderScanProgressRow[],
-  orderId: string,
-  cartonId: string,
-  scannedAt: string
-): OrderScanProgressRow[] {
-  return orders.map((order) => {
-    if (order.id !== orderId) return order;
-
-    const hoursSinceOrder =
-      (Date.now() - new Date(order.created_at).getTime()) / (1000 * 60 * 60);
-
-    const cartons = order.cartons.map((c) => {
-      if (c.id !== cartonId) return c;
-      return {
-        ...c,
-        scanned: true,
-        scanned_at: scannedAt,
-        state: "scanned" as const,
-      };
-    });
-
-    const scanned_count = cartons.filter((c) => c.scanned).length;
-    const pending_count = Math.max(0, order.total_cartons - scanned_count);
-
-    const cartonsWithState = cartons.map((c) => {
-      if (c.scanned) return c;
-      const isLate = hoursSinceOrder >= LATE_HOURS;
-      return {
-        ...c,
-        state: (isLate ? "missing" : "pending") as OrderScanProgressCarton["state"],
-      };
-    });
-
-    return {
-      ...order,
-      cartons: cartonsWithState,
-      scanned_count,
-      pending_count,
-    };
-  });
-}
-
-function applyOutwardCartonScanned(
-  orders: OrderScanProgressRow[],
-  orderId: string,
-  cartonId: string,
-  consoleId: string,
-  scannedAt: string
-): OrderScanProgressRow[] {
-  return orders.map((order) => {
-    if (order.id !== orderId || !order.outward || order.outward.console_id !== consoleId) {
-      return order;
-    }
-
-    const hoursSinceOrder =
-      (Date.now() - new Date(order.created_at).getTime()) / (1000 * 60 * 60);
-
-    const o = order.outward;
-    const cartons = o.cartons.map((c) => {
-      if (c.id !== cartonId) return c;
-      return {
-        ...c,
-        scanned: true,
-        scanned_at: scannedAt,
-        state: "scanned" as const,
-      };
-    });
-
-    const scanned_count = cartons.filter((c) => c.scanned).length;
-    const pending_count = Math.max(0, order.total_cartons - scanned_count);
-
-    const cartonsWithState = cartons.map((c) => {
-      if (c.scanned) return c;
-      const isLate = hoursSinceOrder >= LATE_HOURS;
-      return {
-        ...c,
-        state: (isLate ? "missing" : "pending") as OrderScanProgressCarton["state"],
-      };
-    });
-
-    return {
-      ...order,
-      outward: {
-        ...o,
-        cartons: cartonsWithState,
-        scanned_count,
-        pending_count,
-      },
-    };
-  });
-}
 
 function CartonSlot({ carton }: { carton: OrderScanProgressCarton }) {
   const base =
@@ -154,26 +63,20 @@ export function UserScanProgressPanel({ refreshKey, username }: Props) {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const supabase = useMemo(() => createClient(), []);
-  const resyncTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const fetchDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const fetchProgress = useCallback(async () => {
+  const fetchProgress = useCallback(async (options?: { background?: boolean }) => {
     const result = await getOrderScanProgressForUser();
     if ("error" in result) {
       setError(result.error ?? "Unable to load scan progress");
-      setOrders([]);
-    } else {
-      setError(null);
-      setOrders(result.orders ?? []);
+      if (!options?.background) {
+        setOrders([]);
+      }
+      return;
     }
+    setError(null);
+    setOrders((prev) => mergeScanProgressOrders(result.orders ?? [], prev));
   }, []);
-
-  const scheduleServerResync = useCallback(() => {
-    if (resyncTimerRef.current) clearTimeout(resyncTimerRef.current);
-    resyncTimerRef.current = setTimeout(() => {
-      resyncTimerRef.current = null;
-      void fetchProgress();
-    }, 400);
-  }, [fetchProgress]);
 
   const patchFromScan = useCallback(
     (
@@ -182,19 +85,30 @@ export function UserScanProgressPanel({ refreshKey, username }: Props) {
       scannedAt: string,
       meta?: { scan_type?: string | null; console_id?: string | null }
     ) => {
-      if (meta?.scan_type === "outward") {
-        const cid = meta.console_id;
-        if (cid) {
-          setOrders((prev) => applyOutwardCartonScanned(prev, orderId, cartonId, cid, scannedAt));
-        } else {
-          setOrders((prev) => applyCartonScanned(prev, orderId, cartonId, scannedAt));
-        }
-      } else {
-        setOrders((prev) => applyCartonScanned(prev, orderId, cartonId, scannedAt));
+      let needsFetch = false;
+      let logDetail: Record<string, unknown> | null = null;
+      setOrders((prev) => {
+        const { next, patched } = patchScanProgressOrders(prev, orderId, cartonId, scannedAt, meta);
+        if (!patched) needsFetch = true;
+        logDetail = {
+          orderId,
+          cartonId,
+          patched,
+          scan_type: meta?.scan_type,
+          console_id: meta?.console_id,
+          orderCount: next.length,
+        };
+        return next;
+      });
+      if (logDetail) {
+        usbScannerLog("scan progress state update", logDetail);
       }
-      scheduleServerResync();
+      if (needsFetch) {
+        usbScannerLog("scan progress patch missed — fetching from server");
+        void fetchProgress({ background: true });
+      }
     },
-    [scheduleServerResync]
+    [fetchProgress]
   );
 
   useEffect(() => {
@@ -213,7 +127,7 @@ export function UserScanProgressPanel({ refreshKey, username }: Props) {
   useEffect(() => {
     const handleVisibility = () => {
       if (document.visibilityState === "visible") {
-        void fetchProgress();
+        void fetchProgress({ background: true });
       }
     };
     window.addEventListener("focus", handleVisibility);
@@ -234,8 +148,10 @@ export function UserScanProgressPanel({ refreshKey, username }: Props) {
             scan_type?: string | null;
             console_id?: string | null;
           };
+          usbScannerLog("supabase realtime carton_scans INSERT", { row });
           if (!row?.order_id || !row?.carton_id || !row?.scanned_at) {
-            void fetchProgress();
+            usbScannerLog("supabase realtime insert missing required fields — fetching progress");
+            void fetchProgress({ background: true });
             return;
           }
           if (row.username && row.username !== username) return;
@@ -249,47 +165,63 @@ export function UserScanProgressPanel({ refreshKey, username }: Props) {
         "postgres_changes",
         { event: "DELETE", schema: "public", table: "carton_scans", filter: filterUser },
         () => {
-          void fetchProgress();
+          usbScannerLog("supabase realtime carton_scans DELETE — refreshing progress");
+          void fetchProgress({ background: true });
         }
       )
       .on(
         "postgres_changes",
         { event: "INSERT", schema: "public", table: "orders", filter: filterUser },
         () => {
-          void fetchProgress();
+          usbScannerLog("supabase realtime orders INSERT — refreshing progress");
+          void fetchProgress({ background: true });
         }
       )
       .subscribe();
+
+    const onScanMessage = (data: ScanProgressBroadcastMessage | undefined) => {
+      if (!data || data.type !== "carton_scanned") return;
+      usbScannerLog("scan progress listener received scan", {
+        order_id: data.order_id,
+        carton_id: data.carton_id,
+        scan_type: data.scan_type,
+      });
+      patchFromScan(data.order_id, data.carton_id, data.scanned_at, {
+        scan_type: data.scan_type,
+        console_id: data.console_id,
+      });
+    };
+
+    const onDomScan = (event: Event) => {
+      onScanMessage((event as CustomEvent<ScanProgressBroadcastMessage>).detail);
+    };
+    window.addEventListener(SCAN_PROGRESS_DOM_EVENT, onDomScan);
 
     let bc: BroadcastChannel | null = null;
     try {
       bc = new BroadcastChannel(SCAN_PROGRESS_CHANNEL);
       bc.onmessage = (event: MessageEvent<ScanProgressBroadcastMessage>) => {
-        const data = event.data;
-        if (!data || data.type !== "carton_scanned") return;
-        patchFromScan(data.order_id, data.carton_id, data.scanned_at, {
-          scan_type: data.scan_type,
-          console_id: data.console_id,
-        });
+        onScanMessage(event.data);
       };
     } catch {
       bc = null;
     }
 
-    const pollMs = 2500;
+    const pollMs = 15000;
     const poll = () => {
       if (document.visibilityState !== "visible") return;
-      void fetchProgress();
+      void fetchProgress({ background: true });
     };
     const pollId = window.setInterval(poll, pollMs);
 
     return () => {
       window.removeEventListener("focus", handleVisibility);
       document.removeEventListener("visibilitychange", handleVisibility);
+      window.removeEventListener(SCAN_PROGRESS_DOM_EVENT, onDomScan);
       void supabase.removeChannel(channel);
-      if (resyncTimerRef.current) {
-        clearTimeout(resyncTimerRef.current);
-        resyncTimerRef.current = null;
+      if (fetchDebounceRef.current) {
+        clearTimeout(fetchDebounceRef.current);
+        fetchDebounceRef.current = null;
       }
       if (bc) bc.close();
       window.clearInterval(pollId);

@@ -11,6 +11,8 @@ import { OrderHistoryPanel } from "@/components/user/OrderHistoryPanel";
 import { UserScannedStickersPanel } from "@/components/user/UserScannedStickersPanel";
 import { UserScanProgressPanel } from "@/components/user/UserScanProgressPanel";
 import { UserLoadingInstructionsPanel } from "@/components/user/UserLoadingInstructionsPanel";
+import { UsbQrScannerInput } from "@/components/scan/UsbQrScannerInput";
+import { UsbScannerDebugPanel } from "@/components/scan/UsbScannerDebugPanel";
 
 type Props = {
   username: string;
@@ -39,6 +41,8 @@ export function UserDashboardShell({ username }: Props) {
     setIsSidebarOpen(false);
     if (tab === "book") {
       setIsOrderModalOpen(true);
+    } else {
+      setIsOrderModalOpen(false);
     }
     if (tab === "loading") {
       setLoadingInstructionsRefreshKey((k) => k + 1);
@@ -47,6 +51,7 @@ export function UserDashboardShell({ username }: Props) {
 
   return (
     <div className="min-h-screen bg-white">
+      <UsbScannerDebugPanel />
       <header className="fixed top-0 inset-x-0 h-16 bg-white border-b z-50">
         <div className="h-full px-6 md:px-8 flex items-center justify-between">
           <div className="flex items-center gap-3">
@@ -135,6 +140,7 @@ export function UserDashboardShell({ username }: Props) {
       )}
 
       <main className="pt-20 md:pl-72 px-6 md:px-10 pb-10 space-y-6">
+        <UsbQrScannerInput enabled={!isOrderModalOpen} showCaptureField={activeTab === "tracking"} />
         {activeTab === "book" ? (
           <Card className="bg-white border shadow-sm">
             <CardHeader>
@@ -151,13 +157,16 @@ export function UserDashboardShell({ username }: Props) {
           </Card>
         ) : activeTab === "history" ? (
           <OrderHistoryPanel refreshKey={historyRefreshKey} />
-        ) : activeTab === "tracking" ? (
-          <UserScanProgressPanel refreshKey={scanProgressRefreshKey} username={username} />
         ) : activeTab === "scanned" ? (
           <UserScannedStickersPanel />
         ) : activeTab === "loading" ? (
           <UserLoadingInstructionsPanel key={loadingInstructionsRefreshKey} />
         ) : null}
+
+        {/* Keep mounted so USB / broadcast / Supabase listeners stay active on every tab */}
+        <div className={activeTab === "tracking" ? undefined : "hidden"} aria-hidden={activeTab !== "tracking"}>
+          <UserScanProgressPanel refreshKey={scanProgressRefreshKey} username={username} />
+        </div>
       </main>
 
       <BookOrderModal

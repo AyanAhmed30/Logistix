@@ -28,9 +28,11 @@ async function lookupCartonByScanIdentifier(
   trimmed: string,
   select: string
 ): Promise<{ data: Record<string, unknown> | null; error: { message?: string } | null }> {
+  const toRow = (row: unknown): Record<string, unknown> => row as Record<string, unknown>;
+
   const byToken = await supabase.from("cartons").select(select).eq("scan_token", trimmed).maybeSingle();
   if (!byToken.error && byToken.data) {
-    return { data: byToken.data as Record<string, unknown>, error: null };
+    return { data: toRow(byToken.data), error: null };
   }
 
   const bySerial = await supabase
@@ -39,7 +41,7 @@ async function lookupCartonByScanIdentifier(
     .eq("carton_serial_number", trimmed)
     .maybeSingle();
   if (!bySerial.error && bySerial.data) {
-    return { data: bySerial.data as Record<string, unknown>, error: null };
+    return { data: toRow(bySerial.data), error: null };
   }
 
   const bySticker = await supabase
@@ -48,7 +50,7 @@ async function lookupCartonByScanIdentifier(
     .eq("sticker_identifier", trimmed)
     .maybeSingle();
   if (!bySticker.error && bySticker.data) {
-    return { data: bySticker.data as Record<string, unknown>, error: null };
+    return { data: toRow(bySticker.data), error: null };
   }
 
   return {

@@ -2,6 +2,7 @@
 
 import { createAdminClient } from "@/utils/supabase/server";
 import { getSession } from "@/lib/auth/session";
+import { ensureConsoleOrderLoadingRows, logConsoleLoadingEvent } from "@/lib/loading-workflow-server";
 
 type ConsoleInput = {
   console_number: string;
@@ -170,8 +171,9 @@ export async function getReadyForLoadingConsoles() {
     }
 
     // Filter by status in JavaScript (handles case where status column doesn't exist)
-    const filtered = (data || []).filter((console: { status?: string }) => 
-      console.status === "ready_for_loading"
+    const filtered = (data || []).filter(
+      (console: { status?: string; loading_phase?: string | null }) =>
+        console.status === "ready_for_loading" && console.loading_phase !== "closed"
     );
 
     return { consoles: filtered };
@@ -209,7 +211,11 @@ export async function markConsoleReadyForLoading(consoleId: string) {
 
     const { data, error } = await supabase
       .from("consoles")
-      .update({ status: "ready_for_loading", updated_at: new Date().toISOString() })
+      .update({
+        status: "ready_for_loading",
+        loading_phase: "open",
+        updated_at: new Date().toISOString(),
+      })
       .eq("id", consoleId)
       .select()
       .single();
@@ -422,6 +428,27 @@ export async function assignOrdersToConsole(consoleId: string, orderIds: string[
       return { error: "One or more orders are already assigned to this console" };
     }
     return { error: insertError.message || "Failed to assign orders" };
+  }
+
+  try {
+    await ensureConsoleOrderLoadingRows(supabase, consoleId, orderIds);
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : "Failed to sync loading assignments" };
+  }
+
+  if (console.loading_phase === "space_available" || console.status === "ready_for_loading") {
+    await supabase
+      .from("consoles")
+      .update({ loading_phase: "open", updated_at: new Date().toISOString() })
+      .eq("id", consoleId);
+
+    await logConsoleLoadingEvent(supabase, {
+      consoleId,
+      eventType: "orders_added",
+      actorUsername: session!.username,
+      actorRole: session!.role,
+      payload: { order_ids: orderIds },
+    });
   }
 
   // Update console totals (recalculate from all assigned orders)

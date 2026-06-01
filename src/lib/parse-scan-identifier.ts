@@ -1,6 +1,15 @@
+/** Fix common QR / keyboard typos in scan URLs (e.g. http'//localhost'3000). */
+function normalizeScanUrlInput(raw: string): string {
+  return raw
+    .replace(/^http['`]/i, "http://")
+    .replace(/^https['`]/i, "https://")
+    .replace(/localhost['`]\s*(\d{4,5})/gi, "localhost:$1")
+    .replace(/localhost(\d{4,5})\//gi, "localhost:$1/");
+}
+
 /** Normalize USB scanner / pasted input to the scan token or serial used by `/scan/[serial]`. */
 export function parseScanIdentifierFromScannerInput(raw: string): string {
-  const trimmed = raw.trim();
+  const trimmed = normalizeScanUrlInput(raw.trim());
   if (!trimmed) return "";
 
   if (trimmed.includes("/scan/")) {

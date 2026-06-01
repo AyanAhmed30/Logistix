@@ -6,7 +6,7 @@ export type SubmitCartonScanResult =
       success: true;
       duplicate: boolean;
       scannedAt: string;
-      scanType: "inward" | "outward";
+      scanType: "inward" | "outward" | "re_inward" | "return";
       consoleId: string | null;
       carton: { id: string; order_id: string };
     }
@@ -36,7 +36,7 @@ export async function submitCartonScan(scanIdentifier: string): Promise<SubmitCa
       success?: boolean;
       duplicate?: boolean;
       error?: string;
-      scanType?: "inward" | "outward";
+      scanType?: "inward" | "outward" | "re_inward" | "return";
       consoleId?: string | null;
       carton?: { id?: string; order_id?: string };
     };
@@ -92,5 +92,63 @@ export async function submitCartonScan(scanIdentifier: string): Promise<SubmitCa
       message: err instanceof Error ? err.message : String(err),
     });
     return { success: false, error: "Network issue while saving scan. Please retry." };
+  }
+}
+
+/** Return-to-warehouse scan (container full workflow). */
+export async function submitCartonReturnScan(
+  scanIdentifier: string,
+  consoleId: string
+): Promise<SubmitCartonScanResult> {
+  const trimmed = scanIdentifier.trim();
+  if (!trimmed || !consoleId) {
+    return { success: false, error: "Scan identifier and console are required" };
+  }
+
+  try {
+    usbScannerLog("RETURN SCAN", { scanIdentifier: trimmed, consoleId });
+
+    const response = await fetch("/api/scan/return", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ scanIdentifier: trimmed, consoleId }),
+    });
+
+    const result = (await response.json()) as {
+      success?: boolean;
+      duplicate?: boolean;
+      error?: string;
+      consoleId?: string;
+      carton?: { id?: string; order_id?: string };
+    };
+
+    if (!response.ok || !result.success) {
+      return { success: false, error: result.error || "Unable to record return scan." };
+    }
+
+    const scannedAt = new Date().toISOString();
+    const cid = result.carton?.id;
+    const oid = result.carton?.order_id;
+
+    if (cid && oid) {
+      notifyCartonScanned({
+        order_id: oid,
+        carton_id: cid,
+        scanned_at: scannedAt,
+        scan_type: "return",
+        console_id: result.consoleId ?? consoleId,
+      });
+    }
+
+    return {
+      success: true,
+      duplicate: !!result.duplicate,
+      scannedAt,
+      scanType: "return",
+      consoleId: result.consoleId ?? consoleId,
+      carton: { id: cid ?? "", order_id: oid ?? "" },
+    };
+  } catch {
+    return { success: false, error: "Network issue while saving return scan. Please retry." };
   }
 }

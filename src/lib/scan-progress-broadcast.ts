@@ -8,7 +8,7 @@ export type ScanProgressBroadcastMessage = {
   order_id: string;
   carton_id: string;
   scanned_at: string;
-  scan_type?: "inward" | "outward";
+  scan_type?: "inward" | "outward" | "re_inward" | "return";
   console_id?: string | null;
 };
 

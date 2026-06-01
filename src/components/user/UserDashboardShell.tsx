@@ -4,7 +4,8 @@ import { useState } from "react";
 import { logout } from "@/app/actions/auth";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Menu, PackagePlus, History, MapPin, LogOut, Bell, X, QrCode, ClipboardList } from "lucide-react";
+import { Menu, PackagePlus, History, MapPin, LogOut, Bell, X, QrCode, ClipboardList, RotateCcw } from "lucide-react";
+import { UserReInwardPanel } from "@/components/user/UserReInwardPanel";
 import Image from "next/image";
 import { BookOrderModal } from "@/components/user/BookOrderModal";
 import { OrderHistoryPanel } from "@/components/user/OrderHistoryPanel";
@@ -18,12 +19,13 @@ type Props = {
   username: string;
 };
 
-type TabKey = "book" | "history" | "tracking" | "scanned" | "loading";
+type TabKey = "book" | "history" | "tracking" | "reinward" | "scanned" | "loading";
 
 const tabs: { key: TabKey; label: string; icon: React.ReactNode }[] = [
   { key: "book", label: "Book a New Order", icon: <PackagePlus className="h-4 w-4" /> },
   { key: "history", label: "History", icon: <History className="h-4 w-4" /> },
   { key: "tracking", label: "Scan Progress", icon: <MapPin className="h-4 w-4" /> },
+  { key: "reinward", label: "Re-inward", icon: <RotateCcw className="h-4 w-4" /> },
   { key: "scanned", label: "Scanned Stickers", icon: <QrCode className="h-4 w-4" /> },
   { key: "loading", label: "Loading Instructions", icon: <ClipboardList className="h-4 w-4" /> },
 ];
@@ -35,6 +37,7 @@ export function UserDashboardShell({ username }: Props) {
   const [historyRefreshKey, setHistoryRefreshKey] = useState(0);
   const [scanProgressRefreshKey, setScanProgressRefreshKey] = useState(0);
   const [loadingInstructionsRefreshKey, setLoadingInstructionsRefreshKey] = useState(0);
+  const [reInwardRefreshKey, setReInwardRefreshKey] = useState(0);
 
   function selectTab(tab: TabKey) {
     setActiveTab(tab);
@@ -46,6 +49,9 @@ export function UserDashboardShell({ username }: Props) {
     }
     if (tab === "loading") {
       setLoadingInstructionsRefreshKey((k) => k + 1);
+    }
+    if (tab === "reinward") {
+      setReInwardRefreshKey((k) => k + 1);
     }
   }
 
@@ -140,7 +146,10 @@ export function UserDashboardShell({ username }: Props) {
       )}
 
       <main className="pt-20 md:pl-72 px-6 md:px-10 pb-10 space-y-6">
-        <UsbQrScannerInput enabled={!isOrderModalOpen} showCaptureField={activeTab === "tracking"} />
+        <UsbQrScannerInput
+          enabled={!isOrderModalOpen}
+          showCaptureField={activeTab === "tracking" || activeTab === "reinward"}
+        />
         {activeTab === "book" ? (
           <Card className="bg-white border shadow-sm">
             <CardHeader>
@@ -160,7 +169,12 @@ export function UserDashboardShell({ username }: Props) {
         ) : activeTab === "scanned" ? (
           <UserScannedStickersPanel />
         ) : activeTab === "loading" ? (
-          <UserLoadingInstructionsPanel key={loadingInstructionsRefreshKey} />
+          <UserLoadingInstructionsPanel
+            key={loadingInstructionsRefreshKey}
+            onOpenReInwardTab={() => selectTab("reinward")}
+          />
+        ) : activeTab === "reinward" ? (
+          <UserReInwardPanel refreshKey={reInwardRefreshKey} />
         ) : null}
 
         {/* Keep mounted so USB / broadcast / Supabase listeners stay active on every tab */}

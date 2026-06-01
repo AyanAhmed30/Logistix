@@ -45,6 +45,44 @@ export function applyInwardCartonScanned(
   });
 }
 
+export function applyReInwardCartonScanned(
+  orders: OrderScanProgressRow[],
+  orderId: string,
+  cartonId: string,
+  consoleId: string,
+  scannedAt: string
+): OrderScanProgressRow[] {
+  return orders.map((order) => {
+    if (order.id !== orderId || !order.re_inward || order.re_inward.console_id !== consoleId) {
+      return order;
+    }
+
+    const section = order.re_inward;
+    const cartons = section.cartons.map((c) => {
+      if (c.id !== cartonId) return c;
+      return {
+        ...c,
+        scanned: true,
+        scanned_at: scannedAt,
+        state: "scanned" as const,
+      };
+    });
+
+    const scanned_count = cartons.filter((c) => c.scanned).length;
+    const pending_count = Math.max(0, order.total_cartons - scanned_count);
+
+    return {
+      ...order,
+      re_inward: {
+        ...section,
+        cartons,
+        scanned_count,
+        pending_count,
+      },
+    };
+  });
+}
+
 export function applyOutwardCartonScanned(
   orders: OrderScanProgressRow[],
   orderId: string,
@@ -108,6 +146,19 @@ export function patchScanProgressOrders(
   scannedAt: string,
   meta?: ScanProgressPatchMeta
 ): { next: OrderScanProgressRow[]; patched: boolean } {
+  if ((meta?.scan_type === "re_inward" || meta?.scan_type === "return") && meta.console_id) {
+    const order = orders.find((o) => o.id === orderId);
+    if (!order?.re_inward || order.re_inward.console_id !== meta.console_id) {
+      return { next: orders, patched: false };
+    }
+    const carton = order.re_inward.cartons.find((c) => c.id === cartonId);
+    if (!carton) return { next: orders, patched: false };
+    return {
+      next: applyReInwardCartonScanned(orders, orderId, cartonId, meta.console_id, scannedAt),
+      patched: true,
+    };
+  }
+
   if (meta?.scan_type === "outward" && meta.console_id) {
     const order = orders.find((o) => o.id === orderId);
     if (!order?.outward || order.outward.console_id !== meta.console_id) {

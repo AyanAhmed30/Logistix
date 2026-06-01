@@ -30,14 +30,18 @@ function recountInward(order: OrderScanProgressRow): OrderScanProgressRow {
   };
 }
 
-function recountOutward(order: OrderScanProgressRow): OrderScanProgressRow {
-  if (!order.outward) return order;
-  const cartons = order.outward.cartons;
+function recountConsoleSection(
+  order: OrderScanProgressRow,
+  key: "outward" | "re_inward"
+): OrderScanProgressRow {
+  const section = order[key];
+  if (!section) return order;
+  const cartons = section.cartons;
   const scanned_count = cartons.filter((c) => c.scanned).length;
   return {
     ...order,
-    outward: {
-      ...order.outward,
+    [key]: {
+      ...section,
       cartons,
       scanned_count,
       pending_count: Math.max(0, order.total_cartons - scanned_count),
@@ -69,13 +73,33 @@ export function mergeScanProgressOrders(
     if (serverOut || prevOut) {
       const base = serverOut ?? prevOut!;
       const prevCartons = prevOut?.cartons ?? [];
-      merged = recountOutward({
-        ...merged,
-        outward: {
-          ...base,
-          cartons: mergeCartonLists(base.cartons, prevCartons),
+      merged = recountConsoleSection(
+        {
+          ...merged,
+          outward: {
+            ...base,
+            cartons: mergeCartonLists(base.cartons, prevCartons),
+          },
         },
-      });
+        "outward"
+      );
+    }
+
+    const serverRe = serverOrder.re_inward;
+    const prevRe = prevOrder.re_inward;
+    if (serverRe || prevRe) {
+      const base = serverRe ?? prevRe!;
+      const prevCartons = prevRe?.cartons ?? [];
+      merged = recountConsoleSection(
+        {
+          ...merged,
+          re_inward: {
+            ...base,
+            cartons: mergeCartonLists(base.cartons, prevCartons),
+          },
+        },
+        "re_inward"
+      );
     }
 
     return merged;

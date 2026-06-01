@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   getOrderScanProgressForUser,
   type OrderScanProgressCarton,
+  type OrderScanProgressConsoleSection,
   type OrderScanProgressRow,
 } from "@/app/actions/orders";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -22,15 +23,35 @@ type Props = {
   username: string;
 };
 
-function CartonSlot({ carton }: { carton: OrderScanProgressCarton }) {
+type CartonSlotVariant = "inward" | "outward" | "re_inward";
+
+function CartonSlot({
+  carton,
+  variant = "inward",
+}: {
+  carton: OrderScanProgressCarton;
+  variant?: CartonSlotVariant;
+}) {
   const base =
     "inline-flex min-w-[4.5rem] flex-col items-center justify-center rounded-lg border px-2 py-2 text-xs font-semibold transition-colors duration-300 sm:min-w-[5.25rem] sm:px-3 sm:text-sm";
 
   if (carton.state === "scanned") {
+    const styles =
+      variant === "re_inward"
+        ? "border-amber-500 bg-amber-50 text-amber-950"
+        : variant === "outward"
+          ? "border-sky-500 bg-sky-50 text-sky-900"
+          : "border-emerald-500 bg-emerald-50 text-emerald-900";
+    const label =
+      variant === "re_inward" ? "Re-inward" : variant === "outward" ? "Outward" : "Inward";
     return (
       <div
-        className={`${base} border-emerald-500 bg-emerald-50 text-emerald-900`}
-        title={carton.scanned_at ? `Scanned ${new Date(carton.scanned_at).toLocaleString()}` : "Scanned"}
+        className={`${base} ${styles}`}
+        title={
+          carton.scanned_at
+            ? `${label} ${new Date(carton.scanned_at).toLocaleString()}`
+            : `${label} complete`
+        }
       >
         <span className="text-base leading-none sm:text-lg">✓</span>
         <span className="mt-1">{carton.sticker_label}</span>
@@ -54,6 +75,56 @@ function CartonSlot({ carton }: { carton: OrderScanProgressCarton }) {
     <div className={`${base} border-slate-200 bg-slate-50 text-slate-600`} title="Not scanned yet">
       <span className="text-[10px] text-slate-400 sm:text-xs">○</span>
       <span className="mt-1">{carton.sticker_label}</span>
+    </div>
+  );
+}
+
+function ConsoleProgressSection({
+  title,
+  subtitle,
+  section,
+  variant,
+  barClass,
+}: {
+  title: string;
+  subtitle: string;
+  section: OrderScanProgressConsoleSection;
+  variant: "outward" | "re_inward";
+  barClass: string;
+}) {
+  const pct =
+    section.cartons.length > 0
+      ? Math.round((section.scanned_count / section.cartons.length) * 100)
+      : 0;
+
+  return (
+    <div className="mt-5 border-t border-slate-200 pt-4 space-y-2">
+      <p className="text-xs font-semibold text-primary-dark uppercase tracking-wide">
+        {title} — Console {section.console_number}
+        {section.container_number ? ` · ${section.container_number}` : ""}
+        {section.loading_phase ? ` · ${section.loading_phase.replace(/_/g, " ")}` : ""}
+      </p>
+      <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between text-sm">
+        <span className="text-secondary-muted">{subtitle}</span>
+        <span className="font-semibold text-primary-dark sm:text-right">
+          Done {section.scanned_count} · Pending {section.pending_count}
+        </span>
+      </div>
+      <div className="h-2 w-full overflow-hidden rounded-full bg-slate-100">
+        <div
+          className={`h-full rounded-full transition-all duration-200 ease-out ${barClass}`}
+          style={{ width: `${pct}%` }}
+        />
+      </div>
+      <div className="flex flex-wrap gap-2 pt-1">
+        {section.cartons.length === 0 ? (
+          <p className="text-sm text-secondary-muted">No cartons for this row.</p>
+        ) : (
+          section.cartons.map((c) => (
+            <CartonSlot key={`${variant}-${c.id}`} carton={c} variant={variant} />
+          ))
+        )}
+      </div>
     </div>
   );
 }
@@ -269,18 +340,15 @@ export function UserScanProgressPanel({ refreshKey, username }: Props) {
         <CardHeader>
           <CardTitle>Scan Progress</CardTitle>
           <CardDescription>
-          Live view of inward receipt scans and, when a console is ready for loading, outward loading progress per
-          order. Updates automatically when scans are recorded.
-        </CardDescription>
+            Three rows per order: <strong>Inward</strong> (1st scan), <strong>Outward</strong> (2nd),{" "}
+            <strong>Re-inward</strong> (3rd, after outward). Updates automatically when you scan.
+          </CardDescription>
         </CardHeader>
       </Card>
 
       {orders.map((order) => {
         const pct =
           order.total_cartons > 0 ? Math.round((order.scanned_count / order.total_cartons) * 100) : 0;
-        const out = order.outward;
-        const outPct =
-          out && order.total_cartons > 0 ? Math.round((out.scanned_count / order.total_cartons) * 100) : 0;
         const orderLabel = `Order ${String(order.id).slice(0, 8).toUpperCase()}`;
         const created = new Date(order.created_at).toLocaleString();
 
@@ -298,7 +366,7 @@ export function UserScanProgressPanel({ refreshKey, username }: Props) {
                 </div>
                 <div className="text-right text-sm shrink-0">
                   <p className="font-semibold text-primary-dark">
-                    Scanned {order.scanned_count}/{order.total_cartons}
+                    Inward {order.scanned_count}/{order.total_cartons}
                   </p>
                   <p className="text-xs text-secondary-muted">Remaining: {order.pending_count}</p>
                 </div>
@@ -311,44 +379,40 @@ export function UserScanProgressPanel({ refreshKey, username }: Props) {
               </div>
             </CardHeader>
             <CardContent className="pt-0">
-              <p className="text-xs text-secondary-muted mb-3">
+              <p className="text-xs text-secondary-muted mb-2">
                 {order.item_description ? `Items: ${order.item_description}` : null}
                 {order.destination_country ? ` · ${order.destination_country}` : null}
               </p>
-              <div className="flex flex-wrap gap-2">
+
+              <p className="text-xs font-semibold text-emerald-800 uppercase tracking-wide mb-2">
+                Inward (1st scan)
+              </p>
+              <div className="flex flex-wrap gap-2 mb-1">
                 {order.cartons.length === 0 ? (
                   <p className="text-sm text-secondary-muted">No carton rows loaded for this order.</p>
                 ) : (
-                  order.cartons.map((c) => <CartonSlot key={c.id} carton={c} />)
+                  order.cartons.map((c) => <CartonSlot key={c.id} carton={c} variant="inward" />)
                 )}
               </div>
 
-              {out ? (
-                <div className="mt-5 border-t border-slate-200 pt-4 space-y-2">
-                  <p className="text-xs font-semibold text-primary-dark uppercase tracking-wide">
-                    Outward (loading) — Console {out.console_number}
-                    {out.container_number ? ` · ${out.container_number}` : ""}
-                  </p>
-                  <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between text-sm">
-                    <span className="text-secondary-muted">Loading scan progress</span>
-                    <span className="font-semibold text-primary-dark sm:text-right">
-                      {out.scanned_count}/{order.total_cartons} · Remaining {out.pending_count}
-                    </span>
-                  </div>
-                  <div className="h-2 w-full overflow-hidden rounded-full bg-slate-100">
-                    <div
-                      className="h-full rounded-full bg-sky-500 transition-all duration-200 ease-out"
-                      style={{ width: `${outPct}%` }}
-                    />
-                  </div>
-                  <div className="flex flex-wrap gap-2 pt-1">
-                    {out.cartons.length === 0 ? (
-                      <p className="text-sm text-secondary-muted">No carton rows for outward tracking.</p>
-                    ) : (
-                      out.cartons.map((c) => <CartonSlot key={`out-${c.id}`} carton={c} />)
-                    )}
-                  </div>
-                </div>
+              {order.outward ? (
+                <ConsoleProgressSection
+                  title="Outward (2nd scan)"
+                  subtitle="Loading scan progress"
+                  section={order.outward}
+                  variant="outward"
+                  barClass="bg-sky-500"
+                />
+              ) : null}
+
+              {order.re_inward ? (
+                <ConsoleProgressSection
+                  title="Re-inward (3rd scan)"
+                  subtitle="3rd scan — cartons returned to warehouse"
+                  section={order.re_inward}
+                  variant="re_inward"
+                  barClass="bg-amber-500"
+                />
               ) : null}
             </CardContent>
           </Card>

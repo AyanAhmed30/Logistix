@@ -5,6 +5,8 @@ import { getReadyForLoadingConsoles, getConsoleWithOrders } from "@/app/actions/
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { ChevronDown, ChevronRight } from "lucide-react";
+import { ConsoleLoadingManageCard } from "@/components/admin/ConsoleLoadingManageCard";
+import { LOADING_PHASE_LABELS, type LoadingPhase } from "@/lib/loading-workflow-types";
 
 type Carton = {
   weight: number | null;
@@ -37,6 +39,7 @@ type Console = {
   total_cbm: number;
   max_cbm: number;
   status: string;
+  loading_phase?: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -47,6 +50,7 @@ export function LoadingInstructionPanel() {
   const [error, setError] = useState<string | null>(null);
   const [expandedConsoles, setExpandedConsoles] = useState<Set<string>>(new Set());
   const [consoleOrders, setConsoleOrders] = useState<Record<string, Order[]>>({});
+  const [refreshKey, setRefreshKey] = useState(0);
 
   useEffect(() => {
     let isMounted = true;
@@ -72,7 +76,7 @@ export function LoadingInstructionPanel() {
     return () => {
       isMounted = false;
     };
-  }, []);
+  }, [refreshKey]);
 
   const fetchConsoleOrders = async (consoleId: string) => {
     if (consoleOrders[consoleId]) return; // Already loaded
@@ -203,7 +207,8 @@ export function LoadingInstructionPanel() {
                           </div>
                         </div>
                         <span className="px-3 py-1 rounded-full text-xs font-semibold bg-blue-100 text-blue-700">
-                          Ready for Loading
+                          {LOADING_PHASE_LABELS[(console.loading_phase ?? "open") as LoadingPhase] ??
+                            "Ready for Loading"}
                         </span>
                       </div>
                     </CardHeader>
@@ -235,6 +240,26 @@ export function LoadingInstructionPanel() {
                           </div>
                         </div>
                       </div>
+
+                      {isExpanded ? (
+                        <ConsoleLoadingManageCard
+                          consoleId={console.id}
+                          consoleNumber={console.console_number}
+                          loadingPhase={console.loading_phase}
+                          orders={orders}
+                          onUpdated={() => {
+                            setConsoleOrders((prev) => {
+                              const next = { ...prev };
+                              delete next[console.id];
+                              return next;
+                            });
+                            setRefreshKey((k) => k + 1);
+                            if (expandedConsoles.has(console.id)) {
+                              void fetchConsoleOrders(console.id);
+                            }
+                          }}
+                        />
+                      ) : null}
 
                       {isExpanded && orders.length > 0 && (
                         <div className="mt-6 pt-6 border-t">

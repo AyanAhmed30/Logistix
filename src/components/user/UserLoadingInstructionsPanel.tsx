@@ -1,39 +1,91 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { getLoadingInstructionsForUser } from "@/app/actions/orders";
+import {
+  reportConsoleFull,
+  reportConsoleSpaceAvailable,
+} from "@/app/actions/loading-workflow";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import type { LoadingInstructionPdfConsole, LoadingInstructionPdfOrder } from "@/lib/loading-instruction-pdf";
+import type { ConsoleLoadingStats } from "@/app/actions/loading-workflow";
+import { LOADING_PHASE_LABELS, type LoadingPhase } from "@/lib/loading-workflow-types";
+import { toast } from "sonner";
 
 type InstructionRow = {
-  console: LoadingInstructionPdfConsole;
+  console: LoadingInstructionPdfConsole & { loading_phase?: string | null };
   orders: LoadingInstructionPdfOrder[];
+  stats: ConsoleLoadingStats | null;
 };
 
-/** Parent should set `key={...}` when this list must refetch (e.g. tab revisit). Avoids setState-in-effect lint issues. */
-export function UserLoadingInstructionsPanel() {
+function phaseBadge(phase: LoadingPhase | null | undefined) {
+  const p = (phase ?? "open") as LoadingPhase;
+  const variant =
+    p === "open"
+      ? "default"
+      : p === "full_reported"
+        ? "destructive"
+        : p === "space_available"
+          ? "secondary"
+          : "outline";
+  return <Badge variant={variant}>{LOADING_PHASE_LABELS[p] ?? p}</Badge>;
+}
+
+type Props = {
+  onOpenReInwardTab?: () => void;
+};
+
+export function UserLoadingInstructionsPanel({ onOpenReInwardTab }: Props) {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [rows, setRows] = useState<InstructionRow[]>([]);
+  const [busyConsoleId, setBusyConsoleId] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    setIsLoading(true);
+    const res = await getLoadingInstructionsForUser();
+    if ("error" in res) {
+      setError(res.error ?? "Unable to load loading instructions");
+      setRows([]);
+    } else {
+      setError(null);
+      setRows((res.instructions ?? []) as InstructionRow[]);
+    }
+    setIsLoading(false);
+  }, []);
 
   useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      const res = await getLoadingInstructionsForUser();
-      if (cancelled) return;
-      if ("error" in res) {
-        setError(res.error ?? "Unable to load loading instructions");
-        setRows([]);
-      } else {
-        setError(null);
-        setRows((res.instructions ?? []) as InstructionRow[]);
-      }
-      setIsLoading(false);
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+    void load();
+  }, [load]);
+
+  async function handleReportFull(consoleId: string) {
+    setBusyConsoleId(consoleId);
+    const res = await reportConsoleFull(consoleId);
+    setBusyConsoleId(null);
+    if ("error" in res && res.error) {
+      toast.error(res.error);
+      return;
+    }
+    toast.success("Container full — open Re-inward tab and scan cartons returning to the warehouse (3rd scan).", {
+      duration: 6000,
+    });
+    void load();
+    onOpenReInwardTab?.();
+  }
+
+  async function handleReportSpace(consoleId: string) {
+    setBusyConsoleId(consoleId);
+    const res = await reportConsoleSpaceAvailable(consoleId);
+    setBusyConsoleId(null);
+    if ("error" in res && res.error) {
+      toast.error(res.error);
+      return;
+    }
+    toast.success("Space available reported. Admin can assign more orders.");
+    void load();
+  }
 
   if (isLoading) {
     return (
@@ -63,8 +115,8 @@ export function UserLoadingInstructionsPanel() {
         <CardHeader>
           <CardTitle>Loading Instructions</CardTitle>
           <CardDescription>
-            When an admin marks your console as ready for loading, it appears here. Use the same carton stickers from
-            when you booked the order: scan each QR again to record loading (outward) — no new labels required.
+            When admin marks your console ready, scan each carton here for outward (2nd scan). After container full,
+            use the <strong>Re-inward</strong> tab for the 3rd scan.
           </CardDescription>
         </CardHeader>
       </Card>
@@ -77,38 +129,76 @@ export function UserLoadingInstructionsPanel() {
         <CardHeader>
           <CardTitle>Loading Instructions</CardTitle>
           <CardDescription>
-            Consoles open for loading that include your orders. Scan the original book-order stickers on each carton
-            again to record outward when you are ready — the QR does not change.
+            1st scan = inward · 2nd scan = outward (here) · 3rd scan = re-inward (same QR, fills amber row in Scan Progress)
           </CardDescription>
         </CardHeader>
       </Card>
 
-      {rows.map(({ console: cons, orders }) => {
-        const cid = cons.id;
+      {rows.map(({ console: cons, orders, stats }) => {
+        const phase = (cons.loading_phase ?? "open") as LoadingPhase;
+        const s = stats;
+        const isBusy = busyConsoleId === cons.id;
+
         return (
-          <Card key={cid} className="bg-white border shadow-sm">
-            <CardHeader>
-              <div>
+          <Card key={cons.id} className="bg-white border shadow-sm">
+            <CardHeader className="space-y-2">
+              <div className="flex flex-wrap items-center gap-2 justify-between">
                 <CardTitle className="text-lg">Console {cons.console_number}</CardTitle>
-                <p className="text-sm text-secondary-muted mt-1">
-                  Container: {cons.container_number ?? "—"}
-                  {cons.carrier ? ` · Carrier: ${cons.carrier}` : ""}
-                  {cons.bl_number ? ` · BL: ${cons.bl_number}` : ""}
-                </p>
-                <p className="text-xs text-secondary-muted mt-0.5">Status: ready for loading</p>
+                {phaseBadge(phase)}
               </div>
+              <p className="text-sm text-secondary-muted">
+                Container: {cons.container_number ?? "—"}
+                {cons.carrier ? ` · ${cons.carrier}` : ""}
+              </p>
+              {s ? (
+                <p className="text-xs text-secondary-muted">
+                  Loaded {s.loaded_cartons} · Pending load {s.pending_cartons} · Re-inwarded {s.returned_cartons}
+                </p>
+              ) : null}
             </CardHeader>
-            <CardContent className="space-y-3">
-              <p className="text-xs font-semibold text-primary-dark uppercase tracking-wide">Your orders on this console</p>
+            <CardContent className="space-y-4">
+              <div className="flex flex-wrap gap-2">
+                {s?.can_report_full ? (
+                  <Button
+                    type="button"
+                    variant="destructive"
+                    size="sm"
+                    disabled={isBusy}
+                    onClick={() => void handleReportFull(cons.id)}
+                  >
+                    Report container full
+                  </Button>
+                ) : null}
+                {s?.can_report_space ? (
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    size="sm"
+                    disabled={isBusy}
+                    onClick={() => void handleReportSpace(cons.id)}
+                  >
+                    Report space available
+                  </Button>
+                ) : null}
+                {phase === "full_reported" && onOpenReInwardTab ? (
+                  <Button type="button" size="sm" onClick={onOpenReInwardTab}>
+                    Open Re-inward tab
+                  </Button>
+                ) : null}
+              </div>
+
+              {phase === "full_reported" ? (
+                <p className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-lg p-3">
+                  Container is full. Scan cartons again with the same QR for <strong>re-inward</strong> (3rd scan) when
+                  they return to the warehouse. Original inward receipt is unchanged.
+                </p>
+              ) : null}
+
               <ul className="space-y-2 text-sm">
                 {orders.map((o) => (
                   <li key={o.id} className="rounded-lg border bg-slate-50 px-3 py-2">
                     <span className="font-semibold text-primary-dark">{o.shipping_mark || o.id.slice(0, 8)}</span>
-                    <span className="text-secondary-muted"> · {o.destination_country}</span>
                     <span className="text-secondary-muted"> · {o.total_cartons} cartons</span>
-                    {o.item_description ? (
-                      <p className="text-xs text-secondary-muted mt-1 line-clamp-2">{o.item_description}</p>
-                    ) : null}
                   </li>
                 ))}
               </ul>

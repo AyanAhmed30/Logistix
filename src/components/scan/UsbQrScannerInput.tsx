@@ -157,10 +157,17 @@ export function UsbQrScannerInput({ enabled = true, showCaptureField = false }: 
         return;
       }
 
-      toast.success(
-        result.duplicate ? "Already scanned" : "Scanned — progress updating…",
-        { className: "bg-green-500 text-white" }
-      );
+      const isReInward = result.scanType === "re_inward" || result.scanType === "return";
+      const toastMessage = isReInward
+        ? result.duplicate
+          ? "Re-inward already recorded"
+          : "Re-inward recorded — carton back in warehouse"
+        : result.duplicate
+          ? "Already scanned"
+          : "Scanned — progress updating…";
+      toast.success(toastMessage, {
+        className: isReInward ? "bg-amber-600 text-white" : "bg-green-500 text-white",
+      });
     },
     [clearIdle, setValue]
   );

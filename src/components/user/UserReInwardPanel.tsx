@@ -83,8 +83,9 @@ export function UserReInwardPanel({ refreshKey }: Props) {
   }, []);
 
   useEffect(() => {
-    setIsLoading(true);
-    void fetchRows();
+    queueMicrotask(() => {
+      void fetchRows();
+    });
   }, [refreshKey, fetchRows]);
 
   useEffect(() => {

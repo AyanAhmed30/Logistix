@@ -44,7 +44,6 @@ export function UserLoadingInstructionsPanel({ onOpenReInwardTab }: Props) {
   const [busyConsoleId, setBusyConsoleId] = useState<string | null>(null);
 
   const load = useCallback(async () => {
-    setIsLoading(true);
     const res = await getLoadingInstructionsForUser();
     if ("error" in res) {
       setError(res.error ?? "Unable to load loading instructions");
@@ -57,7 +56,9 @@ export function UserLoadingInstructionsPanel({ onOpenReInwardTab }: Props) {
   }, []);
 
   useEffect(() => {
-    void load();
+    queueMicrotask(() => {
+      void load();
+    });
   }, [load]);
 
   async function handleReportFull(consoleId: string) {

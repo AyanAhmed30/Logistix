@@ -4,17 +4,12 @@ import { createAdminClient } from "@/utils/supabase/server";
 import { getSession } from "@/lib/auth/session";
 import type { LoadingPhase } from "@/lib/loading-workflow-types";
 import {
-  canAcceptOutwardScans,
   canAcceptReturnScans,
-  ensureConsoleOrderLoadingRows,
   canAcceptReInwardScans,
-  getActiveOutwardScan,
   isOrderActiveOnConsole,
   logConsoleLoadingEvent,
-  normalizeLoadingPhase,
   performCartonReInward,
   resolveLoadingConsoleById,
-  resolveLoadingConsoleForOrder,
 } from "@/lib/loading-workflow-server";
 import { lookupCartonByScanIdentifier } from "@/lib/lookup-carton-by-scan-identifier";
 

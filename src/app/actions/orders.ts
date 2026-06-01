@@ -33,8 +33,6 @@ type OrderInput = {
   item_description: string;
 };
 
-type SupabaseAdmin = Awaited<ReturnType<typeof createAdminClient>>;
-
 export async function getNextCartonSerial() {
   try {
     const supabase = await createAdminClient();
@@ -952,8 +950,8 @@ export async function getReInwardProgressForUser() {
         const sorted = [...rawCartons].sort((a, b) => a.carton_index - b.carton_index);
         const cartonIds = sorted.map((c) => c.id);
 
-        let outwardByCarton = new Map<string, string>();
-        let reInwardByCarton = new Map<string, string>();
+        const outwardByCarton = new Map<string, string>();
+        const reInwardByCarton = new Map<string, string>();
 
         if (cartonIds.length) {
           const { data: scans } = await supabase

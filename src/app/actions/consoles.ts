@@ -126,9 +126,12 @@ export async function getAllConsoles() {
       return { error: error.message || "Failed to fetch consoles" };
     }
 
-    // Filter by status in JavaScript (handles case where status column doesn't exist)
-    const filtered = (data || []).filter((console: { status?: string }) => 
-      !console.status || console.status === "active"
+    // Keep active + ready_for_loading visible in Console tab (reusable console workflow).
+    const filtered = (data || []).filter(
+      (console: { status?: string; loading_phase?: string | null }) =>
+        !console.status ||
+        console.status === "active" ||
+        (console.status === "ready_for_loading" && console.loading_phase !== "closed")
     );
 
     return { consoles: filtered };
@@ -224,13 +227,44 @@ export async function markConsoleReadyForLoading(consoleId: string) {
       return { error: error.message || "Failed to mark console as ready for loading" };
     }
 
+    // Record only newly sent orders for Loading Instruction, so old orders are not re-sent.
+    const { data: links } = await supabase
+      .from("console_orders")
+      .select("order_id")
+      .eq("console_id", consoleId);
+    const currentOrderIds = (links || []).map((l) => l.order_id as string).filter(Boolean);
+
+    const { data: sentEvents } = await supabase
+      .from("console_loading_events")
+      .select("payload")
+      .eq("console_id", consoleId)
+      .eq("event_type", "orders_sent_to_loading");
+
+    const alreadySent = new Set<string>();
+    for (const ev of sentEvents || []) {
+      const ids = (ev.payload as { order_ids?: string[] } | null)?.order_ids || [];
+      for (const id of ids) alreadySent.add(id);
+    }
+    const newlySentOrderIds = currentOrderIds.filter((id) => !alreadySent.has(id));
+
+    await logConsoleLoadingEvent(supabase, {
+      consoleId,
+      eventType: "orders_sent_to_loading",
+      actorUsername: session.username,
+      actorRole: session.role,
+      payload: { order_ids: newlySentOrderIds },
+    });
+
     return { console: data };
   } catch (err) {
     return { error: err instanceof Error ? err.message : "An unexpected error occurred while marking console as ready for loading" };
   }
 }
 
-export async function getConsoleWithOrders(consoleId: string) {
+export async function getConsoleWithOrders(
+  consoleId: string,
+  options?: { onlyLatestSentToLoading?: boolean }
+) {
   try {
     const session = await getSession();
     if (!session) {
@@ -280,6 +314,24 @@ export async function getConsoleWithOrders(consoleId: string) {
       return { console, orders: [] };
     }
 
+    let filteredOrderIds = orderIds;
+    if (options?.onlyLatestSentToLoading) {
+      const { data: latestSentEvent } = await supabase
+        .from("console_loading_events")
+        .select("payload, created_at")
+        .eq("console_id", consoleId)
+        .eq("event_type", "orders_sent_to_loading")
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      const latestIds =
+        (latestSentEvent?.payload as { order_ids?: string[] } | null)?.order_ids?.filter(Boolean) ?? [];
+      if (latestIds.length > 0) {
+        filteredOrderIds = latestIds;
+      }
+    }
+
     // Get full order details with cartons
     const { data: orders, error: fullOrdersError } = await supabase
       .from("orders")
@@ -289,7 +341,7 @@ export async function getConsoleWithOrders(consoleId: string) {
       cartons (*)
     `
       )
-      .in("id", orderIds);
+      .in("id", filteredOrderIds);
 
     if (fullOrdersError) {
       return { error: fullOrdersError.message || "Failed to fetch orders" };

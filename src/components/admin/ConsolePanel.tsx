@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { Fragment, useEffect, useState } from "react";
 import { createConsole, getAllConsoles, getConsoleWithOrders, markConsoleReadyForLoading } from "@/app/actions/consoles";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -55,6 +55,7 @@ type Console = {
 
 export function ConsolePanel() {
   const [consoles, setConsoles] = useState<Console[]>([]);
+  const [consoleOrderCounts, setConsoleOrderCounts] = useState<Record<string, number>>({});
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
@@ -87,7 +88,20 @@ export function ConsolePanel() {
         setConsoles([]);
       } else {
         setError(null);
-        setConsoles(result.consoles as Console[]);
+        const fetchedConsoles = result.consoles as Console[];
+        setConsoles(fetchedConsoles);
+
+        // Preload order counts so "Orders" column is accurate even before expanding a row.
+        const countPairs = await Promise.all(
+          fetchedConsoles.map(async (c) => {
+            const details = await getConsoleWithOrders(c.id);
+            if ("error" in details) return [c.id, 0] as const;
+            const count = Array.isArray(details.orders) ? details.orders.length : 0;
+            return [c.id, count] as const;
+          })
+        );
+        if (!isMounted) return;
+        setConsoleOrderCounts(Object.fromEntries(countPairs));
       }
       setIsLoading(false);
     };
@@ -111,6 +125,10 @@ export function ConsolePanel() {
     setConsoleOrders((prev) => ({
       ...prev,
       [consoleId]: result.orders as Order[],
+    }));
+    setConsoleOrderCounts((prev) => ({
+      ...prev,
+      [consoleId]: Array.isArray(result.orders) ? result.orders.length : 0,
     }));
   };
 
@@ -190,7 +208,8 @@ export function ConsolePanel() {
     // Refresh consoles list
     const refreshResult = await getAllConsoles();
     if ("consoles" in refreshResult) {
-      setConsoles(refreshResult.consoles as Console[]);
+      const refreshed = refreshResult.consoles as Console[];
+      setConsoles(refreshed);
     }
   };
 
@@ -204,20 +223,16 @@ export function ConsolePanel() {
       return;
     }
 
-    toast.success("Console moved to Loading Instruction");
+    toast.success("Console is ready for loading and remains available in Console tab.");
     setReadyForLoadingOpen(false);
     setSelectedConsoleForLoading(null);
 
-    // Refresh console list to remove the moved console
+    // Refresh console list to reflect updated status.
     const refreshResult = await getAllConsoles();
     if ("consoles" in refreshResult) {
-      setConsoles(refreshResult.consoles as Console[]);
+      const refreshed = refreshResult.consoles as Console[];
+      setConsoles(refreshed);
     }
-  };
-
-  const getConsoleStatus = (console: Console): "Empty" | "Has Orders" => {
-    if (console.total_cbm === 0) return "Empty";
-    return "Has Orders";
   };
 
   const calcOrderTotals = (order: Order) => {
@@ -233,6 +248,45 @@ export function ConsolePanel() {
       return sum + (length * width * height) / 1_000_000;
     }, 0);
     return { totalWeight, totalCbm };
+  };
+
+  const buildConsoleOrderSummary = (orders: Order[]) => {
+    const grouped = new Map<
+      string,
+      {
+        shippingMark: string;
+        orderDescription: string;
+        orderCount: number;
+        totalCartons: number;
+        totalWeight: number;
+        totalCbm: number;
+      }
+    >();
+
+    for (const order of orders) {
+      const key = order.shipping_mark || "NO_MARK";
+      const current = grouped.get(key);
+      const totals = calcOrderTotals(order);
+      if (!current) {
+        grouped.set(key, {
+          shippingMark: order.shipping_mark || "-",
+          orderDescription: order.item_description || "-",
+          orderCount: 1,
+          totalCartons: order.total_cartons || 0,
+          totalWeight: totals.totalWeight,
+          totalCbm: totals.totalCbm,
+        });
+      } else {
+        current.orderCount += 1;
+        current.totalCartons += order.total_cartons || 0;
+        current.totalWeight += totals.totalWeight;
+        current.totalCbm += totals.totalCbm;
+      }
+    }
+
+    return Array.from(grouped.values()).sort((a, b) =>
+      a.shippingMark.localeCompare(b.shippingMark)
+    );
   };
 
   if (isLoading) {
@@ -278,147 +332,118 @@ export function ConsolePanel() {
               No consoles created yet. Click &quot;Create Console&quot; to get started.
             </div>
           ) : (
-            <div className="space-y-4">
-              {consoles.map((console) => {
-                const isExpanded = expandedConsoles.has(console.id);
-                const orders = consoleOrders[console.id] || [];
-                const status = getConsoleStatus(console);
-                const statusColors = {
-                  Empty: "bg-gray-100 text-gray-700",
-                  "Has Orders": "bg-green-100 text-green-700",
-                };
+            <div className="overflow-x-auto">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead className="w-10" />
+                    <TableHead>Console #</TableHead>
+                    <TableHead>Container</TableHead>
+                    <TableHead>Date</TableHead>
+                    <TableHead>Created At</TableHead>
+                    <TableHead>BL Number</TableHead>
+                    <TableHead>Carrier</TableHead>
+                    <TableHead>SO</TableHead>
+                    <TableHead>Orders</TableHead>
+                    <TableHead>Total Cartons</TableHead>
+                    <TableHead>Total CBM</TableHead>
+                    <TableHead className="text-right">Action</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {consoles.map((console) => {
+                    const isExpanded = expandedConsoles.has(console.id);
+                    const orders = consoleOrders[console.id] || [];
+                    const orderCount = consoleOrderCounts[console.id] ?? 0;
+                    const summaryRows = buildConsoleOrderSummary(orders);
 
-                return (
-                  <Card key={console.id} className="border">
-                    <CardHeader className="pb-3">
-                      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-                        <div className="flex items-center gap-3 flex-1 min-w-0">
-                          <button
-                            onClick={() => toggleConsole(console.id)}
-                            className="text-primary-dark hover:text-primary-accent flex-shrink-0"
-                          >
-                            {isExpanded ? (
-                              <ChevronDown className="h-5 w-5" />
-                            ) : (
-                              <ChevronRight className="h-5 w-5" />
-                            )}
-                          </button>
-                          <div className="min-w-0 flex-1">
-                            <CardTitle className="text-base sm:text-lg truncate">
-                              Console #{console.console_number}
-                            </CardTitle>
-                            <CardDescription className="text-xs break-words">
-                              <span className="block sm:inline">Container: {console.container_number}</span>
-                              <span className="hidden sm:inline"> | </span>
-                              <span className="block sm:inline">BL: {console.bl_number}</span>
-                            </CardDescription>
-                          </div>
-                        </div>
-                        <span
-                          className={`px-3 py-1 rounded-full text-xs font-semibold ${statusColors[status]} self-start sm:self-auto whitespace-nowrap`}
-                        >
-                          {status}
-                        </span>
-                      </div>
-                    </CardHeader>
-                    <CardContent>
-                      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4 text-sm">
-                        <div>
-                          <span className="text-secondary-muted">Date:</span>
-                          <div className="font-medium">
-                            {new Date(console.date).toLocaleDateString()}
-                          </div>
-                        </div>
-                        <div>
-                          <span className="text-secondary-muted">Carrier:</span>
-                          <div className="font-medium break-words">{console.carrier}</div>
-                        </div>
-                        <div>
-                          <span className="text-secondary-muted">SO:</span>
-                          <div className="font-medium break-words">{console.so}</div>
-                        </div>
-                        <div>
-                          <span className="text-secondary-muted">Total Cartons:</span>
-                          <div className="font-medium">{console.total_cartons}</div>
-                        </div>
-                        <div className="sm:col-span-2 md:col-span-1">
-                          <span className="text-secondary-muted">Total CBM:</span>
-                          <div className="font-medium break-words">
-                            <span className="block sm:inline">{console.total_cbm.toFixed(3)}</span>
-                            <span className="text-xs text-secondary-muted block sm:inline sm:ml-1">(Calculated from assigned orders)</span>
-                          </div>
-                        </div>
-                      </div>
+                    return (
+                      <Fragment key={console.id}>
+                        <TableRow>
+                          <TableCell>
+                            <button
+                              onClick={() => toggleConsole(console.id)}
+                              className="text-primary-dark hover:text-primary-accent"
+                              title={isExpanded ? "Collapse console details" : "Expand console details"}
+                            >
+                              {isExpanded ? (
+                                <ChevronDown className="h-4 w-4" />
+                              ) : (
+                                <ChevronRight className="h-4 w-4" />
+                              )}
+                            </button>
+                          </TableCell>
+                          <TableCell className="font-medium">{console.console_number}</TableCell>
+                          <TableCell>{console.container_number}</TableCell>
+                          <TableCell>{new Date(console.date).toLocaleDateString()}</TableCell>
+                          <TableCell>{new Date(console.created_at).toLocaleString()}</TableCell>
+                          <TableCell>{console.bl_number}</TableCell>
+                          <TableCell>{console.carrier}</TableCell>
+                          <TableCell>{console.so}</TableCell>
+                          <TableCell>{orderCount}</TableCell>
+                          <TableCell>{console.total_cartons}</TableCell>
+                          <TableCell>{console.total_cbm.toFixed(3)}</TableCell>
+                          <TableCell className="text-right">
+                            <Button
+                              onClick={() => {
+                                setSelectedConsoleForLoading(console);
+                                setReadyForLoadingOpen(true);
+                              }}
+                              className="ready-for-loading-btn bg-primary-dark hover:bg-primary-accent text-white"
+                              size="sm"
+                            >
+                              <Truck className="h-4 w-4 mr-2" />
+                              Ready
+                            </Button>
+                          </TableCell>
+                        </TableRow>
 
-                      <div className="mt-4 pt-4 border-t">
-                        <Button
-                          onClick={() => {
-                            setSelectedConsoleForLoading(console);
-                            setReadyForLoadingOpen(true);
-                          }}
-                          className="ready-for-loading-btn w-full md:w-auto bg-primary-dark hover:bg-primary-accent text-white"
-                        >
-                          <Truck className="h-4 w-4 mr-2" />
-                          Ready for Loading
-                        </Button>
-                      </div>
-
-                      {isExpanded && orders.length > 0 && (
-                        <div className="mt-6 pt-6 border-t">
-                          <h4 className="font-semibold mb-4 text-primary-dark">
-                            Assigned Orders ({orders.length})
-                          </h4>
-                          <div className="overflow-x-auto -mx-4 sm:mx-0">
-                            <div className="inline-block min-w-full align-middle px-4 sm:px-0">
-                              <Table>
-                            <TableHeader>
-                              <TableRow>
-                                <TableHead>Shipping Mark</TableHead>
-                                <TableHead>UUID</TableHead>
-                                <TableHead>Username</TableHead>
-                                <TableHead>Item Description</TableHead>
-                                <TableHead>Cartons</TableHead>
-                                <TableHead>Weight (kg)</TableHead>
-                                <TableHead>CBM (m³)</TableHead>
-                                <TableHead>Date & Time</TableHead>
-                              </TableRow>
-                            </TableHeader>
-                            <TableBody>
-                              {orders.map((order) => {
-                                const totals = calcOrderTotals(order);
-                                return (
-                                  <TableRow key={order.id}>
-                                    <TableCell className="font-medium">
-                                      {order.shipping_mark}
-                                    </TableCell>
-                                    <TableCell className="font-mono text-xs break-all">{order.id}</TableCell>
-                                    <TableCell>{order.username}</TableCell>
-                                    <TableCell>{order.item_description || "-"}</TableCell>
-                                    <TableCell>{order.total_cartons}</TableCell>
-                                    <TableCell>{totals.totalWeight.toFixed(2)}</TableCell>
-                                    <TableCell>{totals.totalCbm.toFixed(3)}</TableCell>
-                                    <TableCell>
-                                      {new Date(order.created_at).toLocaleString()}
-                                    </TableCell>
-                                  </TableRow>
-                                );
-                              })}
-                            </TableBody>
-                          </Table>
-                            </div>
-                          </div>
-                        </div>
-                      )}
-
-                      {isExpanded && orders.length === 0 && (
-                        <div className="mt-6 pt-6 border-t text-center text-secondary-muted text-sm">
-                          No orders assigned to this console yet.
-                        </div>
-                      )}
-                    </CardContent>
-                  </Card>
-                );
-              })}
+                        {isExpanded ? (
+                          <TableRow>
+                            <TableCell colSpan={11} className="bg-slate-50">
+                              {orders.length > 0 ? (
+                                <div className="py-3">
+                                  <h4 className="font-semibold mb-3 text-primary-dark">
+                                    Console Order Summary ({summaryRows.length} shipping mark groups)
+                                  </h4>
+                                  <Table>
+                                    <TableHeader>
+                                      <TableRow>
+                                        <TableHead>Shipping Mark</TableHead>
+                                        <TableHead>Order Description</TableHead>
+                                        <TableHead>Order Count</TableHead>
+                                        <TableHead>Total Cartons</TableHead>
+                                        <TableHead>Weight (kg)</TableHead>
+                                        <TableHead>CBM (m³)</TableHead>
+                                      </TableRow>
+                                    </TableHeader>
+                                    <TableBody>
+                                      {summaryRows.map((row) => (
+                                        <TableRow key={row.shippingMark}>
+                                          <TableCell className="font-medium">{row.shippingMark}</TableCell>
+                                          <TableCell>{row.orderDescription}</TableCell>
+                                          <TableCell>{row.orderCount}</TableCell>
+                                          <TableCell>{row.totalCartons}</TableCell>
+                                          <TableCell>{row.totalWeight.toFixed(2)}</TableCell>
+                                          <TableCell>{row.totalCbm.toFixed(3)}</TableCell>
+                                        </TableRow>
+                                      ))}
+                                    </TableBody>
+                                  </Table>
+                                </div>
+                              ) : (
+                                <div className="py-3 text-center text-secondary-muted text-sm">
+                                  No orders assigned to this console yet.
+                                </div>
+                              )}
+                            </TableCell>
+                          </TableRow>
+                        ) : null}
+                      </Fragment>
+                    );
+                  })}
+                </TableBody>
+              </Table>
             </div>
           )}
         </CardContent>

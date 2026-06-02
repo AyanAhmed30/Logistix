@@ -6,6 +6,7 @@ import { getAllConsoles, assignOrdersToConsole } from "@/app/actions/consoles";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
   Select,
@@ -61,6 +62,9 @@ export function OrderManagementPanel() {
   const [selectedConsole, setSelectedConsole] = useState<string>("");
   const [selectedOrderIds, setSelectedOrderIds] = useState<Set<string>>(new Set());
   const [isAssigning, setIsAssigning] = useState(false);
+  const [shippingSearch, setShippingSearch] = useState("");
+  const [fromDate, setFromDate] = useState("");
+  const [toDate, setToDate] = useState("");
 
   useEffect(() => {
     let isMounted = true;
@@ -200,6 +204,17 @@ export function OrderManagementPanel() {
     return dateB - dateA;
   });
 
+  const filteredTableData = tableData.filter((row) => {
+    const normalizedMark = row.shippingMark.toLowerCase();
+    const searchOk = !shippingSearch.trim() || normalizedMark.includes(shippingSearch.trim().toLowerCase());
+
+    const rowDate = row.dateTime ? new Date(row.dateTime) : null;
+    const fromOk = !fromDate || (rowDate ? rowDate >= new Date(`${fromDate}T00:00:00`) : false);
+    const toOk = !toDate || (rowDate ? rowDate <= new Date(`${toDate}T23:59:59`) : false);
+
+    return searchOk && fromOk && toOk;
+  });
+
   const toggleRow = (shippingMark: string) => {
     setExpandedRows((prev) => {
       const newSet = new Set(prev);
@@ -273,9 +288,27 @@ export function OrderManagementPanel() {
           <div className="flex-1">
             <CardTitle>Order Management</CardTitle>
             <CardDescription>
-              Manage and view all orders in the system. Click to expand and see individual
-              sub-orders.
+              Manage all orders, then search by shipping mark and filter by booking date for accountability.
             </CardDescription>
+            <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-3">
+              <Input
+                value={shippingSearch}
+                onChange={(e) => setShippingSearch(e.target.value)}
+                placeholder="Search shipping mark..."
+              />
+              <Input
+                type="date"
+                value={fromDate}
+                onChange={(e) => setFromDate(e.target.value)}
+                title="From date"
+              />
+              <Input
+                type="date"
+                value={toDate}
+                onChange={(e) => setToDate(e.target.value)}
+                title="To date"
+              />
+            </div>
           </div>
           <div className="flex flex-col gap-3 min-w-[280px] relative z-10">
             <div className="flex flex-col gap-2">
@@ -349,7 +382,7 @@ export function OrderManagementPanel() {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {tableData.map((row, index) => {
+            {filteredTableData.map((row, index) => {
               const isExpanded = expandedRows.has(row.shippingMark);
               const hasSubOrders = row.orderCount > 1;
 
@@ -468,6 +501,13 @@ export function OrderManagementPanel() {
                 </React.Fragment>
               );
             })}
+            {filteredTableData.length === 0 ? (
+              <TableRow>
+                <TableCell colSpan={selectedConsole ? 10 : 9} className="text-center text-secondary-muted py-8">
+                  No orders match current search/filter.
+                </TableCell>
+              </TableRow>
+            ) : null}
           </TableBody>
         </Table>
       </CardContent>

@@ -87,7 +87,9 @@ export function UserLoadingInstructionsPanel({
 
   useEffect(() => {
     if (!isVisible && hasLoadedOnce) return;
-    void load(hasLoadedOnce ? { silent: true } : undefined);
+    queueMicrotask(() => {
+      void load(hasLoadedOnce ? { silent: true } : undefined);
+    });
   }, [load, refreshKey, isVisible, hasLoadedOnce]);
 
   const allOrders = useMemo(

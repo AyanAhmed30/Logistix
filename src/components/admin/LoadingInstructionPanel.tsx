@@ -73,7 +73,9 @@ export function LoadingInstructionPanel() {
   }, []);
 
   useEffect(() => {
-    void loadDashboard();
+    queueMicrotask(() => {
+      void loadDashboard();
+    });
   }, [loadDashboard, refreshKey]);
 
   const filteredOrders = useMemo(

@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useCallback, useEffect, useState } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { logout } from "@/app/actions/auth";
 import { Button } from "@/components/ui/button";
@@ -34,9 +34,13 @@ function UserDashboardShellInner({ username }: Props) {
   const pathname = usePathname();
   const searchParams = useSearchParams();
 
-  const [activeTab, setActiveTab] = useState<UserDashboardTab>(() =>
-    parseUserDashboardTab(searchParams.get("tab"))
+  const urlTab = useMemo(
+    () => parseUserDashboardTab(searchParams.get("tab")),
+    [searchParams]
   );
+  const [pendingTab, setPendingTab] = useState<UserDashboardTab | null>(null);
+  const activeTab = pendingTab ?? urlTab;
+
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [isOrderModalOpen, setIsOrderModalOpen] = useState(false);
   const [historyRefreshKey, setHistoryRefreshKey] = useState(0);
@@ -44,8 +48,6 @@ function UserDashboardShellInner({ username }: Props) {
   const [loadingRefreshKey, setLoadingRefreshKey] = useState(0);
 
   useEffect(() => {
-    const parsed = parseUserDashboardTab(searchParams.get("tab"));
-    setActiveTab(parsed);
     const raw = searchParams.get("tab");
     if (raw === "reinward" || raw === "scanned") {
       const params = new URLSearchParams(searchParams.toString());
@@ -53,6 +55,12 @@ function UserDashboardShellInner({ username }: Props) {
       router.replace(`${pathname}?${params.toString()}`, { scroll: false });
     }
   }, [searchParams, pathname, router]);
+
+  useEffect(() => {
+    queueMicrotask(() => {
+      setPendingTab((prev) => (prev === urlTab ? null : prev));
+    });
+  }, [urlTab]);
 
   const syncTabToUrl = useCallback(
     (tab: UserDashboardTab) => {
@@ -69,7 +77,7 @@ function UserDashboardShellInner({ username }: Props) {
   );
 
   function selectTab(tab: UserDashboardTab) {
-    setActiveTab(tab);
+    setPendingTab(tab);
     syncTabToUrl(tab);
     setIsSidebarOpen(false);
     if (tab === "book") {

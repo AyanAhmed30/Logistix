@@ -652,7 +652,7 @@ export async function recordCartonScan(scanIdentifier: string) {
         if (canAcceptReInwardScans(paused.loading_phase)) {
           return {
             error:
-              "Container is full — use the Re-inward tab. Scan again any carton that was outward-scanned but is coming back to the warehouse (3rd scan).",
+              "Container is full — use Scan Progress. Scan again any carton that was outward-scanned but is coming back to the warehouse (3rd scan).",
           };
         }
         return {

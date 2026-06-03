@@ -1,7 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
-import { getLoadingInstructionsForUser } from "@/app/actions/orders";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { getLoadingInstructionDashboardForUser } from "@/app/actions/loading-instruction-progress";
 import {
   reportConsoleFull,
   reportConsoleSpaceAvailable,
@@ -9,15 +9,33 @@ import {
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import type { LoadingInstructionPdfConsole, LoadingInstructionPdfOrder } from "@/lib/loading-instruction-pdf";
-import type { ConsoleLoadingStats } from "@/app/actions/loading-workflow";
 import { LOADING_PHASE_LABELS, type LoadingPhase } from "@/lib/loading-workflow-types";
+import { filterAndSortOrderRows } from "@/lib/loading-instruction-progress";
+import type {
+  LoadingInstructionSortKey,
+  LoadingInstructionStatusFilter,
+  OrderLoadingProgressRow,
+} from "@/lib/loading-instruction-progress";
+import { LoadingInstructionFilters } from "@/components/loading-instructions/LoadingInstructionFilters";
+import { LoadingInstructionOrdersTable } from "@/components/loading-instructions/LoadingInstructionOrdersTable";
 import { toast } from "sonner";
 
-type InstructionRow = {
-  console: LoadingInstructionPdfConsole & { loading_phase?: string | null };
-  orders: LoadingInstructionPdfOrder[];
-  stats: ConsoleLoadingStats | null;
+type InstructionBundle = {
+  console: {
+    id: string;
+    console_number: string;
+    container_number: string | null;
+    carrier?: string | null;
+    loading_phase?: string | null;
+  };
+  orders: OrderLoadingProgressRow[];
+  stats: {
+    can_report_full?: boolean;
+    can_report_space?: boolean;
+    loaded_cartons?: number;
+    pending_cartons?: number;
+    returned_cartons?: number;
+  } | null;
 };
 
 function phaseBadge(phase: LoadingPhase | null | undefined) {
@@ -34,32 +52,63 @@ function phaseBadge(phase: LoadingPhase | null | undefined) {
 }
 
 type Props = {
-  onOpenReInwardTab?: () => void;
+  refreshKey?: number;
+  isVisible?: boolean;
+  onAfterContainerFull?: () => void;
 };
 
-export function UserLoadingInstructionsPanel({ onOpenReInwardTab }: Props) {
+export function UserLoadingInstructionsPanel({
+  refreshKey = 0,
+  isVisible = true,
+  onAfterContainerFull,
+}: Props) {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [rows, setRows] = useState<InstructionRow[]>([]);
+  const [bundles, setBundles] = useState<InstructionBundle[]>([]);
+  const [hasLoadedOnce, setHasLoadedOnce] = useState(false);
   const [busyConsoleId, setBusyConsoleId] = useState<string | null>(null);
+  const [search, setSearch] = useState("");
+  const [statusFilter, setStatusFilter] = useState<LoadingInstructionStatusFilter>("all");
+  const [sort, setSort] = useState<LoadingInstructionSortKey>("latest_activity");
 
-  const load = useCallback(async () => {
-    const res = await getLoadingInstructionsForUser();
+  const load = useCallback(async (options?: { silent?: boolean }) => {
+    if (!options?.silent) setIsLoading(true);
+    const res = await getLoadingInstructionDashboardForUser();
     if ("error" in res) {
       setError(res.error ?? "Unable to load loading instructions");
-      setRows([]);
+      if (!options?.silent) setBundles([]);
     } else {
       setError(null);
-      setRows((res.instructions ?? []) as InstructionRow[]);
+      setBundles((res.instructions ?? []) as InstructionBundle[]);
+      setHasLoadedOnce(true);
     }
     setIsLoading(false);
   }, []);
 
   useEffect(() => {
-    queueMicrotask(() => {
-      void load();
-    });
-  }, [load]);
+    if (!isVisible && hasLoadedOnce) return;
+    void load(hasLoadedOnce ? { silent: true } : undefined);
+  }, [load, refreshKey, isVisible, hasLoadedOnce]);
+
+  const allOrders = useMemo(
+    () => bundles.flatMap((b) => b.orders),
+    [bundles]
+  );
+
+  const filteredOrders = useMemo(
+    () => filterAndSortOrderRows(allOrders, { search, statusFilter, sort }),
+    [allOrders, search, statusFilter, sort]
+  );
+
+  const ordersByConsole = useMemo(() => {
+    const map = new Map<string, OrderLoadingProgressRow[]>();
+    for (const row of filteredOrders) {
+      const list = map.get(row.console_id) ?? [];
+      list.push(row);
+      map.set(row.console_id, list);
+    }
+    return map;
+  }, [filteredOrders]);
 
   async function handleReportFull(consoleId: string) {
     setBusyConsoleId(consoleId);
@@ -69,11 +118,12 @@ export function UserLoadingInstructionsPanel({ onOpenReInwardTab }: Props) {
       toast.error(res.error);
       return;
     }
-    toast.success("Container full — open Re-inward tab and scan cartons returning to the warehouse (3rd scan).", {
-      duration: 6000,
-    });
+    toast.success(
+      "Container full — open Scan Progress and scan returning cartons (3rd scan, same QR).",
+      { duration: 6000 }
+    );
     void load();
-    onOpenReInwardTab?.();
+    onAfterContainerFull?.();
   }
 
   async function handleReportSpace(consoleId: string) {
@@ -88,13 +138,19 @@ export function UserLoadingInstructionsPanel({ onOpenReInwardTab }: Props) {
     void load();
   }
 
-  if (isLoading) {
+  if (isLoading && !hasLoadedOnce) {
     return (
       <Card className="bg-white border shadow-sm">
         <CardHeader>
           <CardTitle>Loading Instructions</CardTitle>
-          <CardDescription>Loading…</CardDescription>
+          <CardDescription>Loading order and carton status…</CardDescription>
         </CardHeader>
+        <CardContent>
+          <div className="space-y-3 animate-pulse">
+            <div className="h-10 bg-slate-100 rounded-md" />
+            <div className="h-32 bg-slate-100 rounded-md" />
+          </div>
+        </CardContent>
       </Card>
     );
   }
@@ -110,14 +166,14 @@ export function UserLoadingInstructionsPanel({ onOpenReInwardTab }: Props) {
     );
   }
 
-  if (!rows.length) {
+  if (!bundles.length) {
     return (
       <Card className="bg-white border shadow-sm">
         <CardHeader>
           <CardTitle>Loading Instructions</CardTitle>
           <CardDescription>
-            When admin marks your console ready, scan each carton here for outward (2nd scan). After container full,
-            use the <strong>Re-inward</strong> tab for the 3rd scan.
+            When admin marks your console ready, orders appear here. Scan outward (2nd scan) in Scan
+            Progress; after container full, use Scan Progress for returning cartons (3rd scan).
           </CardDescription>
         </CardHeader>
       </Card>
@@ -125,84 +181,74 @@ export function UserLoadingInstructionsPanel({ onOpenReInwardTab }: Props) {
   }
 
   return (
-    <div className="space-y-4">
-      <Card className="bg-white border shadow-sm">
-        <CardHeader>
-          <CardTitle>Loading Instructions</CardTitle>
-          <CardDescription>
-            1st scan = inward · 2nd scan = outward (here) · 3rd scan = re-inward (same QR, fills amber row in Scan Progress)
-          </CardDescription>
+    <div className="space-y-3">
+      <Card className="bg-white border shadow-sm gap-0 py-0">
+        <CardHeader className="px-4 py-2.5 pb-2">
+          <CardTitle className="text-base">Search &amp; filter</CardTitle>
         </CardHeader>
+        <CardContent className="px-4 pt-0 pb-3">
+          <LoadingInstructionFilters
+            search={search}
+            onSearchChange={setSearch}
+            statusFilter={statusFilter}
+            onStatusFilterChange={setStatusFilter}
+            sort={sort}
+            onSortChange={setSort}
+          />
+        </CardContent>
       </Card>
 
-      {rows.map(({ console: cons, orders, stats }) => {
+      {bundles.map(({ console: cons, stats }) => {
         const phase = (cons.loading_phase ?? "open") as LoadingPhase;
-        const s = stats;
         const isBusy = busyConsoleId === cons.id;
+        const consoleOrders = ordersByConsole.get(cons.id) ?? [];
+
+        if (!consoleOrders.length && (search || statusFilter !== "all")) {
+          return null;
+        }
 
         return (
-          <Card key={cons.id} className="bg-white border shadow-sm">
-            <CardHeader className="space-y-2">
-              <div className="flex flex-wrap items-center gap-2 justify-between">
-                <CardTitle className="text-lg">Console {cons.console_number}</CardTitle>
+          <Card key={cons.id} className="bg-white border shadow-sm gap-0 py-0 overflow-hidden">
+            <div className="flex flex-wrap items-center justify-between gap-2 px-3 py-2 border-b border-slate-100 bg-slate-50/40">
+              <div className="flex flex-wrap items-center gap-2 min-w-0">
+                <CardTitle className="text-base font-semibold leading-tight">
+                  Console {cons.console_number}
+                </CardTitle>
                 {phaseBadge(phase)}
               </div>
-              <p className="text-sm text-secondary-muted">
-                Container: {cons.container_number ?? "—"}
-                {cons.carrier ? ` · ${cons.carrier}` : ""}
-              </p>
-              {s ? (
-                <p className="text-xs text-secondary-muted">
-                  Loaded {s.loaded_cartons} · Pending load {s.pending_cartons} · Re-inwarded {s.returned_cartons}
-                </p>
-              ) : null}
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="flex flex-wrap gap-2">
-                {s?.can_report_full ? (
+              <div className="flex flex-wrap gap-1.5 shrink-0">
+                {stats?.can_report_full ? (
                   <Button
                     type="button"
                     variant="destructive"
                     size="sm"
+                    className="h-8"
                     disabled={isBusy}
                     onClick={() => void handleReportFull(cons.id)}
                   >
                     Report container full
                   </Button>
                 ) : null}
-                {s?.can_report_space ? (
+                {stats?.can_report_space ? (
                   <Button
                     type="button"
                     variant="secondary"
                     size="sm"
+                    className="h-8"
                     disabled={isBusy}
                     onClick={() => void handleReportSpace(cons.id)}
                   >
                     Report space available
                   </Button>
                 ) : null}
-                {phase === "full_reported" && onOpenReInwardTab ? (
-                  <Button type="button" size="sm" onClick={onOpenReInwardTab}>
-                    Open Re-inward tab
-                  </Button>
-                ) : null}
               </div>
-
-              {phase === "full_reported" ? (
-                <p className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-lg p-3">
-                  Container is full. Scan cartons again with the same QR for <strong>re-inward</strong> (3rd scan) when
-                  they return to the warehouse. Original inward receipt is unchanged.
-                </p>
-              ) : null}
-
-              <ul className="space-y-2 text-sm">
-                {orders.map((o) => (
-                  <li key={o.id} className="rounded-lg border bg-slate-50 px-3 py-2">
-                    <span className="font-semibold text-primary-dark">{o.shipping_mark || o.id.slice(0, 8)}</span>
-                    <span className="text-secondary-muted"> · {o.total_cartons} cartons</span>
-                  </li>
-                ))}
-              </ul>
+            </div>
+            <CardContent className="px-2 py-2 sm:px-3">
+              <LoadingInstructionOrdersTable
+                rows={consoleOrders}
+                variant="user"
+                compact
+              />
             </CardContent>
           </Card>
         );

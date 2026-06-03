@@ -1,57 +1,81 @@
 "use client";
 
-import { useState } from "react";
+import { Suspense, useCallback, useEffect, useState } from "react";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { logout } from "@/app/actions/auth";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Menu, PackagePlus, History, MapPin, LogOut, Bell, X, QrCode, ClipboardList, RotateCcw } from "lucide-react";
-import { UserReInwardPanel } from "@/components/user/UserReInwardPanel";
+import { Menu, PackagePlus, History, MapPin, LogOut, Bell, X, ClipboardList } from "lucide-react";
 import Image from "next/image";
 import { BookOrderModal } from "@/components/user/BookOrderModal";
 import { OrderHistoryPanel } from "@/components/user/OrderHistoryPanel";
-import { UserScannedStickersPanel } from "@/components/user/UserScannedStickersPanel";
 import { UserScanProgressPanel } from "@/components/user/UserScanProgressPanel";
 import { UserLoadingInstructionsPanel } from "@/components/user/UserLoadingInstructionsPanel";
 import { UsbQrScannerInput } from "@/components/scan/UsbQrScannerInput";
 import { UsbScannerDebugPanel } from "@/components/scan/UsbScannerDebugPanel";
+import {
+  parseUserDashboardTab,
+  type UserDashboardTab,
+} from "@/lib/user-dashboard-tab";
 
 type Props = {
   username: string;
 };
 
-type TabKey = "book" | "history" | "tracking" | "reinward" | "scanned" | "loading";
-
-const tabs: { key: TabKey; label: string; icon: React.ReactNode }[] = [
+const tabs: { key: UserDashboardTab; label: string; icon: React.ReactNode }[] = [
   { key: "book", label: "Book a New Order", icon: <PackagePlus className="h-4 w-4" /> },
   { key: "history", label: "History", icon: <History className="h-4 w-4" /> },
   { key: "tracking", label: "Scan Progress", icon: <MapPin className="h-4 w-4" /> },
-  { key: "reinward", label: "Re-inward", icon: <RotateCcw className="h-4 w-4" /> },
-  { key: "scanned", label: "Scanned Stickers", icon: <QrCode className="h-4 w-4" /> },
   { key: "loading", label: "Loading Instructions", icon: <ClipboardList className="h-4 w-4" /> },
 ];
 
-export function UserDashboardShell({ username }: Props) {
-  const [activeTab, setActiveTab] = useState<TabKey>("book");
+function UserDashboardShellInner({ username }: Props) {
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+
+  const [activeTab, setActiveTab] = useState<UserDashboardTab>(() =>
+    parseUserDashboardTab(searchParams.get("tab"))
+  );
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [isOrderModalOpen, setIsOrderModalOpen] = useState(false);
   const [historyRefreshKey, setHistoryRefreshKey] = useState(0);
   const [scanProgressRefreshKey, setScanProgressRefreshKey] = useState(0);
-  const [loadingInstructionsRefreshKey, setLoadingInstructionsRefreshKey] = useState(0);
-  const [reInwardRefreshKey, setReInwardRefreshKey] = useState(0);
+  const [loadingRefreshKey, setLoadingRefreshKey] = useState(0);
 
-  function selectTab(tab: TabKey) {
+  useEffect(() => {
+    const parsed = parseUserDashboardTab(searchParams.get("tab"));
+    setActiveTab(parsed);
+    const raw = searchParams.get("tab");
+    if (raw === "reinward" || raw === "scanned") {
+      const params = new URLSearchParams(searchParams.toString());
+      params.set("tab", "tracking");
+      router.replace(`${pathname}?${params.toString()}`, { scroll: false });
+    }
+  }, [searchParams, pathname, router]);
+
+  const syncTabToUrl = useCallback(
+    (tab: UserDashboardTab) => {
+      const params = new URLSearchParams(searchParams.toString());
+      if (tab === "book") {
+        params.delete("tab");
+      } else {
+        params.set("tab", tab);
+      }
+      const qs = params.toString();
+      router.replace(qs ? `${pathname}?${qs}` : pathname, { scroll: false });
+    },
+    [pathname, router, searchParams]
+  );
+
+  function selectTab(tab: UserDashboardTab) {
     setActiveTab(tab);
+    syncTabToUrl(tab);
     setIsSidebarOpen(false);
     if (tab === "book") {
       setIsOrderModalOpen(true);
     } else {
       setIsOrderModalOpen(false);
-    }
-    if (tab === "loading") {
-      setLoadingInstructionsRefreshKey((k) => k + 1);
-    }
-    if (tab === "reinward") {
-      setReInwardRefreshKey((k) => k + 1);
     }
   }
 
@@ -133,7 +157,7 @@ export function UserDashboardShell({ username }: Props) {
           ))}
         </div>
         <div className="rounded-xl bg-slate-50 p-4 text-xs text-secondary-muted">
-          View booked orders, live scan progress, loading instructions when your console is ready, and scanned stickers.
+          Book orders, track scan progress, and manage loading when your console is ready.
         </div>
       </aside>
 
@@ -148,7 +172,7 @@ export function UserDashboardShell({ username }: Props) {
       <main className="pt-20 md:pl-72 px-6 md:px-10 pb-10 space-y-6">
         <UsbQrScannerInput
           enabled={!isOrderModalOpen}
-          showCaptureField={activeTab === "tracking" || activeTab === "reinward"}
+          showCaptureField={activeTab === "tracking" || activeTab === "loading"}
         />
         {activeTab === "book" ? (
           <Card className="bg-white border shadow-sm">
@@ -166,18 +190,19 @@ export function UserDashboardShell({ username }: Props) {
           </Card>
         ) : activeTab === "history" ? (
           <OrderHistoryPanel refreshKey={historyRefreshKey} />
-        ) : activeTab === "scanned" ? (
-          <UserScannedStickersPanel />
-        ) : activeTab === "loading" ? (
-          <UserLoadingInstructionsPanel
-            key={loadingInstructionsRefreshKey}
-            onOpenReInwardTab={() => selectTab("reinward")}
-          />
-        ) : activeTab === "reinward" ? (
-          <UserReInwardPanel refreshKey={reInwardRefreshKey} />
         ) : null}
 
-        {/* Keep mounted so USB / broadcast / Supabase listeners stay active on every tab */}
+        <div className={activeTab === "loading" ? undefined : "hidden"} aria-hidden={activeTab !== "loading"}>
+          <UserLoadingInstructionsPanel
+            refreshKey={loadingRefreshKey}
+            isVisible={activeTab === "loading"}
+            onAfterContainerFull={() => {
+              setScanProgressRefreshKey((k) => k + 1);
+              selectTab("tracking");
+            }}
+          />
+        </div>
+
         <div className={activeTab === "tracking" ? undefined : "hidden"} aria-hidden={activeTab !== "tracking"}>
           <UserScanProgressPanel refreshKey={scanProgressRefreshKey} username={username} />
         </div>
@@ -189,8 +214,23 @@ export function UserDashboardShell({ username }: Props) {
         onOrderSaved={() => {
           setHistoryRefreshKey((prev) => prev + 1);
           setScanProgressRefreshKey((prev) => prev + 1);
+          setLoadingRefreshKey((prev) => prev + 1);
         }}
       />
     </div>
+  );
+}
+
+export function UserDashboardShell(props: Props) {
+  return (
+    <Suspense
+      fallback={
+        <div className="min-h-screen bg-white flex items-center justify-center text-secondary-muted">
+          Loading dashboard…
+        </div>
+      }
+    >
+      <UserDashboardShellInner {...props} />
+    </Suspense>
   );
 }

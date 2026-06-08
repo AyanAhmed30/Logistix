@@ -9,6 +9,8 @@ import {
   rejectInquiryConfirmation,
   type InquiryConfirmationWithLead,
 } from "@/app/actions/inquiry_confirmations";
+import { InquiryAttachmentList } from "@/components/inquiry/InquiryAttachmentList";
+import { collectInquiryAttachmentUrls } from "@/lib/inquiry-attachments";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -360,86 +362,25 @@ export function InquiryConfirmationPanel() {
 
             <div className="border-t" />
 
-            {/* Images - All 3 sections */}
-            <div>
-              <h3 className="text-sm font-semibold text-slate-700 mb-3 flex items-center gap-1">
-                <ImageIcon className="h-4 w-4" /> Images
+            <div className="space-y-4">
+              <h3 className="text-sm font-semibold text-slate-700 flex items-center gap-1">
+                <ImageIcon className="h-4 w-4" /> Attachments
               </h3>
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                {/* Original Image */}
-                <div className="space-y-1.5">
-                  <label className="text-xs text-slate-500 font-medium">Original Inquiry Image</label>
-                  {c.original_image_url ? (
-                    <div className="border rounded-lg p-2">
-                      <img
-                        src={c.original_image_url}
-                        alt="Original inquiry"
-                        className="max-h-48 rounded object-contain w-full cursor-zoom-in"
-                        onClick={() => setImagePreview({ url: c.original_image_url || "", title: "Original Inquiry Image" })}
-                      />
-                    </div>
-                  ) : (
-                    <div className="border-2 border-dashed border-slate-200 rounded-lg p-6 text-center">
-                      <ImageIcon className="h-8 w-8 mx-auto text-slate-300 mb-1" />
-                      <p className="text-xs text-slate-400">No image</p>
-                    </div>
-                  )}
-                </div>
-
-                {/* Additional Image 1 */}
-                <div className="space-y-1.5">
-                  <label className="text-xs text-slate-500 font-medium">Additional Image 1</label>
-                  {c.additional_image_1_url ? (
-                    <div className="border rounded-lg p-2">
-                      <img
-                        src={c.additional_image_1_url}
-                        alt="Additional 1"
-                        className="max-h-48 rounded object-contain w-full cursor-zoom-in"
-                        onClick={() => setImagePreview({ url: c.additional_image_1_url || "", title: "Additional Image 1" })}
-                      />
-                    </div>
-                  ) : (
-                    <div className="border-2 border-dashed border-slate-200 rounded-lg p-6 text-center">
-                      <ImageIcon className="h-8 w-8 mx-auto text-slate-300 mb-1" />
-                      <p className="text-xs text-slate-400">No image</p>
-                    </div>
-                  )}
-                </div>
-
-                {/* Additional Image 2 */}
-                <div className="space-y-1.5">
-                  <label className="text-xs text-slate-500 font-medium">Additional Image 2</label>
-                  {c.additional_image_2_url ? (
-                    <div className="border rounded-lg p-2">
-                      <img
-                        src={c.additional_image_2_url}
-                        alt="Additional 2"
-                        className="max-h-48 rounded object-contain w-full cursor-zoom-in"
-                        onClick={() => setImagePreview({ url: c.additional_image_2_url || "", title: "Additional Image 2" })}
-                      />
-                    </div>
-                  ) : (
-                    <div className="border-2 border-dashed border-slate-200 rounded-lg p-6 text-center">
-                      <ImageIcon className="h-8 w-8 mx-auto text-slate-300 mb-1" />
-                      <p className="text-xs text-slate-400">No image</p>
-                    </div>
-                  )}
-                </div>
-                {/* Sales Additional Images */}
-                {(Array.isArray(c.sales_additional_image_urls) ? c.sales_additional_image_urls : []).map((url, idx) => (
-                  <div className="space-y-1.5" key={`sales-extra-${idx}`}>
-                    <label className="text-xs text-slate-500 font-medium">Sales Image {idx + 1}</label>
-                    <div className="border rounded-lg p-2">
-                      <img
-                        src={url}
-                        alt={`Sales image ${idx + 1}`}
-                        className="max-h-48 rounded object-contain w-full cursor-zoom-in"
-                        onClick={() => setImagePreview({ url, title: `Sales Image ${idx + 1}` })}
-                      />
-                    </div>
-                  </div>
-                ))}
-              </div>
+              <InquiryAttachmentList
+                urls={collectInquiryAttachmentUrls(
+                  c.original_image_url,
+                  c.sales_additional_image_urls
+                )}
+                title="Sales Attachments"
+                onPreviewImage={(url, title) => setImagePreview({ url, title })}
+              />
+              <InquiryAttachmentList
+                urls={[c.additional_image_1_url, c.additional_image_2_url].filter(
+                  (url): url is string => typeof url === "string" && url.trim().length > 0
+                )}
+                title="Operations Attachments"
+                onPreviewImage={(url, title) => setImagePreview({ url, title })}
+              />
             </div>
 
             <div className="border-t" />

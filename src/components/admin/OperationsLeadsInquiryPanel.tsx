@@ -25,6 +25,8 @@ import {
   getConfirmationsForInquiry,
   type InquiryConfirmation,
 } from "@/app/actions/inquiry_confirmations";
+import { InquiryAttachmentList } from "@/components/inquiry/InquiryAttachmentList";
+import { collectInquiryAttachmentUrls } from "@/lib/inquiry-attachments";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -621,30 +623,25 @@ export function OperationsLeadsInquiryPanel({
 
   // ─── Image handling helpers ───────────────────────────────────────
 
+  const isSupportedAttachmentFile = useCallback((file: File) => {
+    const ext = (file.name.split(".").pop() || "").toLowerCase();
+    const imageExts = new Set(["jpg", "jpeg", "png", "gif", "webp", "bmp", "svg", "heic", "heif", "avif"]);
+    const docExts = new Set(["pdf", "doc", "docx", "xls", "xlsx", "txt", "csv"]);
+    if (file.type?.startsWith("image/") || imageExts.has(ext)) return true;
+    if (file.type === "application/pdf" || ext === "pdf") return true;
+    if (file.type.includes("word") || docExts.has(ext)) return true;
+    if (file.type.includes("excel") || file.type.includes("spreadsheet") || docExts.has(ext)) return true;
+    if (file.type.startsWith("text/")) return true;
+    return false;
+  }, []);
+
   const extractImageFileFromFileList = useCallback((files: FileList | null | undefined) => {
     if (!files || files.length === 0) return null;
-    const imageExts = new Set([
-      "jpg",
-      "jpeg",
-      "png",
-      "gif",
-      "webp",
-      "bmp",
-      "svg",
-      "heic",
-      "heif",
-      "avif",
-    ]);
-    const isImageLikeFile = (file: File) => {
-      if (file.type?.startsWith("image/")) return true;
-      const ext = (file.name.split(".").pop() || "").toLowerCase();
-      return imageExts.has(ext);
-    };
     for (let i = 0; i < files.length; i++) {
-      if (isImageLikeFile(files[i])) return files[i];
+      if (isSupportedAttachmentFile(files[i])) return files[i];
     }
     return null;
-  }, []);
+  }, [isSupportedAttachmentFile]);
 
   const extractImageFileFromItems = useCallback((items: DataTransferItemList | null | undefined) => {
     if (!items) return null;
@@ -666,23 +663,33 @@ export function OperationsLeadsInquiryPanel({
   function processImageUpload(file: File | null, slot: 1 | 2) {
     if (!file) return false;
     const ext = (file.name.split(".").pop() || "").toLowerCase();
-    const allowedExts = new Set(["jpg", "jpeg", "png", "gif", "webp", "bmp", "svg", "heic", "heif", "avif"]);
-    const isImageLike = file.type?.startsWith("image/") || allowedExts.has(ext);
-    if (!isImageLike) {
-      toast.error("Please select an image file.");
+    const imageExts = new Set(["jpg", "jpeg", "png", "gif", "webp", "bmp", "svg", "heic", "heif", "avif"]);
+    const isImageLike = file.type?.startsWith("image/") || imageExts.has(ext);
+    if (!isSupportedAttachmentFile(file)) {
+      toast.error("Unsupported file type.");
       return false;
     }
     if (file.size > 5 * 1024 * 1024) {
-      toast.error("Image must be less than 5 MB.");
+      toast.error("File must be less than 5 MB.");
       return false;
     }
 
-    // Keep the selected file immediately so submit does not depend on FileReader timing.
     if (slot === 1) {
       setAdditionalImage1(file);
     } else {
       setAdditionalImage2(file);
     }
+
+    if (!isImageLike) {
+      const label = `doc://${encodeURIComponent(file.name)}`;
+      if (slot === 1) {
+        setAdditionalImage1Preview(label);
+      } else {
+        setAdditionalImage2Preview(label);
+      }
+      return true;
+    }
+
     const reader = new FileReader();
     reader.onload = (e) => {
       const url = e.target?.result as string;
@@ -693,7 +700,7 @@ export function OperationsLeadsInquiryPanel({
       }
     };
     reader.onerror = () => {
-      toast.error("Unable to read selected image. Please try another file.");
+      toast.error("Unable to read selected file. Please try another file.");
     };
     reader.readAsDataURL(file);
     return true;
@@ -763,7 +770,7 @@ export function OperationsLeadsInquiryPanel({
     setActiveUploadSlot(slot);
     const file = extractImageFileFromFileList(e.target.files);
     if (!file && e.target.files && e.target.files.length > 0) {
-      toast.error("Selected file is not a supported image format.");
+      toast.error("Selected file is not a supported attachment format.");
     } else {
       processImageUpload(file, slot);
     }
@@ -929,7 +936,7 @@ export function OperationsLeadsInquiryPanel({
     return (
       <div className="space-y-2">
         <label className="text-xs font-medium text-slate-600">
-          Additional Image {slot}
+          Operations Attachment {slot}
         </label>
         {preview ? (
           <div
@@ -943,12 +950,29 @@ export function OperationsLeadsInquiryPanel({
             className="border rounded-lg p-2 space-y-2 focus:outline-none focus:ring-2 focus:ring-teal-500/30"
           >
             <div className="relative inline-block">
-              <img
-                src={preview}
-                alt={`Additional ${slot}`}
-                className="max-h-40 rounded object-contain cursor-zoom-in"
-                onClick={() => onPreviewClick(preview)}
-              />
+              {preview.startsWith("doc://") ? (
+                <div className="text-sm text-slate-700 p-2">
+                  <FileText className="h-5 w-5 text-teal-600 mb-1" />
+                  <div className="font-medium truncate">
+                    {decodeURIComponent(preview.replace(/^doc:\/\//, ""))}
+                  </div>
+                </div>
+              ) : preview.startsWith("data:image/") || /\.(jpe?g|png|gif|webp)(\?|$)/i.test(preview) ? (
+                <img
+                  src={preview}
+                  alt={`Additional ${slot}`}
+                  className="max-h-40 rounded object-contain cursor-zoom-in"
+                  onClick={() => onPreviewClick(preview)}
+                />
+              ) : (
+                <button
+                  type="button"
+                  className="text-left text-sm text-teal-700 hover:underline max-w-full truncate"
+                  onClick={() => onPreviewClick(preview)}
+                >
+                  {preview.split("/").pop()?.split("?")[0] || `Attachment ${slot}`}
+                </button>
+              )}
               <button
                 type="button"
                 onClick={(e) => {
@@ -1001,7 +1025,7 @@ export function OperationsLeadsInquiryPanel({
           id={inputId}
           ref={inputRef}
           type="file"
-          accept="image/*"
+          accept="image/*,application/pdf,.doc,.docx,.xlsx,.xls,.txt,.csv"
           className="absolute -left-[9999px] h-px w-px opacity-0"
           onChange={(e) => handleFileInputChange(e, slot)}
         />
@@ -1015,12 +1039,10 @@ export function OperationsLeadsInquiryPanel({
 
   if (view === "detail" && selectedInquiry) {
     const inq = selectedInquiry;
-    const salesInquiryImages = [
-      ...(inq.image_url ? [inq.image_url] : []),
-      ...((Array.isArray(inq.additional_image_urls) ? inq.additional_image_urls : []).filter(
-        (url): url is string => typeof url === "string" && url.trim().length > 0
-      )),
-    ];
+    const salesAttachmentUrls = collectInquiryAttachmentUrls(
+      inq.image_url,
+      inq.additional_image_urls
+    );
 
     const toNum = (v: string | null | undefined) => {
       const n = parseFloat(String(v ?? "").replace(/,/g, ""));
@@ -1573,25 +1595,12 @@ export function OperationsLeadsInquiryPanel({
             {/* Separator */}
             <div className="border-t" />
 
-            {/* Images */}
-            {salesInquiryImages.length > 0 && (
-              <div>
-                <label className="text-xs text-slate-500 font-medium flex items-center gap-1">
-                  <ImageIcon className="h-3.5 w-3.5" /> Attached Image{salesInquiryImages.length > 1 ? "s" : ""}
-                </label>
-                <div className="mt-2 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-                  {salesInquiryImages.map((img, idx) => (
-                    <div key={`${img.slice(0, 32)}-${idx}`} className="border rounded-lg p-2">
-                      <img
-                        src={img}
-                        alt={`Inquiry attachment ${idx + 1}`}
-                        className="max-h-56 w-full rounded object-contain cursor-zoom-in"
-                        onClick={() => openImagePreview(img, `Inquiry Image ${idx + 1}`)}
-                      />
-                    </div>
-                  ))}
-                </div>
-              </div>
+            {salesAttachmentUrls.length > 0 && (
+              <InquiryAttachmentList
+                urls={salesAttachmentUrls}
+                title={`Sales Attachment${salesAttachmentUrls.length > 1 ? "s" : ""}`}
+                onPreviewImage={openImagePreview}
+              />
             )}
 
             {/* Other Details (read-only when not editing) */}
@@ -1968,37 +1977,26 @@ export function OperationsLeadsInquiryPanel({
               )}
 
               <div className="border-t pt-4" />
-              <h4 className="text-sm font-semibold text-slate-700">Images</h4>
+              <h4 className="text-sm font-semibold text-slate-700">Attachments</h4>
 
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                <div className="space-y-2">
-                  <label className="text-xs font-medium text-slate-600">
-                    Original Inquiry Image
-                  </label>
-                  {salesInquiryImages.length > 0 ? (
-                    <div className="space-y-2">
-                      <div className="grid grid-cols-1 gap-2">
-                        {salesInquiryImages.map((img, idx) => (
-                          <div key={`${img.slice(0, 32)}-form-${idx}`} className="border rounded-lg p-2">
-                            <img
-                              src={img}
-                              alt={`Original inquiry ${idx + 1}`}
-                              className="max-h-40 rounded object-contain w-full cursor-zoom-in"
-                              onClick={() => openImagePreview(img, `Original Inquiry Image ${idx + 1}`)}
-                            />
-                          </div>
-                        ))}
-                      </div>
-                      <p className="text-[10px] text-slate-400 mt-1 text-center">Read-only</p>
-                    </div>
-                  ) : (
-                    <div className="border-2 border-dashed border-slate-200 rounded-lg p-6 text-center">
-                      <ImageIcon className="h-8 w-8 mx-auto text-slate-300 mb-2" />
-                      <p className="text-xs text-slate-400">No image attached</p>
-                    </div>
-                  )}
-                </div>
+              <div className="grid grid-cols-1 gap-4">
+                {salesAttachmentUrls.length > 0 ? (
+                  <div className="space-y-2">
+                    <InquiryAttachmentList
+                      urls={salesAttachmentUrls}
+                      title="Sales Attachments (read-only)"
+                      compact
+                      onPreviewImage={openImagePreview}
+                    />
+                  </div>
+                ) : (
+                  <div className="border-2 border-dashed border-slate-200 rounded-lg p-6 text-center">
+                    <ImageIcon className="h-8 w-8 mx-auto text-slate-300 mb-2" />
+                    <p className="text-xs text-slate-400">No sales attachments</p>
+                  </div>
+                )}
 
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <ImageUploadSection
                   slot={1}
                   preview={additionalImage1Preview}
@@ -2014,6 +2012,7 @@ export function OperationsLeadsInquiryPanel({
                   inputRef={img2Ref}
                   onPreviewClick={(url) => openImagePreview(url, "Additional Image 2")}
                 />
+                </div>
               </div>
             </div>
 

@@ -3,6 +3,7 @@
 import { createAdminClient } from '@/utils/supabase/server';
 import { getSession } from '@/lib/auth/session';
 import { revalidatePath } from 'next/cache';
+import { computeCalculatorTotals } from '@/lib/inquiry-calculator';
 
 export type ConfirmationStatus = 'pending' | 'approved' | 'rejected';
 
@@ -236,6 +237,14 @@ export async function submitInquiryForConfirmation(data: {
       performed_by: session.username || 'operations',
     }]);
 
+    await supabase
+      .from('lead_inquiries')
+      .update({
+        calculator_values: data.calculator_values || {},
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', data.inquiry_id);
+
     // Notify the Sales Agent that inquiry was forwarded to Admin for approval.
     const { data: lead } = await supabase
       .from('leads')
@@ -468,16 +477,26 @@ export async function approveInquiryConfirmation(confirmationId: string) {
 
     if (error) return { error: error.message };
 
+    const approvedCalculatorValues =
+      confirmationData.calculator_values && typeof confirmationData.calculator_values === 'object'
+        ? { ...(confirmationData.calculator_values as Record<string, string>) }
+        : {};
+    const approvedHsCode =
+      (confirmationData.hs_code || '').trim() ||
+      (approvedCalculatorValues.hs_code || '').trim();
+    if (approvedHsCode) {
+      approvedCalculatorValues.hs_code = approvedHsCode;
+    }
+
     await supabase
       .from('lead_inquiries')
       .update({
         approval_status: 'approved',
         approved_at: data.reviewed_at || new Date().toISOString(),
+        calculator_values: Object.keys(approvedCalculatorValues).length > 0 ? approvedCalculatorValues : null,
         updated_at: new Date().toISOString(),
       })
       .eq('id', data.inquiry_id);
-
-    // No need to create quotation - calculator values are sufficient
 
     // Notify Sales Agent + Operations submitter about approval.
     const { data: lead } = await supabase
@@ -595,6 +614,51 @@ export async function rejectInquiryConfirmation(confirmationId: string, rejectio
 
 // ─── Upload additional image ────────────────────────────────────────
 
+export async function getApprovedPricingForInquiryIds(inquiryIds: string[]) {
+  try {
+    const session = await getSession();
+    if (!session) {
+      return { error: 'Unauthorized' };
+    }
+
+    const ids = [...new Set(inquiryIds.filter(Boolean))];
+    if (ids.length === 0) {
+      return { pricing: {} as Record<string, { quotation_number: string; unit_price: number; total_amount: number; notes: string | null }> };
+    }
+
+    const supabase = await createAdminClient();
+    const { data, error } = await supabase
+      .from('inquiry_confirmations')
+      .select('inquiry_id, calculator_values, total_weight, quantity, status, created_at')
+      .in('inquiry_id', ids)
+      .eq('status', 'approved')
+      .order('created_at', { ascending: false });
+
+    if (error) return { error: error.message };
+
+    const pricing: Record<string, { quotation_number: string; unit_price: number; total_amount: number; notes: string | null }> = {};
+    for (const row of data || []) {
+      const inquiryId = String(row.inquiry_id || '');
+      if (!inquiryId || pricing[inquiryId]) continue;
+      const totals = computeCalculatorTotals(
+        row.calculator_values as Record<string, unknown> | null,
+        { weightKg: row.total_weight, quantity: row.quantity }
+      );
+      if (!totals) continue;
+      pricing[inquiryId] = {
+        quotation_number: 'APPROVED',
+        unit_price: totals.unitPrice,
+        total_amount: totals.totalAmount,
+        notes: null,
+      };
+    }
+
+    return { pricing };
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };
+  }
+}
+
 export async function uploadConfirmationImage(file: File, label: string) {
   try {
     const session = await getSession();
@@ -608,10 +672,13 @@ export async function uploadConfirmationImage(file: File, label: string) {
 
     const { error: uploadError } = await supabase.storage
       .from('inquiry-images')
-      .upload(filePath, file);
+      .upload(filePath, file, {
+        contentType: file.type || 'application/octet-stream',
+        upsert: false,
+      });
 
     if (uploadError) {
-      return { error: 'Image upload failed. Please try again.' };
+      return { error: uploadError.message || 'File upload failed. Please try again.' };
     }
 
     const { data: urlData } = supabase.storage

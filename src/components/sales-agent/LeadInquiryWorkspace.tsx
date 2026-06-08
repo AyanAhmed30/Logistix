@@ -35,6 +35,7 @@ import {
   updateInquiryForAccounting,
   getQuotationsForInquiry,
   getLatestQuotationPricingByInquiryIds,
+  uploadInquiryAttachment,
   getLeadChatMessages,
   sendLeadChatMessage,
   type LeadInquiry,
@@ -42,7 +43,15 @@ import {
   type InquiryQuotation,
   type LeadChatMessage,
 } from "@/app/actions/inquiries";
-import { getConfirmationsForInquiry } from "@/app/actions/inquiry_confirmations";
+import {
+  getApprovedPricingForInquiryIds,
+  getConfirmationsForInquiry,
+} from "@/app/actions/inquiry_confirmations";
+import {
+  CALCULATOR_FIELD_LABELS,
+  computeCalculatorTotals,
+} from "@/lib/inquiry-calculator";
+import { classifyInquiryAttachment } from "@/lib/inquiry-attachments";
 import {
   Dialog,
   DialogContent,
@@ -79,6 +88,30 @@ function formatInquiryMoney(n: number) {
   return `Rs. ${Number(n).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
+function getInquiryPricingForDisplay(
+  inq: LeadInquiry,
+  pricingByInquiryId: Record<
+    string,
+    { quotation_number: string; unit_price: number; total_amount: number; notes: string | null }
+  >
+) {
+  const fromState = pricingByInquiryId[inq.id];
+  if (fromState) return fromState;
+
+  const totals = computeCalculatorTotals(inq.calculator_values, {
+    weightKg: inq.total_weight,
+    quantity: inq.quantity,
+  });
+  if (!totals) return null;
+
+  return {
+    quotation_number: "APPROVED",
+    unit_price: totals.unitPrice,
+    total_amount: totals.totalAmount,
+    notes: null,
+  };
+}
+
 function isDecimalString(value: string) {
   if (!value.trim()) return true;
   return /^(?:\d+|\d+\.\d+|\d*\.\d+)$/.test(value.trim());
@@ -106,47 +139,28 @@ function buildApprovedInquiryDetailText(
   lines.push("");
   lines.push("FINAL RATES (FROM ADMIN)");
   
-  // Helper function to parse amount from calculator values
-  const parseAmount = (value: unknown) => {
-    if (!value) return 0;
-    const cleaned = String(value).replace(/[^0-9.,]/g, '').replace(/,/g, '');
-    return parseFloat(cleaned) || 0;
-  };
-  
-  // Check calculator values first for rates
   if (calculatorValues && Object.keys(calculatorValues).length > 0) {
-    let totalAmount = 0;
-    let unitPrice = 0;
-    
-    // Extract total amount from calculator
-    if (calculatorValues['PKR Value']) {
-      totalAmount = parseAmount(calculatorValues['PKR Value']);
-    } else if (calculatorValues['Assessed Value']) {
-      totalAmount = parseAmount(calculatorValues['Assessed Value']);
-    } else if (calculatorValues['Total Duty Cost']) {
-      totalAmount = parseAmount(calculatorValues['Total Duty Cost']);
-    }
-    
-    // Calculate unit price
-    const quantity = parseFloat(inq.quantity || '1');
-    if (quantity > 0 && totalAmount > 0) {
-      unitPrice = totalAmount / quantity;
-    }
-    
-    if (totalAmount > 0) {
+    const totals = computeCalculatorTotals(calculatorValues, {
+      weightKg: inq.total_weight,
+      quantity: inq.quantity,
+    });
+
+    if (totals && totals.totalAmount > 0) {
       lines.push(`Product / service: ${inq.product_name?.trim() || "—"}`);
       lines.push(`Quantity: ${inq.quantity || "1"}`);
-      if (unitPrice > 0) {
-        lines.push(`Unit price: ${formatInquiryMoney(unitPrice)}`);
+      lines.push(`Unit price: ${formatInquiryMoney(totals.unitPrice)}`);
+      lines.push(`Total amount: ${formatInquiryMoney(totals.totalAmount)}`);
+      lines.push(`Total duty cost: ${formatInquiryMoney(totals.totalDutyCost)}`);
+      if (totals.costPerWeight > 0 && inq.total_weight?.trim()) {
+        lines.push(`Cost per kg: ${totals.costPerWeight.toFixed(6)}`);
       }
-      lines.push(`Total amount: ${formatInquiryMoney(totalAmount)}`);
-      
-      // Show detailed calculator breakdown
+
       lines.push("");
       lines.push("RATE BREAKDOWN:");
       for (const [k, v] of Object.entries(calculatorValues)) {
-        if (v !== null && v !== undefined && String(v).trim() !== '' && String(v) !== '0') {
-          lines.push(`${k}: ${v}`);
+        if (v !== null && v !== undefined && String(v).trim() !== "" && String(v) !== "0") {
+          const label = CALCULATOR_FIELD_LABELS[k] || k.replace(/_/g, " ");
+          lines.push(`${label}: ${v}`);
         }
       }
       return lines.join("\n");
@@ -302,12 +316,25 @@ export function LeadInquiryWorkspace({
           .filter((x) => salesInquiryIsApproved(x, nextApprovedFallback))
           .map((x) => x.id);
         if (approvedInquiryIds.length > 0) {
-          const pricingResult = await getLatestQuotationPricingByInquiryIds(approvedInquiryIds);
-          if (!("error" in pricingResult)) {
-            setPricingByInquiryId(pricingResult.pricing || {});
-          } else {
-            setPricingByInquiryId({});
+          const [quotationPricingResult, confirmationPricingResult] = await Promise.all([
+            getLatestQuotationPricingByInquiryIds(approvedInquiryIds),
+            getApprovedPricingForInquiryIds(approvedInquiryIds),
+          ]);
+          const mergedPricing: Record<
+            string,
+            { quotation_number: string; unit_price: number; total_amount: number; notes: string | null }
+          > = {};
+          if (!("error" in quotationPricingResult)) {
+            Object.assign(mergedPricing, quotationPricingResult.pricing || {});
           }
+          if (!("error" in confirmationPricingResult)) {
+            for (const [inquiryId, pricing] of Object.entries(confirmationPricingResult.pricing || {})) {
+              if (!mergedPricing[inquiryId]) {
+                mergedPricing[inquiryId] = pricing;
+              }
+            }
+          }
+          setPricingByInquiryId(mergedPricing);
         } else {
           setPricingByInquiryId({});
         }
@@ -438,15 +465,20 @@ export function LeadInquiryWorkspace({
 
   // Handle all file types (images and documents)
   const handleFiles = useCallback(async (files: File[]) => {
+    if (!lead?.id) {
+      toast.error("Lead must be saved before uploading attachments.");
+      return;
+    }
+
     const allowedTypes = [
-      'image/', // All image types
-      'application/pdf',
-      'application/msword',
-      'application/vnd.openxmlformats-officedocument.wordprocessingml.document', // .docx
-      'application/vnd.ms-excel',
-      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', // .xlsx
-      'text/plain', // .txt
-      'text/csv'
+      "image/",
+      "application/pdf",
+      "application/msword",
+      "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      "application/vnd.ms-excel",
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      "text/plain",
+      "text/csv",
     ];
 
     const validFiles = files.filter((file) => {
@@ -454,13 +486,14 @@ export function LeadInquiryWorkspace({
         toast.error(`"${file.name}" is larger than 5MB`);
         return false;
       }
-      
-      const isAllowedType = allowedTypes.some(type => 
-        file.type.startsWith(type) || 
-        (type === 'application/msword' && file.name.toLowerCase().endsWith('.doc')) ||
-        (type === 'application/vnd.ms-excel' && file.name.toLowerCase().endsWith('.xls'))
+
+      const isAllowedType = allowedTypes.some(
+        (type) =>
+          file.type.startsWith(type) ||
+          (type === "application/msword" && file.name.toLowerCase().endsWith(".doc")) ||
+          (type === "application/vnd.ms-excel" && file.name.toLowerCase().endsWith(".xls"))
       );
-      
+
       if (!isAllowedType) {
         toast.error(`"${file.name}" is not a supported file type`);
         return false;
@@ -471,33 +504,38 @@ export function LeadInquiryWorkspace({
     if (validFiles.length === 0) return;
 
     try {
-      const fileDataPromises = validFiles.map(async (file) => {
-        if (file.type.startsWith("image/")) {
-          // For images, create data URL for preview
-          return await readImageAsDataUrl(file);
-        } else {
-          // For documents, create a file representation
-          return `data:${file.type};name=${encodeURIComponent(file.name)};size=${file.size}`;
+      const uploadedUrls: string[] = [];
+      for (const file of validFiles) {
+        const uploadResult = await uploadInquiryAttachment(lead.id, file);
+        if ("error" in uploadResult || !uploadResult.url) {
+          if (file.type.startsWith("image/")) {
+            uploadedUrls.push(await readImageAsDataUrl(file));
+          } else {
+            toast.error(`Failed to upload "${file.name}": ${uploadResult.error || "Unknown error"}`);
+          }
+          continue;
         }
-      });
-      
-      const fileData = await Promise.all(fileDataPromises);
-      setImageDataList((prev) => [...prev, ...fileData.filter((data) => data.length > 0)]);
-      
-      const documentCount = validFiles.filter(f => !f.type.startsWith("image/")).length;
-      const imageCount = validFiles.filter(f => f.type.startsWith("image/")).length;
-      
+        uploadedUrls.push(uploadResult.url);
+      }
+
+      if (uploadedUrls.length === 0) return;
+
+      setImageDataList((prev) => [...prev, ...uploadedUrls]);
+
+      const documentCount = validFiles.filter((f) => !f.type.startsWith("image/")).length;
+      const imageCount = validFiles.filter((f) => f.type.startsWith("image/")).length;
+
       if (documentCount > 0 && imageCount > 0) {
-        toast.success(`Added ${imageCount} image(s) and ${documentCount} document(s)`);
+        toast.success(`Uploaded ${imageCount} image(s) and ${documentCount} document(s)`);
       } else if (documentCount > 0) {
-        toast.success(`Added ${documentCount} document(s)`);
-      } else if (imageCount > 0) {
-        toast.success(`Added ${imageCount} image(s)`);
+        toast.success(`Uploaded ${documentCount} document(s)`);
+      } else {
+        toast.success(`Uploaded ${imageCount} image(s)`);
       }
     } catch {
       toast.error("Failed to process selected files");
     }
-  }, [readImageAsDataUrl]);
+  }, [lead?.id, readImageAsDataUrl]);
 
   // Global paste handler for Ctrl+V image paste
   useEffect(() => {
@@ -555,23 +593,29 @@ export function LeadInquiryWorkspace({
     setImageDataList((prev) => prev.filter((_, i) => i !== index));
   }
 
-  // Helper function to check if file data is an image
   function isImageData(data: string): boolean {
-    return data.startsWith('data:image/');
+    return classifyInquiryAttachment(data).kind === "image";
   }
 
-  // Helper function to extract document info from data string
-  function getDocumentInfo(data: string): { name: string; size: number; type: string } | null {
-    if (isImageData(data)) return null;
-    
-    const match = data.match(/^data:([^;]+);name=([^;]+);size=(\d+)$/);
-    if (!match) return null;
-    
-    const [, type, encodedName, sizeStr] = match;
-    const name = decodeURIComponent(encodedName);
-    const size = parseInt(sizeStr, 10);
-    
-    return { name, size, type };
+  function getAttachmentDisplayInfo(data: string) {
+    const info = classifyInquiryAttachment(data);
+    if (info.kind === "image") return null;
+    if (info.kind === "legacy_meta") {
+      return {
+        name: info.filename,
+        size: 0,
+        type: info.mimeType || "file",
+        legacyMissing: true,
+        url: null as string | null,
+      };
+    }
+    return {
+      name: info.filename,
+      size: 0,
+      type: info.mimeType || "file",
+      legacyMissing: false,
+      url: info.url,
+    };
   }
 
   // Helper function to get file icon based on type
@@ -581,13 +625,6 @@ export function LeadInquiryWorkspace({
     if (type.includes('excel') || type.includes('sheet')) return '📊';
     if (type.includes('text')) return '📃';
     return '📎';
-  }
-
-  // Helper function to format file size
-  function formatFileSize(bytes: number): string {
-    if (bytes < 1024) return bytes + ' B';
-    if (bytes < 1024 * 1024) return Math.round(bytes / 1024) + ' KB';
-    return Math.round(bytes / (1024 * 1024)) + ' MB';
   }
 
   function isIntegerString(value: string) {
@@ -776,16 +813,21 @@ export function LeadInquiryWorkspace({
           }
         }
         
-        // Check if we already have pricing data for this inquiry
-        let pricingData = pricingByInquiryId[inq.id];
+        let pricingData:
+          | { quotation_number: string; unit_price: number; total_amount: number; notes: string | null }
+          | undefined = pricingByInquiryId[inq.id];
         
         // If no pricing data in state, try to fetch it specifically for this inquiry
         if (!pricingData) {
-          const pricingResult = await getLatestQuotationPricingByInquiryIds([inq.id]);
-          if (!("error" in pricingResult) && pricingResult.pricing && pricingResult.pricing[inq.id]) {
-            pricingData = pricingResult.pricing[inq.id];
-            // Update the state with the newly fetched pricing
-            setPricingByInquiryId(prev => ({ ...prev, [inq.id]: pricingData! }));
+          const [quotationPricingResult, confirmationPricingResult] = await Promise.all([
+            getLatestQuotationPricingByInquiryIds([inq.id]),
+            getApprovedPricingForInquiryIds([inq.id]),
+          ]);
+          pricingData =
+            (!("error" in quotationPricingResult) ? quotationPricingResult.pricing?.[inq.id] : undefined) ||
+            (!("error" in confirmationPricingResult) ? confirmationPricingResult.pricing?.[inq.id] : undefined);
+          if (pricingData) {
+            setPricingByInquiryId((prev) => ({ ...prev, [inq.id]: pricingData! }));
           }
         }
         
@@ -1371,7 +1413,7 @@ export function LeadInquiryWorkspace({
                   <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
                     {imageDataList.map((fileData, idx) => {
                       const isImage = isImageData(fileData);
-                      const docInfo = !isImage ? getDocumentInfo(fileData) : null;
+                      const docInfo = !isImage ? getAttachmentDisplayInfo(fileData) : null;
                       
                       return (
                         <div key={`${fileData.slice(0, 30)}-${idx}`} className="relative group">
@@ -1383,16 +1425,25 @@ export function LeadInquiryWorkspace({
                                 className="w-full h-full rounded-md object-cover"
                               />
                             ) : docInfo ? (
-                              <div className="text-center p-2">
+                              <div className="text-center p-2 w-full">
                                 <div className="text-4xl mb-2">
                                   {getFileIcon(docInfo.type)}
                                 </div>
                                 <div className="text-xs font-semibold text-gray-700 truncate mb-1">
                                   {docInfo.name}
                                 </div>
-                                <div className="text-xs text-gray-500">
-                                  {formatFileSize(docInfo.size)}
-                                </div>
+                                {docInfo.legacyMissing ? (
+                                  <div className="text-[10px] text-amber-700">Re-upload required</div>
+                                ) : docInfo.url ? (
+                                  <a
+                                    href={docInfo.url}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="text-[10px] text-blue-600 hover:underline"
+                                  >
+                                    Download
+                                  </a>
+                                ) : null}
                               </div>
                             ) : (
                               <div className="text-center p-2">
@@ -1440,7 +1491,7 @@ export function LeadInquiryWorkspace({
               <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
                 {imageDataList.map((fileData, idx) => {
                   const isImage = isImageData(fileData);
-                  const docInfo = !isImage ? getDocumentInfo(fileData) : null;
+                  const docInfo = !isImage ? getAttachmentDisplayInfo(fileData) : null;
                   
                   return (
                     <div key={`${fileData.slice(0, 30)}-${idx}`} className="aspect-square border-2 border-gray-200 rounded-lg p-2 bg-white flex items-center justify-center">
@@ -1451,16 +1502,25 @@ export function LeadInquiryWorkspace({
                           className="w-full h-full rounded-md object-cover"
                         />
                       ) : docInfo ? (
-                        <div className="text-center p-2">
+                        <div className="text-center p-2 w-full">
                           <div className="text-4xl mb-2">
                             {getFileIcon(docInfo.type)}
                           </div>
                           <div className="text-xs font-semibold text-gray-700 truncate mb-1">
                             {docInfo.name}
                           </div>
-                          <div className="text-xs text-gray-500">
-                            {formatFileSize(docInfo.size)}
-                          </div>
+                          {docInfo.legacyMissing ? (
+                            <div className="text-[10px] text-amber-700">Unavailable</div>
+                          ) : docInfo.url ? (
+                            <a
+                              href={docInfo.url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-[10px] text-blue-600 hover:underline"
+                            >
+                              Download
+                            </a>
+                          ) : null}
                         </div>
                       ) : (
                         <div className="text-center p-2">
@@ -1992,6 +2052,7 @@ export function LeadInquiryWorkspace({
                         <div className="grid gap-4">
                           {statusTabInquiries.map((inq, idx) => {
                             const isApproved = salesInquiryIsApproved(inq, approvedInquiryId);
+                            const inquiryPricing = getInquiryPricingForDisplay(inq, pricingByInquiryId);
                             const title = inq.product_name?.trim() || "Product TBD";
                             const createdDate = inq.created_at ? new Date(inq.created_at).toLocaleDateString() : 'Unknown date';
                             
@@ -2022,19 +2083,19 @@ export function LeadInquiryWorkspace({
                                     <p className="text-xs text-emerald-700 font-medium">
                                       ✓ Ready for next steps - Click to view pricing details
                                     </p>
-                                    {pricingByInquiryId[inq.id] && (
+                                    {inquiryPricing && (
                                       <div className="bg-emerald-50 rounded-lg p-3 border border-emerald-200">
                                         <div className="grid grid-cols-2 gap-3 text-xs">
                                           <div>
                                             <p className="text-emerald-600 font-medium">Unit Price</p>
                                             <p className="text-emerald-900 font-semibold">
-                                              {formatInquiryMoney(pricingByInquiryId[inq.id].unit_price)}
+                                              {formatInquiryMoney(inquiryPricing.unit_price)}
                                             </p>
                                           </div>
                                           <div>
                                             <p className="text-emerald-600 font-medium">Total Amount</p>
                                             <p className="text-emerald-900 font-semibold">
-                                              {formatInquiryMoney(pricingByInquiryId[inq.id].total_amount)}
+                                              {formatInquiryMoney(inquiryPricing.total_amount)}
                                             </p>
                                           </div>
                                         </div>

@@ -2472,24 +2472,29 @@ export async function markQuotationSentToAgent(quotationId: string) {
   }
 }
 
-export async function uploadInquiryImage(leadId: string, file: File) {
+export async function uploadInquiryAttachment(leadId: string, file: File) {
   try {
     const session = await getSession();
     if (!session) return { error: 'Unauthorized' };
 
-    const supabase = await createAdminClient();
+    if (!leadId?.trim()) {
+      return { error: 'Lead is required before uploading attachments.' };
+    }
 
-    const fileExt = file.name.split('.').pop();
-    const fileName = `inquiry_${leadId}_${Date.now()}.${fileExt}`;
+    const supabase = await createAdminClient();
+    const sanitizedName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
+    const fileName = `inquiry_${leadId}_${Date.now()}_${sanitizedName}`;
     const filePath = `inquiries/${fileName}`;
 
     const { error: uploadError } = await supabase.storage
       .from('inquiry-images')
-      .upload(filePath, file);
+      .upload(filePath, file, {
+        contentType: file.type || 'application/octet-stream',
+        upsert: false,
+      });
 
     if (uploadError) {
-      // If bucket doesn't exist, store as data URL fallback
-      return { error: 'Image upload not available. Please add a link instead.' };
+      return { error: uploadError.message || 'File upload failed. Please try again.' };
     }
 
     const { data: urlData } = supabase.storage
@@ -2500,4 +2505,8 @@ export async function uploadInquiryImage(leadId: string, file: File) {
   } catch (err) {
     return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };
   }
+}
+
+export async function uploadInquiryImage(leadId: string, file: File) {
+  return uploadInquiryAttachment(leadId, file);
 }

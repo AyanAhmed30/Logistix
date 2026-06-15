@@ -103,8 +103,7 @@ export function InquiryTrackingPanel() {
       if ("error" in inquiriesResult) {
         toast.error(inquiriesResult.error || "Unable to load inquiry records");
       }
-
-      const inquiries: LeadInquiryWithLead[] = "inquiries" in inquiriesResult ? (inquiriesResult.inquiries || []) : [];
+      const inquiries = ("inquiries" in inquiriesResult ? (inquiriesResult.inquiries || []) : []) as unknown as LeadInquiryWithLead[];
 
       // Keep a placeholder row only for leads that truly have no inquiries yet.
       const leadIdsWithInquiry = new Set(inquiries.map((i) => i.lead_id));

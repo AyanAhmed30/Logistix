@@ -640,7 +640,7 @@ export async function sendInquiryQuotationDocument(formData: FormData): Promise<
     } as {
       success: boolean;
       useWebFallback: boolean;
-      send_method: string;
+      send_method: 'whatsapp_web' | 'whatsapp_api';
       whatsapp_message_id: string | null;
       whatsapp_media_id: string | null;
       error?: string;

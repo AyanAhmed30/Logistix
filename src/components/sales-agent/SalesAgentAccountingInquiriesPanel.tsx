@@ -30,10 +30,6 @@ import {
   ImageIcon,
   Link2,
   Search,
-  History,
-  ArrowLeft,
-  X,
-  Save,
   RefreshCcw,
   Package,
 } from "lucide-react";
@@ -43,7 +39,7 @@ import {
   getApprovedPricingForInquiryIds,
   type InquiryConfirmation,
 } from "@/app/actions/inquiry_confirmations";
-import { sendInquiryQuotationDocument, sendQuotation, createQuotation } from "@/app/actions/quotations";
+import { sendQuotation, createQuotation } from "@/app/actions/quotations";
 import {
   classifyInquiryAttachment,
   collectInquiryAttachmentUrls,
@@ -186,94 +182,6 @@ function collectDetailImageUrls(
 
   return Array.from(urls);
 }
-// ─── Log Content Renderer ────────────────────────────────────────────
-
-function InquiryLogEntry({ log }: { log: InquiryLog }) {
-  const prev = log.previous_values as Record<string, unknown> | null;
-  const next = log.new_values as Record<string, unknown> | null;
-
-  const changes: { field: string; oldVal: string; newVal: string }[] = [];
-
-  if (prev && next) {
-    const fieldLabels: Record<string, string> = {
-      description: "Other Details",
-      status: "Status",
-      image_url: "Image",
-      link_url: "Link",
-      product_name: "Product Name",
-      total_weight: "Total Weight",
-      cbm: "CBM",
-      quantity: "Quantity",
-    };
-
-    for (const key of Object.keys(next)) {
-      const label = fieldLabels[key] || key;
-      if (key === "status") {
-        changes.push({
-          field: label,
-          oldVal: formatStatus(String(prev[key] || "")),
-          newVal: formatStatus(String(next[key] || "")),
-        });
-      } else if (key === "image_url") {
-        changes.push({
-          field: label,
-          oldVal: prev[key] ? "Attached" : "None",
-          newVal: next[key] ? "Attached" : "Removed",
-        });
-      } else {
-        changes.push({
-          field: label,
-          oldVal: String(prev[key] || "(empty)"),
-          newVal: String(next[key] || "(empty)"),
-        });
-      }
-    }
-  }
-
-  return (
-    <div className="flex gap-3">
-      <div className="h-8 w-8 rounded-full bg-teal-100 flex items-center justify-center text-teal-800 font-semibold text-xs shrink-0 mt-0.5">
-        {(log.performed_by || "?").charAt(0).toUpperCase()}
-      </div>
-      <div className="flex-1 min-w-0">
-        <div className="flex items-center gap-2 flex-wrap">
-          <span className="font-semibold text-sm text-slate-700">
-            {log.performed_by}
-          </span>
-          <Badge className={`text-[10px] h-5 ${getLogActionColor(log.action)}`}>
-            {formatLogAction(log.action)}
-          </Badge>
-          <span className="text-xs text-slate-400">
-            {new Date(log.performed_at).toLocaleString([], {
-              month: "short",
-              day: "numeric",
-              hour: "2-digit",
-              minute: "2-digit",
-            })}
-          </span>
-        </div>
-
-        {changes.length > 0 ? (
-          <div className="mt-1.5 space-y-1">
-            {changes.map((c, i) => (
-              <div key={i} className="text-sm bg-slate-50 rounded-md px-3 py-1.5 border border-slate-100">
-                <span className="text-slate-500 text-xs font-medium">{c.field}: </span>
-                <span className="text-red-400 line-through text-xs">{c.oldVal}</span>
-                <span className="mx-1.5 text-slate-300">→</span>
-                <span className="text-teal-700 font-semibold text-xs">{c.newVal}</span>
-              </div>
-            ))}
-          </div>
-        ) : (
-          <p className="text-xs text-slate-400 mt-0.5">
-            {log.action === "created" ? "Inquiry created" : "Changes logged"}
-          </p>
-        )}
-      </div>
-    </div>
-  );
-}
-
 // ─── Main Component ──────────────────────────────────────────────────
 
 type ViewMode = "list" | "detail";
@@ -283,7 +191,7 @@ export function SalesAgentAccountingInquiriesPanel() {
   const [inquiries, setInquiries] = useState<LeadInquiryWithLead[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [selectedInquiry, setSelectedInquiry] = useState<LeadInquiryWithLead | null>(null);
-  const [isPending, startTransition] = useTransition();
+  const [, startTransition] = useTransition();
   const [searchQuery, setSearchQuery] = useState("");
 
   // Edit state
@@ -304,7 +212,6 @@ export function SalesAgentAccountingInquiriesPanel() {
   } | null>(null);
 
   // Logs
-  const [logs, setLogs] = useState<InquiryLog[]>([]);
   const [isSendingQuotation, setIsSendingQuotation] = useState(false);
 
   // ─── Data fetching ──────────────────────────────────────
@@ -330,12 +237,8 @@ export function SalesAgentAccountingInquiriesPanel() {
   }, []);
 
   const fetchLogs = useCallback(async (inquiryId: string) => {
-    const result = await getInquiryLogs(inquiryId);
-    if (!("error" in result)) {
-      setLogs(result.logs || []);
-    } else {
-      setLogs([]);
-    }
+    // Kept to maintain hook structure but no longer sets state
+    await getInquiryLogs(inquiryId);
   }, []);
 
   const fetchConfirmationExtras = useCallback(async (inquiryId: string) => {
@@ -532,7 +435,8 @@ export function SalesAgentAccountingInquiriesPanel() {
         return;
       }
 
-      const newQuotation = (createRes as { quotation: any }).quotation || (createRes as any).quotation || createRes;
+      const createResData = createRes as { quotation?: { id: string }; id?: string };
+      const newQuotation = createResData.quotation || createResData;
       const quotationId = newQuotation?.id;
       if (!quotationId) {
         toast.error('Failed to create quotation record');
@@ -611,96 +515,9 @@ export function SalesAgentAccountingInquiriesPanel() {
     setView("list");
     setSelectedInquiry(null);
     setIsEditing(false);
-    setLogs([]);
     setConfirmationDetails(null);
     setApprovedPricing(null);
     fetchInquiries();
-  }
-
-  function startEdit() {
-    if (!selectedInquiry) return;
-    setEditProductName(selectedInquiry.product_name || "");
-    setEditTotalWeight(selectedInquiry.total_weight || "");
-    setEditCbm(selectedInquiry.cbm || "");
-    setEditQuantity(selectedInquiry.quantity || "");
-    setEditDescription(selectedInquiry.description || "");
-    setEditStatus(selectedInquiry.status);
-    setEditLink(selectedInquiry.link_url || "");
-    setIsEditing(true);
-  }
-
-  function cancelEdit() {
-    setIsEditing(false);
-  }
-
-  // ─── Save edit ──────────────────────────────────────────
-
-  async function handleSaveEdit() {
-    if (!selectedInquiry) return;
-
-    startTransition(async () => {
-      const updates: {
-        product_name?: string;
-        total_weight?: string;
-        cbm?: string;
-        quantity?: string;
-        description?: string;
-        status?: "pending" | "in_progress" | "quotation_sent" | "completed";
-        link_url?: string | null;
-      } = {};
-
-      if (editProductName !== (selectedInquiry.product_name || "")) {
-        updates.product_name = editProductName;
-      }
-      if (editTotalWeight !== (selectedInquiry.total_weight || "")) {
-        updates.total_weight = editTotalWeight;
-      }
-      if (editCbm !== (selectedInquiry.cbm || "")) {
-        updates.cbm = editCbm;
-      }
-      if (editQuantity !== (selectedInquiry.quantity || "")) {
-        updates.quantity = editQuantity;
-      }
-      if (editDescription !== (selectedInquiry.description || "")) {
-        updates.description = editDescription;
-      }
-      if (editStatus !== selectedInquiry.status) {
-        updates.status = editStatus as "pending" | "in_progress" | "quotation_sent" | "completed";
-      }
-      if (editLink !== (selectedInquiry.link_url || "")) {
-        updates.link_url = editLink || null;
-      }
-
-      if (Object.keys(updates).length === 0) {
-        toast.info("No changes to save");
-        setIsEditing(false);
-        return;
-      }
-
-      const result = await updateInquiryForAccounting(selectedInquiry.id, updates);
-
-      if ("error" in result) {
-        toast.error(result.error || "Failed to update inquiry");
-        return;
-      }
-
-      toast.success("Inquiry updated successfully");
-      setIsEditing(false);
-
-      // Refresh the detail
-      const refreshed = await getAllInquiriesForSalesAgent() as {
-        inquiries?: LeadInquiryWithLead[];
-        error?: string;
-      };
-      if (!("error" in refreshed)) {
-        const updated = (refreshed.inquiries || []).find(
-          (i) => i.id === selectedInquiry.id
-        ) as LeadInquiryWithLead | undefined;
-        if (updated) setSelectedInquiry(updated);
-        setInquiries(refreshed.inquiries || []);
-      }
-      fetchLogs(selectedInquiry.id);
-    });
   }
 
   // ═══════════════════════════════════════════════════════════

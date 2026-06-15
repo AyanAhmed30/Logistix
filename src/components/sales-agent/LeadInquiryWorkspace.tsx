@@ -388,7 +388,7 @@ export function LeadInquiryWorkspace({
     } finally {
       setIsLoading(false);
     }
-  }, [lead, selectedInquiryId, mode, layout]);
+  }, [lead, selectedInquiryId, mode]);
 
   useEffect(() => {
     if (active && lead && layout === "page" && mainTab === "create") {

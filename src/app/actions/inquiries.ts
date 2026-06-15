@@ -30,7 +30,7 @@ export type LeadInquiry = {
   created_at: string;
   updated_at: string;
   inquiry_confirmations?: {
-    original_image_url(original_image_url: any, arg1: any): unknown;
+    original_image_url: string | null;
     id: string;
     status: string;
     created_at: string;
@@ -52,10 +52,10 @@ export type LeadInquiryWithLead = LeadInquiry & {
     } | null;
   } | null;
   inquiry_confirmations?: {
-    original_image_url(original_image_url: any, arg1: any): unknown;
-    sales_additional_image_urls: never[];
-    additional_image_1_url(additional_image_1_url: any): unknown;
-    additional_image_2_url(additional_image_2_url: any): unknown;
+    original_image_url: string | null;
+    sales_additional_image_urls?: string[] | null;
+    additional_image_1_url?: string | null;
+    additional_image_2_url?: string | null;
     id: string;
     status: string;
     created_at: string;

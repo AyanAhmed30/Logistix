@@ -31,7 +31,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { PlusCircle, Trash2, Edit, TrendingUp, Truck, Bell, Package, Container, FileText, Settings, ClipboardList, Receipt, UserPlus, Users, ShoppingCart, UsersRound, ClipboardCheck } from "lucide-react";
+import { PlusCircle, Trash2, Edit, TrendingUp, Truck, Bell, Package, Container, FileText, Settings, ClipboardList, Receipt, UserPlus, Users, UsersRound, ClipboardCheck } from "lucide-react";
 
 
 // Available permissions that can be assigned to sales agents
@@ -39,7 +39,6 @@ const AVAILABLE_PERMISSIONS = [
   { key: "lead", label: "Lead", icon: UserPlus },
   { key: "pipeline", label: "Pipeline", icon: FileText },
   { key: "customer-list", label: "Customer List", icon: Users },
-  { key: "manage-request", label: "Manage Request", icon: ShoppingCart },
   { key: "create", label: "Create New User", icon: PlusCircle },
   { key: "profiles", label: "User Profiles", icon: UsersRound },
   { key: "dashboard", label: "Dashboard", icon: TrendingUp },

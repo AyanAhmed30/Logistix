@@ -38,6 +38,17 @@ export type QuotationLog = {
   details: Record<string, unknown> | null;
 };
 
+export type InquiryQuotationSendResult = {
+  success: boolean;
+  useWebFallback: boolean;
+  send_method: 'whatsapp_web' | 'whatsapp_api';
+  whatsapp_message_id: string | null;
+  whatsapp_media_id: string | null;
+  error?: string;
+};
+
+export type InquiryQuotationSendResponse = InquiryQuotationSendResult | { error: string };
+
 function ensureAdminOrSalesAgent(session: { role: string } | null) {
   if (!session || (session.role !== 'admin' && session.role !== 'sales_agent')) {
     throw new Error('Unauthorized');
@@ -121,25 +132,29 @@ export async function createQuotation(formData: FormData) {
 
     const supabase = await createAdminClient();
 
-    // Resolve partner_id (best-effort: no longer a hard requirement
-    // since the new flow is anchored on contact_id).
+    // Resolve partner_id (best-effort). If `skip_partner_match` flag is provided
+    // we will bypass partner lookup (useful when creating quotations from
+    // inquiries where a matching partner record may not exist).
+    const skipPartnerMatch = String(formData.get('skip_partner_match') || '').trim() === 'true';
     let partner_id: string | null = null;
-    const { data: partnerRows } = await supabase
-      .from('partners')
-      .select('id, name, partner_type, status')
-      .ilike('name', customer_name)
-      .eq('status', 'active')
-      .limit(5);
-    const customerPartners = (partnerRows || []).filter((row) => canPartnerBeCustomer(row.partner_type));
-    if (customerPartners.length === 1) {
-      partner_id = customerPartners[0].id;
-    } else if (!contact_id) {
-      // Only enforce the partner match when there is no contact link at all,
-      // to keep the legacy flow working.
-      if (customerPartners.length === 0) {
-        return { error: `Active customer partner "${customer_name}" not found.` };
+    if (!skipPartnerMatch) {
+      const { data: partnerRows } = await supabase
+        .from('partners')
+        .select('id, name, partner_type, status')
+        .ilike('name', customer_name)
+        .eq('status', 'active')
+        .limit(5);
+      const customerPartners = (partnerRows || []).filter((row) => canPartnerBeCustomer(row.partner_type));
+      if (customerPartners.length === 1) {
+        partner_id = customerPartners[0].id;
+      } else if (!contact_id) {
+        // Only enforce the partner match when there is no contact link at all,
+        // to keep the legacy flow working.
+        if (customerPartners.length === 0) {
+          return { error: `Active customer partner "${customer_name}" not found.` };
+        }
+        return { error: `Multiple active customer partners matched "${customer_name}". Please use unique partner names.` };
       }
-      return { error: `Multiple active customer partners matched "${customer_name}". Please use unique partner names.` };
     }
 
     // Generate quotation number
@@ -587,6 +602,55 @@ export async function sendQuotation(
     revalidatePath('/admin/dashboard');
     revalidatePath('/sales-agent/dashboard');
     return { quotation: updatedData as Quotation, send_method: sendMethod };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'An unexpected error occurred';
+    return { error: message };
+  }
+}
+
+export async function sendInquiryQuotationDocument(formData: FormData): Promise<InquiryQuotationSendResponse> {
+  try {
+    const session = await getSession();
+    if (!session) return { error: 'Unauthorized' };
+    ensureAdminOrSalesAgent(session);
+
+    const phone_number = String(formData.get('phone_number') || '').trim();
+    const whatsapp_message = String(formData.get('whatsapp_message') || '').trim();
+    const pdf_base64 = String(formData.get('pdf_base64') || '').trim();
+    const pdf_filename = String(formData.get('pdf_filename') || 'Quotation.pdf').trim() || 'Quotation.pdf';
+
+    if (!phone_number || !whatsapp_message || !pdf_base64) {
+      return { error: 'Missing required WhatsApp message or PDF payload' };
+    }
+
+    const pdfBuffer = Buffer.from(pdf_base64, 'base64');
+    const whatsappResult = await sendWhatsAppDocument(
+      phone_number,
+      pdfBuffer,
+      pdf_filename,
+      whatsapp_message
+    );
+
+    const response = {
+      success: whatsappResult.success,
+      useWebFallback: whatsappResult.useWebFallback || false,
+      send_method: whatsappResult.useWebFallback ? 'whatsapp_web' : 'whatsapp_api',
+      whatsapp_message_id: whatsappResult.messageId || null,
+      whatsapp_media_id: whatsappResult.mediaId || null,
+    } as {
+      success: boolean;
+      useWebFallback: boolean;
+      send_method: string;
+      whatsapp_message_id: string | null;
+      whatsapp_media_id: string | null;
+      error?: string;
+    };
+
+    if (!whatsappResult.success) {
+      response.error = whatsappResult.error || 'WhatsApp send failed';
+    }
+
+    return response;
   } catch (err) {
     const message = err instanceof Error ? err.message : 'An unexpected error occurred';
     return { error: message };

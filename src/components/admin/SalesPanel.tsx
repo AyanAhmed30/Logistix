@@ -35,6 +35,17 @@ export function SalesPanel() {
   const [barCustomFrom, setBarCustomFrom] = useState("");
   const [barCustomTo, setBarCustomTo] = useState("");
 
+  const [leadSearch, setLeadSearch] = useState("");
+
+  const visibleLeads = useMemo(() => {
+    const needle = leadSearch.trim().toLowerCase();
+    if (!needle) return leads;
+    return leads.filter((lead) => {
+      const hay = `${lead.lead_id_formatted || ""} ${lead.name || ""} ${lead.number || ""}`.toLowerCase();
+      return hay.includes(needle);
+    });
+  }, [leads, leadSearch]);
+
   const topAgentId = useMemo(() => {
     if (agentRows.length === 0) return null;
     let leader: SalesAgentDirectoryRow | null = null;
@@ -157,10 +168,23 @@ export function SalesPanel() {
       {activeSubTab === "leads" && (
         <Card className="bg-white border shadow-sm">
           <CardHeader>
-            <CardTitle>Leads</CardTitle>
-            <CardDescription>
-              View all leads created by sales agents.
-            </CardDescription>
+            <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+              <div>
+                <CardTitle>Leads</CardTitle>
+                <CardDescription>
+                  View all leads created by sales agents.
+                </CardDescription>
+              </div>
+              <div className="relative w-full md:w-72">
+                <Search className="h-4 w-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                <Input
+                  placeholder="Search by ID, name, or number"
+                  value={leadSearch}
+                  onChange={(e) => setLeadSearch(e.target.value)}
+                  className="h-9 pl-9 text-sm bg-white"
+                />
+              </div>
+            </div>
           </CardHeader>
           <CardContent>
             {isLoadingLeads ? (
@@ -185,39 +209,47 @@ export function SalesPanel() {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {leads.map((lead) => (
-                      <TableRow key={lead.id}>
-                        <TableCell>
-                          <span className="font-mono font-semibold text-primary-accent">
-                            {lead.lead_id_formatted || "-"}
-                          </span>
-                        </TableCell>
-                        <TableCell className="font-semibold">{lead.name}</TableCell>
-                        <TableCell>{lead.number}</TableCell>
-                        <TableCell>
-                          <span className="px-2 py-1 bg-blue-100 text-blue-800 rounded-md text-sm">
-                            {lead.source}
-                          </span>
-                        </TableCell>
-                        <TableCell>
-                          {lead.sales_agents ? (
-                            <div>
-                              <div className="font-medium">{lead.sales_agents.name}</div>
-                              {lead.sales_agents.username && (
-                                <div className="text-xs text-secondary-muted">
-                                  @{lead.sales_agents.username}
-                                </div>
-                              )}
-                            </div>
-                          ) : (
-                            <span className="text-secondary-muted text-sm">-</span>
-                          )}
-                        </TableCell>
-                        <TableCell>
-                          {new Date(lead.created_at).toLocaleString()}
+                    {visibleLeads.length === 0 ? (
+                      <TableRow>
+                        <TableCell colSpan={6} className="h-24 text-center text-secondary-muted">
+                          No leads match &ldquo;{leadSearch}&rdquo;.
                         </TableCell>
                       </TableRow>
-                    ))}
+                    ) : (
+                      visibleLeads.map((lead) => (
+                        <TableRow key={lead.id}>
+                          <TableCell>
+                            <span className="font-mono font-semibold text-primary-accent">
+                              {lead.lead_id_formatted || "-"}
+                            </span>
+                          </TableCell>
+                          <TableCell className="font-semibold">{lead.name}</TableCell>
+                          <TableCell>{lead.number}</TableCell>
+                          <TableCell>
+                            <span className="px-2 py-1 bg-blue-100 text-blue-800 rounded-md text-sm">
+                              {lead.source}
+                            </span>
+                          </TableCell>
+                          <TableCell>
+                            {lead.sales_agents ? (
+                              <div>
+                                <div className="font-medium">{lead.sales_agents.name}</div>
+                                {lead.sales_agents.username && (
+                                  <div className="text-xs text-secondary-muted">
+                                    @{lead.sales_agents.username}
+                                  </div>
+                                )}
+                              </div>
+                            ) : (
+                              <span className="text-secondary-muted text-sm">-</span>
+                            )}
+                          </TableCell>
+                          <TableCell>
+                            {new Date(lead.created_at).toLocaleString()}
+                          </TableCell>
+                        </TableRow>
+                      ))
+                    )}
                   </TableBody>
                 </Table>
               </div>

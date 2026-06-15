@@ -66,10 +66,10 @@ export function classifyInquiryAttachment(url: string): InquiryAttachmentInfo {
     return { url: trimmed, kind: "text", filename: filenameFromPath, mimeType: "text/plain" };
   }
 
-  if (
-    trimmed.startsWith("http") &&
-    (/\.(jpe?g|png|gif|webp|bmp|svg)(\?|$)/i.test(lower) || lower.includes("/inquiry-images/"))
-  ) {
+  const imageUrlPattern = /\.(jpe?g|png|gif|webp|bmp|svg)(\?|$)/i;
+  const isImageUrl = trimmed.startsWith("http") && imageUrlPattern.test(lower);
+
+  if (isImageUrl) {
     return { url: trimmed, kind: "image", filename: filenameFromPath, mimeType: "image/*" };
   }
 

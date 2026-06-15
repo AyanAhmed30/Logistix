@@ -15,11 +15,9 @@ export function LeadDetailPageClient({ lead }: { lead: Lead }) {
   const searchParams = useSearchParams();
   const initialTab = tabFromSearchParams(searchParams);
   const initialInquiryId = searchParams.get("inquiryId") || undefined;
-  const remountKey = `${lead.id}-${initialTab ?? "default"}`;
-  
-  // Get workflow constraint information from URL params
   const allowInquiry = searchParams.get("allowInquiry") === "true";
   const boardStatus = searchParams.get("boardStatus") || lead.status;
+  const remountKey = `${lead.id}-${initialTab ?? "default"}-${initialInquiryId ?? "none"}-${allowInquiry ? "1" : "0"}-${boardStatus}`;
 
   return (
     <LeadInquiryWorkspace

@@ -11,7 +11,6 @@ import {
   UserPlus,
   Users,
   FileText,
-  ShoppingCart,
   Truck,
   Bell,
   Package,
@@ -69,7 +68,6 @@ type TabKey =
   | "lead"
   | "pipeline"
   | "customer-list"
-  | "manage-request"
   | "create"
   | "profiles"
   | "dashboard"
@@ -90,7 +88,6 @@ const permissionTabs: Record<string, { key: TabKey; label: string; icon: React.R
   lead: { key: "lead", label: "Lead", icon: <UserPlus className="h-4 w-4" /> },
   pipeline: { key: "pipeline", label: "Pipeline", icon: <FileText className="h-4 w-4" /> },
   "customer-list": { key: "customer-list", label: "Customer List", icon: <Users className="h-4 w-4" /> },
-  "manage-request": { key: "manage-request", label: "Manage Request", icon: <ShoppingCart className="h-4 w-4" /> },
   create: { key: "create", label: "Create New User", icon: <PlusCircle className="h-4 w-4" /> },
   profiles: { key: "profiles", label: "User Profiles", icon: <UsersRound className="h-4 w-4" /> },
   dashboard: { key: "dashboard", label: "Dashboard", icon: <LayoutDashboard className="h-4 w-4" /> },
@@ -462,19 +459,6 @@ export function SalesAgentDashboardShell({ username, permissions }: Props) {
             {resolvedActiveTab === "lead" && <LeadPanel />}
             {resolvedActiveTab === "pipeline" && <PipelinePanel />}
             {resolvedActiveTab === "customer-list" && <CustomerListPanel />}
-            {resolvedActiveTab === "manage-request" && (
-              <Card className="bg-white border shadow-sm">
-                <CardHeader>
-                  <CardTitle>Manage Request</CardTitle>
-                  <CardDescription>This section is empty for now.</CardDescription>
-                </CardHeader>
-                <CardContent>
-                  <div className="py-16 text-center text-secondary-muted">
-                    Manage Request functionality coming soon...
-                  </div>
-                </CardContent>
-              </Card>
-            )}
             {resolvedActiveTab === "dashboard" && <SalesAgentDashboardOverview />}
             {resolvedActiveTab === "tracking" && <OrderTrackingPanel />}
             {resolvedActiveTab === "notifications" && <AdminNotificationsPanel />}

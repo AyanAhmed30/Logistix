@@ -666,14 +666,39 @@ export async function uploadConfirmationImage(file: File, label: string) {
 
     const supabase = await createAdminClient();
 
-    const fileExt = file.name.split('.').pop();
+    const fileExt = file.name.split('.').pop()?.toLowerCase() || '';
     const fileName = `confirmation_${label}_${Date.now()}.${fileExt}`;
     const filePath = `confirmations/${fileName}`;
+
+    // Determine MIME type based on file extension if file.type is empty
+    let contentType = file.type || 'application/octet-stream';
+    if (!contentType || contentType === 'application/octet-stream') {
+      const mimeTypeMap: Record<string, string> = {
+        'jpg': 'image/jpeg',
+        'jpeg': 'image/jpeg',
+        'png': 'image/png',
+        'gif': 'image/gif',
+        'webp': 'image/webp',
+        'bmp': 'image/bmp',
+        'svg': 'image/svg+xml',
+        'heic': 'image/heic',
+        'heif': 'image/heif',
+        'avif': 'image/avif',
+        'pdf': 'application/pdf',
+        'doc': 'application/msword',
+        'docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        'xls': 'application/vnd.ms-excel',
+        'xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        'txt': 'text/plain',
+        'csv': 'text/csv',
+      };
+      contentType = mimeTypeMap[fileExt] || file.type || 'application/octet-stream';
+    }
 
     const { error: uploadError } = await supabase.storage
       .from('inquiry-images')
       .upload(filePath, file, {
-        contentType: file.type || 'application/octet-stream',
+        contentType,
         upsert: false,
       });
 

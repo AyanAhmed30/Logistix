@@ -12,7 +12,6 @@ import {
   addInquiryActivity,
   addInquiryCalculatorFieldLog,
   saveInquiryCalculatorField,
-  getSharedInquiryCalculatorValues,
   getLeadChatMessages,
   sendLeadChatMessage,
   type LeadInquiryWithLead,
@@ -402,12 +401,7 @@ export function OperationsLeadsInquiryPanel({
     resetForm();
     // Calculator must start empty/zero for each inquiry (manual-only entry).
     const defaults = getDefaultCalculatorValues();
-    const sharedResult = await getSharedInquiryCalculatorValues();
-    const mergedDefaults =
-      "error" in sharedResult
-        ? defaults
-        : { ...defaults, ...(sharedResult.values || {}) };
-    applyCalculatorValues(mergedDefaults);
+    applyCalculatorValues(defaults);
     // Load secondary detail data in parallel to reduce perceived latency.
     const [confirmResult] = await Promise.allSettled([
       getConfirmationsForInquiry(inquiry.id),
@@ -423,7 +417,7 @@ export function OperationsLeadsInquiryPanel({
     } else {
       setConfirmations([]);
     }
-    setLastCalcSnapshot(mergedDefaults);
+    setLastCalcSnapshot(defaults);
     setActiveRightTab("send_message");
     setLogNoteText("");
     setChatInput("");
@@ -820,10 +814,13 @@ export function OperationsLeadsInquiryPanel({
       // Upload additional images to storage and keep only URLs in DB/logs.
       let img1Url: string | null = null;
       let img2Url: string | null = null;
+      const uploadErrors: string[] = [];
 
       if (additionalImage1) {
         const upload1 = await uploadConfirmationImage(additionalImage1, "additional_1");
         if ("error" in upload1) {
+          uploadErrors.push(`Image 1: ${upload1.error}`);
+          // Fall back to data URL for storage
           img1Url = additionalImage1Preview || await fileToDataUrl(additionalImage1);
         } else {
           img1Url = upload1.url || null;
@@ -832,10 +829,17 @@ export function OperationsLeadsInquiryPanel({
       if (additionalImage2) {
         const upload2 = await uploadConfirmationImage(additionalImage2, "additional_2");
         if ("error" in upload2) {
+          uploadErrors.push(`Image 2: ${upload2.error}`);
+          // Fall back to data URL for storage
           img2Url = additionalImage2Preview || await fileToDataUrl(additionalImage2);
         } else {
           img2Url = upload2.url || null;
         }
+      }
+
+      // Show warning if any uploads failed (but don't block submission)
+      if (uploadErrors.length > 0) {
+        toast.warning(`Some images couldn't be uploaded to storage but will be saved locally: ${uploadErrors.join(", ")}`);
       }
 
       const result = await submitInquiryForConfirmation({

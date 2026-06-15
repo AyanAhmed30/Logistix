@@ -346,9 +346,7 @@ export function LeadInquiryWorkspace({
         const current =
           mode === "create"
             ? (selected || list[0] || null)
-            : layout === "page"
-              ? selected
-              : (selected || list[0] || null);
+            : (selected || list[0] || null);
 
         setSelectedInquiryId(current?.id || "");
         setInquiry(current);

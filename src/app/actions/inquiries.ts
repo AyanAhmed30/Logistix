@@ -230,6 +230,31 @@ function isValidDecimal(value: string) {
   return /^(?:\d+|\d+\.\d+|\d*\.\d+)$/.test(value.trim());
 }
 
+type InquirySaveTargetRow = {
+  id: string;
+  lead_id: string;
+  sent_to_accounting: boolean;
+};
+
+function inquiryIsSent(row: Pick<InquirySaveTargetRow, 'sent_to_accounting'>) {
+  return Boolean(row.sent_to_accounting);
+}
+
+async function getNextInquiryVersionNumber(
+  supabase: Awaited<ReturnType<typeof createAdminClient>>,
+  leadId: string
+) {
+  const { data: maxVersionRow } = await supabase
+    .from('lead_inquiries')
+    .select('version_number')
+    .eq('lead_id', leadId)
+    .order('version_number', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  return maxVersionRow?.version_number ? Number(maxVersionRow.version_number) + 1 : 1;
+}
+
 async function addLeadActivityLog(
   supabase: Awaited<ReturnType<typeof createAdminClient>>,
   input: {
@@ -287,19 +312,32 @@ export async function saveInquiry(
     const supabase = await createAdminClient();
 
     const forceNewInquiry = Boolean(options?.forceNewInquiry);
+    const explicitInquiryId = forceNewInquiry ? undefined : inquiryId;
 
-    const { data: latest } = inquiryId
-      ? { data: { id: inquiryId } as { id: string } }
-      : forceNewInquiry
-        ? { data: null }
-      : await supabase
-          .from('lead_inquiries')
-          .select('id, lead_id, sent_to_accounting, inquiry_group_id, version_number')
-          .eq('lead_id', leadId)
-          .order('version_number', { ascending: false })
-          .order('created_at', { ascending: false })
-          .limit(1)
-          .maybeSingle();
+    let targetRow: InquirySaveTargetRow | null = null;
+
+    if (explicitInquiryId) {
+      const { data: row } = await supabase
+        .from('lead_inquiries')
+        .select('id, lead_id, sent_to_accounting')
+        .eq('id', explicitInquiryId)
+        .maybeSingle();
+      targetRow = (row as InquirySaveTargetRow | null) || null;
+    } else if (!forceNewInquiry) {
+      const { data: row } = await supabase
+        .from('lead_inquiries')
+        .select('id, lead_id, sent_to_accounting')
+        .eq('lead_id', leadId)
+        .order('version_number', { ascending: false })
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      targetRow = (row as InquirySaveTargetRow | null) || null;
+    }
+
+    const shouldUpdateExisting =
+      Boolean(targetRow?.id) &&
+      (Boolean(explicitInquiryId) || !inquiryIsSent(targetRow as InquirySaveTargetRow));
 
     const inquiryData = {
       product_name: data.product_name.trim(),
@@ -316,12 +354,12 @@ export async function saveInquiry(
       return { error: 'CBM must be a valid decimal number (e.g. 1.5).' };
     }
 
-    if (latest && latest.id) {
-      // Load current values to compute diffs for inquiry logs (draft or already sent — update in place).
+    if (shouldUpdateExisting && targetRow?.id) {
+      // Update an existing unsent draft, or an explicitly selected inquiry.
       const { data: current, error: currentError } = await supabase
         .from('lead_inquiries')
         .select('*')
-        .eq('id', latest.id)
+        .eq('id', targetRow.id)
         .single();
 
       if (currentError || !current) {
@@ -331,11 +369,10 @@ export async function saveInquiry(
         return { error: 'Inquiry does not belong to this lead' };
       }
 
-      // Update inquiry in place (no new version row)
       const { data: result, error } = await supabase
         .from('lead_inquiries')
         .update(inquiryData)
-        .eq('id', latest.id)
+        .eq('id', targetRow.id)
         .select()
         .single();
 
@@ -373,7 +410,7 @@ export async function saveInquiry(
       if (Object.keys(newValues).length > 0) {
         await supabase.from('inquiry_logs').insert([
           {
-            inquiry_id: latest.id,
+            inquiry_id: targetRow.id,
             action: 'inquiry_edited',
             previous_values: previousValues,
             new_values: newValues,
@@ -382,7 +419,7 @@ export async function saveInquiry(
         ]);
         await addLeadActivityLog(supabase, {
           leadId,
-          inquiryId: latest.id,
+          inquiryId: targetRow.id,
           inquiryVersion: null,
           actionType: 'inquiry_edited',
           actionLabel: 'Inquiry updated',
@@ -394,24 +431,9 @@ export async function saveInquiry(
 
       return { success: true, inquiry: result as LeadInquiry };
     } else {
-      // Create a new inquiry (either first ever, or latest was already sent)
-      const priorForNewRow =
-        latest && typeof latest === 'object' && 'version_number' in latest
-          ? (latest as {
-              id: string;
-              version_number?: string | number | null;
-              inquiry_group_id?: string | null;
-            })
-          : null;
-      const nextVersion = priorForNewRow?.version_number ? Number(priorForNewRow.version_number) + 1 : 1;
-      const versionGroupId = priorForNewRow?.inquiry_group_id || crypto.randomUUID();
-
-      if (priorForNewRow?.id) {
-        await supabase
-          .from('lead_inquiries')
-          .update({ is_current_version: false, updated_at: new Date().toISOString() })
-          .eq('id', priorForNewRow.id);
-      }
+      // Always insert a new row for additional inquiries on the same lead.
+      const nextVersion = await getNextInquiryVersionNumber(supabase, leadId);
+      const versionGroupId = crypto.randomUUID();
 
       const { data: result, error } = await supabase
         .from('lead_inquiries')
@@ -435,7 +457,7 @@ export async function saveInquiry(
       await supabase.from('inquiry_logs').insert([
         {
           inquiry_id: result.id,
-          action: priorForNewRow?.id ? 'inquiry_resent' : 'inquiry_created_draft',
+          action: 'inquiry_created_draft',
           previous_values: null,
           new_values: {
             product_name: inquiryData.product_name,
@@ -452,9 +474,9 @@ export async function saveInquiry(
       await addLeadActivityLog(supabase, {
         leadId,
         inquiryId: result.id,
-        inquiryVersion: null,
-        actionType: priorForNewRow?.id ? 'inquiry_edited' : 'inquiry_created_draft',
-        actionLabel: priorForNewRow?.id ? 'New inquiry draft started' : 'Inquiry created (draft)',
+        inquiryVersion: nextVersion,
+        actionType: 'inquiry_created_draft',
+        actionLabel: 'Inquiry created (draft)',
         performedBy: session.username || 'sales-agent',
         newValues: {
           product_name: inquiryData.product_name,
@@ -462,8 +484,8 @@ export async function saveInquiry(
           cbm: inquiryData.cbm,
           quantity: inquiryData.quantity,
           description: inquiryData.description,
+          version_number: nextVersion,
         },
-        metadata: priorForNewRow?.id ? { previous_inquiry_id: priorForNewRow.id } : null,
       });
 
       return { success: true, inquiry: result as LeadInquiry };
@@ -625,24 +647,8 @@ export async function createInquiryDraft(leadId: string) {
       return { error: 'Unauthorized' };
     }
 
-    const { data: latestInquiry } = await supabase
-      .from('lead_inquiries')
-      .select('id, inquiry_group_id, version_number')
-      .eq('lead_id', leadId)
-      .order('version_number', { ascending: false })
-      .order('created_at', { ascending: false })
-      .limit(1)
-      .maybeSingle();
-
-    const nextVersion = latestInquiry?.version_number ? Number(latestInquiry.version_number) + 1 : 1;
-    const versionGroupId = latestInquiry?.inquiry_group_id || crypto.randomUUID();
-
-    if (latestInquiry?.id) {
-      await supabase
-        .from('lead_inquiries')
-        .update({ is_current_version: false, updated_at: new Date().toISOString() })
-        .eq('id', latestInquiry.id);
-    }
+    const nextVersion = await getNextInquiryVersionNumber(supabase, leadId);
+    const versionGroupId = crypto.randomUUID();
 
     const { data: result, error } = await supabase
       .from('lead_inquiries')

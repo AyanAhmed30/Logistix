@@ -10,7 +10,14 @@ import {
   type InquiryConfirmationWithLead,
 } from "@/app/actions/inquiry_confirmations";
 import { InquiryAttachmentList } from "@/components/inquiry/InquiryAttachmentList";
+import { InquiryPricingSummary } from "@/components/admin/InquiryPricingSummary";
+import { getSharedInquiryCalculatorValues } from "@/app/actions/inquiries";
 import { collectInquiryAttachmentUrls } from "@/lib/inquiry-attachments";
+import {
+  computeInquiryTaxBreakdown,
+  parsePricingConfig,
+  type CalculatorPricingConfig,
+} from "@/lib/inquiry-calculator";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -86,6 +93,11 @@ export function InquiryConfirmationPanel() {
   const [imagePreview, setImagePreview] = useState<{ url: string; title: string } | null>(null);
   const [rejectDialogOpen, setRejectDialogOpen] = useState(false);
   const [rejectReason, setRejectReason] = useState("");
+  const [pricingConfig, setPricingConfig] = useState<CalculatorPricingConfig>({
+    grossWeightValue: 0,
+    volumetricWeightValue: 0,
+    cbmValue: 0,
+  });
 
   const fetchConfirmations = useCallback(async () => {
     setIsLoading(true);
@@ -107,6 +119,16 @@ export function InquiryConfirmationPanel() {
   useEffect(() => {
     fetchConfirmations();
   }, [fetchConfirmations]);
+
+  useEffect(() => {
+    async function loadPricingConfig() {
+      const result = await getSharedInquiryCalculatorValues();
+      if (!("error" in result)) {
+        setPricingConfig(parsePricingConfig(result.values));
+      }
+    }
+    void loadPricingConfig();
+  }, []);
 
   const filteredConfirmations = confirmations.filter((c) => {
     if (!searchQuery.trim()) return true;
@@ -205,8 +227,12 @@ export function InquiryConfirmationPanel() {
       const text = String(value);
       return text.trim() === "" ? "0" : text;
     };
-    const invValue = toNum(calculatorValues.inv_value);
-    const exchangeRate = toNum(calculatorValues.exchange_rate);
+    const invFine = toNum(calculatorValues.inv_fine);
+    const weightKg = toNum(c.total_weight);
+    const cbm = toNum(c.cbm);
+    const taxBreakdown = computeInquiryTaxBreakdown(calculatorValues);
+    const invValue = taxBreakdown?.invValue ?? toNum(calculatorValues.inv_value);
+    const exchangeRate = taxBreakdown?.exchangeRate ?? toNum(calculatorValues.exchange_rate);
     const customDutyRate = toNum(calculatorValues.custom_duty_rate);
     const addCdRate = toNum(calculatorValues.add_cd_rate);
     const gstRate = toNum(calculatorValues.gst_rate);
@@ -215,36 +241,17 @@ export function InquiryConfirmationPanel() {
     const exciseRate = toNum(calculatorValues.excise_rate);
     const regularDutyRate = toNum(calculatorValues.regular_duty_rate);
     const stampDutyRate = toNum(calculatorValues.stamp_duty_rate);
-    const invFine = toNum(calculatorValues.inv_fine);
-    const freight = toNum(calculatorValues.freight);
-    const shippingLineCharges = toNum(calculatorValues.shipping_line_charges);
-    const clearanceExpense = toNum(calculatorValues.clearance_expense);
-    const weightKg = toNum(c.total_weight);
-    const pkrValue = invValue * exchangeRate;
-    const assessedValue = pkrValue;
-    const customDuty = (assessedValue * customDutyRate) / 100;
-    const addCd = (assessedValue * addCdRate) / 100;
-    const gst = (assessedValue * gstRate) / 100;
-    const addGst = (assessedValue * addGstRate) / 100;
-    const incomeTax = (assessedValue * incomeTaxRate) / 100;
-    const excise = (assessedValue * exciseRate) / 100;
-    const regularDuty = (assessedValue * regularDutyRate) / 100;
-    const stampDuty = (assessedValue * stampDutyRate) / 100;
-    const totalDutyCost =
-      assessedValue +
-      customDuty +
-      addCd +
-      gst +
-      addGst +
-      incomeTax +
-      excise +
-      regularDuty +
-      stampDuty +
-      invFine +
-      freight +
-      shippingLineCharges +
-      clearanceExpense;
-    const costPerWeight = weightKg > 0 ? totalDutyCost / weightKg : 0;
+    const pkrValue = taxBreakdown?.pkrValue ?? 0;
+    const assessedValue = taxBreakdown?.assessedValue ?? 0;
+    const customDuty = taxBreakdown?.customDuty ?? 0;
+    const addCd = taxBreakdown?.addCd ?? 0;
+    const gst = taxBreakdown?.gst ?? 0;
+    const addGst = taxBreakdown?.addGst ?? 0;
+    const incomeTax = taxBreakdown?.incomeTax ?? 0;
+    const excise = taxBreakdown?.excise ?? 0;
+    const regularDuty = taxBreakdown?.regularDuty ?? 0;
+    const stampDuty = taxBreakdown?.stampDuty ?? 0;
+    const sumOfAllTaxes = taxBreakdown?.sumOfAllTaxes ?? 0;
 
     return (
       <div className="space-y-4">
@@ -340,11 +347,15 @@ export function InquiryConfirmationPanel() {
                 <div>Regular Duty ({regularDutyRate}%): <span className="font-semibold">{fmtMoney(regularDuty)}</span></div>
                 <div>Stamp Duty ({stampDutyRate}%): <span className="font-semibold">{fmtMoney(stampDuty)}</span></div>
                 <div>INV Fine: <span className="font-semibold">{fmtMoney(invFine)}</span></div>
-                <div>Freight: <span className="font-semibold">{fmtMoney(freight)}</span></div>
-                <div>Shipping Line Charges: <span className="font-semibold">{fmtMoney(shippingLineCharges)}</span></div>
-                <div>Clearance Expense: <span className="font-semibold">{fmtMoney(clearanceExpense)}</span></div>
-                <div>Total Duty Cost: <span className="font-semibold">{fmtMoney(totalDutyCost)}</span></div>
-                <div>Cost per Weight: <span className="font-semibold">{weightKg > 0 ? costPerWeight.toFixed(6) : "-"}</span></div>
+                <div>Sum of All Taxes: <span className="font-semibold">{fmtMoney(sumOfAllTaxes)}</span></div>
+              </div>
+              <div className="mt-4">
+                <InquiryPricingSummary
+                  calculatorValues={calculatorValues}
+                  totalWeightKg={weightKg}
+                  cbm={cbm}
+                  pricingConfig={pricingConfig}
+                />
               </div>
             </div>
 

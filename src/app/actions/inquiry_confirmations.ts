@@ -3,7 +3,7 @@
 import { createAdminClient } from '@/utils/supabase/server';
 import { getSession } from '@/lib/auth/session';
 import { revalidatePath } from 'next/cache';
-import { computeCalculatorTotals } from '@/lib/inquiry-calculator';
+import { computeCalculatorTotals, parsePricingConfig } from '@/lib/inquiry-calculator';
 
 export type ConfirmationStatus = 'pending' | 'approved' | 'rejected';
 
@@ -629,12 +629,23 @@ export async function getApprovedPricingForInquiryIds(inquiryIds: string[]) {
     const supabase = await createAdminClient();
     const { data, error } = await supabase
       .from('inquiry_confirmations')
-      .select('inquiry_id, calculator_values, total_weight, quantity, status, created_at')
+      .select('inquiry_id, calculator_values, total_weight, cbm, quantity, status, created_at')
       .in('inquiry_id', ids)
       .eq('status', 'approved')
       .order('created_at', { ascending: false });
 
     if (error) return { error: error.message };
+
+    const { data: configRow } = await supabase
+      .from('inquiry_calculator_config')
+      .select('values')
+      .eq('id', 'shared')
+      .maybeSingle();
+    const pricingConfig = parsePricingConfig(
+      configRow?.values && typeof configRow.values === 'object'
+        ? (configRow.values as Record<string, unknown>)
+        : {}
+    );
 
     const pricing: Record<string, { quotation_number: string; unit_price: number; total_amount: number; notes: string | null }> = {};
     for (const row of data || []) {
@@ -642,7 +653,7 @@ export async function getApprovedPricingForInquiryIds(inquiryIds: string[]) {
       if (!inquiryId || pricing[inquiryId]) continue;
       const totals = computeCalculatorTotals(
         row.calculator_values as Record<string, unknown> | null,
-        { weightKg: row.total_weight, quantity: row.quantity }
+        { weightKg: row.total_weight, quantity: row.quantity, cbm: row.cbm, pricingConfig }
       );
       if (!totals) continue;
       pricing[inquiryId] = {

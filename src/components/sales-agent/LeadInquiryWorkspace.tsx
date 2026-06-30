@@ -77,6 +77,65 @@ function salesInquiryIsApproved(inq: LeadInquiry, approvedFallbackId: string | n
   );
 }
 
+function inquiryIsUnsentDraft(inq: LeadInquiry | null | undefined) {
+  if (!inq?.id) return false;
+  return !inq.sent_to_accounting && inq.approval_status !== "sent";
+}
+
+function resolveSaveInquiryOptions(
+  inquiry: LeadInquiry | null,
+  mode: "create" | "view",
+  layout: "dialog" | "page",
+  mainTab: MainTab
+) {
+  const isCreateFlow = mode === "create" || (layout === "page" && mainTab === "create");
+  if (!isCreateFlow) {
+    return { inquiryId: inquiry?.id, forceNewInquiry: false };
+  }
+  if (inquiryIsUnsentDraft(inquiry)) {
+    return { inquiryId: inquiry!.id, forceNewInquiry: false };
+  }
+  return { inquiryId: undefined, forceNewInquiry: true };
+}
+
+function resetCreateInquiryFormState(setters: {
+  setInquiry: (value: LeadInquiry | null) => void;
+  setSelectedInquiryId: (value: string) => void;
+  setProductName: (value: string) => void;
+  setTotalWeight: (value: string) => void;
+  setCbm: (value: string) => void;
+  setQuantity: (value: string) => void;
+  setImageDataList: (value: string[]) => void;
+  setOtherDetails: (value: string) => void;
+  setInquiryLogs: (value: InquiryLog[]) => void;
+  setBaselineDraftState: (value: {
+    product_name: string;
+    total_weight: string;
+    cbm: string;
+    quantity: string;
+    description: string;
+    image_count: number;
+  }) => void;
+}) {
+  setters.setInquiry(null);
+  setters.setSelectedInquiryId("");
+  setters.setProductName("");
+  setters.setTotalWeight("");
+  setters.setCbm("");
+  setters.setQuantity("");
+  setters.setImageDataList([]);
+  setters.setOtherDetails("");
+  setters.setInquiryLogs([]);
+  setters.setBaselineDraftState({
+    product_name: "",
+    total_weight: "",
+    cbm: "",
+    quantity: "",
+    description: "",
+    image_count: 0,
+  });
+}
+
 function pickPrimaryQuotation(quotations: InquiryQuotation[]): InquiryQuotation | null {
   if (!quotations.length) return null;
   const sent = quotations.find((q) => q.sent_to_agent);
@@ -101,6 +160,7 @@ function getInquiryPricingForDisplay(
   const totals = computeCalculatorTotals(inq.calculator_values, {
     weightKg: inq.total_weight,
     quantity: inq.quantity,
+    cbm: inq.cbm,
   });
   if (!totals) return null;
 
@@ -143,6 +203,7 @@ function buildApprovedInquiryDetailText(
     const totals = computeCalculatorTotals(calculatorValues, {
       weightKg: inq.total_weight,
       quantity: inq.quantity,
+      cbm: inq.cbm,
     });
 
     if (totals && totals.totalAmount > 0) {
@@ -150,9 +211,10 @@ function buildApprovedInquiryDetailText(
       lines.push(`Quantity: ${inq.quantity || "1"}`);
       lines.push(`Unit price: ${formatInquiryMoney(totals.unitPrice)}`);
       lines.push(`Total amount: ${formatInquiryMoney(totals.totalAmount)}`);
-      lines.push(`Total duty cost: ${formatInquiryMoney(totals.totalDutyCost)}`);
+      lines.push(`Sum of taxes: ${formatInquiryMoney(totals.sumOfAllTaxes)}`);
+      lines.push(`Final answer (per kg): ${totals.finalAnswer.toFixed(6)}`);
       if (totals.costPerWeight > 0 && inq.total_weight?.trim()) {
-        lines.push(`Cost per kg: ${totals.costPerWeight.toFixed(6)}`);
+        lines.push(`Rate per kg: ${totals.costPerWeight.toFixed(6)}`);
       }
 
       lines.push("");
@@ -340,6 +402,12 @@ export function LeadInquiryWorkspace({
         }
         setApprovedInquiryId(nextApprovedFallback);
 
+        const skipFormHydration = layout === "page" && mainTab === "create";
+
+        if (skipFormHydration) {
+          return;
+        }
+
         const selected = selectedInquiryId
           ? list.find((x) => x.id === selectedInquiryId) || null
           : null;
@@ -388,7 +456,7 @@ export function LeadInquiryWorkspace({
     } finally {
       setIsLoading(false);
     }
-  }, [lead, selectedInquiryId, mode]);
+  }, [lead, selectedInquiryId, mode, layout, mainTab]);
 
   useEffect(() => {
     if (active && lead && layout === "page" && mainTab === "create") {
@@ -882,6 +950,7 @@ export function LeadInquiryWorkspace({
       return;
     }
     startTransition(async () => {
+      const saveOptions = resolveSaveInquiryOptions(inquiry, mode, layout, mainTab);
       const result = await saveInquiry(lead.id, {
         product_name: productName,
         total_weight: totalWeight,
@@ -890,10 +959,8 @@ export function LeadInquiryWorkspace({
         image_url: imageDataList[0] || null,
         additional_image_urls: imageDataList.slice(1),
         description: otherDetails,
-      }, inquiry?.id, {
-        forceNewInquiry:
-          (mode === "create" && !inquiry?.id) ||
-          (layout === "page" && mainTab === "create" && !inquiry?.id),
+      }, saveOptions.inquiryId, {
+        forceNewInquiry: saveOptions.forceNewInquiry,
       });
       if ("error" in result) {
         toast.error(result.error);
@@ -943,6 +1010,7 @@ export function LeadInquiryWorkspace({
       return;
     }
     startTransition(async () => {
+      const saveOptions = resolveSaveInquiryOptions(inquiry, mode, layout, mainTab);
       // Save first
       const saveResult = await saveInquiry(lead.id, {
         product_name: productName,
@@ -952,10 +1020,8 @@ export function LeadInquiryWorkspace({
         image_url: imageDataList[0] || null,
         additional_image_urls: imageDataList.slice(1),
         description: otherDetails,
-      }, inquiry?.id, {
-        forceNewInquiry:
-          (mode === "create" && !inquiry?.id) ||
-          (layout === "page" && mainTab === "create" && !inquiry?.id),
+      }, saveOptions.inquiryId, {
+        forceNewInquiry: saveOptions.forceNewInquiry,
       });
       if ("error" in saveResult) {
         toast.error(saveResult.error);
@@ -973,20 +1039,39 @@ export function LeadInquiryWorkspace({
       } else {
         toast.success("Inquiry sent to Accounting & Operations!");
         if (result.inquiry) {
-          setInquiry(result.inquiry);
-          const primaryImage = result.inquiry.image_url || "";
-          const additionalImages = Array.isArray(result.inquiry.additional_image_urls)
-            ? result.inquiry.additional_image_urls.filter((url) => typeof url === "string" && url.trim().length > 0)
-            : [];
-          setBaselineDraftState({
-            product_name: result.inquiry.product_name || "",
-            total_weight: result.inquiry.total_weight || "",
-            cbm: result.inquiry.cbm || "",
-            quantity: result.inquiry.quantity || "",
-            description: result.inquiry.description || "",
-            image_count: (primaryImage ? 1 : 0) + additionalImages.length,
+          setLeadInquiries((prev) => {
+            const filtered = prev.filter((x) => x.id !== result.inquiry!.id);
+            return [result.inquiry!, ...filtered];
           });
-          await fetchLogsForInquiry(result.inquiry.id);
+          if (layout === "page" && mainTab === "create") {
+            resetCreateInquiryFormState({
+              setInquiry,
+              setSelectedInquiryId,
+              setProductName,
+              setTotalWeight,
+              setCbm,
+              setQuantity,
+              setImageDataList,
+              setOtherDetails,
+              setInquiryLogs,
+              setBaselineDraftState,
+            });
+          } else {
+            setInquiry(result.inquiry);
+            const primaryImage = result.inquiry.image_url || "";
+            const additionalImages = Array.isArray(result.inquiry.additional_image_urls)
+              ? result.inquiry.additional_image_urls.filter((url) => typeof url === "string" && url.trim().length > 0)
+              : [];
+            setBaselineDraftState({
+              product_name: result.inquiry.product_name || "",
+              total_weight: result.inquiry.total_weight || "",
+              cbm: result.inquiry.cbm || "",
+              quantity: result.inquiry.quantity || "",
+              description: result.inquiry.description || "",
+              image_count: (primaryImage ? 1 : 0) + additionalImages.length,
+            });
+            await fetchLogsForInquiry(result.inquiry.id);
+          }
         }
         // Close the modal after a successful send so the workflow can continue.
         onRequestClose?.();

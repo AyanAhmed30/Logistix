@@ -12,6 +12,7 @@ import {
   addInquiryActivity,
   addInquiryCalculatorFieldLog,
   saveInquiryCalculatorField,
+  getSharedInquiryCalculatorValues,
   getLeadChatMessages,
   sendLeadChatMessage,
   type LeadInquiryWithLead,
@@ -25,7 +26,13 @@ import {
   type InquiryConfirmation,
 } from "@/app/actions/inquiry_confirmations";
 import { InquiryAttachmentList } from "@/components/inquiry/InquiryAttachmentList";
+import { InquiryPricingSummary } from "@/components/admin/InquiryPricingSummary";
 import { collectInquiryAttachmentUrls } from "@/lib/inquiry-attachments";
+import {
+  computeInquiryTaxBreakdown,
+  parsePricingConfig,
+  type CalculatorPricingConfig,
+} from "@/lib/inquiry-calculator";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -207,14 +214,27 @@ export function OperationsLeadsInquiryPanel({
   const [calcRegularDutyRate, setCalcRegularDutyRate] = useState("0");
   const [calcStampDutyRate, setCalcStampDutyRate] = useState("0");
   const [calcInvFine, setCalcInvFine] = useState("0");
-  const [calcFreight, setCalcFreight] = useState("0");
-  const [calcShippingLineCharges, setCalcShippingLineCharges] = useState("0");
-  const [calcClearanceExpense, setCalcClearanceExpense] = useState("0");
   const [calcSalesTaxRate, setCalcSalesTaxRate] = useState("18");
   const [calcUom, setCalcUom] = useState("KG");
   const [calcQuantity, setCalcQuantity] = useState("0");
   const [calcHsCode, setCalcHsCode] = useState("");
   const [lastCalcSnapshot, setLastCalcSnapshot] = useState<Record<string, string>>({});
+  const [pricingConfig, setPricingConfig] = useState<CalculatorPricingConfig>({
+    grossWeightValue: 0,
+    volumetricWeightValue: 0,
+    cbmValue: 0,
+  });
+
+  const refreshPricingConfig = useCallback(async () => {
+    const result = await getSharedInquiryCalculatorValues();
+    if (!("error" in result)) {
+      setPricingConfig(parsePricingConfig(result.values));
+    }
+  }, []);
+
+  useEffect(() => {
+    void refreshPricingConfig();
+  }, [refreshPricingConfig]);
 
   const getDefaultCalculatorValues = useCallback(() => ({
     inv_value: "0",
@@ -228,9 +248,6 @@ export function OperationsLeadsInquiryPanel({
     regular_duty_rate: "0",
     stamp_duty_rate: "0",
     inv_fine: "0",
-    freight: "0",
-    shipping_line_charges: "0",
-    clearance_expense: "0",
     sales_tax_rate: "18",
     uom: "KG",
     quantity: "0",
@@ -249,9 +266,6 @@ export function OperationsLeadsInquiryPanel({
     setCalcRegularDutyRate(values.regular_duty_rate ?? "0");
     setCalcStampDutyRate(values.stamp_duty_rate ?? "0");
     setCalcInvFine(values.inv_fine ?? "0");
-    setCalcFreight(values.freight ?? "0");
-    setCalcShippingLineCharges(values.shipping_line_charges ?? "0");
-    setCalcClearanceExpense(values.clearance_expense ?? "0");
     setCalcSalesTaxRate(values.sales_tax_rate ?? "18");
     setCalcUom(values.uom ?? "KG");
     setCalcQuantity(values.quantity ?? "0");
@@ -402,7 +416,9 @@ export function OperationsLeadsInquiryPanel({
     // Calculator must start empty/zero for each inquiry (manual-only entry).
     const defaults = getDefaultCalculatorValues();
     applyCalculatorValues(defaults);
-    // Load secondary detail data in parallel to reduce perceived latency.
+    const inquiryQuantity = inquiry.quantity?.trim() || "0";
+    setCalcQuantity(inquiryQuantity);
+    const nextSnapshot = { ...defaults, quantity: inquiryQuantity };
     const [confirmResult] = await Promise.allSettled([
       getConfirmationsForInquiry(inquiry.id),
       refreshInquiryLogs(inquiry.lead_id),
@@ -417,7 +433,8 @@ export function OperationsLeadsInquiryPanel({
     } else {
       setConfirmations([]);
     }
-    setLastCalcSnapshot(defaults);
+    setLastCalcSnapshot(nextSnapshot);
+    // Load secondary detail data in parallel to reduce perceived latency.
     setActiveRightTab("send_message");
     setLogNoteText("");
     setChatInput("");
@@ -572,6 +589,8 @@ export function OperationsLeadsInquiryPanel({
           description: editDescription.trim(),
         };
         setSelectedInquiry(updatedInquiry);
+        setCalcQuantity(editQuantity.trim() || "0");
+        setLastCalcSnapshot((prev) => ({ ...prev, quantity: editQuantity.trim() || "0" }));
         setIsEditing(false);
         await refreshInquiryLogs(selectedInquiry.lead_id);
         fetchInquiries();
@@ -842,6 +861,11 @@ export function OperationsLeadsInquiryPanel({
         toast.warning(`Some images couldn't be uploaded to storage but will be saved locally: ${uploadErrors.join(", ")}`);
       }
 
+      const resolvedQuantity =
+        (isEditing ? editQuantity : selectedInquiry.quantity)?.trim() ||
+        formQuantity.trim() ||
+        "0";
+
       const result = await submitInquiryForConfirmation({
         inquiry_id: selectedInquiry.id,
         lead_id: selectedInquiry.lead_id,
@@ -849,7 +873,7 @@ export function OperationsLeadsInquiryPanel({
         product_name: formProductName,
         total_weight: formWeight,
         cbm: formCbm,
-        quantity: formQuantity || calcQuantity,
+        quantity: resolvedQuantity,
         hs_code: calcHsCode,
         calculator_values: {
           inv_value: calcInvValue,
@@ -863,12 +887,9 @@ export function OperationsLeadsInquiryPanel({
           regular_duty_rate: calcRegularDutyRate,
           stamp_duty_rate: calcStampDutyRate,
           inv_fine: calcInvFine,
-          freight: calcFreight,
-          shipping_line_charges: calcShippingLineCharges,
-          clearance_expense: calcClearanceExpense,
           sales_tax_rate: calcSalesTaxRate,
           uom: calcUom,
-          quantity: calcQuantity,
+          quantity: resolvedQuantity,
           hs_code: calcHsCode,
         },
         original_image_url: selectedInquiry.image_url,
@@ -1059,9 +1080,30 @@ export function OperationsLeadsInquiryPanel({
     const fmtRate = (v: string) => `${toNum(v).toFixed(2)}%`;
 
     const weightKg = toNum(isEditing ? editWeight : inq.total_weight);
+    const cbm = toNum(isEditing ? editCbm : inq.cbm);
+    const inquiryQuantity = (isEditing ? editQuantity : inq.quantity)?.trim() || "0";
 
-    const invValue = toNum(calcInvValue);
-    const exchangeRate = toNum(calcExchangeRate);
+    const calculatorValuesRecord = {
+      inv_value: calcInvValue,
+      exchange_rate: calcExchangeRate,
+      custom_duty_rate: calcCustomDutyRate,
+      add_cd_rate: calcAddCdRate,
+      gst_rate: calcGstRate,
+      add_gst_rate: calcAddGstRate,
+      income_tax_rate: calcIncomeTaxRate,
+      excise_rate: calcExciseRate,
+      regular_duty_rate: calcRegularDutyRate,
+      stamp_duty_rate: calcStampDutyRate,
+      inv_fine: calcInvFine,
+      sales_tax_rate: calcSalesTaxRate,
+      quantity: inquiryQuantity,
+      uom: calcUom,
+      hs_code: calcHsCode,
+    };
+
+    const taxBreakdown = computeInquiryTaxBreakdown(calculatorValuesRecord);
+
+    const invValue = taxBreakdown?.invValue ?? toNum(calcInvValue);
     const customDutyRate = toNum(calcCustomDutyRate);
     const addCdRate = toNum(calcAddCdRate);
     const gstRate = toNum(calcGstRate);
@@ -1070,69 +1112,25 @@ export function OperationsLeadsInquiryPanel({
     const exciseRate = toNum(calcExciseRate);
     const regularDutyRate = toNum(calcRegularDutyRate);
     const stampDutyRate = toNum(calcStampDutyRate);
-    const invFine = toNum(calcInvFine);
-    const freight = toNum(calcFreight);
-    const shippingLineCharges = toNum(calcShippingLineCharges);
-    const clearanceExpense = toNum(calcClearanceExpense);
-    const salesTaxRate = toNum(calcSalesTaxRate);
-
-    const pkrValue = invValue * exchangeRate;
-    const assessedValue = pkrValue;
-
-    const customDuty = (assessedValue * customDutyRate) / 100;
-    const addCd = (assessedValue * addCdRate) / 100;
-    const gst = (assessedValue * gstRate) / 100;
-    const addGst = (assessedValue * addGstRate) / 100;
-    const incomeTax = (assessedValue * incomeTaxRate) / 100;
-    const excise = (assessedValue * exciseRate) / 100;
-    const regularDuty = (assessedValue * regularDutyRate) / 100;
-    const stampDuty = (assessedValue * stampDutyRate) / 100;
-
-    const subTotalDutyCost =
-      assessedValue +
-      customDuty +
-      addCd +
-      gst +
-      addGst +
-      incomeTax +
-      excise +
-      regularDuty +
-      stampDuty +
-      invFine +
-      freight +
-      shippingLineCharges +
-      clearanceExpense;
-    const salesTaxAmount = (subTotalDutyCost * salesTaxRate) / 100;
-    const totalDutyCost = subTotalDutyCost + salesTaxAmount;
-
-    const costPerWeight = weightKg > 0 ? totalDutyCost / weightKg : 0;
 
     const calc = {
       invValue,
-      pkrValue,
-      assessedValue,
-      customDuty,
-      addCd,
-      gst,
-      addGst,
-      incomeTax,
-      excise,
-      regularDuty,
-      stampDuty,
-      invFine,
-      freight,
-      shippingLineCharges,
-      clearanceExpense,
-      salesTaxAmount,
-      totalDutyCost,
-      costPerWeight,
+      pkrValue: taxBreakdown?.pkrValue ?? 0,
+      assessedValue: taxBreakdown?.assessedValue ?? 0,
+      customDuty: taxBreakdown?.customDuty ?? 0,
+      addCd: taxBreakdown?.addCd ?? 0,
+      gst: taxBreakdown?.gst ?? 0,
+      addGst: taxBreakdown?.addGst ?? 0,
+      incomeTax: taxBreakdown?.incomeTax ?? 0,
+      excise: taxBreakdown?.excise ?? 0,
+      regularDuty: taxBreakdown?.regularDuty ?? 0,
+      stampDuty: taxBreakdown?.stampDuty ?? 0,
+      invFine: taxBreakdown?.invFine ?? 0,
+      salesTaxAmount: taxBreakdown?.salesTaxAmount ?? 0,
+      sumOfAllTaxes: taxBreakdown?.sumOfAllTaxes ?? 0,
     };
 
     const calculatorFieldsForForm = [
-      { label: "INV Value", value: calc.invValue, format: "money" as const },
-      { label: "Exchange Rate", value: exchangeRate, format: "number" as const },
-      { label: "PKR Value", value: calc.pkrValue, format: "money" as const },
-      { label: "Assessed Value", value: calc.assessedValue, format: "money" as const },
       { label: "Custom Duty %", value: customDutyRate, format: "percent" as const },
       { label: "Custom Duty Amount", value: calc.customDuty, format: "money" as const },
       { label: "Add CD %", value: addCdRate, format: "percent" as const },
@@ -1150,13 +1148,9 @@ export function OperationsLeadsInquiryPanel({
       { label: "Stamp Duty %", value: stampDutyRate, format: "percent" as const },
       { label: "Stamp Duty Amount", value: calc.stampDuty, format: "money" as const },
       { label: "INV Fine", value: calc.invFine, format: "money" as const },
-      { label: "Freight", value: calc.freight, format: "money" as const },
-      { label: "Shipping Line Charges", value: calc.shippingLineCharges, format: "money" as const },
-      { label: "Clearance Expense", value: calc.clearanceExpense, format: "money" as const },
-      { label: "Sales Tax (ST) %", value: salesTaxRate, format: "percent" as const },
+      { label: "Sales Tax (ST) %", value: toNum(calcSalesTaxRate), format: "percent" as const },
       { label: "Sales Tax Amount", value: calc.salesTaxAmount, format: "money" as const },
-      { label: "Total Duty Cost", value: calc.totalDutyCost, format: "money" as const },
-      { label: "Cost per Weight", value: calc.costPerWeight, format: "number" as const },
+      { label: "Sum of All Taxes", value: calc.sumOfAllTaxes, format: "money" as const },
     ].filter((item) => Math.abs(item.value) > 0);
 
     const fieldLabels: Record<string, string> = {
@@ -1180,9 +1174,6 @@ export function OperationsLeadsInquiryPanel({
       regular_duty_rate: "Regular Duty %",
       stamp_duty_rate: "Stamp Duty %",
       inv_fine: "INV Fine",
-      freight: "Freight",
-      shipping_line_charges: "Shipping Line Charges",
-      clearance_expense: "Clearance Expense",
       sales_tax_rate: "Sales Tax (ST) %",
       uom: "UOM",
       hs_code: "HS Code",
@@ -1426,6 +1417,68 @@ export function OperationsLeadsInquiryPanel({
                 </div>
 
                 <div className="grid grid-cols-12 border-b">
+                  <div className="col-span-5 px-3 py-2 border-r text-sm">Sales Tax (ST)</div>
+                  <div className="col-span-3 px-2 py-1.5 border-r">
+                    <Input
+                      value={calcSalesTaxRate}
+                      onChange={(e) => setCalcSalesTaxRate(e.target.value)}
+                      onBlur={() => void logCalculatorFieldChange("sales_tax_rate", calcSalesTaxRate)}
+                      className="h-8 text-xs"
+                    />
+                    <div className="text-[10px] text-slate-500 mt-0.5">{fmtRate(calcSalesTaxRate)}</div>
+                  </div>
+                  <div className="col-span-4 px-3 py-2 text-right text-sm font-semibold">{fmtMoney(calc.salesTaxAmount)}</div>
+                </div>
+
+                <div className="grid grid-cols-12 border-b">
+                  <div className="col-span-5 px-3 py-2 border-r text-sm">UOM</div>
+                  <div className="col-span-7 px-2 py-1.5">
+                    <Select
+                      value={calcUom}
+                      onValueChange={(value) => {
+                        setCalcUom(value);
+                        void logCalculatorFieldChange("uom", value);
+                      }}
+                    >
+                      <SelectTrigger className="h-8 text-xs">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="KG">KG</SelectItem>
+                        <SelectItem value="M³">M³</SelectItem>
+                        <SelectItem value="PCS/U">PCS/U</SelectItem>
+                        <SelectItem value="Pairs (2U)">Pairs (2U)</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-12 border-b">
+                  <div className="col-span-5 px-3 py-2 border-r text-sm">Quantity</div>
+                  <div className="col-span-7 px-2 py-1.5">
+                    <Input
+                      value={inquiryQuantity}
+                      readOnly
+                      className="h-8 text-xs bg-slate-50"
+                      title="Filled automatically from inquiry"
+                    />
+                    <div className="text-[10px] text-slate-500 mt-0.5">From inquiry</div>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-12 border-b">
+                  <div className="col-span-5 px-3 py-2 border-r text-sm">HS Code</div>
+                  <div className="col-span-7 px-2 py-1.5">
+                    <Input
+                      value={calcHsCode}
+                      onChange={(e) => setCalcHsCode(e.target.value)}
+                      onBlur={() => void logCalculatorFieldChange("hs_code", calcHsCode)}
+                      className="h-8 text-xs"
+                    />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-12 border-b">
                   <div className="col-span-5 px-3 py-2 border-r text-sm font-medium">INV Value</div>
                   <div className="col-span-3 px-2 py-1.5 border-r">
                     <Input
@@ -1489,72 +1542,8 @@ export function OperationsLeadsInquiryPanel({
                   </div>
                 ))}
 
-                <div className="grid grid-cols-12 border-b">
-                  <div className="col-span-5 px-3 py-2 border-r text-sm">Sales Tax (ST)</div>
-                  <div className="col-span-3 px-2 py-1.5 border-r">
-                    <Input
-                      value={calcSalesTaxRate}
-                      onChange={(e) => setCalcSalesTaxRate(e.target.value)}
-                      onBlur={() => void logCalculatorFieldChange("sales_tax_rate", calcSalesTaxRate)}
-                      className="h-8 text-xs"
-                    />
-                    <div className="text-[10px] text-slate-500 mt-0.5">{fmtRate(calcSalesTaxRate)}</div>
-                  </div>
-                  <div className="col-span-4 px-3 py-2 text-right text-sm font-semibold">{fmtMoney(calc.salesTaxAmount)}</div>
-                </div>
-
-                <div className="grid grid-cols-12 border-b">
-                  <div className="col-span-5 px-3 py-2 border-r text-sm">UOM</div>
-                  <div className="col-span-7 px-2 py-1.5">
-                    <Select
-                      value={calcUom}
-                      onValueChange={(value) => {
-                        setCalcUom(value);
-                        void logCalculatorFieldChange("uom", value);
-                      }}
-                    >
-                      <SelectTrigger className="h-8 text-xs">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="KG">KG</SelectItem>
-                        <SelectItem value="M³">M³</SelectItem>
-                        <SelectItem value="PCS/U">PCS/U</SelectItem>
-                        <SelectItem value="Pairs (2U)">Pairs (2U)</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-12 border-b">
-                  <div className="col-span-5 px-3 py-2 border-r text-sm">Quantity</div>
-                  <div className="col-span-7 px-2 py-1.5">
-                    <Input
-                      value={calcQuantity}
-                      onChange={(e) => setCalcQuantity(e.target.value.replace(/\D/g, ""))}
-                      onBlur={() => void logCalculatorFieldChange("quantity", calcQuantity)}
-                      className="h-8 text-xs"
-                    />
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-12 border-b">
-                  <div className="col-span-5 px-3 py-2 border-r text-sm">HS Code</div>
-                  <div className="col-span-7 px-2 py-1.5">
-                    <Input
-                      value={calcHsCode}
-                      onChange={(e) => setCalcHsCode(e.target.value)}
-                      onBlur={() => void logCalculatorFieldChange("hs_code", calcHsCode)}
-                      className="h-8 text-xs"
-                    />
-                  </div>
-                </div>
-
                 {[
                   { field: "inv_fine", label: "INV Fine", value: calcInvFine, setValue: setCalcInvFine, amount: calc.invFine },
-                  { field: "freight", label: "Freight", value: calcFreight, setValue: setCalcFreight, amount: calc.freight },
-                  { field: "shipping_line_charges", label: "Shipping Line Charges", value: calcShippingLineCharges, setValue: setCalcShippingLineCharges, amount: calc.shippingLineCharges },
-                  { field: "clearance_expense", label: "Clearance Expense", value: calcClearanceExpense, setValue: setCalcClearanceExpense, amount: calc.clearanceExpense },
                 ].map((row) => (
                   <div key={row.label} className="grid grid-cols-12 border-b">
                     <div className="col-span-5 px-3 py-2 border-r text-sm">{row.label}</div>
@@ -1570,27 +1559,32 @@ export function OperationsLeadsInquiryPanel({
                   </div>
                 ))}
 
-                {(!adminCalculatorMode || calc.totalDutyCost !== 0) && (
-                  <div className="grid grid-cols-12 bg-yellow-50">
-                    <div className="col-span-8 px-3 py-2 border-r text-sm font-bold text-slate-800">Total Duty Cost</div>
-                    <div className="col-span-4 px-3 py-2 text-right text-sm font-bold text-slate-900">{fmtMoney(calc.totalDutyCost)}</div>
-                  </div>
-                )}
+                <div className="grid grid-cols-12 border-b bg-slate-50">
+                  <div className="col-span-8 px-3 py-2 border-r text-sm font-bold text-slate-800">Sum of All Taxes</div>
+                  <div className="col-span-4 px-3 py-2 text-right text-sm font-bold text-slate-900">{fmtMoney(calc.sumOfAllTaxes)}</div>
+                </div>
               </div>
 
-              <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-2">
+              <div className="mt-4">
+                <InquiryPricingSummary
+                  calculatorValues={calculatorValuesRecord}
+                  totalWeightKg={weightKg}
+                  cbm={cbm}
+                  pricingConfig={pricingConfig}
+                />
+              </div>
+
+              <div className="mt-3 grid grid-cols-1 md:grid-cols-3 gap-x-8 gap-y-2">
                 {(!adminCalculatorMode || weightKg !== 0) && (
                   <div>
-                    <div className="text-xs text-slate-500 font-medium">Weight</div>
+                    <div className="text-xs text-slate-500 font-medium">Weight (kg)</div>
                     <div className="text-sm font-semibold text-slate-800 mt-0.5">{weightKg || "-"}</div>
                   </div>
                 )}
-                {(!adminCalculatorMode || calc.costPerWeight !== 0) && (
+                {(!adminCalculatorMode || cbm !== 0) && (
                   <div>
-                    <div className="text-xs text-slate-500 font-medium">Cost per Weight</div>
-                    <div className="text-sm font-semibold text-slate-800 mt-0.5">
-                      {weightKg > 0 ? calc.costPerWeight.toFixed(6) : "-"}
-                    </div>
+                    <div className="text-xs text-slate-500 font-medium">CBM</div>
+                    <div className="text-sm font-semibold text-slate-800 mt-0.5">{cbm || "-"}</div>
                   </div>
                 )}
               </div>
@@ -1967,9 +1961,7 @@ export function OperationsLeadsInquiryPanel({
                       <span className="font-semibold text-slate-800">
                         {row.format === "percent"
                           ? `${row.value.toFixed(2)}%`
-                          : row.format === "number"
-                            ? row.value.toLocaleString(undefined, { maximumFractionDigits: 6 })
-                            : fmtMoney(row.value)}
+                          : fmtMoney(row.value)}
                       </span>
                     </div>
                   ))}

@@ -1,7 +1,71 @@
+export const VOLUMETRIC_CBM_FACTOR = 200;
+
+export const PRICING_CONFIG_KEYS = {
+  grossWeightValue: "gross_weight_value",
+  volumetricWeightValue: "volumetric_weight_value",
+  cbmValue: "cbm_value",
+} as const;
+
+export type CalculatorPricingConfig = {
+  grossWeightValue: number;
+  volumetricWeightValue: number;
+  cbmValue: number;
+};
+
+export type InquiryTaxBreakdown = {
+  invValue: number;
+  exchangeRate: number;
+  pkrValue: number;
+  assessedValue: number;
+  customDuty: number;
+  addCd: number;
+  gst: number;
+  addGst: number;
+  incomeTax: number;
+  excise: number;
+  regularDuty: number;
+  stampDuty: number;
+  invFine: number;
+  salesTaxRate: number;
+  salesTaxAmount: number;
+  subTotalBeforeSalesTax: number;
+  sumOfAllTaxes: number;
+};
+
+export type PricingCase = "gross_weight" | "volumetric";
+
+export type Case2Subcase = {
+  taxPerKg: number;
+  addonLabel: string;
+  addonValue: number;
+  finalAnswer: number;
+};
+
+export type InquiryPricingResult = {
+  volumetricWeight: number;
+  totalWeightKg: number;
+  cbm: number;
+  taxPerKg: number;
+  sumOfAllTaxes: number;
+  pricingCase: PricingCase;
+  grossWeightValue: number;
+  volumetricWeightValue: number;
+  cbmValue: number;
+  finalAnswer: number;
+  case2Subcases?: {
+    volumetric: Case2Subcase;
+    cbm: Case2Subcase;
+  };
+};
+
 export type CalculatorTotals = {
   pkrValue: number;
   assessedValue: number;
-  totalDutyCost: number;
+  sumOfAllTaxes: number;
+  taxPerKg: number;
+  volumetricWeight: number;
+  pricingCase: PricingCase;
+  finalAnswer: number;
   costPerWeight: number;
   unitPrice: number;
   totalAmount: number;
@@ -14,10 +78,25 @@ function toNum(value: unknown): number {
   return Number.isFinite(n) ? n : 0;
 }
 
-export function computeCalculatorTotals(
-  values: Record<string, unknown> | null | undefined,
-  options?: { weightKg?: string | number; quantity?: string | number }
-): CalculatorTotals | null {
+export function parsePricingConfig(
+  values: Record<string, unknown> | null | undefined
+): CalculatorPricingConfig {
+  const source = values && typeof values === "object" ? values : {};
+  return {
+    grossWeightValue: toNum(source[PRICING_CONFIG_KEYS.grossWeightValue]),
+    volumetricWeightValue: toNum(source[PRICING_CONFIG_KEYS.volumetricWeightValue]),
+    cbmValue: toNum(source[PRICING_CONFIG_KEYS.cbmValue]),
+  };
+}
+
+export function computeVolumetricWeight(cbm: number): number {
+  const safeCbm = Math.max(toNum(cbm), 0);
+  return safeCbm * VOLUMETRIC_CBM_FACTOR;
+}
+
+export function computeInquiryTaxBreakdown(
+  values: Record<string, unknown> | null | undefined
+): InquiryTaxBreakdown | null {
   if (!values || typeof values !== "object") return null;
 
   const invValue = toNum(values.inv_value ?? values["PKR Value"]);
@@ -31,17 +110,14 @@ export function computeCalculatorTotals(
   const regularDutyRate = toNum(values.regular_duty_rate);
   const stampDutyRate = toNum(values.stamp_duty_rate);
   const invFine = toNum(values.inv_fine);
-  const freight = toNum(values.freight);
-  const shippingLineCharges = toNum(values.shipping_line_charges);
-  const clearanceExpense = toNum(values.clearance_expense);
   const salesTaxRate = toNum(values.sales_tax_rate);
 
   const pkrValue =
     invValue > 0 && exchangeRate > 0
       ? invValue * exchangeRate
-      : toNum(values["PKR Value"] ?? values["Assessed Value"] ?? values["Total Duty Cost"]);
+      : toNum(values["PKR Value"] ?? values["Assessed Value"]);
 
-  if (pkrValue <= 0 && toNum(values["Total Duty Cost"]) <= 0) return null;
+  if (pkrValue <= 0) return null;
 
   const assessedValue = pkrValue;
   const customDuty = (assessedValue * customDutyRate) / 100;
@@ -53,7 +129,7 @@ export function computeCalculatorTotals(
   const regularDuty = (assessedValue * regularDutyRate) / 100;
   const stampDuty = (assessedValue * stampDutyRate) / 100;
 
-  const subTotalDutyCost =
+  const subTotalBeforeSalesTax =
     assessedValue +
     customDuty +
     addCd +
@@ -63,24 +139,158 @@ export function computeCalculatorTotals(
     excise +
     regularDuty +
     stampDuty +
+    invFine;
+
+  const salesTaxAmount = (subTotalBeforeSalesTax * salesTaxRate) / 100;
+
+  const sumOfAllTaxes =
+    customDuty +
+    addCd +
+    gst +
+    addGst +
+    incomeTax +
+    excise +
+    regularDuty +
+    stampDuty +
     invFine +
-    freight +
-    shippingLineCharges +
-    clearanceExpense;
+    salesTaxAmount;
 
-  const salesTax = (subTotalDutyCost * salesTaxRate) / 100;
-  const totalDutyCost = subTotalDutyCost + salesTax;
+  return {
+    invValue,
+    exchangeRate,
+    pkrValue,
+    assessedValue,
+    customDuty,
+    addCd,
+    gst,
+    addGst,
+    incomeTax,
+    excise,
+    regularDuty,
+    stampDuty,
+    invFine,
+    salesTaxRate,
+    salesTaxAmount,
+    subTotalBeforeSalesTax,
+    sumOfAllTaxes,
+  };
+}
 
-  const weightKg = toNum(options?.weightKg);
-  const quantity = toNum(options?.quantity ?? values.quantity ?? 1) || 1;
-  const costPerWeight = weightKg > 0 ? totalDutyCost / weightKg : 0;
-  const totalAmount = totalDutyCost > 0 ? totalDutyCost : pkrValue;
+export function computeTaxPerKg(sumOfAllTaxes: number, totalWeightKg: number): number {
+  const weight = Math.max(toNum(totalWeightKg), 0);
+  if (weight <= 0) return 0;
+  return sumOfAllTaxes / weight;
+}
+
+export function computeInquiryPricing(
+  taxBreakdown: InquiryTaxBreakdown,
+  options: {
+    totalWeightKg: number;
+    cbm: number;
+    pricingConfig: CalculatorPricingConfig;
+  }
+): InquiryPricingResult {
+  const totalWeightKg = Math.max(toNum(options.totalWeightKg), 0);
+  const cbm = Math.max(toNum(options.cbm), 0);
+  const pricingConfig = options.pricingConfig;
+
+  const volumetricWeight = computeVolumetricWeight(cbm);
+  const taxPerKg = computeTaxPerKg(taxBreakdown.sumOfAllTaxes, totalWeightKg);
+
+  const grossWeightValue = pricingConfig.grossWeightValue;
+  const volumetricWeightValue = pricingConfig.volumetricWeightValue;
+  const cbmValue = pricingConfig.cbmValue;
+
+  if (volumetricWeight < totalWeightKg) {
+    return {
+      volumetricWeight,
+      totalWeightKg,
+      cbm,
+      taxPerKg,
+      sumOfAllTaxes: taxBreakdown.sumOfAllTaxes,
+      pricingCase: "gross_weight",
+      grossWeightValue,
+      volumetricWeightValue,
+      cbmValue,
+      finalAnswer: taxPerKg + grossWeightValue,
+    };
+  }
+
+  const volumetricSubcase: Case2Subcase = {
+    taxPerKg,
+    addonLabel: "Volumetric Weight Value",
+    addonValue: volumetricWeightValue,
+    finalAnswer: taxPerKg + volumetricWeightValue,
+  };
+
+  const cbmSubcase: Case2Subcase = {
+    taxPerKg,
+    addonLabel: "CBM Value",
+    addonValue: cbmValue,
+    finalAnswer: taxPerKg + cbmValue,
+  };
+
+  return {
+    volumetricWeight,
+    totalWeightKg,
+    cbm,
+    taxPerKg,
+    sumOfAllTaxes: taxBreakdown.sumOfAllTaxes,
+    pricingCase: "volumetric",
+    grossWeightValue,
+    volumetricWeightValue,
+    cbmValue,
+    finalAnswer: volumetricSubcase.finalAnswer,
+    case2Subcases: {
+      volumetric: volumetricSubcase,
+      cbm: cbmSubcase,
+    },
+  };
+}
+
+export function computeCalculatorTotals(
+  values: Record<string, unknown> | null | undefined,
+  options?: {
+    weightKg?: string | number;
+    quantity?: string | number;
+    cbm?: string | number;
+    pricingConfig?: CalculatorPricingConfig | Record<string, unknown> | null;
+  }
+): CalculatorTotals | null {
+  const taxBreakdown = computeInquiryTaxBreakdown(values);
+  if (!taxBreakdown) return null;
+
+  const weightKg = Math.max(toNum(options?.weightKg), 0);
+  const quantity = Math.max(toNum(options?.quantity ?? values?.quantity ?? 1), 1) || 1;
+  const cbm = toNum(options?.cbm);
+  const pricingConfig = parsePricingConfig(
+    options?.pricingConfig && typeof options.pricingConfig === "object" && "grossWeightValue" in options.pricingConfig
+      ? {
+          [PRICING_CONFIG_KEYS.grossWeightValue]: (options.pricingConfig as CalculatorPricingConfig).grossWeightValue,
+          [PRICING_CONFIG_KEYS.volumetricWeightValue]: (options.pricingConfig as CalculatorPricingConfig).volumetricWeightValue,
+          [PRICING_CONFIG_KEYS.cbmValue]: (options.pricingConfig as CalculatorPricingConfig).cbmValue,
+        }
+      : (options?.pricingConfig as Record<string, unknown> | null | undefined)
+  );
+
+  const pricing = computeInquiryPricing(taxBreakdown, {
+    totalWeightKg: weightKg,
+    cbm,
+    pricingConfig,
+  });
+
+  const costPerWeight = pricing.finalAnswer;
+  const totalAmount = weightKg > 0 ? pricing.finalAnswer * weightKg : pricing.finalAnswer;
   const unitPrice = quantity > 0 ? totalAmount / quantity : totalAmount;
 
   return {
-    pkrValue,
-    assessedValue,
-    totalDutyCost,
+    pkrValue: taxBreakdown.pkrValue,
+    assessedValue: taxBreakdown.assessedValue,
+    sumOfAllTaxes: taxBreakdown.sumOfAllTaxes,
+    taxPerKg: pricing.taxPerKg,
+    volumetricWeight: pricing.volumetricWeight,
+    pricingCase: pricing.pricingCase,
+    finalAnswer: pricing.finalAnswer,
     costPerWeight,
     unitPrice,
     totalAmount,
@@ -99,10 +309,10 @@ export const CALCULATOR_FIELD_LABELS: Record<string, string> = {
   regular_duty_rate: "Regular Duty %",
   stamp_duty_rate: "Stamp Duty %",
   inv_fine: "INV Fine",
-  freight: "Freight",
-  shipping_line_charges: "Shipping Line Charges",
-  clearance_expense: "Clearance Expense",
   sales_tax_rate: "Sales Tax %",
+  gross_weight_value: "Gross Weight Value",
+  volumetric_weight_value: "Volumetric Weight Value",
+  cbm_value: "CBM Value",
   uom: "UOM",
   quantity: "Quantity",
   hs_code: "HS Code",

@@ -152,7 +152,7 @@ type OperationsInquiriesPage = {
   nextOffset: number;
 };
 
-const OPERATIONS_INQUIRY_CACHE_TTL_MS = 15000;
+const OPERATIONS_INQUIRY_CACHE_TTL_MS = 30000;
 const OPERATIONS_INQUIRY_CACHE_MAX_ENTRIES = 120;
 const operationsInquiriesCache = new Map<string, { expiresAt: number; data: OperationsInquiriesPage }>();
 
@@ -1255,6 +1255,155 @@ export async function getAllInquiriesForAccounting() {
 
 // ========== Operations Actions ==========
 
+const OPERATIONS_LIST_INQUIRY_SELECT = `
+  id,
+  lead_id,
+  product_name,
+  status,
+  sent_at,
+  leads (
+    id,
+    lead_id_formatted,
+    name,
+    sales_agents!leads_sales_agent_id_fkey (
+      id,
+      name
+    )
+  ),
+  inquiry_confirmations (
+    id,
+    status,
+    created_at
+  )
+`;
+
+const OPERATIONS_DETAIL_INQUIRY_SELECT = `
+  id,
+  lead_id,
+  description,
+  image_url,
+  additional_image_urls,
+  link_url,
+  product_name,
+  total_weight,
+  cbm,
+  quantity,
+  status,
+  sent_to_accounting,
+  sent_to_operations,
+  sent_at,
+  approval_status,
+  approved_at,
+  calculator_values,
+  created_at,
+  updated_at,
+  leads (
+    id,
+    lead_id_formatted,
+    name,
+    number,
+    source,
+    sales_agent_id,
+    sales_agents!leads_sales_agent_id_fkey (
+      id,
+      name,
+      username
+    )
+  ),
+  inquiry_confirmations (
+    id,
+    status,
+    created_at
+  )
+`;
+
+function normalizeOperationsInquiryRow(row: Record<string, unknown>): LeadInquiryWithLead {
+  const rawLead = Array.isArray(row.leads)
+    ? (row.leads[0] as Record<string, unknown> | undefined)
+    : (row.leads as Record<string, unknown> | undefined);
+  const rawSalesAgent = rawLead && Array.isArray(rawLead.sales_agents)
+    ? (rawLead.sales_agents[0] as Record<string, unknown> | undefined)
+    : (rawLead?.sales_agents as Record<string, unknown> | undefined);
+  return {
+    ...(row as LeadInquiryWithLead),
+    leads: rawLead
+      ? {
+          id: String(rawLead.id || ''),
+          lead_id_formatted: rawLead.lead_id_formatted ? String(rawLead.lead_id_formatted) : null,
+          name: String(rawLead.name || ''),
+          number: String(rawLead.number || ''),
+          source: String(rawLead.source || ''),
+          sales_agent_id: String(rawLead.sales_agent_id || ''),
+          sales_agents: rawSalesAgent
+            ? {
+                id: String(rawSalesAgent.id || ''),
+                name: String(rawSalesAgent.name || ''),
+                username: rawSalesAgent.username ? String(rawSalesAgent.username) : null,
+              }
+            : null,
+        }
+      : null,
+  } as LeadInquiryWithLead;
+}
+
+async function queryOperationsInquiriesPage(
+  supabase: Awaited<ReturnType<typeof createAdminClient>>,
+  input: { pageLimit: number; offset: number; search: string }
+): Promise<OperationsInquiriesPage | { error: string }> {
+  const { pageLimit, offset, search } = input;
+
+  let matchedLeadIds: string[] = [];
+  if (search) {
+    const { data: leadRows } = await supabase
+      .from('leads')
+      .select('id')
+      .or(
+        [
+          `name.ilike.%${search}%`,
+          `number.ilike.%${search}%`,
+          `source.ilike.%${search}%`,
+          `lead_id_formatted.ilike.%${search}%`,
+        ].join(',')
+      )
+      .limit(200);
+    matchedLeadIds = (leadRows || []).map((row) => String(row.id || '')).filter(Boolean);
+  }
+
+  let query = supabase
+    .from('lead_inquiries')
+    .select(OPERATIONS_LIST_INQUIRY_SELECT)
+    .eq('sent_to_accounting', true)
+    .order('sent_at', { ascending: false })
+    .range(offset, offset + pageLimit);
+
+  if (search) {
+    const leadIdClause = matchedLeadIds.length > 0 ? `,lead_id.in.(${matchedLeadIds.join(',')})` : '';
+    query = query.or(
+      [
+        `product_name.ilike.%${search}%`,
+        `description.ilike.%${search}%`,
+        `status.ilike.%${search}%`,
+        `total_weight.ilike.%${search}%`,
+        `cbm.ilike.%${search}%`,
+        `quantity.ilike.%${search}%`,
+      ].join(',') + leadIdClause
+    );
+  }
+
+  query = query
+    .order('created_at', { foreignTable: 'inquiry_confirmations', ascending: false })
+    .limit(1, { foreignTable: 'inquiry_confirmations' });
+
+  const { data, error } = await query;
+  if (error) return { error: error.message };
+
+  const rows = ((data || []) as Array<Record<string, unknown>>).map(normalizeOperationsInquiryRow);
+  const hasMore = rows.length > pageLimit;
+  const inquiries = hasMore ? rows.slice(0, pageLimit) : rows;
+  const nextOffset = offset + inquiries.length;
+  return { inquiries, hasMore, nextOffset };
+}
+
 export async function getAllInquiriesForOperations(input?: {
   limit?: number;
   offset?: number;
@@ -1282,126 +1431,95 @@ export async function getAllInquiriesForOperations(input?: {
       return cached;
     }
 
-    let matchedLeadIds: string[] = [];
-    if (search) {
-      const { data: leadRows } = await supabase
-        .from('leads')
-        .select('id')
-        .or(
-          [
-            `name.ilike.%${search}%`,
-            `number.ilike.%${search}%`,
-            `source.ilike.%${search}%`,
-            `lead_id_formatted.ilike.%${search}%`,
-          ].join(',')
-        )
-        .limit(200);
-      matchedLeadIds = (leadRows || []).map((row) => String(row.id || '')).filter(Boolean);
-    }
-
-    // Query using sent_to_accounting as the source of truth.
-    // Fetch one extra row to cheaply derive "hasMore" without count(*).
-    let query = supabase
-      .from('lead_inquiries')
-      .select(`
-        id,
-        lead_id,
-        description,
-        image_url,
-        additional_image_urls,
-        link_url,
-        product_name,
-        total_weight,
-        cbm,
-        quantity,
-        status,
-        sent_to_accounting,
-        sent_to_operations,
-        sent_at,
-        approval_status,
-        approved_at,
-        calculator_values,
-        created_at,
-        updated_at,
-        leads (
-          id,
-          lead_id_formatted,
-          name,
-          number,
-          source,
-          sales_agent_id,
-          sales_agents!leads_sales_agent_id_fkey (
-            id,
-            name,
-            username
-          )
-        ),
-        inquiry_confirmations (
-          id,
-          status,
-          created_at
-        )
-      `)
-      .eq('sent_to_accounting', true)
-      .order('sent_at', { ascending: false })
-      .range(offset, offset + pageLimit);
-
-    if (search) {
-      const leadIdClause = matchedLeadIds.length > 0 ? `,lead_id.in.(${matchedLeadIds.join(',')})` : '';
-      query = query.or(
-        [
-          `product_name.ilike.%${search}%`,
-          `description.ilike.%${search}%`,
-          `status.ilike.%${search}%`,
-          `total_weight.ilike.%${search}%`,
-          `cbm.ilike.%${search}%`,
-          `quantity.ilike.%${search}%`,
-        ].join(',') + leadIdClause
-      );
-    }
-
-    query = query
-      .order('created_at', { foreignTable: 'inquiry_confirmations', ascending: false })
-      .limit(1, { foreignTable: 'inquiry_confirmations' });
-
-    const { data, error } = await query;
-
-    if (error) return { error: error.message };
-    const rawRows = (data || []) as Array<Record<string, unknown>>;
-    const rows = rawRows.map((row) => {
-      const rawLead = Array.isArray(row.leads)
-        ? row.leads[0] as Record<string, unknown> | undefined
-        : row.leads as Record<string, unknown> | undefined;
-      const rawSalesAgent = rawLead && Array.isArray(rawLead.sales_agents)
-        ? (rawLead.sales_agents[0] as Record<string, unknown> | undefined)
-        : (rawLead?.sales_agents as Record<string, unknown> | undefined);
-      return {
-        ...(row as LeadInquiryWithLead),
-        leads: rawLead
-          ? {
-              id: String(rawLead.id || ''),
-              lead_id_formatted: rawLead.lead_id_formatted ? String(rawLead.lead_id_formatted) : null,
-              name: String(rawLead.name || ''),
-              number: String(rawLead.number || ''),
-              source: String(rawLead.source || ''),
-              sales_agent_id: String(rawLead.sales_agent_id || ''),
-              sales_agents: rawSalesAgent
-                ? {
-                    id: String(rawSalesAgent.id || ''),
-                    name: String(rawSalesAgent.name || ''),
-                    username: rawSalesAgent.username ? String(rawSalesAgent.username) : null,
-                  }
-                : null,
-            }
-          : null,
-      } as LeadInquiryWithLead;
-    });
-    const hasMore = rows.length > pageLimit;
-    const inquiries = hasMore ? rows.slice(0, pageLimit) : rows;
-    const nextOffset = offset + inquiries.length;
-    const result = { inquiries, hasMore, nextOffset };
+    const result = await queryOperationsInquiriesPage(supabase, { pageLimit, offset, search });
+    if ('error' in result) return result;
     writeOperationsInquiriesCache(cacheKey, result);
     return result;
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };
+  }
+}
+
+export async function getInquiryForOperations(inquiryId: string) {
+  try {
+    const session = await getSession();
+    if (!session || (session.role !== 'admin' && session.role !== 'operations')) {
+      return { error: 'Unauthorized' };
+    }
+    if (!inquiryId) return { error: 'Inquiry id is required' };
+
+    const supabase = await createAdminClient();
+    const { data, error } = await supabase
+      .from('lead_inquiries')
+      .select(OPERATIONS_DETAIL_INQUIRY_SELECT)
+      .eq('id', inquiryId)
+      .eq('sent_to_accounting', true)
+      .order('created_at', { foreignTable: 'inquiry_confirmations', ascending: false })
+      .limit(1, { foreignTable: 'inquiry_confirmations' })
+      .maybeSingle();
+
+    if (error) return { error: error.message };
+    if (!data) return { error: 'Inquiry not found' };
+
+    return { inquiry: normalizeOperationsInquiryRow(data as Record<string, unknown>) };
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };
+  }
+}
+
+export async function getOperationsInquiriesBootstrap(input?: {
+  limit?: number;
+  offset?: number;
+  search?: string;
+}) {
+  try {
+    const session = await getSession();
+    if (!session || (session.role !== 'admin' && session.role !== 'operations')) {
+      return { error: 'Unauthorized' };
+    }
+
+    const supabase = await createAdminClient();
+    const pageLimit = Math.min(Math.max(Number(input?.limit || 20), 1), 100);
+    const offset = Math.max(Number(input?.offset || 0), 0);
+    const search = String(input?.search || "").trim();
+    const cacheKey = buildOperationsInquiriesCacheKey({
+      role: session.role,
+      limit: pageLimit,
+      offset,
+      search,
+    });
+    const cached = readOperationsInquiriesCache(cacheKey);
+
+    const [inquiriesResult, calculatorResult] = await Promise.all([
+      cached
+        ? Promise.resolve(cached)
+        : queryOperationsInquiriesPage(supabase, { pageLimit, offset, search }),
+      supabase
+        .from('inquiry_calculator_config')
+        .select('values')
+        .eq('id', 'shared')
+        .maybeSingle(),
+    ]);
+
+    if ('error' in inquiriesResult) return { error: inquiriesResult.error };
+
+    if (!cached) {
+      writeOperationsInquiriesCache(cacheKey, inquiriesResult);
+    }
+
+    if (calculatorResult.error) {
+      return { error: calculatorResult.error.message };
+    }
+
+    const values =
+      calculatorResult.data?.values && typeof calculatorResult.data.values === 'object'
+        ? (calculatorResult.data.values as Record<string, string>)
+        : {};
+
+    return {
+      ...inquiriesResult,
+      calculatorValues: values,
+    };
   } catch (err) {
     return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };
   }
@@ -1772,7 +1890,7 @@ export async function getLeadActivityTimeline(leadId: string) {
   }
 }
 
-export async function getInquiryLogsForLead(leadId: string) {
+export async function getInquiryLogsForLead(leadId: string, inquiryId?: string) {
   try {
     const session = await getSession();
     if (!session) {
@@ -1801,14 +1919,18 @@ export async function getInquiryLogsForLead(leadId: string) {
       return { error: 'Unauthorized' };
     }
 
-    const { data: inquiryRows, error: inquiryErr } = await supabase
-      .from('lead_inquiries')
-      .select('id')
-      .eq('lead_id', leadId);
+    const { data: inquiryRows, error: inquiryErr } = inquiryId
+      ? { data: null, error: null }
+      : await supabase
+          .from('lead_inquiries')
+          .select('id')
+          .eq('lead_id', leadId);
 
     if (inquiryErr) return { error: inquiryErr.message };
 
-    const inquiryIds = (inquiryRows || []).map((r) => r.id);
+    const inquiryIds = inquiryId
+      ? [inquiryId]
+      : (inquiryRows || []).map((r) => r.id);
     if (inquiryIds.length === 0) return { logs: [] as InquiryLog[] };
 
     const { data, error } = await supabase
@@ -2215,33 +2337,37 @@ export async function getMyLeadChatNotifications(limit = 20) {
 
     const supabase = await createAdminClient();
 
-    const { data, error } = await supabase
-      .from('lead_chat_notifications')
-      .select(`
-        *,
-        leads (
-          lead_id_formatted
-        )
-      `)
-      .eq('recipient_role', recipientRole)
-      .eq('recipient_username', session.username)
-      .order('created_at', { ascending: false })
-      .limit(limit);
+    const [chatResult, lifecycleResult] = await Promise.all([
+      supabase
+        .from('lead_chat_notifications')
+        .select(`
+          *,
+          leads (
+            lead_id_formatted
+          )
+        `)
+        .eq('recipient_role', recipientRole)
+        .eq('recipient_username', session.username)
+        .order('created_at', { ascending: false })
+        .limit(limit),
+      supabase
+        .from('inquiry_lifecycle_notifications')
+        .select(`
+          *,
+          leads (
+            lead_id_formatted
+          )
+        `)
+        .eq('recipient_role', recipientRole)
+        .eq('recipient_username', session.username)
+        .order('created_at', { ascending: false })
+        .limit(limit),
+    ]);
 
+    const { data, error } = chatResult;
     if (error) return { error: error.message };
 
-    const { data: lifecycleData, error: lifecycleError } = await supabase
-      .from('inquiry_lifecycle_notifications')
-      .select(`
-        *,
-        leads (
-          lead_id_formatted
-        )
-      `)
-      .eq('recipient_role', recipientRole)
-      .eq('recipient_username', session.username)
-      .order('created_at', { ascending: false })
-      .limit(limit);
+    const { data: lifecycleData, error: lifecycleError } = lifecycleResult;
 
     const chatNotifications = ((data || []) as LeadChatNotification[]).map((n) => ({
       ...n,

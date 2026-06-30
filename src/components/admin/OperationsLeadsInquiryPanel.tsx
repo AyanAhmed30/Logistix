@@ -5,6 +5,8 @@ import { useEffect, useState, useCallback, useRef } from "react";
 import { toast } from "sonner";
 import {
   getAllInquiriesForOperations,
+  getOperationsInquiriesBootstrap,
+  getInquiryForOperations,
   updateInquiryForAccounting,
   deleteInquiry,
   getInquiryLogsForLead,
@@ -12,13 +14,17 @@ import {
   addInquiryActivity,
   addInquiryCalculatorFieldLog,
   saveInquiryCalculatorField,
-  getSharedInquiryCalculatorValues,
   getLeadChatMessages,
   sendLeadChatMessage,
   type LeadInquiryWithLead,
   type InquiryLog,
   type LeadChatMessage,
 } from "@/app/actions/inquiries";
+import {
+  getCachedOperationsBootstrap,
+  setCachedOperationsBootstrap,
+  invalidateCachedOperationsBootstrap,
+} from "@/lib/operations-inquiries-cache";
 import {
   submitInquiryForConfirmation,
   uploadConfirmationImage,
@@ -147,12 +153,13 @@ export function OperationsLeadsInquiryPanel({
   onFocusHandled?: () => void;
   adminCalculatorMode?: boolean;
 } = {}) {
+  const initialBootstrap = getCachedOperationsBootstrap("");
   const [view, setView] = useState<ViewMode>("list");
-  const [inquiries, setInquiries] = useState<LeadInquiryWithLead[]>([]);
-  const [isLoading, setIsLoading] = useState(false);
+  const [inquiries, setInquiries] = useState<LeadInquiryWithLead[]>(() => initialBootstrap?.inquiries ?? []);
+  const [isLoading, setIsLoading] = useState(() => !initialBootstrap);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
-  const [hasMore, setHasMore] = useState(false);
-  const [nextOffset, setNextOffset] = useState(0);
+  const [hasMore, setHasMore] = useState(() => Boolean(initialBootstrap?.hasMore));
+  const [nextOffset, setNextOffset] = useState(() => initialBootstrap?.nextOffset ?? 0);
   const [selectedInquiry, setSelectedInquiry] = useState<LeadInquiryWithLead | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [debouncedSearchQuery, setDebouncedSearchQuery] = useState("");
@@ -219,22 +226,21 @@ export function OperationsLeadsInquiryPanel({
   const [calcQuantity, setCalcQuantity] = useState("0");
   const [calcHsCode, setCalcHsCode] = useState("");
   const [lastCalcSnapshot, setLastCalcSnapshot] = useState<Record<string, string>>({});
-  const [pricingConfig, setPricingConfig] = useState<CalculatorPricingConfig>({
-    grossWeightValue: 0,
-    volumetricWeightValue: 0,
-    cbmValue: 0,
-  });
+  const [pricingConfig, setPricingConfig] = useState<CalculatorPricingConfig>(() =>
+    parsePricingConfig(initialBootstrap?.calculatorValues ?? {})
+  );
 
   const refreshPricingConfig = useCallback(async () => {
-    const result = await getSharedInquiryCalculatorValues();
-    if (!("error" in result)) {
-      setPricingConfig(parsePricingConfig(result.values));
+    const cached = getCachedOperationsBootstrap("");
+    if (cached?.calculatorValues) {
+      setPricingConfig(parsePricingConfig(cached.calculatorValues));
+      return;
+    }
+    const result = await getOperationsInquiriesBootstrap({ limit: 1, offset: 0, search: "" });
+    if (!("error" in result) && result.calculatorValues) {
+      setPricingConfig(parsePricingConfig(result.calculatorValues));
     }
   }, []);
-
-  useEffect(() => {
-    void refreshPricingConfig();
-  }, [refreshPricingConfig]);
 
   const getDefaultCalculatorValues = useCallback(() => ({
     inv_value: "0",
@@ -272,9 +278,9 @@ export function OperationsLeadsInquiryPanel({
     setCalcHsCode(values.hs_code ?? "");
   }, []);
 
-  const refreshInquiryLogs = useCallback(async (leadId: string) => {
+  const refreshInquiryLogs = useCallback(async (leadId: string, inquiryId?: string) => {
     try {
-      const logsResult = await getInquiryLogsForLead(leadId);
+      const logsResult = await getInquiryLogsForLead(leadId, inquiryId);
       if ("error" in logsResult) {
         setInquiryLogs([]);
       } else {
@@ -308,26 +314,34 @@ export function OperationsLeadsInquiryPanel({
       );
 
       setLastCalcSnapshot((prev) => ({ ...prev, [field]: currentValue }));
-      await refreshInquiryLogs(selectedInquiry.lead_id);
+      await refreshInquiryLogs(selectedInquiry.lead_id, selectedInquiry.id);
     },
     [lastCalcSnapshot, refreshInquiryLogs, selectedInquiry]
   );
 
-  const fetchInquiries = useCallback(async (opts?: { append?: boolean; offset?: number; query?: string }) => {
+  const fetchInquiries = useCallback(async (opts?: { append?: boolean; offset?: number; query?: string; background?: boolean }) => {
     const append = Boolean(opts?.append);
     const offset = Math.max(Number(opts?.offset || 0), 0);
     const query = String(opts?.query ?? debouncedSearchQuery);
+    const background = Boolean(opts?.background);
     if (append) {
       setIsLoadingMore(true);
-    } else {
+    } else if (!background) {
       setIsLoading(true);
     }
     try {
-      const result = await getAllInquiriesForOperations({
-        limit: PAGE_SIZE,
-        offset,
-        search: query,
-      });
+      const useBootstrap = !append && offset === 0;
+      const result = useBootstrap
+        ? await getOperationsInquiriesBootstrap({
+            limit: PAGE_SIZE,
+            offset,
+            search: query,
+          })
+        : await getAllInquiriesForOperations({
+            limit: PAGE_SIZE,
+            offset,
+            search: query,
+          });
       if ("error" in result) {
         toast.error(result.error || "Unable to load inquiries");
         if (!append) {
@@ -348,6 +362,18 @@ export function OperationsLeadsInquiryPanel({
           });
         } else {
           setInquiries(incoming);
+          if ('calculatorValues' in result && result.calculatorValues) {
+            setPricingConfig(parsePricingConfig(result.calculatorValues as Record<string, unknown>));
+          }
+          setCachedOperationsBootstrap(query, {
+            inquiries: incoming,
+            hasMore: Boolean(result.hasMore),
+            nextOffset: Number(result.nextOffset || offset + incoming.length),
+            calculatorValues:
+              'calculatorValues' in result && result.calculatorValues
+                ? (result.calculatorValues as Record<string, string>)
+                : getCachedOperationsBootstrap(query)?.calculatorValues ?? {},
+          });
         }
         setHasMore(Boolean(result.hasMore));
         setNextOffset(Number(result.nextOffset || offset + incoming.length));
@@ -357,7 +383,7 @@ export function OperationsLeadsInquiryPanel({
     } finally {
       if (append) {
         setIsLoadingMore(false);
-      } else {
+      } else if (!background) {
         setIsLoading(false);
       }
     }
@@ -371,7 +397,13 @@ export function OperationsLeadsInquiryPanel({
   }, [searchQuery]);
 
   useEffect(() => {
-    fetchInquiries({ append: false, offset: 0, query: debouncedSearchQuery });
+    const cached = getCachedOperationsBootstrap(debouncedSearchQuery);
+    fetchInquiries({
+      append: false,
+      offset: 0,
+      query: debouncedSearchQuery,
+      background: Boolean(cached),
+    });
   }, [fetchInquiries, debouncedSearchQuery]);
 
   useEffect(() => {
@@ -413,16 +445,26 @@ export function OperationsLeadsInquiryPanel({
     setView("detail");
     setShowForm(false);
     resetForm();
-    // Calculator must start empty/zero for each inquiry (manual-only entry).
     const defaults = getDefaultCalculatorValues();
     applyCalculatorValues(defaults);
     const inquiryQuantity = inquiry.quantity?.trim() || "0";
     setCalcQuantity(inquiryQuantity);
     const nextSnapshot = { ...defaults, quantity: inquiryQuantity };
-    const [confirmResult] = await Promise.allSettled([
+    setActiveRightTab("send_message");
+    setLogNoteText("");
+    setChatInput("");
+    setChatMessages([]);
+
+    const [detailResult, confirmResult] = await Promise.allSettled([
+      getInquiryForOperations(inquiry.id),
       getConfirmationsForInquiry(inquiry.id),
-      refreshInquiryLogs(inquiry.lead_id),
+      refreshInquiryLogs(inquiry.lead_id, inquiry.id),
     ]);
+
+    if (detailResult.status === "fulfilled" && !("error" in detailResult.value) && detailResult.value.inquiry) {
+      setSelectedInquiry(detailResult.value.inquiry);
+    }
+
     if (confirmResult.status === "fulfilled") {
       const result = confirmResult.value;
       if ("error" in result) {
@@ -434,11 +476,6 @@ export function OperationsLeadsInquiryPanel({
       setConfirmations([]);
     }
     setLastCalcSnapshot(nextSnapshot);
-    // Load secondary detail data in parallel to reduce perceived latency.
-    setActiveRightTab("send_message");
-    setLogNoteText("");
-    setChatInput("");
-    setChatMessages([]);
   }
 
   function backToList() {
@@ -497,7 +534,7 @@ export function OperationsLeadsInquiryPanel({
       toast.success("Note added.");
       setLogNoteText("");
       setActiveRightTab("send_message");
-      await refreshInquiryLogs(selectedInquiry.lead_id);
+      await refreshInquiryLogs(selectedInquiry.lead_id, selectedInquiry.id);
     } catch {
       toast.error("Failed to add note.");
     } finally {
@@ -526,7 +563,7 @@ export function OperationsLeadsInquiryPanel({
       setActivitySummary("");
       setActivityDueDate("");
       setActiveRightTab("send_message");
-      await refreshInquiryLogs(selectedInquiry.lead_id);
+      await refreshInquiryLogs(selectedInquiry.lead_id, selectedInquiry.id);
     } catch {
       toast.error("Failed to add activity.");
     } finally {
@@ -592,7 +629,8 @@ export function OperationsLeadsInquiryPanel({
         setCalcQuantity(editQuantity.trim() || "0");
         setLastCalcSnapshot((prev) => ({ ...prev, quantity: editQuantity.trim() || "0" }));
         setIsEditing(false);
-        await refreshInquiryLogs(selectedInquiry.lead_id);
+        await refreshInquiryLogs(selectedInquiry.lead_id, selectedInquiry.id);
+        invalidateCachedOperationsBootstrap();
         fetchInquiries();
       }
     } catch {
@@ -618,6 +656,7 @@ export function OperationsLeadsInquiryPanel({
         toast.error(result.error);
       } else {
         toast.success("Inquiry deleted successfully.");
+        invalidateCachedOperationsBootstrap();
         setDeleteDialogOpen(false);
         setDeleteTarget(null);
         // If we were in detail view, go back to list
@@ -912,7 +951,7 @@ export function OperationsLeadsInquiryPanel({
           if (!("error" in confResult)) {
             setConfirmations(confResult.confirmations || []);
           }
-          await refreshInquiryLogs(selectedInquiry.lead_id);
+          await refreshInquiryLogs(selectedInquiry.lead_id, selectedInquiry.id);
         }
       }
     } catch {
@@ -1130,28 +1169,41 @@ export function OperationsLeadsInquiryPanel({
       sumOfAllTaxes: taxBreakdown?.sumOfAllTaxes ?? 0,
     };
 
-    const calculatorFieldsForForm = [
-      { label: "Custom Duty %", value: customDutyRate, format: "percent" as const },
-      { label: "Custom Duty Amount", value: calc.customDuty, format: "money" as const },
-      { label: "Add CD %", value: addCdRate, format: "percent" as const },
-      { label: "Add CD Amount", value: calc.addCd, format: "money" as const },
-      { label: "GST %", value: gstRate, format: "percent" as const },
-      { label: "GST Amount", value: calc.gst, format: "money" as const },
-      { label: "Add GST %", value: addGstRate, format: "percent" as const },
-      { label: "Add GST Amount", value: calc.addGst, format: "money" as const },
-      { label: "Income Tax %", value: incomeTaxRate, format: "percent" as const },
-      { label: "Income Tax Amount", value: calc.incomeTax, format: "money" as const },
-      { label: "Excise %", value: exciseRate, format: "percent" as const },
-      { label: "Excise Amount", value: calc.excise, format: "money" as const },
-      { label: "Regular Duty %", value: regularDutyRate, format: "percent" as const },
-      { label: "Regular Duty Amount", value: calc.regularDuty, format: "money" as const },
-      { label: "Stamp Duty %", value: stampDutyRate, format: "percent" as const },
-      { label: "Stamp Duty Amount", value: calc.stampDuty, format: "money" as const },
-      { label: "INV Fine", value: calc.invFine, format: "money" as const },
-      { label: "Sales Tax (ST) %", value: toNum(calcSalesTaxRate), format: "percent" as const },
-      { label: "Sales Tax Amount", value: calc.salesTaxAmount, format: "money" as const },
-      { label: "Sum of All Taxes", value: calc.sumOfAllTaxes, format: "money" as const },
-    ].filter((item) => Math.abs(item.value) > 0);
+    const fmtDecimal4 = (n: number) =>
+      Number.isFinite(n)
+        ? n.toLocaleString(undefined, { minimumFractionDigits: 4, maximumFractionDigits: 4 })
+        : "0.0000";
+    const fmtAmount = (n: number) =>
+      Number.isFinite(n) ? Math.round(n).toLocaleString() : "0";
+
+    const exchangeRateDisplay = taxBreakdown?.exchangeRate ?? toNum(calcExchangeRate);
+    const importValue = taxBreakdown?.pkrValue ?? calc.pkrValue;
+    const unitPrice = taxBreakdown?.invValue ?? invValue;
+    const hsCodeDisplay = calcHsCode.trim() || "-";
+    const quantityDisplay = formQuantity || inquiryQuantity || "0";
+
+    const estimatedDutyRows = [
+      { name: "Customs Duty", rate: customDutyRate, amount: calc.customDuty },
+      { name: "Add CD", rate: addCdRate, amount: calc.addCd },
+      { name: "GST", rate: gstRate, amount: calc.gst },
+      { name: "Add GST", rate: addGstRate, amount: calc.addGst },
+      { name: "Income Tax", rate: incomeTaxRate, amount: calc.incomeTax },
+      { name: "Excise", rate: exciseRate, amount: calc.excise },
+      { name: "Regular Duty", rate: regularDutyRate, amount: calc.regularDuty },
+      { name: "Stamp Duty", rate: stampDutyRate, amount: calc.stampDuty },
+      { name: "INV Fine", rate: null as number | null, amount: calc.invFine },
+      { name: "Sales Tax", rate: toNum(calcSalesTaxRate), amount: calc.salesTaxAmount },
+    ].filter(
+      (row) =>
+        row.name === "Customs Duty" ||
+        row.name === "Sales Tax" ||
+        row.name === "Income Tax" ||
+        row.rate === null ||
+        row.rate > 0 ||
+        Math.abs(row.amount) > 0
+    );
+
+    const dutiesGrandTotal = estimatedDutyRows.reduce((sum, row) => sum + row.amount, 0);
 
     const fieldLabels: Record<string, string> = {
       product_name: "Product",
@@ -1949,28 +2001,117 @@ export function OperationsLeadsInquiryPanel({
               </div>
 
               <div className="border-t pt-4" />
-              <h4 className="text-sm font-semibold text-slate-700">Calculator Fields (Non-Zero)</h4>
-              {calculatorFieldsForForm.length > 0 ? (
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                  {calculatorFieldsForForm.map((row) => (
-                    <div
-                      key={row.label}
-                      className="flex items-center justify-between rounded border bg-slate-50 px-3 py-2 text-sm"
-                    >
-                      <span className="text-slate-600">{row.label}</span>
-                      <span className="font-semibold text-slate-800">
-                        {row.format === "percent"
-                          ? `${row.value.toFixed(2)}%`
-                          : fmtMoney(row.value)}
-                      </span>
-                    </div>
-                  ))}
+
+              <p className="text-sm text-slate-800">
+                Disclaimer : Calculated duties and taxes are indicative only by assuming Landing Charges
+                &amp; Insurance 1% and current Exchange Rate:{" "}
+                {exchangeRateDisplay > 0 ? exchangeRateDisplay.toFixed(6) : "0.000000"}
+              </p>
+
+              <div className="border border-slate-300 rounded-sm overflow-hidden text-sm">
+                <div className="bg-gradient-to-b from-[#d4d4d4] to-[#b8b8b8] border-b border-slate-400 px-3 py-2 font-bold text-slate-900">
+                  Estimated Duties And Taxes
                 </div>
-              ) : (
-                <div className="rounded border border-dashed text-sm text-slate-400 px-3 py-2">
-                  All calculator fields are currently zero.
+
+                <table className="w-full border-collapse">
+                  <thead>
+                    <tr className="bg-gradient-to-b from-[#ececec] to-[#d8d8d8] border-b border-slate-300">
+                      <th className="border-r border-slate-300 px-3 py-2 text-left font-semibold text-slate-800">
+                        HS Code
+                      </th>
+                      <th className="border-r border-slate-300 px-3 py-2 text-center font-semibold text-slate-800">
+                        Unit Price
+                      </th>
+                      <th className="border-r border-slate-300 px-3 py-2 text-center font-semibold text-slate-800">
+                        Quantity
+                      </th>
+                      <th className="px-3 py-2 text-center font-semibold text-slate-800">
+                        Import Value
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr className="bg-white border-b border-slate-300">
+                      <td className="border-r border-slate-300 px-3 py-2">
+                        <span className="inline-flex items-center gap-2">
+                          <span className="text-slate-700 font-bold leading-none">−</span>
+                          <span className="font-bold text-slate-900">{hsCodeDisplay}</span>
+                        </span>
+                      </td>
+                      <td className="border-r border-slate-300 px-3 py-2 text-center text-slate-800">
+                        {fmtDecimal4(unitPrice)}
+                      </td>
+                      <td className="border-r border-slate-300 px-3 py-2 text-center text-slate-800">
+                        {quantityDisplay}
+                      </td>
+                      <td className="px-3 py-2 text-center text-slate-800">
+                        {fmtDecimal4(importValue)}
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+
+                <div className="bg-white">
+                  <table className="w-full border-collapse">
+                    <thead>
+                      <tr className="bg-gradient-to-b from-[#ececec] to-[#d8d8d8] border-b border-slate-300">
+                        <th className="border-r border-slate-300 px-3 py-2 text-left font-semibold text-slate-800 w-[40%]">
+                          Duty Name
+                        </th>
+                        <th className="border-r border-slate-300 px-3 py-2 text-center font-semibold text-slate-800 w-[30%]">
+                          Applicable Rate
+                        </th>
+                        <th className="px-3 py-2 text-center font-semibold text-slate-800 w-[30%]">
+                          Net Payable Amount
+                        </th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {estimatedDutyRows.length > 0 ? (
+                        estimatedDutyRows.map((row) => (
+                          <tr
+                            key={row.name}
+                            className={`border-b border-slate-300 ${
+                              row.name === "Sales Tax" ? "bg-sky-100" : "bg-white"
+                            }`}
+                          >
+                            <td className="border-r border-slate-300 px-3 py-2 text-slate-800">
+                              {row.name}
+                            </td>
+                            <td className="border-r border-slate-300 px-3 py-2 text-center text-slate-800">
+                              {row.rate === null ? "—" : `${row.rate.toFixed(0)}%`}
+                            </td>
+                            <td className="px-3 py-2 text-center text-slate-800">
+                              {fmtAmount(row.amount)}
+                            </td>
+                          </tr>
+                        ))
+                      ) : (
+                        <tr className="bg-white border-b border-slate-300">
+                          <td colSpan={3} className="px-3 py-4 text-center text-slate-500">
+                            No duty values entered in the calculator yet.
+                          </td>
+                        </tr>
+                      )}
+                    </tbody>
+                    {estimatedDutyRows.length > 0 && (
+                      <tfoot>
+                        <tr className="bg-white">
+                          <td
+                            colSpan={2}
+                            className="border-r border-slate-300 border-t border-slate-300 px-3 py-2 text-center font-bold text-slate-900"
+                          >
+                            Grand Total
+                          </td>
+                          <td className="border-t border-slate-300 px-3 py-2 text-center font-bold text-slate-900">
+                            {fmtAmount(dutiesGrandTotal)}
+                          </td>
+                        </tr>
+                      </tfoot>
+                    )}
+                  </table>
                 </div>
-              )}
+              </div>
 
               <div className="border-t pt-4" />
               <h4 className="text-sm font-semibold text-slate-700">Attachments</h4>

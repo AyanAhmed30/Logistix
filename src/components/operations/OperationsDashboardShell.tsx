@@ -7,6 +7,7 @@ import { LogOut, Menu, X, Settings, ClipboardList, Bell } from "lucide-react";
 import Image from "next/image";
 import { OperationsPanel } from "@/components/admin/OperationsPanel";
 import { OperationsLeadsInquiryPanel } from "@/components/admin/OperationsLeadsInquiryPanel";
+import { prefetchOperationsInquiries } from "@/lib/operations-inquiries-cache";
 import {
   getMyLeadChatNotifications,
   markLeadChatNotificationRead,
@@ -42,6 +43,12 @@ export function OperationsDashboardShell({ username }: Props) {
       setIsClientMounted(true);
     });
     return () => window.cancelAnimationFrame(frame);
+  }, []);
+
+  useEffect(() => {
+    void prefetchOperationsInquiries("").catch(() => {
+      // Prefetch is best-effort; the panel will fetch on its own if this fails.
+    });
   }, []);
 
   useEffect(() => {
@@ -233,6 +240,12 @@ export function OperationsDashboardShell({ username }: Props) {
             <Button
               variant={activeSubTab === "leads-inquiry" ? "default" : "outline"}
               className="justify-start gap-2"
+              onMouseEnter={() => {
+                void prefetchOperationsInquiries("").catch(() => undefined);
+              }}
+              onFocus={() => {
+                void prefetchOperationsInquiries("").catch(() => undefined);
+              }}
               onClick={() => {
                 setActiveSubTab("leads-inquiry");
                 setIsSidebarOpen(false);
@@ -257,8 +270,10 @@ export function OperationsDashboardShell({ username }: Props) {
       {/* Main Content */}
       <main className="pt-20 md:pl-64">
         <section className="px-6 pb-10 md:px-10">
-          {activeSubTab === "operations" && <OperationsPanel />}
-          {activeSubTab === "leads-inquiry" && (
+          <div className={activeSubTab === "operations" ? undefined : "hidden"}>
+            <OperationsPanel />
+          </div>
+          <div className={activeSubTab === "leads-inquiry" ? undefined : "hidden"}>
             <OperationsLeadsInquiryPanel
               focusLeadId={focusLeadId}
               focusInquiryId={focusInquiryId}
@@ -267,7 +282,7 @@ export function OperationsDashboardShell({ username }: Props) {
                 setFocusInquiryId(null);
               }}
             />
-          )}
+          </div>
         </section>
       </main>
     </div>

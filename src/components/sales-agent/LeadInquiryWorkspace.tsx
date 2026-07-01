@@ -45,12 +45,15 @@ import {
 } from "@/app/actions/inquiries";
 import {
   getApprovedPricingForInquiryIds,
-  getConfirmationsForInquiry,
 } from "@/app/actions/inquiry_confirmations";
 import {
-  CALCULATOR_FIELD_LABELS,
-  computeCalculatorTotals,
+  formatFinalAnswer,
+  type ApprovedInquiryPricing,
 } from "@/lib/inquiry-calculator";
+import {
+  FINAL_RATE_PER_KG_NOTE,
+  SalesAgentFinalRateCard,
+} from "@/components/sales-agent/SalesAgentFinalRateCard";
 import { classifyInquiryAttachment } from "@/lib/inquiry-attachments";
 import {
   Dialog,
@@ -147,29 +150,24 @@ function formatInquiryMoney(n: number) {
   return `Rs. ${Number(n).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
+type SalesAgentPricing =
+  | ApprovedInquiryPricing
+  | {
+      quotation_number: string;
+      unit_price: number;
+      total_amount: number;
+      notes: string | null;
+    };
+
+function hasFinalPrice(pricing: SalesAgentPricing): pricing is ApprovedInquiryPricing {
+  return "final_price" in pricing && typeof pricing.final_price === "number";
+}
+
 function getInquiryPricingForDisplay(
   inq: LeadInquiry,
-  pricingByInquiryId: Record<
-    string,
-    { quotation_number: string; unit_price: number; total_amount: number; notes: string | null }
-  >
+  pricingByInquiryId: Record<string, SalesAgentPricing>
 ) {
-  const fromState = pricingByInquiryId[inq.id];
-  if (fromState) return fromState;
-
-  const totals = computeCalculatorTotals(inq.calculator_values, {
-    weightKg: inq.total_weight,
-    quantity: inq.quantity,
-    cbm: inq.cbm,
-  });
-  if (!totals) return null;
-
-  return {
-    quotation_number: "APPROVED",
-    unit_price: totals.unitPrice,
-    total_amount: totals.totalAmount,
-    notes: null,
-  };
+  return pricingByInquiryId[inq.id] ?? null;
 }
 
 function isDecimalString(value: string) {
@@ -178,10 +176,9 @@ function isDecimalString(value: string) {
 }
 
 function buildApprovedInquiryDetailText(
-  inq: LeadInquiry, 
-  quotations: InquiryQuotation[], 
-  pricingData?: { quotation_number: string; unit_price: number; total_amount: number; notes: string | null },
-  calculatorValues?: Record<string, unknown>
+  inq: LeadInquiry,
+  quotations: InquiryQuotation[],
+  pricingData?: SalesAgentPricing
 ): string {
   const lines: string[] = [];
   lines.push("INQUIRY");
@@ -194,52 +191,15 @@ function buildApprovedInquiryDetailText(
     lines.push("Other details:");
     lines.push(inq.description.trim());
   }
-  
+
   const q = pickPrimaryQuotation(quotations);
   lines.push("");
   lines.push("FINAL RATES (FROM ADMIN)");
-  
-  if (calculatorValues && Object.keys(calculatorValues).length > 0) {
-    const totals = computeCalculatorTotals(calculatorValues, {
-      weightKg: inq.total_weight,
-      quantity: inq.quantity,
-      cbm: inq.cbm,
-    });
 
-    if (totals && totals.totalAmount > 0) {
-      lines.push(`Product / service: ${inq.product_name?.trim() || "—"}`);
-      lines.push(`Quantity: ${inq.quantity || "1"}`);
-      lines.push(`Unit price: ${formatInquiryMoney(totals.unitPrice)}`);
-      lines.push(`Total amount: ${formatInquiryMoney(totals.totalAmount)}`);
-      lines.push(`Sum of taxes: ${formatInquiryMoney(totals.sumOfAllTaxes)}`);
-      lines.push(`Final answer (per kg): ${totals.finalAnswer.toFixed(6)}`);
-      if (totals.costPerWeight > 0 && inq.total_weight?.trim()) {
-        lines.push(`Rate per kg: ${totals.costPerWeight.toFixed(6)}`);
-      }
-
-      lines.push("");
-      lines.push("RATE BREAKDOWN:");
-      for (const [k, v] of Object.entries(calculatorValues)) {
-        if (v !== null && v !== undefined && String(v).trim() !== "" && String(v) !== "0") {
-          const label = CALCULATOR_FIELD_LABELS[k] || k.replace(/_/g, " ");
-          lines.push(`${label}: ${v}`);
-        }
-      }
-      return lines.join("\n");
-    }
-  }
-  
-  // Fallback to existing logic for pricing data and quotations
   if (pricingData) {
-    lines.push(`Quotation #: ${pricingData.quotation_number}`);
-    lines.push(`Product / service: ${inq.product_name?.trim() || "—"}`);
-    lines.push(`Quantity: ${inq.quantity || "1"}`);
-    lines.push(`Unit price: ${formatInquiryMoney(pricingData.unit_price)}`);
-    lines.push(`Total: ${formatInquiryMoney(pricingData.total_amount)}`);
-    if (pricingData.notes?.trim()) {
-      lines.push("");
-      lines.push("Admin notes:");
-      lines.push(pricingData.notes.trim());
+    if (hasFinalPrice(pricingData)) {
+      lines.push(`Final rate: ${formatFinalAnswer(pricingData.final_price)}`);
+      lines.push(FINAL_RATE_PER_KG_NOTE);
     }
   } else if (q) {
     lines.push(`Quotation #: ${q.quotation_number}`);
@@ -260,14 +220,7 @@ function buildApprovedInquiryDetailText(
     lines.push("");
     lines.push("💡 Contact Operations team if you need immediate pricing information.");
   }
-  
-  if (inq.calculator_values && Object.keys(inq.calculator_values).length > 0) {
-    lines.push("");
-    lines.push("OPERATIONS CALCULATOR");
-    for (const [k, v] of Object.entries(inq.calculator_values)) {
-      lines.push(`${k}: ${v}`);
-    }
-  }
+
   return lines.join("\n");
 }
 
@@ -344,9 +297,7 @@ export function LeadInquiryWorkspace({
   const [approvedDetailTitle, setApprovedDetailTitle] = useState("");
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
-  const [pricingByInquiryId, setPricingByInquiryId] = useState<
-    Record<string, { quotation_number: string; unit_price: number; total_amount: number; notes: string | null }>
-  >({});
+  const [pricingByInquiryId, setPricingByInquiryId] = useState<Record<string, SalesAgentPricing>>({});
   const [chatMessages, setChatMessages] = useState<LeadChatMessage[]>([]);
   const [chatInput, setChatInput] = useState("");
   const [isSendingChat, setIsSendingChat] = useState(false);
@@ -382,15 +333,14 @@ export function LeadInquiryWorkspace({
             getLatestQuotationPricingByInquiryIds(approvedInquiryIds),
             getApprovedPricingForInquiryIds(approvedInquiryIds),
           ]);
-          const mergedPricing: Record<
-            string,
-            { quotation_number: string; unit_price: number; total_amount: number; notes: string | null }
-          > = {};
-          if (!("error" in quotationPricingResult)) {
-            Object.assign(mergedPricing, quotationPricingResult.pricing || {});
-          }
+          const mergedPricing: Record<string, SalesAgentPricing> = {};
           if (!("error" in confirmationPricingResult)) {
             for (const [inquiryId, pricing] of Object.entries(confirmationPricingResult.pricing || {})) {
+              mergedPricing[inquiryId] = pricing;
+            }
+          }
+          if (!("error" in quotationPricingResult)) {
+            for (const [inquiryId, pricing] of Object.entries(quotationPricingResult.pricing || {})) {
               if (!mergedPricing[inquiryId]) {
                 mergedPricing[inquiryId] = pricing;
               }
@@ -856,69 +806,47 @@ export function LeadInquiryWorkspace({
       setApprovedDetailOpen(true);
       setApprovedDetailLoading(true);
       setApprovedDetailText("");
-      
+
       try {
-        let calculatorValues: Record<string, unknown> | undefined;
-        
-        // First, check if calculator values exist in the inquiry itself
-        if (inq.calculator_values && typeof inq.calculator_values === 'object' && Object.keys(inq.calculator_values).length > 0) {
-          calculatorValues = inq.calculator_values as Record<string, unknown>;
-        } else {
-          // Try to get calculator values from inquiry confirmation  
-          const confirmationResult = await getConfirmationsForInquiry(inq.id);
-          
-          if (!("error" in confirmationResult) && confirmationResult.confirmations.length > 0) {
-            // Find the approved confirmation with calculator values
-            const approvedConfirmation = confirmationResult.confirmations.find(
-              (conf: { status: string; calculator_values?: Record<string, unknown> }) => conf.status === 'approved'
-            );
-            
-            if (approvedConfirmation && approvedConfirmation.calculator_values) {
-              calculatorValues = approvedConfirmation.calculator_values;
-            }
-          }
-        }
-        
-        let pricingData:
-          | { quotation_number: string; unit_price: number; total_amount: number; notes: string | null }
-          | undefined = pricingByInquiryId[inq.id];
-        
-        // If no pricing data in state, try to fetch it specifically for this inquiry
+        let pricingData: SalesAgentPricing | undefined = pricingByInquiryId[inq.id];
+
         if (!pricingData) {
           const [quotationPricingResult, confirmationPricingResult] = await Promise.all([
             getLatestQuotationPricingByInquiryIds([inq.id]),
             getApprovedPricingForInquiryIds([inq.id]),
           ]);
           pricingData =
-            (!("error" in quotationPricingResult) ? quotationPricingResult.pricing?.[inq.id] : undefined) ||
-            (!("error" in confirmationPricingResult) ? confirmationPricingResult.pricing?.[inq.id] : undefined);
+            (!("error" in confirmationPricingResult)
+              ? confirmationPricingResult.pricing?.[inq.id]
+              : undefined) ||
+            (!("error" in quotationPricingResult)
+              ? quotationPricingResult.pricing?.[inq.id]
+              : undefined);
           if (pricingData) {
             setPricingByInquiryId((prev) => ({ ...prev, [inq.id]: pricingData! }));
           }
         }
-        
-        // Display with calculator values prioritized
-        if (calculatorValues || pricingData) {
+
+        if (pricingData) {
           setApprovedDetailLoading(false);
-          setApprovedDetailText(buildApprovedInquiryDetailText(inq, [], pricingData, calculatorValues));
+          setApprovedDetailText(buildApprovedInquiryDetailText(inq, [], pricingData));
           return;
         }
-        
-        // Fallback to API call if still no data available
+
         const result = await getQuotationsForInquiry(inq.id);
         setApprovedDetailLoading(false);
         if ("error" in result) {
           toast.error(result.error);
           setApprovedDetailText(
-            `${buildApprovedInquiryDetailText(inq, [], undefined, undefined)}\n\n---\nCould not load quotation: ${result.error}`
+            `${buildApprovedInquiryDetailText(inq, [], undefined)}\n\n---\nCould not load quotation: ${result.error}`
           );
           return;
         }
-        setApprovedDetailText(buildApprovedInquiryDetailText(inq, result.quotations || [], undefined, undefined));
+        setApprovedDetailText(buildApprovedInquiryDetailText(inq, result.quotations || [], undefined));
       } catch {
         setApprovedDetailLoading(false);
         toast.error("Failed to load inquiry details");
-        setApprovedDetailText(buildApprovedInquiryDetailText(inq, [], undefined, undefined));
+        setApprovedDetailText(buildApprovedInquiryDetailText(inq, [], undefined));
       }
     },
     [approvedInquiryId, pricingByInquiryId]
@@ -2166,24 +2094,12 @@ export function LeadInquiryWorkspace({
                                     <p className="text-xs text-emerald-700 font-medium">
                                       ✓ Ready for next steps - Click to view pricing details
                                     </p>
-                                    {inquiryPricing && (
-                                      <div className="bg-emerald-50 rounded-lg p-3 border border-emerald-200">
-                                        <div className="grid grid-cols-2 gap-3 text-xs">
-                                          <div>
-                                            <p className="text-emerald-600 font-medium">Unit Price</p>
-                                            <p className="text-emerald-900 font-semibold">
-                                              {formatInquiryMoney(inquiryPricing.unit_price)}
-                                            </p>
-                                          </div>
-                                          <div>
-                                            <p className="text-emerald-600 font-medium">Total Amount</p>
-                                            <p className="text-emerald-900 font-semibold">
-                                              {formatInquiryMoney(inquiryPricing.total_amount)}
-                                            </p>
-                                          </div>
-                                        </div>
-                                      </div>
-                                    )}
+                                    {inquiryPricing && hasFinalPrice(inquiryPricing) ? (
+                                      <SalesAgentFinalRateCard
+                                        finalRate={inquiryPricing.final_price}
+                                        variant="inline"
+                                      />
+                                    ) : null}
                                   </div>
                                 ) : (
                                   <div className="flex items-center gap-2 text-xs text-amber-700">

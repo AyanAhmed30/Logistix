@@ -10,11 +10,12 @@ import {
   type InquiryConfirmationWithLead,
 } from "@/app/actions/inquiry_confirmations";
 import { InquiryAttachmentList } from "@/components/inquiry/InquiryAttachmentList";
-import { InquiryPricingSummary } from "@/components/admin/InquiryPricingSummary";
 import { getSharedInquiryCalculatorValues } from "@/app/actions/inquiries";
+import { InquiryPricingSummary } from "@/components/admin/InquiryPricingSummary";
+import { EstimatedDutiesAndTaxesTable } from "@/components/inquiry/EstimatedDutiesAndTaxesTable";
 import { collectInquiryAttachmentUrls } from "@/lib/inquiry-attachments";
 import {
-  computeInquiryTaxBreakdown,
+  buildEstimatedDutiesDisplay,
   parsePricingConfig,
   type CalculatorPricingConfig,
 } from "@/lib/inquiry-calculator";
@@ -93,11 +94,18 @@ export function InquiryConfirmationPanel() {
   const [imagePreview, setImagePreview] = useState<{ url: string; title: string } | null>(null);
   const [rejectDialogOpen, setRejectDialogOpen] = useState(false);
   const [rejectReason, setRejectReason] = useState("");
-  const [pricingConfig, setPricingConfig] = useState<CalculatorPricingConfig>({
-    grossWeightValue: 0,
-    volumetricWeightValue: 0,
-    cbmValue: 0,
-  });
+  const [pricingConfig, setPricingConfig] = useState<CalculatorPricingConfig>(() =>
+    parsePricingConfig({})
+  );
+
+  useEffect(() => {
+    void (async () => {
+      const result = await getSharedInquiryCalculatorValues();
+      if (!("error" in result) && result.values) {
+        setPricingConfig(parsePricingConfig(result.values));
+      }
+    })();
+  }, []);
 
   const fetchConfirmations = useCallback(async () => {
     setIsLoading(true);
@@ -119,16 +127,6 @@ export function InquiryConfirmationPanel() {
   useEffect(() => {
     fetchConfirmations();
   }, [fetchConfirmations]);
-
-  useEffect(() => {
-    async function loadPricingConfig() {
-      const result = await getSharedInquiryCalculatorValues();
-      if (!("error" in result)) {
-        setPricingConfig(parsePricingConfig(result.values));
-      }
-    }
-    void loadPricingConfig();
-  }, []);
 
   const filteredConfirmations = confirmations.filter((c) => {
     if (!searchQuery.trim()) return true;
@@ -210,48 +208,16 @@ export function InquiryConfirmationPanel() {
 
   if (view === "detail" && selected) {
     const c = selected;
-    const toNum = (v: string | null | undefined) => {
-      const n = parseFloat(String(v ?? "").replace(/,/g, ""));
-      return Number.isFinite(n) ? n : 0;
-    };
-    const fmtMoney = (n: number) =>
-      Number.isFinite(n)
-        ? n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
-        : "-";
     const calculatorValues =
       c.calculator_values && typeof c.calculator_values === "object"
         ? (c.calculator_values as Record<string, string>)
         : {};
-    const showRaw = (value: string | number | null | undefined) => {
-      if (value === null || value === undefined) return "0";
-      const text = String(value);
-      return text.trim() === "" ? "0" : text;
-    };
-    const invFine = toNum(calculatorValues.inv_fine);
-    const weightKg = toNum(c.total_weight);
-    const cbm = toNum(c.cbm);
-    const taxBreakdown = computeInquiryTaxBreakdown(calculatorValues);
-    const invValue = taxBreakdown?.invValue ?? toNum(calculatorValues.inv_value);
-    const exchangeRate = taxBreakdown?.exchangeRate ?? toNum(calculatorValues.exchange_rate);
-    const customDutyRate = toNum(calculatorValues.custom_duty_rate);
-    const addCdRate = toNum(calculatorValues.add_cd_rate);
-    const gstRate = toNum(calculatorValues.gst_rate);
-    const addGstRate = toNum(calculatorValues.add_gst_rate);
-    const incomeTaxRate = toNum(calculatorValues.income_tax_rate);
-    const exciseRate = toNum(calculatorValues.excise_rate);
-    const regularDutyRate = toNum(calculatorValues.regular_duty_rate);
-    const stampDutyRate = toNum(calculatorValues.stamp_duty_rate);
-    const pkrValue = taxBreakdown?.pkrValue ?? 0;
-    const assessedValue = taxBreakdown?.assessedValue ?? 0;
-    const customDuty = taxBreakdown?.customDuty ?? 0;
-    const addCd = taxBreakdown?.addCd ?? 0;
-    const gst = taxBreakdown?.gst ?? 0;
-    const addGst = taxBreakdown?.addGst ?? 0;
-    const incomeTax = taxBreakdown?.incomeTax ?? 0;
-    const excise = taxBreakdown?.excise ?? 0;
-    const regularDuty = taxBreakdown?.regularDuty ?? 0;
-    const stampDuty = taxBreakdown?.stampDuty ?? 0;
-    const sumOfAllTaxes = taxBreakdown?.sumOfAllTaxes ?? 0;
+    const estimatedDuties = buildEstimatedDutiesDisplay(calculatorValues, {
+      hsCode: c.hs_code || calculatorValues.hs_code,
+      quantity: c.quantity || calculatorValues.quantity,
+    });
+    const weightKg = parseFloat(String(c.total_weight || "").replace(/,/g, "")) || 0;
+    const cbm = parseFloat(String(c.cbm || "").replace(/,/g, "")) || 0;
 
     return (
       <div className="space-y-4">
@@ -330,33 +296,26 @@ export function InquiryConfirmationPanel() {
 
             <div className="border-t" />
 
-            {/* Calculator Details */}
+            {/* Calculator Values */}
             <div>
               <h3 className="text-sm font-semibold text-slate-700 mb-3">Calculator Values</h3>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-2 text-sm">
-                <div>INV Value: <span className="font-semibold">{showRaw(calculatorValues.inv_value)}</span></div>
-                <div>Exchange Rate: <span className="font-semibold">{showRaw(calculatorValues.exchange_rate)}</span></div>
-                <div>PKR Value: <span className="font-semibold">{fmtMoney(pkrValue)}</span></div>
-                <div>Assessed Value: <span className="font-semibold">{fmtMoney(assessedValue)}</span></div>
-                <div>Custom Duty ({customDutyRate}%): <span className="font-semibold">{fmtMoney(customDuty)}</span></div>
-                <div>Add CD ({addCdRate}%): <span className="font-semibold">{fmtMoney(addCd)}</span></div>
-                <div>GST ({gstRate}%): <span className="font-semibold">{fmtMoney(gst)}</span></div>
-                <div>Add GST ({addGstRate}%): <span className="font-semibold">{fmtMoney(addGst)}</span></div>
-                <div>Income Tax ({incomeTaxRate}%): <span className="font-semibold">{fmtMoney(incomeTax)}</span></div>
-                <div>Excise ({exciseRate}%): <span className="font-semibold">{fmtMoney(excise)}</span></div>
-                <div>Regular Duty ({regularDutyRate}%): <span className="font-semibold">{fmtMoney(regularDuty)}</span></div>
-                <div>Stamp Duty ({stampDutyRate}%): <span className="font-semibold">{fmtMoney(stampDuty)}</span></div>
-                <div>INV Fine: <span className="font-semibold">{fmtMoney(invFine)}</span></div>
-                <div>Sum of All Taxes: <span className="font-semibold">{fmtMoney(sumOfAllTaxes)}</span></div>
-              </div>
-              <div className="mt-4">
-                <InquiryPricingSummary
-                  calculatorValues={calculatorValues}
-                  totalWeightKg={weightKg}
-                  cbm={cbm}
-                  pricingConfig={pricingConfig}
-                />
-              </div>
+              {estimatedDuties ? (
+                <EstimatedDutiesAndTaxesTable data={estimatedDuties} />
+              ) : (
+                <div className="rounded border border-dashed text-sm text-slate-400 px-3 py-2">
+                  No calculator values were submitted with this inquiry.
+                </div>
+              )}
+              {Object.keys(calculatorValues).length > 0 ? (
+                <div className="mt-4">
+                  <InquiryPricingSummary
+                    calculatorValues={calculatorValues}
+                    totalWeightKg={weightKg}
+                    cbm={cbm}
+                    pricingConfig={pricingConfig}
+                  />
+                </div>
+              ) : null}
             </div>
 
             {c.status === "rejected" && c.rejection_reason ? (

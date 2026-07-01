@@ -3,7 +3,11 @@
 import { createAdminClient } from '@/utils/supabase/server';
 import { getSession } from '@/lib/auth/session';
 import { revalidatePath } from 'next/cache';
-import { computeCalculatorTotals, parsePricingConfig } from '@/lib/inquiry-calculator';
+import {
+  buildApprovedInquiryPricing,
+  parsePricingConfig,
+  type ApprovedInquiryPricing,
+} from '@/lib/inquiry-calculator';
 
 export type ConfirmationStatus = 'pending' | 'approved' | 'rejected';
 
@@ -623,7 +627,7 @@ export async function getApprovedPricingForInquiryIds(inquiryIds: string[]) {
 
     const ids = [...new Set(inquiryIds.filter(Boolean))];
     if (ids.length === 0) {
-      return { pricing: {} as Record<string, { quotation_number: string; unit_price: number; total_amount: number; notes: string | null }> };
+      return { pricing: {} as Record<string, ApprovedInquiryPricing> };
     }
 
     const supabase = await createAdminClient();
@@ -647,21 +651,21 @@ export async function getApprovedPricingForInquiryIds(inquiryIds: string[]) {
         : {}
     );
 
-    const pricing: Record<string, { quotation_number: string; unit_price: number; total_amount: number; notes: string | null }> = {};
+    const pricing: Record<string, ApprovedInquiryPricing> = {};
     for (const row of data || []) {
       const inquiryId = String(row.inquiry_id || '');
       if (!inquiryId || pricing[inquiryId]) continue;
-      const totals = computeCalculatorTotals(
+      const approved = buildApprovedInquiryPricing(
         row.calculator_values as Record<string, unknown> | null,
-        { weightKg: row.total_weight, quantity: row.quantity, cbm: row.cbm, pricingConfig }
+        {
+          weightKg: row.total_weight,
+          quantity: row.quantity,
+          cbm: row.cbm,
+          pricingConfig,
+        }
       );
-      if (!totals) continue;
-      pricing[inquiryId] = {
-        quotation_number: 'APPROVED',
-        unit_price: totals.unitPrice,
-        total_amount: totals.totalAmount,
-        notes: null,
-      };
+      if (!approved) continue;
+      pricing[inquiryId] = approved;
     }
 
     return { pricing };

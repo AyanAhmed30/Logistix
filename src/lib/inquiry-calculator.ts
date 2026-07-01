@@ -297,6 +297,112 @@ export function computeCalculatorTotals(
   };
 }
 
+export type EstimatedDutyRow = {
+  name: string;
+  rate: number | null;
+  amount: number;
+};
+
+export type EstimatedDutiesDisplay = {
+  exchangeRateDisplay: number;
+  hsCodeDisplay: string;
+  unitPrice: number;
+  quantityDisplay: string;
+  importValue: number;
+  rows: EstimatedDutyRow[];
+  grandTotal: number;
+};
+
+export function buildEstimatedDutiesDisplay(
+  calculatorValues: Record<string, unknown> | null | undefined,
+  options?: { hsCode?: string; quantity?: string }
+): EstimatedDutiesDisplay | null {
+  const taxBreakdown = computeInquiryTaxBreakdown(calculatorValues);
+  if (!taxBreakdown) return null;
+
+  const values =
+    calculatorValues && typeof calculatorValues === "object" ? calculatorValues : {};
+
+  const customDutyRate = toNum(values.custom_duty_rate);
+  const addCdRate = toNum(values.add_cd_rate);
+  const gstRate = toNum(values.gst_rate);
+  const addGstRate = toNum(values.add_gst_rate);
+  const incomeTaxRate = toNum(values.income_tax_rate);
+  const exciseRate = toNum(values.excise_rate);
+  const regularDutyRate = toNum(values.regular_duty_rate);
+  const stampDutyRate = toNum(values.stamp_duty_rate);
+  const salesTaxRate = toNum(values.sales_tax_rate);
+
+  const rows: EstimatedDutyRow[] = [
+    { name: "Customs Duty", rate: customDutyRate, amount: taxBreakdown.customDuty },
+    { name: "Add CD", rate: addCdRate, amount: taxBreakdown.addCd },
+    { name: "GST", rate: gstRate, amount: taxBreakdown.gst },
+    { name: "Add GST", rate: addGstRate, amount: taxBreakdown.addGst },
+    { name: "Income Tax", rate: incomeTaxRate, amount: taxBreakdown.incomeTax },
+    { name: "Excise", rate: exciseRate, amount: taxBreakdown.excise },
+    { name: "Regular Duty", rate: regularDutyRate, amount: taxBreakdown.regularDuty },
+    { name: "Stamp Duty", rate: stampDutyRate, amount: taxBreakdown.stampDuty },
+    { name: "INV Fine", rate: null, amount: taxBreakdown.invFine },
+    { name: "Sales Tax", rate: salesTaxRate, amount: taxBreakdown.salesTaxAmount },
+  ].filter(
+    (row) =>
+      row.name === "Customs Duty" ||
+      row.name === "Sales Tax" ||
+      row.name === "Income Tax" ||
+      row.rate === null ||
+      row.rate > 0 ||
+      Math.abs(row.amount) > 0
+  );
+
+  const hsCodeDisplay =
+    (options?.hsCode || String(values.hs_code || "")).trim() || "-";
+  const quantityDisplay =
+    (options?.quantity || String(values.quantity || "")).trim() || "0";
+
+  return {
+    exchangeRateDisplay: taxBreakdown.exchangeRate,
+    hsCodeDisplay,
+    unitPrice: taxBreakdown.invValue,
+    quantityDisplay,
+    importValue: taxBreakdown.pkrValue,
+    rows,
+    grandTotal: rows.reduce((sum, row) => sum + row.amount, 0),
+  };
+}
+
+export type ApprovedInquiryPricing = {
+  quotation_number: string;
+  unit_price: number;
+  total_amount: number;
+  final_price: number;
+  notes: string | null;
+};
+
+export function formatFinalAnswer(n: number) {
+  return Number.isFinite(n) ? n.toFixed(6) : "-";
+}
+
+export function buildApprovedInquiryPricing(
+  calculatorValues: Record<string, unknown> | null | undefined,
+  options: {
+    weightKg?: string | number;
+    quantity?: string | number;
+    cbm?: string | number;
+    pricingConfig?: CalculatorPricingConfig | Record<string, unknown> | null;
+  }
+): ApprovedInquiryPricing | null {
+  const totals = computeCalculatorTotals(calculatorValues, options);
+  if (!totals) return null;
+
+  return {
+    quotation_number: "APPROVED",
+    unit_price: totals.unitPrice,
+    total_amount: totals.totalAmount,
+    final_price: totals.finalAnswer,
+    notes: null,
+  };
+}
+
 export const CALCULATOR_FIELD_LABELS: Record<string, string> = {
   inv_value: "Invoice Value",
   exchange_rate: "Exchange Rate",

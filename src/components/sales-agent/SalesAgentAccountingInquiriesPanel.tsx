@@ -42,6 +42,11 @@ import {
 } from "@/app/actions/inquiry_confirmations";
 import { sendQuotation, createQuotation } from "@/app/actions/quotations";
 import {
+  formatFinalAnswer,
+  type ApprovedInquiryPricing,
+} from "@/lib/inquiry-calculator";
+import { SalesAgentFinalRateCard } from "@/components/sales-agent/SalesAgentFinalRateCard";
+import {
   classifyInquiryAttachment,
   collectInquiryAttachmentUrls,
 } from "@/lib/inquiry-attachments";
@@ -205,12 +210,7 @@ export function SalesAgentAccountingInquiriesPanel() {
   const [editStatus, setEditStatus] = useState<string>("");
   const [editLink, setEditLink] = useState("");
   const [confirmationDetails, setConfirmationDetails] = useState<InquiryConfirmation[] | null>(null);
-  const [approvedPricing, setApprovedPricing] = useState<{
-    quotation_number: string;
-    unit_price: number;
-    total_amount: number;
-    notes: string | null;
-  } | null>(null);
+  const [approvedPricing, setApprovedPricing] = useState<ApprovedInquiryPricing | null>(null);
 
   // Logs
   const [isSendingQuotation, setIsSendingQuotation] = useState(false);
@@ -267,12 +267,7 @@ export function SalesAgentAccountingInquiriesPanel() {
 
   async function buildInquiryQuotationPdf(
     inquiry: LeadInquiryWithLead,
-    pricing: {
-      quotation_number: string;
-      unit_price: number;
-      total_amount: number;
-      notes: string | null;
-    }
+    pricing: ApprovedInquiryPricing
   ) {
     const pdf = new jsPDF({ unit: "mm", format: "a4" });
     const pageWidth = pdf.internal.pageSize.getWidth();
@@ -349,18 +344,19 @@ export function SalesAgentAccountingInquiriesPanel() {
     y += 6;
 
     pdf.setFont("helvetica", "bold");
-    pdf.text("Unit Price", margin, y);
-    pdf.text("Total Amount", pageWidth / 2, y);
+    pdf.text("Final Rate", margin, y);
+    pdf.text("Unit Price", pageWidth / 2, y);
     y += 5;
     pdf.setLineWidth(0.2);
     pdf.line(margin, y, pageWidth - margin, y);
     y += 7;
 
     pdf.setFont("helvetica", "normal");
+    const finalPriceStr = formatFinalAnswer(pricing.final_price);
     const unitPriceStr = `Rs. ${pricing.unit_price.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
     const totalStr = `Rs. ${pricing.total_amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-    pdf.text(unitPriceStr, margin, y);
-    pdf.text(totalStr, pageWidth / 2, y);
+    pdf.text(finalPriceStr, margin, y);
+    pdf.text(unitPriceStr, pageWidth / 2, y);
     y += 10;
     pdf.line(margin, y, pageWidth - margin, y);
     y += 12;
@@ -673,38 +669,7 @@ export function SalesAgentAccountingInquiriesPanel() {
 
                 {/* Approved Pricing */}
                 {approvedPricing && (
-                  <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4">
-                    <div className="flex items-center justify-between gap-3">
-                      <div>
-                        <p className="text-xs font-semibold uppercase tracking-wide text-emerald-700">
-                          Admin Approved Pricing
-                        </p>
-                        <p className="text-sm text-slate-600 mt-1">
-                          Final rates from the approved inquiry confirmation.
-                        </p>
-                      </div>
-                    </div>
-                    <div className="mt-4 grid grid-cols-2 gap-4 text-sm">
-                      <div>
-                        <p className="text-slate-500">Quotation #</p>
-                        <p className="font-semibold text-slate-900 mt-1">{approvedPricing.quotation_number}</p>
-                      </div>
-                      <div>
-                        <p className="text-slate-500">Unit Price</p>
-                        <p className="font-semibold text-slate-900 mt-1">Rs. {Number(approvedPricing.unit_price).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
-                      </div>
-                      <div>
-                        <p className="text-slate-500">Total Amount</p>
-                        <p className="font-semibold text-slate-900 mt-1">Rs. {Number(approvedPricing.total_amount).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
-                      </div>
-                      {approvedPricing.notes ? (
-                        <div className="md:col-span-2">
-                          <p className="text-slate-500">Admin Notes</p>
-                          <p className="text-sm text-slate-700 mt-1 whitespace-pre-wrap">{approvedPricing.notes}</p>
-                        </div>
-                      ) : null}
-                    </div>
-                  </div>
+                  <SalesAgentFinalRateCard finalRate={approvedPricing.final_price} />
                 )}
 
                 {inquiryImageUrls.length > 0 && (

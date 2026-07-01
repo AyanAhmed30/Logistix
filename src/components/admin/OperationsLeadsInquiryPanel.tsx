@@ -901,6 +901,7 @@ export function OperationsLeadsInquiryPanel({
       }
 
       const resolvedQuantity =
+        calcQuantity.trim() ||
         (isEditing ? editQuantity : selectedInquiry.quantity)?.trim() ||
         formQuantity.trim() ||
         "0";
@@ -1135,7 +1136,7 @@ export function OperationsLeadsInquiryPanel({
       stamp_duty_rate: calcStampDutyRate,
       inv_fine: calcInvFine,
       sales_tax_rate: calcSalesTaxRate,
-      quantity: inquiryQuantity,
+      quantity: calcQuantity || inquiryQuantity,
       uom: calcUom,
       hs_code: calcHsCode,
     };
@@ -1180,7 +1181,7 @@ export function OperationsLeadsInquiryPanel({
     const importValue = taxBreakdown?.pkrValue ?? calc.pkrValue;
     const unitPrice = taxBreakdown?.invValue ?? invValue;
     const hsCodeDisplay = calcHsCode.trim() || "-";
-    const quantityDisplay = formQuantity || inquiryQuantity || "0";
+    const quantityDisplay = formQuantity || calcQuantity || inquiryQuantity || "0";
 
     const estimatedDutyRows = [
       { name: "Customs Duty", rate: customDutyRate, amount: calc.customDuty },
@@ -1509,12 +1510,11 @@ export function OperationsLeadsInquiryPanel({
                   <div className="col-span-5 px-3 py-2 border-r text-sm">Quantity</div>
                   <div className="col-span-7 px-2 py-1.5">
                     <Input
-                      value={inquiryQuantity}
-                      readOnly
-                      className="h-8 text-xs bg-slate-50"
-                      title="Filled automatically from inquiry"
+                      value={calcQuantity}
+                      onChange={(e) => setCalcQuantity(e.target.value.replace(/\D/g, ""))}
+                      onBlur={() => void logCalculatorFieldChange("quantity", calcQuantity)}
+                      className="h-8 text-xs"
                     />
-                    <div className="text-[10px] text-slate-500 mt-0.5">From inquiry</div>
                   </div>
                 </div>
 

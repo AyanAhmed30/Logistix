@@ -37,6 +37,7 @@ import { collectInquiryAttachmentUrls } from "@/lib/inquiry-attachments";
 import {
   computeInquiryTaxBreakdown,
   parsePricingConfig,
+  sanitizeCalculatorValues,
   type CalculatorPricingConfig,
 } from "@/lib/inquiry-calculator";
 import { Card, CardContent } from "@/components/ui/card";
@@ -221,7 +222,6 @@ export function OperationsLeadsInquiryPanel({
   const [calcRegularDutyRate, setCalcRegularDutyRate] = useState("0");
   const [calcStampDutyRate, setCalcStampDutyRate] = useState("0");
   const [calcInvFine, setCalcInvFine] = useState("0");
-  const [calcSalesTaxRate, setCalcSalesTaxRate] = useState("18");
   const [calcUom, setCalcUom] = useState("KG");
   const [calcQuantity, setCalcQuantity] = useState("0");
   const [calcHsCode, setCalcHsCode] = useState("");
@@ -254,7 +254,6 @@ export function OperationsLeadsInquiryPanel({
     regular_duty_rate: "0",
     stamp_duty_rate: "0",
     inv_fine: "0",
-    sales_tax_rate: "18",
     uom: "KG",
     quantity: "0",
     hs_code: "",
@@ -272,11 +271,21 @@ export function OperationsLeadsInquiryPanel({
     setCalcRegularDutyRate(values.regular_duty_rate ?? "0");
     setCalcStampDutyRate(values.stamp_duty_rate ?? "0");
     setCalcInvFine(values.inv_fine ?? "0");
-    setCalcSalesTaxRate(values.sales_tax_rate ?? "18");
     setCalcUom(values.uom ?? "KG");
     setCalcQuantity(values.quantity ?? "0");
     setCalcHsCode(values.hs_code ?? "");
   }, []);
+
+  const mergeSharedCalculatorValues = useCallback(
+    (overrides?: Record<string, string>) => {
+      const defaults = getDefaultCalculatorValues();
+      const cached =
+        getCachedOperationsBootstrap(debouncedSearchQuery) ?? getCachedOperationsBootstrap("");
+      const shared = sanitizeCalculatorValues(cached?.calculatorValues ?? {});
+      return { ...defaults, ...shared, ...(overrides ?? {}) };
+    },
+    [debouncedSearchQuery, getDefaultCalculatorValues]
+  );
 
   const refreshInquiryLogs = useCallback(async (leadId: string, inquiryId?: string) => {
     try {
@@ -293,7 +302,7 @@ export function OperationsLeadsInquiryPanel({
 
   const logCalculatorFieldChange = useCallback(
     async (field: string, currentValue: string) => {
-      if (!selectedInquiry) return;
+      if (!selectedInquiry || field === "sales_tax_rate") return;
       const previousValue = lastCalcSnapshot[field] ?? "";
       if (previousValue === currentValue) return;
       const saveResult = await saveInquiryCalculatorField(
@@ -445,11 +454,11 @@ export function OperationsLeadsInquiryPanel({
     setView("detail");
     setShowForm(false);
     resetForm();
-    const defaults = getDefaultCalculatorValues();
-    applyCalculatorValues(defaults);
     const inquiryQuantity = inquiry.quantity?.trim() || "0";
+    const mergedValues = mergeSharedCalculatorValues({ quantity: inquiryQuantity });
+    applyCalculatorValues(mergedValues);
     setCalcQuantity(inquiryQuantity);
-    const nextSnapshot = { ...defaults, quantity: inquiryQuantity };
+    const nextSnapshot = mergedValues;
     setActiveRightTab("send_message");
     setLogNoteText("");
     setChatInput("");
@@ -927,7 +936,6 @@ export function OperationsLeadsInquiryPanel({
           regular_duty_rate: calcRegularDutyRate,
           stamp_duty_rate: calcStampDutyRate,
           inv_fine: calcInvFine,
-          sales_tax_rate: calcSalesTaxRate,
           uom: calcUom,
           quantity: resolvedQuantity,
           hs_code: calcHsCode,
@@ -1135,7 +1143,6 @@ export function OperationsLeadsInquiryPanel({
       regular_duty_rate: calcRegularDutyRate,
       stamp_duty_rate: calcStampDutyRate,
       inv_fine: calcInvFine,
-      sales_tax_rate: calcSalesTaxRate,
       quantity: calcQuantity || inquiryQuantity,
       uom: calcUom,
       hs_code: calcHsCode,
@@ -1166,7 +1173,6 @@ export function OperationsLeadsInquiryPanel({
       regularDuty: taxBreakdown?.regularDuty ?? 0,
       stampDuty: taxBreakdown?.stampDuty ?? 0,
       invFine: taxBreakdown?.invFine ?? 0,
-      salesTaxAmount: taxBreakdown?.salesTaxAmount ?? 0,
       sumOfAllTaxes: taxBreakdown?.sumOfAllTaxes ?? 0,
     };
 
@@ -1186,14 +1192,13 @@ export function OperationsLeadsInquiryPanel({
     const estimatedDutyRows = [
       { name: "Customs Duty", rate: customDutyRate, amount: calc.customDuty },
       { name: "Add CD", rate: addCdRate, amount: calc.addCd },
-      { name: "GST", rate: gstRate, amount: calc.gst },
+      { name: "Sales Tax", rate: gstRate, amount: calc.gst },
       { name: "Add GST", rate: addGstRate, amount: calc.addGst },
       { name: "Income Tax", rate: incomeTaxRate, amount: calc.incomeTax },
       { name: "Excise", rate: exciseRate, amount: calc.excise },
       { name: "Regular Duty", rate: regularDutyRate, amount: calc.regularDuty },
       { name: "Stamp Duty", rate: stampDutyRate, amount: calc.stampDuty },
       { name: "INV Fine", rate: null as number | null, amount: calc.invFine },
-      { name: "Sales Tax", rate: toNum(calcSalesTaxRate), amount: calc.salesTaxAmount },
     ].filter(
       (row) =>
         row.name === "Customs Duty" ||
@@ -1220,14 +1225,13 @@ export function OperationsLeadsInquiryPanel({
       exchange_rate: "Exchange Rate",
       custom_duty_rate: "Custom Duty %",
       add_cd_rate: "Add CD %",
-      gst_rate: "GST %",
+      gst_rate: "Sales Tax %",
       add_gst_rate: "Add GST %",
       income_tax_rate: "Income Tax %",
       excise_rate: "Excise %",
       regular_duty_rate: "Regular Duty %",
       stamp_duty_rate: "Stamp Duty %",
       inv_fine: "INV Fine",
-      sales_tax_rate: "Sales Tax (ST) %",
       uom: "UOM",
       hs_code: "HS Code",
       additional_image_1: "Additional Image 1",
@@ -1470,20 +1474,6 @@ export function OperationsLeadsInquiryPanel({
                 </div>
 
                 <div className="grid grid-cols-12 border-b">
-                  <div className="col-span-5 px-3 py-2 border-r text-sm">Sales Tax (ST)</div>
-                  <div className="col-span-3 px-2 py-1.5 border-r">
-                    <Input
-                      value={calcSalesTaxRate}
-                      onChange={(e) => setCalcSalesTaxRate(e.target.value)}
-                      onBlur={() => void logCalculatorFieldChange("sales_tax_rate", calcSalesTaxRate)}
-                      className="h-8 text-xs"
-                    />
-                    <div className="text-[10px] text-slate-500 mt-0.5">{fmtRate(calcSalesTaxRate)}</div>
-                  </div>
-                  <div className="col-span-4 px-3 py-2 text-right text-sm font-semibold">{fmtMoney(calc.salesTaxAmount)}</div>
-                </div>
-
-                <div className="grid grid-cols-12 border-b">
                   <div className="col-span-5 px-3 py-2 border-r text-sm">UOM</div>
                   <div className="col-span-7 px-2 py-1.5">
                     <Select
@@ -1572,7 +1562,7 @@ export function OperationsLeadsInquiryPanel({
                 {[
                   { field: "custom_duty_rate", label: "Custom Duty", rate: calcCustomDutyRate, setRate: setCalcCustomDutyRate, amount: calc.customDuty },
                   { field: "add_cd_rate", label: "Add CD", rate: calcAddCdRate, setRate: setCalcAddCdRate, amount: calc.addCd },
-                  { field: "gst_rate", label: "GST", rate: calcGstRate, setRate: setCalcGstRate, amount: calc.gst },
+                  { field: "gst_rate", label: "Sales Tax", rate: calcGstRate, setRate: setCalcGstRate, amount: calc.gst },
                   { field: "add_gst_rate", label: "Add GST", rate: calcAddGstRate, setRate: setCalcAddGstRate, amount: calc.addGst },
                   { field: "income_tax_rate", label: "Income Tax", rate: calcIncomeTaxRate, setRate: setCalcIncomeTaxRate, amount: calc.incomeTax },
                   { field: "excise_rate", label: "Excise", rate: calcExciseRate, setRate: setCalcExciseRate, amount: calc.excise },

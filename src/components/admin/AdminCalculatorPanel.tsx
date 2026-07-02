@@ -12,6 +12,7 @@ import {
 import {
   computeInquiryTaxBreakdown,
   PRICING_CONFIG_KEYS,
+  sanitizeCalculatorValues,
 } from "@/lib/inquiry-calculator";
 
 type CalcValues = {
@@ -26,7 +27,6 @@ type CalcValues = {
   regular_duty_rate: string;
   stamp_duty_rate: string;
   inv_fine: string;
-  sales_tax_rate: string;
   gross_weight_value: string;
   volumetric_weight_value: string;
   cbm_value: string;
@@ -44,7 +44,6 @@ const EMPTY_CALC: CalcValues = {
   regular_duty_rate: "30",
   stamp_duty_rate: "0",
   inv_fine: "0",
-  sales_tax_rate: "18",
   gross_weight_value: "0",
   volumetric_weight_value: "0",
   cbm_value: "0",
@@ -72,7 +71,10 @@ export function AdminCalculatorPanel() {
         toast.error(result.error || "Unable to load calculator values");
         return;
       }
-      const resolved: CalcValues = { ...EMPTY_CALC, ...(result.values || {}) };
+      const resolved: CalcValues = {
+        ...EMPTY_CALC,
+        ...sanitizeCalculatorValues(result.values),
+      };
       setCalcValues(resolved);
       setLastSnapshot(resolved);
     }
@@ -106,7 +108,6 @@ export function AdminCalculatorPanel() {
   const regularDuty = taxBreakdown?.regularDuty ?? 0;
   const stampDuty = taxBreakdown?.stampDuty ?? 0;
   const invFine = taxBreakdown?.invFine ?? 0;
-  const salesTaxAmount = taxBreakdown?.salesTaxAmount ?? 0;
   const sumOfAllTaxes = taxBreakdown?.sumOfAllTaxes ?? 0;
 
   const pricingFields = [
@@ -182,7 +183,7 @@ export function AdminCalculatorPanel() {
             {[
               { key: "custom_duty_rate", label: "Custom Duty", amount: customDuty },
               { key: "add_cd_rate", label: "Add CD", amount: addCd },
-              { key: "gst_rate", label: "GST", amount: gst },
+              { key: "gst_rate", label: "Sales Tax", amount: gst },
               { key: "add_gst_rate", label: "Add GST", amount: addGst },
               { key: "income_tax_rate", label: "Income Tax", amount: incomeTax },
               { key: "excise_rate", label: "Excise", amount: excise },
@@ -209,19 +210,6 @@ export function AdminCalculatorPanel() {
                 <div className="col-span-4 px-3 py-2 text-right text-sm font-semibold">{fmtMoney(row.amount)}</div>
               </div>
             ))}
-
-            <div className="grid grid-cols-12 border-b">
-              <div className="col-span-5 px-3 py-2 border-r text-sm">Sales Tax (ST)</div>
-              <div className="col-span-3 px-2 py-1.5 border-r">
-                <Input
-                  value={calcValues.sales_tax_rate}
-                  onChange={(e) => setCalcValues((p) => ({ ...p, sales_tax_rate: e.target.value }))}
-                  onBlur={() => void persistField("sales_tax_rate", calcValues.sales_tax_rate)}
-                  className="h-8 text-xs"
-                />
-              </div>
-              <div className="col-span-4 px-3 py-2 text-right text-sm font-semibold">{fmtMoney(salesTaxAmount)}</div>
-            </div>
 
             <div className="grid grid-cols-12 border-b">
               <div className="col-span-5 px-3 py-2 border-r text-sm">INV Fine</div>

@@ -3,6 +3,11 @@
 import { createAdminClient } from '@/utils/supabase/server';
 import { getSession } from '@/lib/auth/session';
 import { revalidatePath } from 'next/cache';
+import {
+  validateInquiryProductInfoForSend,
+  type InquiryProductFields,
+} from '@/lib/inquiry-form-validation';
+import { sanitizeCalculatorValues } from '@/lib/inquiry-calculator';
 
 export type InquiryStatus = 'pending' | 'in_progress' | 'quotation_sent' | 'completed';
 
@@ -534,6 +539,17 @@ export async function sendInquiryToAccounting(inquiryId: string) {
       return { error: 'Please add a product name before sending.' };
     }
 
+    const sendFieldCheck = validateInquiryProductInfoForSend({
+      product_name: inquiry.product_name || '',
+      total_weight: inquiry.total_weight || '',
+      cbm: inquiry.cbm || '',
+      quantity: inquiry.quantity || '',
+    });
+    if (!sendFieldCheck.valid) {
+      const firstError = Object.values(sendFieldCheck.errors)[0];
+      return { error: firstError || 'Please complete all required product information before sending.' };
+    }
+
     // Update inquiry status - send to accounting (operations reads from same flag)
     const updatePayload: Record<string, unknown> = {
       sent_to_accounting: true,
@@ -553,44 +569,41 @@ export async function sendInquiryToAccounting(inquiryId: string) {
 
     if (error) return { error: error.message };
 
-    // Add status change log so the activity/history UI shows the "send" event.
     const wasAlreadySent = Boolean(inquiry.sent_to_accounting);
     const action = wasAlreadySent ? 'inquiry_resent' : 'inquiry_sent';
     const actionLabel = wasAlreadySent ? 'Inquiry Re-Sent' : 'Inquiry Sent';
-    await supabase.from('inquiry_logs').insert([
-      {
-        inquiry_id: inquiry.id,
-        action,
-        previous_values: { sent_to_accounting: inquiry.sent_to_accounting, sent_at: inquiry.sent_at },
-        new_values: {
-          sent_to_accounting: true,
-          sent_at: updatePayload.sent_at,
-        },
-        performed_by: session.username || 'sales-agent',
-      },
+
+    const [{ data: leadForNotification }, { data: operationsUsers }] = await Promise.all([
+      supabase.from('leads').select('lead_id_formatted').eq('id', inquiry.lead_id).maybeSingle(),
+      supabase.from('operations_users').select('username'),
     ]);
-    await addLeadActivityLog(supabase, {
-      leadId: inquiry.lead_id,
-      inquiryId: inquiry.id,
-      inquiryVersion: inquiry.version_number || null,
-      actionType: wasAlreadySent ? 'inquiry_resent' : 'inquiry_sent',
-      actionLabel,
-      performedBy: session.username || 'sales-agent',
-      previousValues: { sent_to_accounting: inquiry.sent_to_accounting, sent_at: inquiry.sent_at },
-      newValues: { sent_to_accounting: true, sent_at: updatePayload.sent_at },
-    });
 
-    // Notify Operations users that a new inquiry has been sent by Sales Agent.
-    const { data: leadForNotification } = await supabase
-      .from('leads')
-      .select('lead_id_formatted')
-      .eq('id', inquiry.lead_id)
-      .maybeSingle();
+    await Promise.all([
+      supabase.from('inquiry_logs').insert([
+        {
+          inquiry_id: inquiry.id,
+          action,
+          previous_values: { sent_to_accounting: inquiry.sent_to_accounting, sent_at: inquiry.sent_at },
+          new_values: {
+            sent_to_accounting: true,
+            sent_at: updatePayload.sent_at,
+          },
+          performed_by: session.username || 'sales-agent',
+        },
+      ]),
+      addLeadActivityLog(supabase, {
+        leadId: inquiry.lead_id,
+        inquiryId: inquiry.id,
+        inquiryVersion: inquiry.version_number || null,
+        actionType: wasAlreadySent ? 'inquiry_resent' : 'inquiry_sent',
+        actionLabel,
+        performedBy: session.username || 'sales-agent',
+        previousValues: { sent_to_accounting: inquiry.sent_to_accounting, sent_at: inquiry.sent_at },
+        newValues: { sent_to_accounting: true, sent_at: updatePayload.sent_at },
+      }),
+    ]);
+
     const leadNumber = leadForNotification?.lead_id_formatted || 'N/A';
-
-    const { data: operationsUsers } = await supabase
-      .from('operations_users')
-      .select('username');
     const recipients = (operationsUsers || [])
       .map((u) => u.username)
       .filter((u): u is string => !!u);
@@ -619,6 +632,56 @@ export async function sendInquiryToAccounting(inquiryId: string) {
   } catch (err) {
     return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };
   }
+}
+
+export async function saveAndSendInquiry(
+  leadId: string,
+  data: InquiryProductFields & {
+    image_url: string | null;
+    additional_image_urls?: string[] | null;
+    description: string;
+  },
+  inquiryId?: string,
+  options?: {
+    forceNewInquiry?: boolean;
+  }
+) {
+  const validation = validateInquiryProductInfoForSend({
+    product_name: data.product_name,
+    total_weight: data.total_weight,
+    cbm: data.cbm,
+    quantity: data.quantity,
+  });
+  if (!validation.valid) {
+    const firstError = Object.values(validation.errors)[0];
+    return { error: firstError || 'Please complete all required product information before sending.' };
+  }
+
+  const saveResult = await saveInquiry(
+    leadId,
+    {
+      product_name: data.product_name,
+      total_weight: data.total_weight,
+      cbm: data.cbm,
+      quantity: data.quantity,
+      image_url: data.image_url,
+      additional_image_urls: data.additional_image_urls,
+      description: data.description,
+    },
+    inquiryId,
+    options
+  );
+
+  if ('error' in saveResult) {
+    return saveResult;
+  }
+
+  const inquiryToSendId = saveResult.inquiry?.id;
+  if (!inquiryToSendId) {
+    return { error: 'Unable to determine inquiry to send' };
+  }
+
+  return sendInquiryToAccounting(inquiryToSendId);
 }
 
 export async function createInquiryDraft(leadId: string) {
@@ -1518,7 +1581,7 @@ export async function getOperationsInquiriesBootstrap(input?: {
 
     return {
       ...inquiriesResult,
-      calculatorValues: values,
+      calculatorValues: sanitizeCalculatorValues(values),
     };
   } catch (err) {
     return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };
@@ -2075,6 +2138,10 @@ export async function saveInquiryCalculatorField(
       return { error: 'Field is required' };
     }
 
+    if (field === 'sales_tax_rate') {
+      return { error: 'Sales Tax (ST) has been removed from the calculator.' };
+    }
+
     const supabase = await createAdminClient();
 
     const { data: configRow, error: fetchError } = await supabase
@@ -2092,10 +2159,10 @@ export async function saveInquiryCalculatorField(
         ? configRow.values as Record<string, string>
         : {};
 
-    const nextValues: Record<string, string> = {
+    const nextValues = sanitizeCalculatorValues({
       ...currentValues,
       [field]: value ?? '',
-    };
+    });
 
     const { error: updateError } = await supabase
       .from('inquiry_calculator_config')
@@ -2130,10 +2197,11 @@ export async function getSharedInquiryCalculatorValues() {
       .maybeSingle();
 
     if (error) return { error: error.message };
-    const values =
+    const values = sanitizeCalculatorValues(
       data?.values && typeof data.values === 'object'
-        ? data.values as Record<string, string>
-        : {};
+        ? (data.values as Record<string, unknown>)
+        : {}
+    );
     return { values };
   } catch (err) {
     return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };

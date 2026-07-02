@@ -59,6 +59,7 @@ import {
   getInquiryTrackingForSalesAgent,
   type InquiryTrackingInfo,
 } from "@/app/actions/inquiries";
+import { prefetchLeadInquiries } from "@/lib/sales-agent-lead-inquiries-cache";
 
 const STATUSES: LeadStatus[] = [
   "Leads",
@@ -464,6 +465,7 @@ function LeadCard({
           </button>
           <Card
             className="flex-1 min-w-0 rounded-l-none rounded-r-xl border-blue-200 cursor-pointer hover:shadow-2xl hover:border-blue-300 hover:bg-blue-25 transition-all duration-300 shadow-lg mb-0 bg-white"
+            onMouseEnter={() => void prefetchLeadInquiries(lead.id)}
             onClick={() => onOpenLeadDetail?.(lead)}
           >
             {renderLeadBody()}
@@ -1043,6 +1045,7 @@ export function PipelinePanel() {
   }
 
   function navigateToLeadDetail(lead: Lead, tab?: "create" | "view" | "status") {
+    void prefetchLeadInquiries(lead.id);
     // Enforce workflow constraint: Only allow Send Inquiry flow on "Inquiry Received" board
     const allowInquiry = lead.status === "Inquiry Received";
     

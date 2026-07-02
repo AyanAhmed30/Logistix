@@ -26,9 +26,6 @@ export type InquiryTaxBreakdown = {
   regularDuty: number;
   stampDuty: number;
   invFine: number;
-  salesTaxRate: number;
-  salesTaxAmount: number;
-  subTotalBeforeSalesTax: number;
   sumOfAllTaxes: number;
 };
 
@@ -110,7 +107,6 @@ export function computeInquiryTaxBreakdown(
   const regularDutyRate = toNum(values.regular_duty_rate);
   const stampDutyRate = toNum(values.stamp_duty_rate);
   const invFine = toNum(values.inv_fine);
-  const salesTaxRate = toNum(values.sales_tax_rate);
 
   const pkrValue =
     invValue > 0 && exchangeRate > 0
@@ -129,20 +125,6 @@ export function computeInquiryTaxBreakdown(
   const regularDuty = (assessedValue * regularDutyRate) / 100;
   const stampDuty = (assessedValue * stampDutyRate) / 100;
 
-  const subTotalBeforeSalesTax =
-    assessedValue +
-    customDuty +
-    addCd +
-    gst +
-    addGst +
-    incomeTax +
-    excise +
-    regularDuty +
-    stampDuty +
-    invFine;
-
-  const salesTaxAmount = (subTotalBeforeSalesTax * salesTaxRate) / 100;
-
   const sumOfAllTaxes =
     customDuty +
     addCd +
@@ -152,8 +134,7 @@ export function computeInquiryTaxBreakdown(
     excise +
     regularDuty +
     stampDuty +
-    invFine +
-    salesTaxAmount;
+    invFine;
 
   return {
     invValue,
@@ -169,9 +150,6 @@ export function computeInquiryTaxBreakdown(
     regularDuty,
     stampDuty,
     invFine,
-    salesTaxRate,
-    salesTaxAmount,
-    subTotalBeforeSalesTax,
     sumOfAllTaxes,
   };
 }
@@ -331,19 +309,17 @@ export function buildEstimatedDutiesDisplay(
   const exciseRate = toNum(values.excise_rate);
   const regularDutyRate = toNum(values.regular_duty_rate);
   const stampDutyRate = toNum(values.stamp_duty_rate);
-  const salesTaxRate = toNum(values.sales_tax_rate);
 
   const rows: EstimatedDutyRow[] = [
     { name: "Customs Duty", rate: customDutyRate, amount: taxBreakdown.customDuty },
     { name: "Add CD", rate: addCdRate, amount: taxBreakdown.addCd },
-    { name: "GST", rate: gstRate, amount: taxBreakdown.gst },
+    { name: "Sales Tax", rate: gstRate, amount: taxBreakdown.gst },
     { name: "Add GST", rate: addGstRate, amount: taxBreakdown.addGst },
     { name: "Income Tax", rate: incomeTaxRate, amount: taxBreakdown.incomeTax },
     { name: "Excise", rate: exciseRate, amount: taxBreakdown.excise },
     { name: "Regular Duty", rate: regularDutyRate, amount: taxBreakdown.regularDuty },
     { name: "Stamp Duty", rate: stampDutyRate, amount: taxBreakdown.stampDuty },
     { name: "INV Fine", rate: null, amount: taxBreakdown.invFine },
-    { name: "Sales Tax", rate: salesTaxRate, amount: taxBreakdown.salesTaxAmount },
   ].filter(
     (row) =>
       row.name === "Customs Duty" ||
@@ -408,14 +384,13 @@ export const CALCULATOR_FIELD_LABELS: Record<string, string> = {
   exchange_rate: "Exchange Rate",
   custom_duty_rate: "Custom Duty %",
   add_cd_rate: "ADD CD %",
-  gst_rate: "GST %",
+  gst_rate: "Sales Tax %",
   add_gst_rate: "ADD GST %",
   income_tax_rate: "Income Tax %",
   excise_rate: "Excise %",
   regular_duty_rate: "Regular Duty %",
   stamp_duty_rate: "Stamp Duty %",
   inv_fine: "INV Fine",
-  sales_tax_rate: "Sales Tax %",
   gross_weight_value: "Gross Weight Value",
   volumetric_weight_value: "Volumetric Weight Value",
   cbm_value: "CBM Value",
@@ -423,3 +398,13 @@ export const CALCULATOR_FIELD_LABELS: Record<string, string> = {
   quantity: "Quantity",
   hs_code: "HS Code",
 };
+
+/** Removes deprecated Sales Tax (ST) field from calculator value maps. */
+export function sanitizeCalculatorValues(
+  values: Record<string, unknown> | null | undefined
+): Record<string, string> {
+  if (!values || typeof values !== "object") return {};
+  const sanitized = { ...values } as Record<string, string>;
+  delete sanitized.sales_tax_rate;
+  return sanitized;
+}

@@ -27,7 +27,7 @@ import { Badge } from "@/components/ui/badge";
 import type { Lead } from "@/app/actions/leads";
 import {
   saveInquiry,
-  sendInquiryToAccounting,
+  saveAndSendInquiry,
   getInquiriesForLead,
   deleteInquiryForSalesAgent,
   getInquiryLogs,
@@ -55,6 +55,19 @@ import {
   SalesAgentFinalRateCard,
 } from "@/components/sales-agent/SalesAgentFinalRateCard";
 import { classifyInquiryAttachment } from "@/lib/inquiry-attachments";
+import {
+  inquiryProductFieldsFromForm,
+  isIntegerString,
+  isOptionalDecimalString,
+  validateInquiryProductInfoForDraft,
+  validateInquiryProductInfoForSend,
+  type InquiryProductFieldErrors,
+} from "@/lib/inquiry-form-validation";
+import {
+  getCachedLeadInquiries,
+  invalidateCachedLeadInquiries,
+  setCachedLeadInquiries,
+} from "@/lib/sales-agent-lead-inquiries-cache";
 import {
   Dialog,
   DialogContent,
@@ -172,8 +185,56 @@ function getInquiryPricingForDisplay(
 
 function isDecimalString(value: string) {
   if (!value.trim()) return true;
-  return /^(?:\d+|\d+\.\d+|\d*\.\d+)$/.test(value.trim());
+  return isOptionalDecimalString(value);
 }
+
+function InquiryWorkspaceSkeleton() {
+  return (
+    <div className="space-y-6 animate-pulse" aria-hidden="true">
+      <div className="h-10 bg-slate-200 rounded-lg w-1/3" />
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <div className="lg:col-span-2 space-y-4">
+          <div className="h-48 bg-white border border-slate-200 rounded-xl" />
+          <div className="h-36 bg-white border border-slate-200 rounded-xl" />
+        </div>
+        <div className="h-64 bg-white border border-slate-200 rounded-xl" />
+      </div>
+    </div>
+  );
+}
+
+const WORKFLOW_TABS = [
+  {
+    id: "create" as const,
+    label: "Create New Inquiry",
+    shortLabel: "Create",
+    icon: Plus,
+    description: "Start a new inquiry for this lead",
+    activeClass: "bg-blue-600 text-white border-blue-600 shadow-md",
+    iconClass: "bg-blue-100 text-blue-700",
+    iconActiveClass: "bg-white/20 text-white",
+  },
+  {
+    id: "view" as const,
+    label: "View Inquiries",
+    shortLabel: "View",
+    icon: List,
+    description: "Browse and manage existing inquiries",
+    activeClass: "bg-violet-600 text-white border-violet-600 shadow-md",
+    iconClass: "bg-violet-100 text-violet-700",
+    iconActiveClass: "bg-white/20 text-white",
+  },
+  {
+    id: "status" as const,
+    label: "Inquiry Status",
+    shortLabel: "Status",
+    icon: Activity,
+    description: "Track progress and approved rates",
+    activeClass: "bg-emerald-600 text-white border-emerald-600 shadow-md",
+    iconClass: "bg-emerald-100 text-emerald-700",
+    iconActiveClass: "bg-white/20 text-white",
+  },
+] as const;
 
 function buildApprovedInquiryDetailText(
   inq: LeadInquiry,
@@ -301,112 +362,180 @@ export function LeadInquiryWorkspace({
   const [chatMessages, setChatMessages] = useState<LeadChatMessage[]>([]);
   const [chatInput, setChatInput] = useState("");
   const [isSendingChat, setIsSendingChat] = useState(false);
+  const [fieldErrors, setFieldErrors] = useState<InquiryProductFieldErrors>({});
+  const [showSendValidation, setShowSendValidation] = useState(false);
+  const selectedInquiryIdRef = useRef(selectedInquiryId);
+  const isSendingRef = useRef(false);
 
-  const fetchInquiryData = useCallback(async () => {
-    if (!lead) return;
-    setIsLoading(true);
+  useEffect(() => {
+    selectedInquiryIdRef.current = selectedInquiryId;
+  }, [selectedInquiryId]);
+
+  const currentProductFields = useMemo(
+    () =>
+      inquiryProductFieldsFromForm({
+        productName,
+        totalWeight,
+        cbm,
+        quantity,
+      }),
+    [productName, totalWeight, cbm, quantity]
+  );
+
+  const sendValidation = useMemo(
+    () => validateInquiryProductInfoForSend(currentProductFields),
+    [currentProductFields]
+  );
+
+  const isSendFormValid = sendValidation.valid;
+
+  const fetchLogsForInquiry = useCallback(async (inquiryId: string) => {
+    setIsLoadingLogs(true);
     try {
-      // Fetch only core inquiry data first so dialog can render quickly.
-      const inquiryListResult = await getInquiriesForLead(lead.id);
-
-      if ("error" in inquiryListResult) {
-        setLeadInquiries([]);
-        setApprovedInquiryId(null);
-        setInquiry(null);
-        setProductName("");
-        setTotalWeight("");
-        setCbm("");
-        setQuantity("");
-        setImageDataList([]);
-        setOtherDetails("");
-        setConfirmationStatus("none");
+      const result = await getInquiryLogs(inquiryId);
+      if ("error" in result) {
+        setInquiryLogs([]);
       } else {
-        const list = inquiryListResult.inquiries || [];
-        const nextApprovedFallback =
-          ("approvedInquiryId" in inquiryListResult ? inquiryListResult.approvedInquiryId : null) || null;
-        setLeadInquiries(list);
-        const approvedInquiryIds = list
-          .filter((x) => salesInquiryIsApproved(x, nextApprovedFallback))
-          .map((x) => x.id);
-        if (approvedInquiryIds.length > 0) {
-          const [quotationPricingResult, confirmationPricingResult] = await Promise.all([
-            getLatestQuotationPricingByInquiryIds(approvedInquiryIds),
-            getApprovedPricingForInquiryIds(approvedInquiryIds),
-          ]);
-          const mergedPricing: Record<string, SalesAgentPricing> = {};
-          if (!("error" in confirmationPricingResult)) {
-            for (const [inquiryId, pricing] of Object.entries(confirmationPricingResult.pricing || {})) {
-              mergedPricing[inquiryId] = pricing;
-            }
-          }
-          if (!("error" in quotationPricingResult)) {
-            for (const [inquiryId, pricing] of Object.entries(quotationPricingResult.pricing || {})) {
-              if (!mergedPricing[inquiryId]) {
-                mergedPricing[inquiryId] = pricing;
-              }
-            }
-          }
-          setPricingByInquiryId(mergedPricing);
-        } else {
-          setPricingByInquiryId({});
+        setInquiryLogs(result.logs || []);
+      }
+    } catch {
+      setInquiryLogs([]);
+    } finally {
+      setIsLoadingLogs(false);
+    }
+  }, []);
+
+  const fetchPricingForInquiries = useCallback(
+    async (list: LeadInquiry[], approvedFallback: string | null) => {
+      const approvedInquiryIds = list
+        .filter((x) => salesInquiryIsApproved(x, approvedFallback))
+        .map((x) => x.id);
+      if (approvedInquiryIds.length === 0) {
+        setPricingByInquiryId({});
+        return;
+      }
+      const [quotationPricingResult, confirmationPricingResult] = await Promise.all([
+        getLatestQuotationPricingByInquiryIds(approvedInquiryIds),
+        getApprovedPricingForInquiryIds(approvedInquiryIds),
+      ]);
+      const mergedPricing: Record<string, SalesAgentPricing> = {};
+      if (!("error" in confirmationPricingResult)) {
+        for (const [inquiryId, pricing] of Object.entries(confirmationPricingResult.pricing || {})) {
+          mergedPricing[inquiryId] = pricing;
         }
-        setApprovedInquiryId(nextApprovedFallback);
+      }
+      if (!("error" in quotationPricingResult)) {
+        for (const [inquiryId, pricing] of Object.entries(quotationPricingResult.pricing || {})) {
+          if (!mergedPricing[inquiryId]) {
+            mergedPricing[inquiryId] = pricing;
+          }
+        }
+      }
+      setPricingByInquiryId(mergedPricing);
+    },
+    []
+  );
 
-        const skipFormHydration = layout === "page" && mainTab === "create";
+  const hydrateFormFromInquiry = useCallback((current: LeadInquiry | null) => {
+    setSelectedInquiryId(current?.id || "");
+    setInquiry(current);
+    setProductName(current?.product_name || "");
+    setTotalWeight(current?.total_weight || "");
+    setCbm(current?.cbm || "");
+    setQuantity(current?.quantity || "");
+    const primaryImage = current?.image_url || "";
+    const additionalImages = Array.isArray(current?.additional_image_urls)
+      ? current.additional_image_urls.filter((url) => typeof url === "string" && url.trim().length > 0)
+      : [];
+    setImageDataList(primaryImage ? [primaryImage, ...additionalImages] : additionalImages);
+    setOtherDetails(current?.description || "");
+    setBaselineDraftState({
+      product_name: current?.product_name || "",
+      total_weight: current?.total_weight || "",
+      cbm: current?.cbm || "",
+      quantity: current?.quantity || "",
+      description: current?.description || "",
+      image_count: (primaryImage ? 1 : 0) + additionalImages.length,
+    });
 
-        if (skipFormHydration) {
+    const pickedWithConfirmations = (current || null) as (LeadInquiry & {
+      inquiry_confirmations?: { status: string }[];
+    }) | null;
+    const hasApproved =
+      !!pickedWithConfirmations &&
+      (pickedWithConfirmations.inquiry_confirmations || []).some((c) => c.status === "approved");
+    setConfirmationStatus(hasApproved ? "approved" : "none");
+  }, []);
+
+  const fetchInquiryData = useCallback(
+    async (options?: { background?: boolean }) => {
+      if (!lead) return;
+
+      const cached = getCachedLeadInquiries(lead.id);
+      if (cached && !options?.background) {
+        setLeadInquiries(cached.inquiries);
+        setApprovedInquiryId(cached.approvedInquiryId);
+        setIsLoading(false);
+      } else if (!options?.background) {
+        setIsLoading(true);
+      }
+
+      try {
+        const inquiryListResult = await getInquiriesForLead(lead.id);
+
+        if ("error" in inquiryListResult) {
+          setLeadInquiries([]);
+          setApprovedInquiryId(null);
+          if (!(layout === "page" && mainTab === "create")) {
+            hydrateFormFromInquiry(null);
+          }
+          setConfirmationStatus("none");
           return;
         }
 
-        const selected = selectedInquiryId
-          ? list.find((x) => x.id === selectedInquiryId) || null
-          : null;
-        const current =
-          mode === "create"
-            ? (selected || list[0] || null)
-            : (selected || list[0] || null);
+        const list = inquiryListResult.inquiries || [];
+        const nextApprovedFallback =
+          ("approvedInquiryId" in inquiryListResult ? inquiryListResult.approvedInquiryId : null) ||
+          null;
 
-        setSelectedInquiryId(current?.id || "");
-        setInquiry(current);
-        setProductName(current?.product_name || "");
-        setTotalWeight(current?.total_weight || "");
-        setCbm(current?.cbm || "");
-        setQuantity(current?.quantity || "");
-        const primaryImage = current?.image_url || "";
-        const additionalImages = Array.isArray(current?.additional_image_urls)
-          ? current.additional_image_urls.filter((url) => typeof url === "string" && url.trim().length > 0)
-          : [];
-        setImageDataList(primaryImage ? [primaryImage, ...additionalImages] : additionalImages);
-        setOtherDetails(current?.description || "");
-        setBaselineDraftState({
-          product_name: current?.product_name || "",
-          total_weight: current?.total_weight || "",
-          cbm: current?.cbm || "",
-          quantity: current?.quantity || "",
-          description: current?.description || "",
-          image_count: (primaryImage ? 1 : 0) + additionalImages.length,
+        setLeadInquiries(list);
+        setApprovedInquiryId(nextApprovedFallback);
+        setCachedLeadInquiries(lead.id, {
+          inquiries: list,
+          approvedInquiryId: nextApprovedFallback,
         });
 
-        const pickedWithConfirmations = (current || null) as (LeadInquiry & {
-          inquiry_confirmations?: { status: string }[];
-        }) | null;
-        const hasApproved = !!pickedWithConfirmations && (pickedWithConfirmations.inquiry_confirmations || []).some((c) => c.status === "approved");
-        setConfirmationStatus(hasApproved ? "approved" : "none");
+        const skipFormHydration = layout === "page" && mainTab === "create";
+        if (!skipFormHydration) {
+          const selectedId = selectedInquiryIdRef.current;
+          const selected = selectedId ? list.find((x) => x.id === selectedId) || null : null;
+          const current = selected || list[0] || null;
+          hydrateFormFromInquiry(current);
 
-        if (current?.id) {
-          void recordInquiryViewed(current.id);
-          await fetchLogsForInquiry(current.id);
-        } else {
-          setInquiryLogs([]);
+          if (mainTab === "view" && current?.id) {
+            void recordInquiryViewed(current.id);
+            void fetchLogsForInquiry(current.id);
+          } else if (!current?.id) {
+            setInquiryLogs([]);
+          }
         }
-      }
 
-    } catch {
-      toast.error("Failed to load inquiry data");
-    } finally {
-      setIsLoading(false);
-    }
-  }, [lead, selectedInquiryId, mode, layout, mainTab]);
+        if (mainTab === "status") {
+          void fetchPricingForInquiries(list, nextApprovedFallback);
+        }
+      } catch {
+        toast.error("Failed to load inquiry data");
+      } finally {
+        setIsLoading(false);
+      }
+    },
+    [lead, mode, layout, mainTab, hydrateFormFromInquiry, fetchPricingForInquiries, fetchLogsForInquiry]
+  );
+
+  useEffect(() => {
+    if (mainTab !== "status" || leadInquiries.length === 0) return;
+    void fetchPricingForInquiries(leadInquiries, approvedInquiryId);
+  }, [mainTab, leadInquiries, approvedInquiryId, fetchPricingForInquiries]);
 
   useEffect(() => {
     if (active && lead && layout === "page" && mainTab === "create") {
@@ -434,7 +563,13 @@ export function LeadInquiryWorkspace({
 
   useEffect(() => {
     if (active && lead) {
-      fetchInquiryData();
+      const cached = getCachedLeadInquiries(lead.id);
+      if (cached) {
+        setLeadInquiries(cached.inquiries);
+        setApprovedInquiryId(cached.approvedInquiryId);
+        setIsLoading(false);
+      }
+      void fetchInquiryData({ background: Boolean(cached) });
     } else {
       setInquiry(null);
       setProductName("");
@@ -520,19 +655,20 @@ export function LeadInquiryWorkspace({
     if (validFiles.length === 0) return;
 
     try {
-      const uploadedUrls: string[] = [];
-      for (const file of validFiles) {
-        const uploadResult = await uploadInquiryAttachment(lead.id, file);
-        if ("error" in uploadResult || !uploadResult.url) {
-          if (file.type.startsWith("image/")) {
-            uploadedUrls.push(await readImageAsDataUrl(file));
-          } else {
+      const uploadResults = await Promise.all(
+        validFiles.map(async (file) => {
+          const uploadResult = await uploadInquiryAttachment(lead.id, file);
+          if ("error" in uploadResult || !uploadResult.url) {
+            if (file.type.startsWith("image/")) {
+              return readImageAsDataUrl(file);
+            }
             toast.error(`Failed to upload "${file.name}": ${uploadResult.error || "Unknown error"}`);
+            return null;
           }
-          continue;
-        }
-        uploadedUrls.push(uploadResult.url);
-      }
+          return uploadResult.url;
+        })
+      );
+      const uploadedUrls = uploadResults.filter((url): url is string => typeof url === "string" && url.length > 0);
 
       if (uploadedUrls.length === 0) return;
 
@@ -643,10 +779,6 @@ export function LeadInquiryWorkspace({
     return '📎';
   }
 
-  function isIntegerString(value: string) {
-    return /^\d+$/.test(value);
-  }
-
   function toDigitsOnly(value: string) {
     return value.replace(/\D/g, "");
   }
@@ -711,22 +843,6 @@ export function LeadInquiryWorkspace({
     return "Updated";
   }
 
-  async function fetchLogsForInquiry(inquiryId: string) {
-    setIsLoadingLogs(true);
-    try {
-      const result = await getInquiryLogs(inquiryId);
-      if ("error" in result) {
-        setInquiryLogs([]);
-      } else {
-        setInquiryLogs(result.logs || []);
-      }
-    } catch {
-      setInquiryLogs([]);
-    } finally {
-      setIsLoadingLogs(false);
-    }
-  }
-
   async function fetchChatForInquiry(leadId: string, inquiryId: string) {
     try {
       const result = await getLeadChatMessages(leadId, inquiryId);
@@ -773,13 +889,13 @@ export function LeadInquiryWorkspace({
   );
 
   useEffect(() => {
-    if (!inquiry?.id || !lead?.id) return;
+    if (!inquiry?.id || !lead?.id || mainTab !== "view") return;
     void fetchChatForInquiry(lead.id, inquiry.id);
     const timer = setInterval(() => {
       void fetchChatForInquiry(lead.id, inquiry.id);
     }, 5000);
     return () => clearInterval(timer);
-  }, [inquiry?.id, lead?.id]);
+  }, [inquiry?.id, lead?.id, mainTab]);
 
   async function handleSendChatMessage() {
     if (!inquiry?.id || !lead?.id) return;
@@ -861,20 +977,10 @@ export function LeadInquiryWorkspace({
 
   function handleSaveInquiry() {
     if (!lead) return;
-    if (!productName.trim()) {
-      toast.error("Please add a product name.");
-      return;
-    }
-    if (totalWeight.trim() && !isIntegerString(totalWeight.trim())) {
-      toast.error("Total Weight (kg) must be an integer.");
-      return;
-    }
-    if (quantity.trim() && !isIntegerString(quantity.trim())) {
-      toast.error("Quantity must be an integer.");
-      return;
-    }
-    if (cbm.trim() && !isDecimalString(cbm.trim())) {
-      toast.error("CBM (Cubic Meter) must be a valid number (e.g. 1.5).");
+    const draftValidation = validateInquiryProductInfoForDraft(currentProductFields);
+    setFieldErrors(draftValidation.errors);
+    if (!draftValidation.valid) {
+      toast.error(Object.values(draftValidation.errors)[0] || "Please fix the highlighted fields.");
       return;
     }
     startTransition(async () => {
@@ -894,6 +1000,7 @@ export function LeadInquiryWorkspace({
         toast.error(result.error);
       } else {
         toast.success("Inquiry saved successfully");
+        invalidateCachedLeadInquiries(lead.id);
         if (result.inquiry) {
           setInquiry(result.inquiry);
           setSelectedInquiryId(result.inquiry.id);
@@ -920,52 +1027,37 @@ export function LeadInquiryWorkspace({
   }
 
   function handleSendInquiry() {
-    if (!lead) return;
-    if (!productName.trim()) {
-      toast.error("Please add a product name before sending.");
+    if (!lead || isSendingRef.current) return;
+    setShowSendValidation(true);
+    setFieldErrors(sendValidation.errors);
+    if (!sendValidation.valid) {
+      toast.error(Object.values(sendValidation.errors)[0] || "Please complete all required product information.");
       return;
     }
-    if (totalWeight.trim() && !isIntegerString(totalWeight.trim())) {
-      toast.error("Total Weight (kg) must be an integer.");
-      return;
-    }
-    if (quantity.trim() && !isIntegerString(quantity.trim())) {
-      toast.error("Quantity must be an integer.");
-      return;
-    }
-    if (cbm.trim() && !isDecimalString(cbm.trim())) {
-      toast.error("CBM (Cubic Meter) must be a valid number (e.g. 1.5).");
-      return;
-    }
+    isSendingRef.current = true;
     startTransition(async () => {
-      const saveOptions = resolveSaveInquiryOptions(inquiry, mode, layout, mainTab);
-      // Save first
-      const saveResult = await saveInquiry(lead.id, {
-        product_name: productName,
-        total_weight: totalWeight,
-        cbm,
-        quantity,
-        image_url: imageDataList[0] || null,
-        additional_image_urls: imageDataList.slice(1),
-        description: otherDetails,
-      }, saveOptions.inquiryId, {
-        forceNewInquiry: saveOptions.forceNewInquiry,
-      });
-      if ("error" in saveResult) {
-        toast.error(saveResult.error);
-        return;
-      }
-      // Then send to Accounting + Operations
-      const inquiryToSendId = saveResult.inquiry?.id || inquiry?.id;
-      if (!inquiryToSendId) {
-        toast.error("Unable to determine inquiry to send");
-        return;
-      }
-      const result = await sendInquiryToAccounting(inquiryToSendId);
-      if ("error" in result) {
-        toast.error(result.error);
-      } else {
+      try {
+        const saveOptions = resolveSaveInquiryOptions(inquiry, mode, layout, mainTab);
+        const result = await saveAndSendInquiry(
+          lead.id,
+          {
+            product_name: productName,
+            total_weight: totalWeight,
+            cbm,
+            quantity,
+            image_url: imageDataList[0] || null,
+            additional_image_urls: imageDataList.slice(1),
+            description: otherDetails,
+          },
+          saveOptions.inquiryId,
+          { forceNewInquiry: saveOptions.forceNewInquiry }
+        );
+        if ("error" in result) {
+          toast.error(result.error);
+          return;
+        }
         toast.success("Inquiry sent to Accounting & Operations!");
+        invalidateCachedLeadInquiries(lead.id);
         if (result.inquiry) {
           setLeadInquiries((prev) => {
             const filtered = prev.filter((x) => x.id !== result.inquiry!.id);
@@ -984,6 +1076,8 @@ export function LeadInquiryWorkspace({
               setInquiryLogs,
               setBaselineDraftState,
             });
+            setFieldErrors({});
+            setShowSendValidation(false);
           } else {
             setInquiry(result.inquiry);
             const primaryImage = result.inquiry.image_url || "";
@@ -1001,8 +1095,9 @@ export function LeadInquiryWorkspace({
             await fetchLogsForInquiry(result.inquiry.id);
           }
         }
-        // Close the modal after a successful send so the workflow can continue.
         onRequestClose?.();
+      } finally {
+        isSendingRef.current = false;
       }
     });
   }
@@ -1032,20 +1127,10 @@ export function LeadInquiryWorkspace({
 
   function handleSaveViewEdit() {
     if (!inquiry) return;
-    if (!productName.trim()) {
-      toast.error("Please add a product name.");
-      return;
-    }
-    if (totalWeight.trim() && !isIntegerString(totalWeight.trim())) {
-      toast.error("Total Weight (kg) must be an integer.");
-      return;
-    }
-    if (quantity.trim() && !isIntegerString(quantity.trim())) {
-      toast.error("Quantity must be an integer.");
-      return;
-    }
-    if (cbm.trim() && !isDecimalString(cbm.trim())) {
-      toast.error("CBM (Cubic Meter) must be a valid number (e.g. 1.5).");
+    const draftValidation = validateInquiryProductInfoForDraft(currentProductFields);
+    setFieldErrors(draftValidation.errors);
+    if (!draftValidation.valid) {
+      toast.error(Object.values(draftValidation.errors)[0] || "Please fix the highlighted fields.");
       return;
     }
 
@@ -1065,12 +1150,12 @@ export function LeadInquiryWorkspace({
       }
       toast.success("Inquiry updated");
       setIsViewEditing(false);
-      await fetchInquiryData();
+      invalidateCachedLeadInquiries(lead?.id);
+      await fetchInquiryData({ background: true });
       await fetchLogsForInquiry(inquiry.id);
     });
   }
 
-  const isFormValid = productName.trim().length > 0;
   const canEditForm =
     mode === "create" || isViewEditing || (layout === "page" && mainTab === "create");
   const liveUnsavedEntries = useMemo(() => {
@@ -1112,7 +1197,8 @@ export function LeadInquiryWorkspace({
     setInquiry(null);
     setSelectedInquiryId("");
     setInquiryLogs([]);
-    await fetchInquiryData();
+    invalidateCachedLeadInquiries(lead?.id);
+    await fetchInquiryData({ background: true });
   }
 
   const statusTabInquiries = useMemo(
@@ -1323,54 +1409,112 @@ export function LeadInquiryWorkspace({
             <Input
               placeholder="e.g. Steel pipes, cotton fabric, electronics components..."
               value={productName}
-              onChange={(e) => setProductName(e.target.value)}
+              onChange={(e) => {
+                setProductName(e.target.value);
+                if (showSendValidation || fieldErrors.product_name) {
+                  setFieldErrors((prev) => ({ ...prev, product_name: undefined }));
+                }
+              }}
               disabled={!canEditForm}
-              className="h-11 rounded-lg border-gray-200 bg-white focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
+              aria-invalid={Boolean((showSendValidation || fieldErrors.product_name) && fieldErrors.product_name)}
+              className={`h-11 rounded-lg bg-white ${
+                (showSendValidation || fieldErrors.product_name) && fieldErrors.product_name
+                  ? "border-red-400 focus:border-red-400 focus:ring-red-100"
+                  : "border-gray-200 focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
+              }`}
             />
+            {(showSendValidation || fieldErrors.product_name) && fieldErrors.product_name ? (
+              <p className="text-xs text-red-600">{fieldErrors.product_name}</p>
+            ) : null}
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
             <div className="space-y-2">
-              <label className="text-sm font-semibold text-gray-900">Total Weight</label>
+              <label className="text-sm font-semibold text-gray-900 flex items-center gap-1">
+                Total Weight <span className="text-red-500">*</span>
+              </label>
               <div className="relative">
                 <Input
                   placeholder="500"
                   value={totalWeight}
                   inputMode={canEditForm ? "numeric" : "text"}
                   pattern={canEditForm ? "[0-9]*" : undefined}
-                  onChange={(e) => setTotalWeight(canEditForm ? toDigitsOnly(e.target.value) : e.target.value)}
+                  onChange={(e) => {
+                    setTotalWeight(canEditForm ? toDigitsOnly(e.target.value) : e.target.value);
+                    if (showSendValidation || fieldErrors.total_weight) {
+                      setFieldErrors((prev) => ({ ...prev, total_weight: undefined }));
+                    }
+                  }}
                   disabled={!canEditForm}
-                  className="h-11 rounded-lg border-gray-200 bg-white focus:border-blue-400 focus:ring-2 focus:ring-blue-100 pr-12"
+                  aria-invalid={Boolean((showSendValidation || fieldErrors.total_weight) && fieldErrors.total_weight)}
+                  className={`h-11 rounded-lg bg-white pr-12 ${
+                    (showSendValidation || fieldErrors.total_weight) && fieldErrors.total_weight
+                      ? "border-red-400 focus:border-red-400 focus:ring-red-100"
+                      : "border-gray-200 focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
+                  }`}
                 />
                 <span className="absolute right-3 top-1/2 transform -translate-y-1/2 text-sm text-gray-500 font-medium">kg</span>
               </div>
+              {(showSendValidation || fieldErrors.total_weight) && fieldErrors.total_weight ? (
+                <p className="text-xs text-red-600">{fieldErrors.total_weight}</p>
+              ) : null}
             </div>
             <div className="space-y-2">
-              <label className="text-sm font-semibold text-gray-900">Total CBM</label>
+              <label className="text-sm font-semibold text-gray-900 flex items-center gap-1">
+                Total CBM <span className="text-red-500">*</span>
+              </label>
               <div className="relative">
                 <Input
                   placeholder="12.5"
                   value={cbm}
                   inputMode={canEditForm ? "decimal" : "text"}
                   pattern={canEditForm ? "^[0-9]*\\.?[0-9]*$" : undefined}
-                  onChange={(e) => setCbm(canEditForm ? toDecimalInput(e.target.value) : e.target.value)}
+                  onChange={(e) => {
+                    setCbm(canEditForm ? toDecimalInput(e.target.value) : e.target.value);
+                    if (showSendValidation || fieldErrors.cbm) {
+                      setFieldErrors((prev) => ({ ...prev, cbm: undefined }));
+                    }
+                  }}
                   disabled={!canEditForm}
-                  className="h-11 rounded-lg border-gray-200 bg-white focus:border-blue-400 focus:ring-2 focus:ring-blue-100 pr-12"
+                  aria-invalid={Boolean((showSendValidation || fieldErrors.cbm) && fieldErrors.cbm)}
+                  className={`h-11 rounded-lg bg-white pr-12 ${
+                    (showSendValidation || fieldErrors.cbm) && fieldErrors.cbm
+                      ? "border-red-400 focus:border-red-400 focus:ring-red-100"
+                      : "border-gray-200 focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
+                  }`}
                 />
                 <span className="absolute right-3 top-1/2 transform -translate-y-1/2 text-sm text-gray-500 font-medium">CBM</span>
               </div>
+              {(showSendValidation || fieldErrors.cbm) && fieldErrors.cbm ? (
+                <p className="text-xs text-red-600">{fieldErrors.cbm}</p>
+              ) : null}
             </div>
             <div className="space-y-2">
-              <label className="text-sm font-semibold text-gray-900">Quantity</label>
+              <label className="text-sm font-semibold text-gray-900 flex items-center gap-1">
+                Quantity <span className="text-red-500">*</span>
+              </label>
               <Input
                 placeholder="1000"
                 value={quantity}
                 inputMode={canEditForm ? "numeric" : "text"}
                 pattern={canEditForm ? "[0-9]*" : undefined}
-                onChange={(e) => setQuantity(canEditForm ? toDigitsOnly(e.target.value) : e.target.value)}
+                onChange={(e) => {
+                  setQuantity(canEditForm ? toDigitsOnly(e.target.value) : e.target.value);
+                  if (showSendValidation || fieldErrors.quantity) {
+                    setFieldErrors((prev) => ({ ...prev, quantity: undefined }));
+                  }
+                }}
                 disabled={!canEditForm}
-                className="h-11 rounded-lg border-gray-200 bg-white focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
+                aria-invalid={Boolean((showSendValidation || fieldErrors.quantity) && fieldErrors.quantity)}
+                className={`h-11 rounded-lg bg-white ${
+                  (showSendValidation || fieldErrors.quantity) && fieldErrors.quantity
+                    ? "border-red-400 focus:border-red-400 focus:ring-red-100"
+                    : "border-gray-200 focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
+                }`}
               />
+              {(showSendValidation || fieldErrors.quantity) && fieldErrors.quantity ? (
+                <p className="text-xs text-red-600">{fieldErrors.quantity}</p>
+              ) : null}
             </div>
           </div>
         </div>
@@ -1647,15 +1791,17 @@ export function LeadInquiryWorkspace({
               </Button>
               <Button
                 onClick={handleSendInquiry}
-                disabled={isPending || !isFormValid}
-                className="flex-1 h-12 rounded-lg bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white font-semibold shadow-lg"
+                disabled={isPending || !isSendFormValid}
+                className="flex-1 h-12 rounded-lg bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white font-semibold shadow-lg disabled:opacity-60"
               >
                 <Send className="h-5 w-5 mr-2" />
                 {isPending ? "Sending..." : "Send Inquiry"}
               </Button>
             </div>
-            {!isFormValid && (
-              <p className="text-xs text-red-500 mt-2 text-center">Please fill in the product name to send the inquiry</p>
+            {!isSendFormValid && (
+              <p className="text-xs text-red-500 mt-2 text-center">
+                Complete all required product information fields before sending.
+              </p>
             )}
           </div>
         </Card>
@@ -1664,123 +1810,76 @@ export function LeadInquiryWorkspace({
   );
 
   const pageSideNav = tabbedPage ? (
-    <nav
-      aria-label="Inquiry workflow navigation"
-      className="flex lg:flex-col gap-2 w-full lg:w-64 shrink-0"
-    >
-      <div className="bg-white rounded-xl shadow-lg border border-gray-200 overflow-hidden">
-        <div className="bg-gradient-to-r from-indigo-50 to-purple-50 px-4 py-3 border-b border-gray-200">
-          <h3 className="text-sm font-semibold text-gray-900">Inquiry Workflow</h3>
-          <p className="text-xs text-gray-600 mt-1">Manage lead inquiries and track progress</p>
+    <aside className="w-full lg:w-72 shrink-0 lg:sticky lg:top-6 lg:self-start">
+      <nav aria-label="Inquiry workflow navigation" className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+        <div className="px-4 py-4 border-b border-slate-100 bg-slate-50">
+          <h2 className="text-sm font-semibold text-slate-900">Inquiry Board</h2>
+          <p className="text-xs text-slate-500 mt-1">Create, review, and track inquiries</p>
         </div>
-        <div className="p-2 space-y-1">
-          {(
-            [
-              { 
-                id: "create" as const, 
-                label: "Create New Inquiry", 
-                icon: Plus,
-                description: "Start a new inquiry for this lead",
-                color: "blue"
-              },
-              { 
-                id: "view" as const, 
-                label: "View Inquiries", 
-                icon: List,
-                description: "Browse all existing inquiries",
-                color: "purple"
-              },
-              { 
-                id: "status" as const, 
-                label: "Inquiry Status", 
-                icon: Activity,
-                description: "Track inquiry progress and updates",
-                color: "green"
-              },
-            ] as const
-          ).map((t) => {
+        <div className="p-2 flex lg:flex-col gap-1 overflow-x-auto lg:overflow-visible">
+          {WORKFLOW_TABS.map((t) => {
             const Icon = t.icon;
             const activeTab = mainTab === t.id;
             const isCreateTab = t.id === "create";
             const isDisabled = isCreateTab && !allowInquiry;
-            
+
             return (
               <button
                 key={t.id}
                 type="button"
                 onClick={() => {
                   if (isDisabled) {
-                    toast.error(`Send Inquiry is only available from the "Inquiry Received" board. Current board: ${boardStatus || lead?.status}`);
+                    toast.error(
+                      `Send Inquiry is only available from the "Inquiry Received" board. Current board: ${boardStatus || lead?.status}`
+                    );
                     return;
                   }
                   setMainTab(t.id);
                 }}
                 disabled={isDisabled}
                 className={`
-                  w-full text-left p-3 rounded-lg transition-all duration-200 group relative
-                  ${isDisabled 
-                    ? "bg-gray-50 text-gray-400 cursor-not-allowed opacity-60" 
+                  min-w-[9.5rem] lg:min-w-0 w-full text-left px-3 py-3 rounded-lg border transition-all
+                  ${isDisabled
+                    ? "border-transparent bg-slate-50 text-slate-400 cursor-not-allowed"
                     : activeTab
-                    ? `bg-gradient-to-r ${
-                        t.color === "blue" ? "from-blue-500 to-blue-600" :
-                        t.color === "purple" ? "from-purple-500 to-purple-600" :
-                        "from-green-500 to-green-600"
-                      } text-white shadow-lg transform scale-[1.02]`
-                    : "bg-gray-50 hover:bg-gray-100 text-gray-700 hover:text-gray-900"
+                    ? `${t.activeClass} border-current`
+                    : "border-transparent bg-white hover:bg-slate-50 text-slate-700"
                   }
                 `}
               >
                 <div className="flex items-start gap-3">
-                  <div className={`
-                    w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0
-                    ${activeTab && !isDisabled
-                      ? "bg-white/20" 
-                      : isDisabled 
-                      ? "bg-gray-200" 
-                      : `bg-${t.color}-100`
-                    }
-                  `}>
-                    <Icon className={`h-4 w-4 ${
-                      activeTab && !isDisabled 
-                        ? "text-white" 
-                        : isDisabled 
-                        ? "text-gray-400" 
-                        : `text-${t.color}-600`
-                    }`} />
+                  <div
+                    className={`w-9 h-9 rounded-lg flex items-center justify-center shrink-0 ${
+                      activeTab && !isDisabled ? t.iconActiveClass : isDisabled ? "bg-slate-200 text-slate-400" : t.iconClass
+                    }`}
+                  >
+                    <Icon className="h-4 w-4" />
                   </div>
-                  <div className="flex-1 min-w-0">
-                    <div className={`font-semibold text-sm leading-tight ${
-                      activeTab && !isDisabled ? "text-white" : ""
-                    }`}>
-                      {t.label}
+                  <div className="min-w-0">
+                    <div className="font-semibold text-sm leading-tight">
+                      <span className="lg:hidden">{t.shortLabel}</span>
+                      <span className="hidden lg:inline">{t.label}</span>
                     </div>
-                    <div className={`text-xs mt-1 leading-relaxed ${
-                      activeTab && !isDisabled 
-                        ? "text-white/80" 
-                        : isDisabled 
-                        ? "text-gray-400" 
-                        : "text-gray-500"
-                    }`}>
+                    <div
+                      className={`text-xs mt-1 leading-relaxed hidden lg:block ${
+                        activeTab && !isDisabled ? "text-white/85" : "text-slate-500"
+                      }`}
+                    >
                       {t.description}
                     </div>
-                    {isCreateTab && !allowInquiry && (
-                      <Badge className="mt-2 bg-orange-100 text-orange-700 text-xs px-2 py-1 font-medium">
-                        Inquiry Received Only
+                    {isCreateTab && !allowInquiry ? (
+                      <Badge className="mt-2 bg-orange-100 text-orange-700 text-[10px] px-2 py-0.5 font-medium border-0">
+                        Inquiry Received only
                       </Badge>
-                    )}
+                    ) : null}
                   </div>
                 </div>
-                {activeTab && !isDisabled && (
-                  <div className="absolute right-3 top-1/2 transform -translate-y-1/2">
-                    <div className="w-2 h-2 bg-white rounded-full"></div>
-                  </div>
-                )}
               </button>
             );
           })}
         </div>
-      </div>
-    </nav>
+      </nav>
+    </aside>
   ) : null;
 
   return (
@@ -1788,7 +1887,7 @@ export function LeadInquiryWorkspace({
     <div className={layout === "page" ? "min-h-screen bg-slate-50" : ""}>
       {layout === "page" && (
         <header className="border-b border-slate-200 bg-white">
-          <div className="max-w-6xl mx-auto px-4 py-4 flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+          <div className="max-w-7xl mx-auto px-4 sm:px-6 py-4 flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
             <div className="space-y-2 min-w-0">
               <Link
                 href="/sales-agent/dashboard"
@@ -1834,9 +1933,9 @@ export function LeadInquiryWorkspace({
         </div>
       )}
 
-      <div className={layout === "page" ? "max-w-6xl mx-auto px-4 py-6" : "p-4 sm:p-6"}>
+      <div className={layout === "page" ? "max-w-7xl mx-auto px-4 sm:px-6 py-6" : "p-4 sm:p-6"}>
         {isLoading ? (
-          <div className="py-10 text-center text-secondary-muted text-sm">Loading inquiry data...</div>
+          <InquiryWorkspaceSkeleton />
         ) : mode === "view" && leadInquiries.length === 0 && !tabbedPage ? (
           <div className="py-16 flex flex-col items-center justify-center gap-4 border border-dashed border-slate-200 rounded-sm bg-white">
             <div className="h-14 w-14 rounded-full bg-slate-100 flex items-center justify-center">
@@ -1858,9 +1957,9 @@ export function LeadInquiryWorkspace({
             </Button>
           </div>
         ) : tabbedPage ? (
-          <div className="flex flex-col lg:flex-row gap-6">
+          <div className="flex flex-col lg:flex-row gap-6 items-start">
             {pageSideNav}
-            <div className="flex-1 min-w-0 space-y-6">
+            <div className="flex-1 min-w-0 w-full space-y-6">
               {mainTab === "create" && (
                 <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
                   <div className="lg:col-span-2 space-y-4">{renderFormColumn({ showInquiryList: false })}</div>

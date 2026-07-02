@@ -230,18 +230,6 @@ export function OperationsLeadsInquiryPanel({
     parsePricingConfig(initialBootstrap?.calculatorValues ?? {})
   );
 
-  const refreshPricingConfig = useCallback(async () => {
-    const cached = getCachedOperationsBootstrap("");
-    if (cached?.calculatorValues) {
-      setPricingConfig(parsePricingConfig(cached.calculatorValues));
-      return;
-    }
-    const result = await getOperationsInquiriesBootstrap({ limit: 1, offset: 0, search: "" });
-    if (!("error" in result) && result.calculatorValues) {
-      setPricingConfig(parsePricingConfig(result.calculatorValues));
-    }
-  }, []);
-
   const getDefaultCalculatorValues = useCallback(() => ({
     inv_value: "0",
     exchange_rate: "0",
@@ -721,7 +709,7 @@ export function OperationsLeadsInquiryPanel({
     return extractImageFileFromItems(data.items);
   }, [extractImageFileFromFileList, extractImageFileFromItems]);
 
-  function processImageUpload(file: File | null, slot: 1 | 2) {
+  const processImageUpload = useCallback((file: File | null, slot: 1 | 2) => {
     if (!file) return false;
     const ext = (file.name.split(".").pop() || "").toLowerCase();
     const imageExts = new Set(["jpg", "jpeg", "png", "gif", "webp", "bmp", "svg", "heic", "heif", "avif"]);
@@ -765,7 +753,7 @@ export function OperationsLeadsInquiryPanel({
     };
     reader.readAsDataURL(file);
     return true;
-  }
+  }, [isSupportedAttachmentFile]);
 
   function handleDrop(e: React.DragEvent, slot: 1 | 2) {
     e.preventDefault();
@@ -817,7 +805,7 @@ export function OperationsLeadsInquiryPanel({
     // Capture phase helps when focused controls stop bubbling paste events.
     document.addEventListener("paste", handleGlobalPaste, true);
     return () => document.removeEventListener("paste", handleGlobalPaste, true);
-  }, [showForm, additionalImage1, additionalImage2, activeUploadSlot, extractImageFileFromClipboardData]);
+  }, [showForm, additionalImage1, additionalImage2, activeUploadSlot, extractImageFileFromClipboardData, processImageUpload]);
 
   function handleZonePaste(e: React.ClipboardEvent, slot: 1 | 2) {
     const file = extractImageFileFromClipboardData(e.clipboardData);

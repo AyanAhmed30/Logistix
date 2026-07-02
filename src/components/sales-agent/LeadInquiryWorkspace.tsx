@@ -57,8 +57,6 @@ import {
 import { classifyInquiryAttachment } from "@/lib/inquiry-attachments";
 import {
   inquiryProductFieldsFromForm,
-  isIntegerString,
-  isOptionalDecimalString,
   validateInquiryProductInfoForDraft,
   validateInquiryProductInfoForSend,
   type InquiryProductFieldErrors,
@@ -181,11 +179,6 @@ function getInquiryPricingForDisplay(
   pricingByInquiryId: Record<string, SalesAgentPricing>
 ) {
   return pricingByInquiryId[inq.id] ?? null;
-}
-
-function isDecimalString(value: string) {
-  if (!value.trim()) return true;
-  return isOptionalDecimalString(value);
 }
 
 function InquiryWorkspaceSkeleton() {

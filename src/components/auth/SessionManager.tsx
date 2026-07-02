@@ -27,7 +27,7 @@ function isUnauthorizedResult(result: unknown): boolean {
  */
 export function SessionManager() {
   const [expired, setExpired] = useState(false);
-  const lastActivityRef = useRef(Date.now());
+  const lastActivityRef = useRef(0);
   const lastRefreshRef = useRef(0);
   const expiredShownRef = useRef(false);
 
@@ -73,7 +73,13 @@ export function SessionManager() {
   }, []);
 
   useEffect(() => {
-    void tryRefresh();
+    lastActivityRef.current = Date.now();
+  }, []);
+
+  useEffect(() => {
+    const initialRefreshTimer = window.setTimeout(() => {
+      void tryRefresh();
+    }, 0);
 
     const onActivity = () => {
       recordActivity();
@@ -87,6 +93,7 @@ export function SessionManager() {
     }
 
     return () => {
+      window.clearTimeout(initialRefreshTimer);
       for (const eventName of ACTIVITY_EVENTS) {
         window.removeEventListener(eventName, onActivity);
       }

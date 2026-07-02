@@ -1,6 +1,8 @@
 import type { Metadata } from "next";
+import { Suspense } from "react";
 import { Geist, Geist_Mono } from "next/font/google";
 import { Toaster } from "@/components/ui/sonner";
+import { AuthSessionGuard } from "@/components/auth/AuthSessionGuard";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -35,6 +37,9 @@ export default function RootLayout({
         <div className="app-shell">
           {children}
         </div>
+        <Suspense fallback={null}>
+          <AuthSessionGuard />
+        </Suspense>
         <Toaster position="top-right" richColors />
       </body>
     </html>

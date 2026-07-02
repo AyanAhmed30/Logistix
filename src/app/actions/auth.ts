@@ -4,7 +4,7 @@ import { cookies } from 'next/headers';
 import { redirect } from 'next/navigation';
 import { isRedirectError } from 'next/dist/client/components/redirect-error';
 import { createAdminClient } from '@/utils/supabase/server';
-import { encrypt } from '@/lib/auth/session';
+import { encrypt, getSessionCookieOptions } from '@/lib/auth/session';
 
 const ADMIN_USERNAME = 'admin';
 const ADMIN_PASSWORD = 'admin123';
@@ -18,15 +18,12 @@ export async function login(formData: FormData) {
             return { error: 'Username and password are required' };
         }
 
-        const cookieOptions = {
-            expires: new Date(Date.now() + 2 * 60 * 60 * 1000),
-            httpOnly: true,
-            secure: process.env.NODE_ENV === 'production',
-        };
+        const cookieOptions = getSessionCookieOptions();
+        const sessionBase = { lastActivity: Date.now() };
 
         // 1. Check Admin Credentials
         if (username === ADMIN_USERNAME && password === ADMIN_PASSWORD) {
-            const session = await encrypt({ username, role: 'admin', expires: cookieOptions.expires });
+            const session = await encrypt({ username, role: 'admin', ...sessionBase });
             (await cookies()).set('session', session, cookieOptions);
             redirect('/admin/dashboard');
         }
@@ -66,21 +63,21 @@ export async function login(formData: FormData) {
 
         const salesAgent = salesAgentResult.data;
         if (salesAgent) {
-            const session = await encrypt({ username: salesAgent.username, role: 'sales_agent', expires: cookieOptions.expires });
+            const session = await encrypt({ username: salesAgent.username, role: 'sales_agent', ...sessionBase });
             (await cookies()).set('session', session, cookieOptions);
             redirect('/sales-agent/dashboard');
         }
 
         const opsUser = opsUserResult.data;
         if (opsUser) {
-            const session = await encrypt({ username: opsUser.username, role: 'operations', expires: cookieOptions.expires });
+            const session = await encrypt({ username: opsUser.username, role: 'operations', ...sessionBase });
             (await cookies()).set('session', session, cookieOptions);
             redirect('/operations/dashboard');
         }
 
         const user = appUserResult.data;
         if (user) {
-            const session = await encrypt({ username: user.username, role: 'user', expires: cookieOptions.expires });
+            const session = await encrypt({ username: user.username, role: 'user', ...sessionBase });
             (await cookies()).set('session', session, cookieOptions);
             redirect('/user/dashboard');
         }

@@ -1,24 +1,36 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { decrypt } from '@/lib/auth/session';
+import { parseSessionToken, type SessionPayload } from '@/lib/auth/session';
 
-type Session = {
-    username: string;
-    role: 'admin' | 'user' | 'sales_agent' | 'operations';
+type Session = Pick<SessionPayload, 'username' | 'role'>;
+
+type RequestSessionState = {
+    session: Session | null;
+    hadInvalidToken: boolean;
 };
 
-async function getSessionFromRequest(request: NextRequest): Promise<Session | null> {
+async function getSessionFromRequest(request: NextRequest): Promise<RequestSessionState> {
     const token = request.cookies.get('session')?.value;
-    if (!token) return null;
+    if (!token) return { session: null, hadInvalidToken: false };
 
-    try {
-        return (await decrypt(token)) as Session;
-    } catch {
-        return null;
-    }
+    const payload = await parseSessionToken(token);
+    if (!payload) return { session: null, hadInvalidToken: true };
+
+    return {
+        session: { username: payload.username, role: payload.role },
+        hadInvalidToken: false,
+    };
+}
+
+function redirectToLogin(request: NextRequest) {
+    return NextResponse.redirect(new URL('/login', request.url));
+}
+
+function redirectToSessionExpired(request: NextRequest) {
+    return NextResponse.redirect(new URL('/session-expired', request.url));
 }
 
 export async function middleware(request: NextRequest) {
-    const session = await getSessionFromRequest(request);
+    const { session, hadInvalidToken } = await getSessionFromRequest(request);
     const { pathname } = request.nextUrl;
 
     // 1. Allow public access to carton scan/details pages (for QR scanning)
@@ -26,32 +38,49 @@ export async function middleware(request: NextRequest) {
         return NextResponse.next();
     }
 
-    // 2. If hitting root, redirect to login
+    // 2. Dedicated session-expired page (no auth required)
+    if (pathname === '/session-expired') {
+        return NextResponse.next();
+    }
+
+    // 3. If hitting root, redirect to login
     if (pathname === '/') {
-        return NextResponse.redirect(new URL('/login', request.url));
+        return redirectToLogin(request);
     }
 
-    // 3. Protect Admin Routes
+    const requiresAuth =
+        pathname.startsWith('/admin') ||
+        pathname.startsWith('/user') ||
+        pathname.startsWith('/sales-agent') ||
+        pathname.startsWith('/operations');
+
+    if (requiresAuth && !session) {
+        return hadInvalidToken
+            ? redirectToSessionExpired(request)
+            : redirectToLogin(request);
+    }
+
+    // 4. Protect Admin Routes
     if (pathname.startsWith('/admin') && (!session || session.role !== 'admin')) {
-        return NextResponse.redirect(new URL('/login', request.url));
+        return hadInvalidToken ? redirectToSessionExpired(request) : redirectToLogin(request);
     }
 
-    // 4. Protect User Routes
+    // 5. Protect User Routes
     if (pathname.startsWith('/user') && (!session || (session.role !== 'user' && session.role !== 'admin'))) {
-        return NextResponse.redirect(new URL('/login', request.url));
+        return hadInvalidToken ? redirectToSessionExpired(request) : redirectToLogin(request);
     }
 
-    // 5. Protect Sales Agent Routes
+    // 6. Protect Sales Agent Routes
     if (pathname.startsWith('/sales-agent') && (!session || session.role !== 'sales_agent')) {
-        return NextResponse.redirect(new URL('/login', request.url));
+        return hadInvalidToken ? redirectToSessionExpired(request) : redirectToLogin(request);
     }
 
-    // 6. Protect Operations Routes
+    // 7. Protect Operations Routes
     if (pathname.startsWith('/operations') && (!session || session.role !== 'operations')) {
-        return NextResponse.redirect(new URL('/login', request.url));
+        return hadInvalidToken ? redirectToSessionExpired(request) : redirectToLogin(request);
     }
 
-    // 7. If logged in and hitting login, redirect to dashboard
+    // 8. If logged in and hitting login, redirect to dashboard
     if (pathname === '/login' && session) {
         if (session.role === 'admin') {
             return NextResponse.redirect(new URL('/admin/dashboard', request.url));

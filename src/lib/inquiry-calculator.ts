@@ -399,6 +399,20 @@ export const CALCULATOR_FIELD_LABELS: Record<string, string> = {
   hs_code: "HS Code",
 };
 
+/** Admin-shared rate defaults — not inquiry-specific values like inv_value or hs_code. */
+export const SHARED_CALCULATOR_DEFAULT_KEYS = [
+  "exchange_rate",
+  "custom_duty_rate",
+  "add_cd_rate",
+  "gst_rate",
+  "add_gst_rate",
+  "income_tax_rate",
+  "excise_rate",
+  "regular_duty_rate",
+  "stamp_duty_rate",
+  "inv_fine",
+] as const;
+
 /** Removes deprecated Sales Tax (ST) field from calculator value maps. */
 export function sanitizeCalculatorValues(
   values: Record<string, unknown> | null | undefined
@@ -407,4 +421,18 @@ export function sanitizeCalculatorValues(
   const sanitized = { ...values } as Record<string, string>;
   delete sanitized.sales_tax_rate;
   return sanitized;
+}
+
+/** Picks only shared admin rate defaults — excludes inquiry-specific fields. */
+export function pickSharedCalculatorDefaults(
+  values: Record<string, unknown> | null | undefined
+): Record<string, string> {
+  const sanitized = sanitizeCalculatorValues(values);
+  const picked: Record<string, string> = {};
+  for (const key of SHARED_CALCULATOR_DEFAULT_KEYS) {
+    if (sanitized[key] !== undefined) {
+      picked[key] = sanitized[key];
+    }
+  }
+  return picked;
 }

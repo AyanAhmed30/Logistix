@@ -1,7 +1,7 @@
 "use client";
 /* eslint-disable @next/next/no-img-element */
 
-import { useEffect, useState, useCallback, useRef } from "react";
+import { useEffect, useState, useCallback, useRef, useLayoutEffect } from "react";
 import { toast } from "sonner";
 import {
   getAllInquiriesForOperations,
@@ -181,6 +181,8 @@ export function OperationsLeadsInquiryPanel({
   const img2Ref = useRef<HTMLInputElement>(null);
   const dropZone1Ref = useRef<HTMLDivElement>(null);
   const dropZone2Ref = useRef<HTMLDivElement>(null);
+  const activeInquiryIdRef = useRef<string | null>(null);
+  const syncedCalculatorInquiryIdRef = useRef<string | null>(null);
 
   // Confirmation history for selected inquiry
   const [confirmations, setConfirmations] = useState<InquiryConfirmation[]>([]);
@@ -264,16 +266,47 @@ export function OperationsLeadsInquiryPanel({
     setCalcHsCode(values.hs_code ?? "");
   }, []);
 
-  const mergeSharedCalculatorValues = useCallback(
-    (overrides?: Record<string, string>) => {
+  const resolveCalculatorValuesForInquiry = useCallback(
+    (inquiry: LeadInquiryWithLead) => {
       const defaults = getDefaultCalculatorValues();
-      const cached =
-        getCachedOperationsBootstrap(debouncedSearchQuery) ?? getCachedOperationsBootstrap("");
-      const shared = sanitizeCalculatorValues(cached?.calculatorValues ?? {});
-      return { ...defaults, ...shared, ...(overrides ?? {}) };
+      const inquiryQuantity = inquiry.quantity?.trim() || "0";
+      const saved =
+        inquiry.calculator_values && typeof inquiry.calculator_values === "object"
+          ? sanitizeCalculatorValues(inquiry.calculator_values as Record<string, unknown>)
+          : {};
+      const hasSaved = Object.keys(saved).length > 0;
+
+      if (hasSaved) {
+        return {
+          ...defaults,
+          ...saved,
+          quantity: String(saved.quantity ?? inquiryQuantity).trim() || inquiryQuantity,
+        };
+      }
+
+      // Fresh inquiry: empty defaults only (no values carried from shared config or prior inquiries).
+      return {
+        ...defaults,
+        quantity: inquiryQuantity,
+      };
     },
-    [debouncedSearchQuery, getDefaultCalculatorValues]
+    [getDefaultCalculatorValues]
   );
+
+  const initializeCalculatorForInquiry = useCallback(
+    (inquiry: LeadInquiryWithLead) => {
+      const resolved = resolveCalculatorValuesForInquiry(inquiry);
+      applyCalculatorValues(resolved);
+      setLastCalcSnapshot(resolved);
+    },
+    [applyCalculatorValues, resolveCalculatorValuesForInquiry]
+  );
+
+  const resetCalculatorState = useCallback(() => {
+    const defaults = getDefaultCalculatorValues();
+    applyCalculatorValues(defaults);
+    setLastCalcSnapshot(defaults);
+  }, [applyCalculatorValues, getDefaultCalculatorValues]);
 
   const refreshInquiryLogs = useCallback(async (leadId: string, inquiryId?: string) => {
     try {
@@ -437,20 +470,52 @@ export function OperationsLeadsInquiryPanel({
     return () => clearInterval(timer);
   }, [view, selectedInquiry, fetchLeadChat]);
 
+  useLayoutEffect(() => {
+    if (view !== "detail" || !selectedInquiry) {
+      if (view !== "detail") {
+        syncedCalculatorInquiryIdRef.current = null;
+      }
+      return;
+    }
+
+    const inquiryId = selectedInquiry.id;
+    if (syncedCalculatorInquiryIdRef.current === inquiryId) {
+      return;
+    }
+
+    const defaults = getDefaultCalculatorValues();
+    applyCalculatorValues(defaults);
+    setLastCalcSnapshot(defaults);
+    initializeCalculatorForInquiry(selectedInquiry);
+    syncedCalculatorInquiryIdRef.current = inquiryId;
+  }, [
+    view,
+    selectedInquiry,
+    initializeCalculatorForInquiry,
+    applyCalculatorValues,
+    getDefaultCalculatorValues,
+  ]);
+
   async function openDetail(inquiry: LeadInquiryWithLead) {
+    const inquiryId = inquiry.id;
+    activeInquiryIdRef.current = inquiryId;
+    syncedCalculatorInquiryIdRef.current = null;
+
+    const defaults = getDefaultCalculatorValues();
+    applyCalculatorValues(defaults);
+    setLastCalcSnapshot(defaults);
+
     setSelectedInquiry(inquiry);
     setView("detail");
     setShowForm(false);
     resetForm();
-    const inquiryQuantity = inquiry.quantity?.trim() || "0";
-    const mergedValues = mergeSharedCalculatorValues({ quantity: inquiryQuantity });
-    applyCalculatorValues(mergedValues);
-    setCalcQuantity(inquiryQuantity);
-    const nextSnapshot = mergedValues;
     setActiveRightTab("send_message");
     setLogNoteText("");
     setChatInput("");
     setChatMessages([]);
+
+    initializeCalculatorForInquiry(inquiry);
+    syncedCalculatorInquiryIdRef.current = inquiryId;
 
     const [detailResult, confirmResult] = await Promise.allSettled([
       getInquiryForOperations(inquiry.id),
@@ -458,8 +523,14 @@ export function OperationsLeadsInquiryPanel({
       refreshInquiryLogs(inquiry.lead_id, inquiry.id),
     ]);
 
+    if (activeInquiryIdRef.current !== inquiryId) {
+      return;
+    }
+
     if (detailResult.status === "fulfilled" && !("error" in detailResult.value) && detailResult.value.inquiry) {
-      setSelectedInquiry(detailResult.value.inquiry);
+      const fullInquiry = detailResult.value.inquiry;
+      setSelectedInquiry(fullInquiry);
+      initializeCalculatorForInquiry(fullInquiry);
     }
 
     if (confirmResult.status === "fulfilled") {
@@ -472,10 +543,11 @@ export function OperationsLeadsInquiryPanel({
     } else {
       setConfirmations([]);
     }
-    setLastCalcSnapshot(nextSnapshot);
   }
 
   function backToList() {
+    activeInquiryIdRef.current = null;
+    syncedCalculatorInquiryIdRef.current = null;
     setView("list");
     setSelectedInquiry(null);
     setShowForm(false);
@@ -485,6 +557,7 @@ export function OperationsLeadsInquiryPanel({
     setChatInput("");
     setChatMessages([]);
     resetForm();
+    resetCalculatorState();
   }
 
   async function handleSendChatMessage() {
@@ -1452,7 +1525,7 @@ export function OperationsLeadsInquiryPanel({
             </div>
 
             {/* Additional Calculator */}
-            <div className="border-t pt-4">
+            <div className="border-t pt-4" key={`calculator-${inq.id}`}>
               <h3 className="text-sm font-semibold text-slate-700 mb-3">Calculation on Actual</h3>
               <div className="border rounded-lg overflow-hidden">
                 <div className="grid grid-cols-12 bg-slate-50 border-b text-xs font-semibold text-slate-600">

@@ -13,9 +13,17 @@ export function isIntegerString(value: string) {
   return /^\d+$/.test(value.trim());
 }
 
+/** Strip a trailing decimal point left mid-entry (e.g. "12." → "12"). */
+export function normalizeDecimalInput(value: string) {
+  const trimmed = value.trim();
+  if (!trimmed) return trimmed;
+  return trimmed.endsWith(".") ? trimmed.slice(0, -1) : trimmed;
+}
+
 export function isDecimalString(value: string) {
-  if (!value.trim()) return false;
-  return /^(?:\d+|\d+\.\d+|\d*\.\d+)$/.test(value.trim());
+  const normalized = normalizeDecimalInput(value);
+  if (!normalized) return false;
+  return /^(?:\d+|\d+\.\d+|\d*\.\d+)$/.test(normalized);
 }
 
 export function isOptionalDecimalString(value: string) {
@@ -61,9 +69,10 @@ export function validateInquiryProductInfoForSend(fields: InquiryProductFields):
   } else if (!isIntegerString(fields.total_weight)) {
     errors.total_weight = "Total Weight must be a whole number (kg).";
   }
-  if (!fields.cbm.trim()) {
+  const cbmValue = normalizeDecimalInput(fields.cbm);
+  if (!cbmValue) {
     errors.cbm = "Total CBM is required.";
-  } else if (!isDecimalString(fields.cbm)) {
+  } else if (!isDecimalString(cbmValue)) {
     errors.cbm = "CBM must be a valid number (e.g. 12.5).";
   }
   if (!fields.quantity.trim()) {

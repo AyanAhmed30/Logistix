@@ -16,6 +16,7 @@ import {
   List,
   Activity,
   Clock,
+  Loader2,
 } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -359,6 +360,9 @@ export function LeadInquiryWorkspace({
   const [showSendValidation, setShowSendValidation] = useState(false);
   const selectedInquiryIdRef = useRef(selectedInquiryId);
   const isSendingRef = useRef(false);
+  const prevMainTabRef = useRef<MainTab | null>(null);
+  const createFormLeadIdRef = useRef<string | null>(null);
+  const [isUploadingAttachments, setIsUploadingAttachments] = useState(false);
 
   useEffect(() => {
     selectedInquiryIdRef.current = selectedInquiryId;
@@ -531,28 +535,34 @@ export function LeadInquiryWorkspace({
   }, [mainTab, leadInquiries, approvedInquiryId, fetchPricingForInquiries]);
 
   useEffect(() => {
-    if (active && lead && layout === "page" && mainTab === "create") {
-      setInquiry(null);
-      setSelectedInquiryId("");
-      setProductName("");
-      setTotalWeight("");
-      setCbm("");
-      setQuantity("");
-      setImageDataList([]);
-      setOtherDetails("");
-      setInquiryLogs([]);
-      setIsViewEditing(true);
-      setConfirmationStatus("none");
-      setBaselineDraftState({
-        product_name: "",
-        total_weight: "",
-        cbm: "",
-        quantity: "",
-        description: "",
-        image_count: 0,
-      });
-    }
-  }, [active, lead, layout, mainTab]);
+    if (!active || !lead || layout !== "page") return;
+
+    const enteredCreateTab = mainTab === "create" && prevMainTabRef.current !== "create";
+    const switchedLeadOnCreate =
+      mainTab === "create" && createFormLeadIdRef.current !== lead.id;
+
+    prevMainTabRef.current = mainTab;
+
+    if (mainTab !== "create" || (!enteredCreateTab && !switchedLeadOnCreate)) return;
+
+    createFormLeadIdRef.current = lead.id;
+    resetCreateInquiryFormState({
+      setInquiry,
+      setSelectedInquiryId,
+      setProductName,
+      setTotalWeight,
+      setCbm,
+      setQuantity,
+      setImageDataList,
+      setOtherDetails,
+      setInquiryLogs,
+      setBaselineDraftState,
+    });
+    setIsViewEditing(false);
+    setFieldErrors({});
+    setShowSendValidation(false);
+    setConfirmationStatus("none");
+  }, [active, lead?.id, layout, mainTab]);
 
   useEffect(() => {
     if (active && lead) {
@@ -647,6 +657,7 @@ export function LeadInquiryWorkspace({
 
     if (validFiles.length === 0) return;
 
+    setIsUploadingAttachments(true);
     try {
       const uploadResults = await Promise.all(
         validFiles.map(async (file) => {
@@ -679,6 +690,8 @@ export function LeadInquiryWorkspace({
       }
     } catch {
       toast.error("Failed to process selected files");
+    } finally {
+      setIsUploadingAttachments(false);
     }
   }, [lead?.id, readImageAsDataUrl]);
 
@@ -969,7 +982,12 @@ export function LeadInquiryWorkspace({
   }, [layout, mode, mainTab, leadInquiries, selectedInquiryId, handleSelectInquiry]);
 
   function handleSaveInquiry() {
-    if (!lead) return;
+    if (!lead || isUploadingAttachments) {
+      if (isUploadingAttachments) {
+        toast.error("Please wait for file uploads to finish.");
+      }
+      return;
+    }
     const draftValidation = validateInquiryProductInfoForDraft(currentProductFields);
     setFieldErrors(draftValidation.errors);
     if (!draftValidation.valid) {
@@ -1021,12 +1039,23 @@ export function LeadInquiryWorkspace({
 
   function handleSendInquiry() {
     if (!lead || isSendingRef.current) return;
-    setShowSendValidation(true);
-    setFieldErrors(sendValidation.errors);
-    if (!sendValidation.valid) {
-      toast.error(Object.values(sendValidation.errors)[0] || "Please complete all required product information.");
+    if (isUploadingAttachments) {
+      toast.error("Please wait for file uploads to finish.");
       return;
     }
+
+    const validation = validateInquiryProductInfoForSend(
+      inquiryProductFieldsFromForm({ productName, totalWeight, cbm, quantity })
+    );
+    setShowSendValidation(true);
+    setFieldErrors(validation.errors);
+    if (!validation.valid) {
+      toast.error(
+        Object.values(validation.errors)[0] || "Please complete all required product information."
+      );
+      return;
+    }
+
     isSendingRef.current = true;
     startTransition(async () => {
       try {
@@ -1052,40 +1081,33 @@ export function LeadInquiryWorkspace({
         toast.success("Inquiry sent to Accounting & Operations!");
         invalidateCachedLeadInquiries(lead.id);
         if (result.inquiry) {
+          const sentInquiry = result.inquiry;
           setLeadInquiries((prev) => {
-            const filtered = prev.filter((x) => x.id !== result.inquiry!.id);
-            return [result.inquiry!, ...filtered];
+            const filtered = prev.filter((x) => x.id !== sentInquiry.id);
+            return [sentInquiry, ...filtered];
           });
           if (layout === "page" && mainTab === "create") {
-            resetCreateInquiryFormState({
-              setInquiry,
-              setSelectedInquiryId,
-              setProductName,
-              setTotalWeight,
-              setCbm,
-              setQuantity,
-              setImageDataList,
-              setOtherDetails,
-              setInquiryLogs,
-              setBaselineDraftState,
-            });
+            selectedInquiryIdRef.current = sentInquiry.id;
+            setSelectedInquiryId(sentInquiry.id);
+            setMainTab("view");
+            handleSelectInquiry(sentInquiry);
             setFieldErrors({});
             setShowSendValidation(false);
           } else {
-            setInquiry(result.inquiry);
-            const primaryImage = result.inquiry.image_url || "";
-            const additionalImages = Array.isArray(result.inquiry.additional_image_urls)
-              ? result.inquiry.additional_image_urls.filter((url) => typeof url === "string" && url.trim().length > 0)
+            setInquiry(sentInquiry);
+            const primaryImage = sentInquiry.image_url || "";
+            const additionalImages = Array.isArray(sentInquiry.additional_image_urls)
+              ? sentInquiry.additional_image_urls.filter((url) => typeof url === "string" && url.trim().length > 0)
               : [];
             setBaselineDraftState({
-              product_name: result.inquiry.product_name || "",
-              total_weight: result.inquiry.total_weight || "",
-              cbm: result.inquiry.cbm || "",
-              quantity: result.inquiry.quantity || "",
-              description: result.inquiry.description || "",
+              product_name: sentInquiry.product_name || "",
+              total_weight: sentInquiry.total_weight || "",
+              cbm: sentInquiry.cbm || "",
+              quantity: sentInquiry.quantity || "",
+              description: sentInquiry.description || "",
               image_count: (primaryImage ? 1 : 0) + additionalImages.length,
             });
-            await fetchLogsForInquiry(result.inquiry.id);
+            await fetchLogsForInquiry(sentInquiry.id);
           }
         }
         onRequestClose?.();
@@ -1523,11 +1545,19 @@ export function LeadInquiryWorkspace({
           <p className="text-xs text-gray-600 mt-1">Upload images or documents to support your inquiry</p>
         </div>
         <div className="p-4">
+          {isUploadingAttachments && (
+            <div className="mb-3 flex items-center justify-center gap-2 rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 text-sm font-medium text-blue-700">
+              <Loader2 className="h-4 w-4 animate-spin" />
+              Uploading files...
+            </div>
+          )}
           {canEditForm ? (
             <div
               className={`border-2 border-dashed rounded-xl p-6 transition-all duration-200 ${
                 isDragging 
                   ? "border-blue-400 bg-blue-50" 
+                  : isUploadingAttachments
+                    ? "border-blue-300 bg-blue-50/50 pointer-events-none opacity-80"
                   : "border-gray-300 hover:border-gray-400 hover:bg-gray-50"
               }`}
               onDragOver={handleDragOver}
@@ -1631,6 +1661,7 @@ export function LeadInquiryWorkspace({
                 accept="image/*,application/pdf,.doc,.docx,.xlsx,.xls"
                 multiple
                 className="sr-only"
+                disabled={isUploadingAttachments}
                 onChange={handleFileSelect}
               />
             </div>
@@ -1775,23 +1806,25 @@ export function LeadInquiryWorkspace({
           <div className="p-4">
             <div className="flex flex-col sm:flex-row gap-3">
               <Button 
+                type="button"
                 onClick={handleSaveInquiry} 
-                disabled={isPending} 
+                disabled={isPending || isUploadingAttachments} 
                 variant="outline" 
                 className="flex-1 h-12 rounded-lg border-2 font-semibold"
               >
-                {isPending ? "Saving..." : "Save as Draft"}
+                {isPending ? "Saving..." : isUploadingAttachments ? "Uploading..." : "Save as Draft"}
               </Button>
               <Button
+                type="button"
                 onClick={handleSendInquiry}
-                disabled={isPending || !isSendFormValid}
+                disabled={isPending || isUploadingAttachments || !isSendFormValid}
                 className="flex-1 h-12 rounded-lg bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white font-semibold shadow-lg disabled:opacity-60"
               >
                 <Send className="h-5 w-5 mr-2" />
-                {isPending ? "Sending..." : "Send Inquiry"}
+                {isPending ? "Sending..." : isUploadingAttachments ? "Uploading..." : "Send Inquiry"}
               </Button>
             </div>
-            {!isSendFormValid && (
+            {showSendValidation && !isSendFormValid && (
               <p className="text-xs text-red-500 mt-2 text-center">
                 Complete all required product information fields before sending.
               </p>

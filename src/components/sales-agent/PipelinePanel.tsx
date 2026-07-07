@@ -101,6 +101,7 @@ function LeadCard({
   showInquiryButton?: boolean;
   inquiryTracking?: InquiryTrackingInfo | null;
 }) {
+  const router = useRouter();
   const {
     attributes,
     listeners,
@@ -465,7 +466,13 @@ function LeadCard({
           </button>
           <Card
             className="flex-1 min-w-0 rounded-l-none rounded-r-xl border-blue-200 cursor-pointer hover:shadow-2xl hover:border-blue-300 hover:bg-blue-25 transition-all duration-300 shadow-lg mb-0 bg-white"
-            onMouseEnter={() => void prefetchLeadInquiries(lead.id)}
+            onMouseEnter={() => {
+              void prefetchLeadInquiries(lead.id);
+              const params = new URLSearchParams();
+              params.set("allowInquiry", "true");
+              params.set("boardStatus", lead.status);
+              router.prefetch(`/sales-agent/leads/${lead.id}?${params.toString()}`);
+            }}
             onClick={() => onOpenLeadDetail?.(lead)}
           >
             {renderLeadBody()}
@@ -1046,17 +1053,17 @@ export function PipelinePanel() {
 
   function navigateToLeadDetail(lead: Lead, tab?: "create" | "view" | "status") {
     void prefetchLeadInquiries(lead.id);
-    // Enforce workflow constraint: Only allow Send Inquiry flow on "Inquiry Received" board
     const allowInquiry = lead.status === "Inquiry Received";
-    
-    // Build query params
+
     const params = new URLSearchParams();
     if (tab) params.set("tab", tab);
     params.set("allowInquiry", allowInquiry.toString());
     params.set("boardStatus", lead.status);
-    
+
     const queryString = params.toString();
-    router.push(`/sales-agent/leads/${lead.id}${queryString ? `?${queryString}` : ""}`);
+    const href = `/sales-agent/leads/${lead.id}${queryString ? `?${queryString}` : ""}`;
+    router.prefetch(href);
+    router.push(href);
   }
 
   function handleMoveToStatus(lead: Lead, newStatus: LeadStatus) {

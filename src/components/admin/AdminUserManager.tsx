@@ -41,6 +41,7 @@ import { QuotationPanel } from "@/components/admin/QuotationPanel";
 import { InvoicePanel } from "@/components/admin/InvoicePanel";
 import { AccountingInquiriesPanel } from "@/components/admin/AccountingInquiriesPanel";
 import { InquiryConfirmationPanel } from "@/components/admin/InquiryConfirmationPanel";
+import { prefetchInquiryConfirmationsList } from "@/lib/admin-inquiry-confirmations-cache";
 import { OperationsUserPanel } from "@/components/admin/OperationsUserPanel";
 import { AdminCalculatorPanel } from "@/components/admin/AdminCalculatorPanel";
 import { ChartOfAccountsPanel } from "@/components/admin/ChartOfAccountsPanel";
@@ -491,6 +492,12 @@ export function AdminUserManager({
             variant={activeTab === "inquiry-confirmation" ? "default" : "outline"}
             className="justify-start gap-2 sidebar-button"
             onClick={() => handleTabSelect("inquiry-confirmation")}
+            onMouseEnter={() => {
+              void prefetchInquiryConfirmationsList().catch(() => undefined);
+            }}
+            onFocus={() => {
+              void prefetchInquiryConfirmationsList().catch(() => undefined);
+            }}
             title="Inquiry Confirmation"
           >
             <ClipboardCheck className="h-4 w-4 shrink-0 sidebar-icon" />

@@ -289,6 +289,7 @@ export function LeadInquiryWorkspace({
   initialInquiryId,
   allowInquiry = true,
   boardStatus,
+  initialInquiryBootstrap,
 }: {
   lead: Lead | null;
   mode?: "create" | "view";
@@ -302,9 +303,15 @@ export function LeadInquiryWorkspace({
   allowInquiry?: boolean;
   /** The board status from which this lead was accessed */
   boardStatus?: string;
+  /** Server-provided inquiry list to avoid a blocking client refetch on page load. */
+  initialInquiryBootstrap?: {
+    inquiries: LeadInquiry[];
+    approvedInquiryId: string | null;
+  };
 }) {
   const router = useRouter();
   const inquiryImageInputId = "sales-inquiry-image-input";
+  const bootstrapAppliedRef = useRef(false);
   const [inquiry, setInquiry] = useState<LeadInquiry | null>(null);
   const [productName, setProductName] = useState("");
   const [totalWeight, setTotalWeight] = useState("");
@@ -312,13 +319,25 @@ export function LeadInquiryWorkspace({
   const [quantity, setQuantity] = useState("");
   const [imageDataList, setImageDataList] = useState<string[]>([]);
   const [otherDetails, setOtherDetails] = useState("");
-  const [isLoading, setIsLoading] = useState(false);
+  const [isLoading, setIsLoading] = useState(() => {
+    if (initialInquiryBootstrap) return false;
+    if (lead?.id && getCachedLeadInquiries(lead.id)) return false;
+    return false;
+  });
   const [isPending, startTransition] = useTransition();
   const [isDragging, setIsDragging] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [confirmationStatus, setConfirmationStatus] = useState<'none' | 'approved'>('none');
-  const [leadInquiries, setLeadInquiries] = useState<LeadInquiry[]>([]);
-  const [approvedInquiryId, setApprovedInquiryId] = useState<string | null>(null);
+  const [leadInquiries, setLeadInquiries] = useState<LeadInquiry[]>(() => {
+    if (initialInquiryBootstrap?.inquiries) return initialInquiryBootstrap.inquiries;
+    const cached = lead?.id ? getCachedLeadInquiries(lead.id) : null;
+    return cached?.inquiries ?? [];
+  });
+  const [approvedInquiryId, setApprovedInquiryId] = useState<string | null>(() => {
+    if (initialInquiryBootstrap) return initialInquiryBootstrap.approvedInquiryId;
+    const cached = lead?.id ? getCachedLeadInquiries(lead.id) : null;
+    return cached?.approvedInquiryId ?? null;
+  });
   const [selectedInquiryId, setSelectedInquiryId] = useState<string>(initialInquiryId || "");
   const [inquiryLogs, setInquiryLogs] = useState<InquiryLog[]>([]);
   const [isLoadingLogs, setIsLoadingLogs] = useState(false);
@@ -469,11 +488,13 @@ export function LeadInquiryWorkspace({
       if (!lead) return;
 
       const cached = getCachedLeadInquiries(lead.id);
+      const hasWarmData = Boolean(cached || initialInquiryBootstrap || leadInquiries.length > 0);
+
       if (cached && !options?.background) {
         setLeadInquiries(cached.inquiries);
         setApprovedInquiryId(cached.approvedInquiryId);
         setIsLoading(false);
-      } else if (!options?.background) {
+      } else if (!options?.background && !hasWarmData) {
         setIsLoading(true);
       }
 
@@ -526,8 +547,33 @@ export function LeadInquiryWorkspace({
         setIsLoading(false);
       }
     },
-    [lead, mode, layout, mainTab, hydrateFormFromInquiry, fetchPricingForInquiries, fetchLogsForInquiry]
+    [lead, mode, layout, mainTab, hydrateFormFromInquiry, fetchPricingForInquiries, fetchLogsForInquiry, initialInquiryBootstrap, leadInquiries.length]
   );
+
+  useEffect(() => {
+    if (!active || !lead || bootstrapAppliedRef.current) return;
+    if (!initialInquiryBootstrap) return;
+
+    bootstrapAppliedRef.current = true;
+    setCachedLeadInquiries(lead.id, {
+      inquiries: initialInquiryBootstrap.inquiries,
+      approvedInquiryId: initialInquiryBootstrap.approvedInquiryId,
+    });
+
+    const skipFormHydration = layout === "page" && mainTab === "create";
+    if (!skipFormHydration && initialInquiryBootstrap.inquiries.length > 0) {
+      const selectedId = selectedInquiryIdRef.current;
+      const selected = selectedId
+        ? initialInquiryBootstrap.inquiries.find((x) => x.id === selectedId) || null
+        : null;
+      const current = selected || initialInquiryBootstrap.inquiries[0] || null;
+      hydrateFormFromInquiry(current);
+      if (mainTab === "view" && current?.id) {
+        void recordInquiryViewed(current.id);
+        void fetchLogsForInquiry(current.id);
+      }
+    }
+  }, [active, lead, initialInquiryBootstrap, layout, mainTab, hydrateFormFromInquiry, fetchLogsForInquiry]);
 
   useEffect(() => {
     if (mainTab !== "status" || leadInquiries.length === 0) return;
@@ -572,7 +618,10 @@ export function LeadInquiryWorkspace({
         setApprovedInquiryId(cached.approvedInquiryId);
         setIsLoading(false);
       }
-      void fetchInquiryData({ background: Boolean(cached) });
+      const hasWarmData = Boolean(
+        cached || initialInquiryBootstrap || bootstrapAppliedRef.current || leadInquiries.length > 0
+      );
+      void fetchInquiryData({ background: hasWarmData });
     } else {
       setInquiry(null);
       setProductName("");
@@ -606,7 +655,7 @@ export function LeadInquiryWorkspace({
         image_count: 0,
       });
     }
-  }, [active, lead, fetchInquiryData]);
+  }, [active, lead?.id, fetchInquiryData, initialInquiryBootstrap, leadInquiries.length]);
 
   const readImageAsDataUrl = useCallback((file: File) => {
     return new Promise<string>((resolve, reject) => {
@@ -1228,6 +1277,7 @@ export function LeadInquiryWorkspace({
 
   const tabbedPage = layout === "page" && mode === "view";
   const isCreateFlow = mode === "create" || (tabbedPage && mainTab === "create");
+  const blockWithSkeleton = isLoading && !(tabbedPage && mainTab === "create");
 
   const renderInquiryLogsPanel = (compact?: boolean) => (
     <div
@@ -1960,7 +2010,7 @@ export function LeadInquiryWorkspace({
       )}
 
       <div className={layout === "page" ? "max-w-7xl mx-auto px-4 sm:px-6 py-6" : "p-4 sm:p-6"}>
-        {isLoading ? (
+        {blockWithSkeleton ? (
           <InquiryWorkspaceSkeleton />
         ) : mode === "view" && leadInquiries.length === 0 && !tabbedPage ? (
           <div className="py-16 flex flex-col items-center justify-center gap-4 border border-dashed border-slate-200 rounded-sm bg-white">

@@ -1,8 +1,10 @@
 "use client";
 
 import { useSearchParams } from "next/navigation";
-import type { Lead } from "@/app/actions/leads";
+import type { Lead, LeadDetailBootstrap } from "@/app/actions/leads";
 import { LeadInquiryWorkspace, type LeadInquiryWorkspaceTab } from "@/components/sales-agent/LeadInquiryWorkspace";
+import { setCachedLeadInquiries } from "@/lib/sales-agent-lead-inquiries-cache";
+import { useEffect } from "react";
 
 function tabFromSearchParams(searchParams: URLSearchParams): LeadInquiryWorkspaceTab | undefined {
   const raw = searchParams.get("tab");
@@ -11,13 +13,29 @@ function tabFromSearchParams(searchParams: URLSearchParams): LeadInquiryWorkspac
   return undefined;
 }
 
-export function LeadDetailPageClient({ lead }: { lead: Lead }) {
+export function LeadDetailPageClient({
+  lead,
+  initialInquiries,
+  initialApprovedInquiryId,
+}: {
+  lead: Lead;
+  initialInquiries?: LeadDetailBootstrap["inquiries"];
+  initialApprovedInquiryId?: string | null;
+}) {
   const searchParams = useSearchParams();
   const initialTab = tabFromSearchParams(searchParams);
   const initialInquiryId = searchParams.get("inquiryId") || undefined;
   const allowInquiry = searchParams.get("allowInquiry") === "true";
   const boardStatus = searchParams.get("boardStatus") || lead.status;
   const remountKey = `${lead.id}-${initialTab ?? "default"}-${initialInquiryId ?? "none"}-${allowInquiry ? "1" : "0"}-${boardStatus}`;
+
+  useEffect(() => {
+    if (!initialInquiries) return;
+    setCachedLeadInquiries(lead.id, {
+      inquiries: initialInquiries,
+      approvedInquiryId: initialApprovedInquiryId ?? null,
+    });
+  }, [lead.id, initialInquiries, initialApprovedInquiryId]);
 
   return (
     <LeadInquiryWorkspace
@@ -30,6 +48,14 @@ export function LeadDetailPageClient({ lead }: { lead: Lead }) {
       initialInquiryId={initialInquiryId}
       allowInquiry={allowInquiry}
       boardStatus={boardStatus}
+      initialInquiryBootstrap={
+        initialInquiries
+          ? {
+              inquiries: initialInquiries,
+              approvedInquiryId: initialApprovedInquiryId ?? null,
+            }
+          : undefined
+      }
     />
   );
 }

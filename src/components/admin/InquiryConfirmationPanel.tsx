@@ -1,12 +1,14 @@
 "use client";
 /* eslint-disable @next/next/no-img-element */
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useMemo, useRef } from "react";
 import { toast } from "sonner";
 import {
   getAllInquiryConfirmations,
+  getInquiryConfirmationDetail,
   approveInquiryConfirmation,
   rejectInquiryConfirmation,
+  type InquiryConfirmationListItem,
   type InquiryConfirmationWithLead,
 } from "@/app/actions/inquiry_confirmations";
 import { InquiryAttachmentList } from "@/components/inquiry/InquiryAttachmentList";
@@ -19,6 +21,11 @@ import {
   parsePricingConfig,
   type CalculatorPricingConfig,
 } from "@/lib/inquiry-calculator";
+import {
+  getCachedInquiryConfirmations,
+  setCachedInquiryConfirmations,
+  invalidateCachedInquiryConfirmations,
+} from "@/lib/admin-inquiry-confirmations-cache";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -80,15 +87,53 @@ function statusIcon(status: string) {
   }
 }
 
+function TableSkeletonRows({ rows = 8 }: { rows?: number }) {
+  return (
+    <>
+      {Array.from({ length: rows }).map((_, index) => (
+        <TableRow key={index}>
+          {Array.from({ length: 10 }).map((__, cellIndex) => (
+            <TableCell key={cellIndex}>
+              <div className="h-4 bg-slate-100 rounded animate-pulse" />
+            </TableCell>
+          ))}
+        </TableRow>
+      ))}
+    </>
+  );
+}
+
+function DetailSkeleton() {
+  return (
+    <Card className="border shadow-sm">
+      <CardContent className="p-6 space-y-5">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          {Array.from({ length: 3 }).map((_, index) => (
+            <div key={index} className="h-12 bg-slate-100 rounded animate-pulse" />
+          ))}
+        </div>
+        <div className="border-t" />
+        <div className="space-y-3">
+          {Array.from({ length: 5 }).map((_, index) => (
+            <div key={index} className="h-8 bg-slate-100 rounded animate-pulse" />
+          ))}
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
 // ─── Main Component ──────────────────────────────────────────────────
 
 type ViewMode = "list" | "detail";
 
 export function InquiryConfirmationPanel() {
   const [view, setView] = useState<ViewMode>("list");
-  const [confirmations, setConfirmations] = useState<InquiryConfirmationWithLead[]>([]);
+  const [confirmations, setConfirmations] = useState<InquiryConfirmationListItem[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [selected, setSelected] = useState<InquiryConfirmationWithLead | null>(null);
+  const [detailListItem, setDetailListItem] = useState<InquiryConfirmationListItem | null>(null);
+  const [isDetailLoading, setIsDetailLoading] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [isActioning, setIsActioning] = useState(false);
   const [imagePreview, setImagePreview] = useState<{ url: string; title: string } | null>(null);
@@ -97,59 +142,105 @@ export function InquiryConfirmationPanel() {
   const [pricingConfig, setPricingConfig] = useState<CalculatorPricingConfig>(() =>
     parsePricingConfig({})
   );
+  const pricingConfigFetched = useRef(false);
 
-  useEffect(() => {
-    void (async () => {
-      const result = await getSharedInquiryCalculatorValues();
-      if (!("error" in result) && result.values) {
-        setPricingConfig(parsePricingConfig(result.values));
-      }
-    })();
-  }, []);
+  const fetchConfirmations = useCallback(async (opts?: { silent?: boolean }) => {
+    const cached = getCachedInquiryConfirmations();
+    if (cached) {
+      setConfirmations(cached.confirmations);
+    }
 
-  const fetchConfirmations = useCallback(async () => {
-    setIsLoading(true);
+    const showLoading = !cached && !opts?.silent;
+    if (showLoading) setIsLoading(true);
+
     try {
       const result = await getAllInquiryConfirmations();
       if ("error" in result) {
-        toast.error(result.error || "Unable to load confirmations");
-        setConfirmations([]);
+        if (!cached) {
+          toast.error(result.error || "Unable to load confirmations");
+          setConfirmations([]);
+        }
       } else {
-        setConfirmations(result.confirmations || []);
+        const next = result.confirmations || [];
+        setConfirmations(next);
+        setCachedInquiryConfirmations(next);
       }
     } catch {
-      toast.error("An unexpected error occurred");
+      if (!cached) {
+        toast.error("An unexpected error occurred");
+      }
     } finally {
-      setIsLoading(false);
+      if (showLoading) setIsLoading(false);
     }
   }, []);
 
   useEffect(() => {
-    fetchConfirmations();
+    void fetchConfirmations();
   }, [fetchConfirmations]);
 
-  const filteredConfirmations = confirmations.filter((c) => {
-    if (!searchQuery.trim()) return true;
-    const s = searchQuery.toLowerCase();
-    return (
-      (c.leads?.name || "").toLowerCase().includes(s) ||
-      c.lead_number.toLowerCase().includes(s) ||
-      c.product_name.toLowerCase().includes(s) ||
-      c.submitted_by.toLowerCase().includes(s) ||
-      c.status.toLowerCase().includes(s) ||
-      (c.leads?.sales_agents?.name || "").toLowerCase().includes(s)
-    );
-  });
+  const filteredConfirmations = useMemo(() => {
+    const query = searchQuery.trim().toLowerCase();
+    if (!query) return confirmations;
 
-  function openDetail(conf: InquiryConfirmationWithLead) {
-    setSelected(conf);
+    return confirmations.filter((c) =>
+      (c.leads?.name || "").toLowerCase().includes(query) ||
+      c.lead_number.toLowerCase().includes(query) ||
+      c.product_name.toLowerCase().includes(query) ||
+      c.submitted_by.toLowerCase().includes(query) ||
+      c.status.toLowerCase().includes(query) ||
+      (c.leads?.sales_agents?.name || "").toLowerCase().includes(query)
+    );
+  }, [confirmations, searchQuery]);
+
+  const loadPricingConfig = useCallback(async () => {
+    if (pricingConfigFetched.current) return;
+
+    const result = await getSharedInquiryCalculatorValues();
+    if (!("error" in result) && result.values) {
+      setPricingConfig(parsePricingConfig(result.values));
+    }
+    pricingConfigFetched.current = true;
+  }, []);
+
+  const openDetail = useCallback(async (conf: InquiryConfirmationListItem) => {
+    setDetailListItem(conf);
+    setSelected(null);
     setView("detail");
-  }
+    setIsDetailLoading(true);
+
+    try {
+      const [detailResult] = await Promise.all([
+        getInquiryConfirmationDetail(conf.id),
+        loadPricingConfig(),
+      ]);
+
+      if ("error" in detailResult) {
+        toast.error(detailResult.error || "Unable to load confirmation details");
+        setView("list");
+        setDetailListItem(null);
+        return;
+      }
+
+      setSelected(detailResult.confirmation);
+    } catch {
+      toast.error("An unexpected error occurred");
+      setView("list");
+      setDetailListItem(null);
+    } finally {
+      setIsDetailLoading(false);
+    }
+  }, [loadPricingConfig]);
+
+  const handleRefresh = useCallback(() => {
+    invalidateCachedInquiryConfirmations();
+    void fetchConfirmations();
+  }, [fetchConfirmations]);
 
   function backToList() {
     setView("list");
     setSelected(null);
-    fetchConfirmations();
+    setDetailListItem(null);
+    void fetchConfirmations({ silent: true });
   }
 
   async function handleApprove() {
@@ -162,7 +253,8 @@ export function InquiryConfirmationPanel() {
       } else {
         toast.success("Inquiry confirmation approved!");
         setSelected({ ...selected, status: "approved", reviewed_by: "admin", reviewed_at: new Date().toISOString() });
-        fetchConfirmations();
+        invalidateCachedInquiryConfirmations();
+        void fetchConfirmations({ silent: true });
       }
     } catch {
       toast.error("Failed to approve.");
@@ -193,7 +285,8 @@ export function InquiryConfirmationPanel() {
         });
         setRejectDialogOpen(false);
         setRejectReason("");
-        fetchConfirmations();
+        invalidateCachedInquiryConfirmations();
+        void fetchConfirmations({ silent: true });
       }
     } catch {
       toast.error("Failed to reject.");
@@ -206,7 +299,28 @@ export function InquiryConfirmationPanel() {
   //  DETAIL VIEW
   // ═══════════════════════════════════════════════════════════════════
 
-  if (view === "detail" && selected) {
+  if (view === "detail" && detailListItem) {
+    if (isDetailLoading || !selected) {
+      return (
+        <div className="space-y-4">
+          <div className="flex items-center gap-2 text-sm">
+            <button onClick={backToList} className="text-teal-600 hover:underline flex items-center gap-1">
+              <ArrowLeft className="h-4 w-4" /> All Confirmations
+            </button>
+            <span className="text-slate-400">/</span>
+            <span className="font-semibold text-slate-700">
+              {detailListItem.product_name || "Unnamed"}
+            </span>
+          </div>
+          <div className="flex items-center gap-2 text-sm text-slate-500">
+            <Loader2 className="h-4 w-4 animate-spin" />
+            Loading confirmation details...
+          </div>
+          <DetailSkeleton />
+        </div>
+      );
+    }
+
     const c = selected;
     const calculatorValues =
       c.calculator_values && typeof c.calculator_values === "object"
@@ -457,6 +571,8 @@ export function InquiryConfirmationPanel() {
   //  LIST VIEW
   // ═══════════════════════════════════════════════════════════════════
 
+  const showEmptyState = !isLoading && filteredConfirmations.length === 0;
+
   return (
     <div className="space-y-4">
       {/* Header */}
@@ -475,12 +591,14 @@ export function InquiryConfirmationPanel() {
               className="pl-9 w-60"
             />
           </div>
-          <Button variant="outline" size="sm" onClick={fetchConfirmations} disabled={isLoading}>
+          <Button variant="outline" size="sm" onClick={handleRefresh} disabled={isLoading}>
             <RefreshCcw className={`h-4 w-4 mr-1 ${isLoading ? "animate-spin" : ""}`} />
             Refresh
           </Button>
           <span className="text-sm text-slate-500">
-            {filteredConfirmations.length} record{filteredConfirmations.length !== 1 ? "s" : ""}
+            {isLoading && confirmations.length === 0
+              ? "Loading..."
+              : `${filteredConfirmations.length} record${filteredConfirmations.length !== 1 ? "s" : ""}`}
           </span>
         </div>
       </div>
@@ -488,9 +606,7 @@ export function InquiryConfirmationPanel() {
       {/* Table */}
       <Card className="border shadow-sm">
         <CardContent className="p-0">
-          {isLoading ? (
-            <div className="py-16 text-center text-slate-400">Loading confirmations...</div>
-          ) : filteredConfirmations.length === 0 ? (
+          {showEmptyState ? (
             <div className="py-16 text-center text-slate-400">
               {searchQuery
                 ? "No confirmations match your search."
@@ -514,63 +630,67 @@ export function InquiryConfirmationPanel() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {filteredConfirmations.map((conf) => (
-                    <TableRow
-                      key={conf.id}
-                      className="cursor-pointer hover:bg-slate-50 transition-colors"
-                      onClick={() => openDetail(conf)}
-                    >
-                      <TableCell className="font-mono font-bold text-teal-700">
-                        {conf.lead_number}
-                      </TableCell>
-                      <TableCell className="font-semibold text-slate-700">
-                        {conf.leads?.name || "-"}
-                      </TableCell>
-                      <TableCell className="text-slate-700 font-medium">
-                        {conf.product_name || "-"}
-                      </TableCell>
-                      <TableCell className="text-slate-600">
-                        {conf.total_weight || "-"}
-                      </TableCell>
-                      <TableCell className="text-slate-600">
-                        {conf.cbm || "-"}
-                      </TableCell>
-                      <TableCell className="text-slate-600">
-                        {conf.quantity || "-"}
-                      </TableCell>
-                      <TableCell className="text-slate-600">
-                        {conf.submitted_by || "-"}
-                      </TableCell>
-                      <TableCell>
-                        <div className="flex items-center gap-1.5">
-                          {statusIcon(conf.status)}
-                          <Badge variant="outline" className={`text-xs ${statusColor(conf.status)}`}>
-                            {formatStatus(conf.status)}
-                          </Badge>
-                        </div>
-                      </TableCell>
-                      <TableCell className="text-xs text-slate-500">
-                        {conf.created_at ? new Date(conf.created_at).toLocaleString([], {
-                          month: "short",
-                          day: "numeric",
-                          hour: "2-digit",
-                          minute: "2-digit",
-                        }) : "-"}
-                      </TableCell>
-                      <TableCell className="text-right">
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            openDetail(conf);
-                          }}
-                        >
-                          View
-                        </Button>
-                      </TableCell>
-                    </TableRow>
-                  ))}
+                  {isLoading && confirmations.length === 0 ? (
+                    <TableSkeletonRows />
+                  ) : (
+                    filteredConfirmations.map((conf) => (
+                      <TableRow
+                        key={conf.id}
+                        className="cursor-pointer hover:bg-slate-50 transition-colors"
+                        onClick={() => void openDetail(conf)}
+                      >
+                        <TableCell className="font-mono font-bold text-teal-700">
+                          {conf.lead_number}
+                        </TableCell>
+                        <TableCell className="font-semibold text-slate-700">
+                          {conf.leads?.name || "-"}
+                        </TableCell>
+                        <TableCell className="text-slate-700 font-medium">
+                          {conf.product_name || "-"}
+                        </TableCell>
+                        <TableCell className="text-slate-600">
+                          {conf.total_weight || "-"}
+                        </TableCell>
+                        <TableCell className="text-slate-600">
+                          {conf.cbm || "-"}
+                        </TableCell>
+                        <TableCell className="text-slate-600">
+                          {conf.quantity || "-"}
+                        </TableCell>
+                        <TableCell className="text-slate-600">
+                          {conf.submitted_by || "-"}
+                        </TableCell>
+                        <TableCell>
+                          <div className="flex items-center gap-1.5">
+                            {statusIcon(conf.status)}
+                            <Badge variant="outline" className={`text-xs ${statusColor(conf.status)}`}>
+                              {formatStatus(conf.status)}
+                            </Badge>
+                          </div>
+                        </TableCell>
+                        <TableCell className="text-xs text-slate-500">
+                          {conf.created_at ? new Date(conf.created_at).toLocaleString([], {
+                            month: "short",
+                            day: "numeric",
+                            hour: "2-digit",
+                            minute: "2-digit",
+                          }) : "-"}
+                        </TableCell>
+                        <TableCell className="text-right">
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              void openDetail(conf);
+                            }}
+                          >
+                            View
+                          </Button>
+                        </TableCell>
+                      </TableRow>
+                    ))
+                  )}
                 </TableBody>
               </Table>
             </div>

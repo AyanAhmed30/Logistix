@@ -4,6 +4,7 @@ import { useEffect, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { createLead, getAllLeadsForSalesAgent, updateLead, deleteLead, type Lead } from "@/app/actions/leads";
+import { normalizePakistaniPhone } from "@/lib/pakistan-phone";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -85,8 +86,15 @@ export function LeadPanel() {
       return;
     }
 
+    const phoneResult = normalizePakistaniPhone(number);
+    if (!phoneResult.ok) {
+      toast.error(phoneResult.error);
+      return;
+    }
+
     // Add source to formData
     formData.set("source", source);
+    formData.set("number", number);
 
     // City is optional; it will be available in formData for future use if needed
     formData.set("city", city);
@@ -99,14 +107,19 @@ export function LeadPanel() {
         });
         return;
       }
+
+      if (result?.lead) {
+        setLeads((prev) => [result.lead!, ...prev]);
+        setTotalLeadCount((prev) => prev + 1);
+      }
+
       toast.success("Lead created successfully", {
         className: "bg-green-400 text-white border-green-400",
       });
       setCreateOpen(false);
       form.reset();
       setSource("");
-      router.refresh();
-      fetchLeads();
+      void fetchLeads();
     });
   }
 
@@ -122,7 +135,14 @@ export function LeadPanel() {
       return;
     }
 
+    const phoneResult = normalizePakistaniPhone(number);
+    if (!phoneResult.ok) {
+      toast.error(phoneResult.error);
+      return;
+    }
+
     formData.set("source", editSource);
+    formData.set("number", number);
 
     startTransition(async () => {
       const result = await updateLead(formData);
@@ -337,7 +357,7 @@ export function LeadPanel() {
             </div>
             <div className="space-y-2">
               <Label htmlFor="lead-number">Number *</Label>
-              <Input id="lead-number" name="number" placeholder="+1 234 567 8900" required />
+              <Input id="lead-number" name="number" placeholder="+923001234567" required />
             </div>
             <div className="space-y-2">
               <Label htmlFor="lead-city">City</Label>

@@ -11,6 +11,99 @@ import { sanitizeCalculatorValues } from '@/lib/inquiry-calculator';
 
 export type InquiryStatus = 'pending' | 'in_progress' | 'quotation_sent' | 'completed';
 
+type InquiryConfirmationLite = {
+  id: string;
+  status: string;
+  created_at: string;
+};
+
+/** Fields required by the sales-agent inquiry workspace list/detail UI (excludes heavy JSON blobs). */
+const SALES_AGENT_LEAD_INQUIRIES_SELECT = `
+  id,
+  lead_id,
+  inquiry_group_id,
+  version_number,
+  is_current_version,
+  description,
+  image_url,
+  additional_image_urls,
+  product_name,
+  total_weight,
+  cbm,
+  quantity,
+  status,
+  sent_to_accounting,
+  sent_to_operations,
+  sent_at,
+  approval_status,
+  approved_at,
+  created_at,
+  updated_at,
+  inquiry_confirmations (
+    id,
+    status,
+    created_at
+  )
+`;
+
+function sanitizeInquiriesForSession(
+  rows: (LeadInquiry & { inquiry_confirmations?: InquiryConfirmationLite[] })[],
+  role: string
+) {
+  const visibleRows =
+    role === 'sales_agent' ? rows.filter((row) => row.approval_status !== 'rejected') : rows;
+  const sanitized = visibleRows.map((row) => ({
+    ...row,
+    inquiry_confirmations:
+      role === 'sales_agent'
+        ? (row.inquiry_confirmations || []).filter((c) => c.status === 'approved')
+        : (row.inquiry_confirmations || []),
+  }));
+
+  const approvedCandidate = [...sanitized]
+    .filter(
+      (row) =>
+        row.approval_status === 'approved' ||
+        (row.inquiry_confirmations || []).some((c) => c.status === 'approved')
+    )
+    .sort((a, b) => {
+      const aApproved =
+        a.approved_at ||
+        (a.inquiry_confirmations || []).find((c) => c.status === 'approved')?.created_at ||
+        a.updated_at;
+      const bApproved =
+        b.approved_at ||
+        (b.inquiry_confirmations || []).find((c) => c.status === 'approved')?.created_at ||
+        b.updated_at;
+      return new Date(bApproved || 0).getTime() - new Date(aApproved || 0).getTime();
+    })[0];
+
+  return {
+    inquiries: sanitized,
+    approvedInquiryId: approvedCandidate?.id || null,
+  };
+}
+
+export async function listInquiriesForLead(
+  supabase: Awaited<ReturnType<typeof createAdminClient>>,
+  leadId: string,
+  role: string
+) {
+  const { data, error } = await supabase
+    .from('lead_inquiries')
+    .select(SALES_AGENT_LEAD_INQUIRIES_SELECT)
+    .eq('lead_id', leadId)
+    .order('version_number', { ascending: false })
+    .order('created_at', { ascending: false });
+
+  if (error) return { error: error.message };
+
+  return sanitizeInquiriesForSession(
+    (data || []) as (LeadInquiry & { inquiry_confirmations?: InquiryConfirmationLite[] })[],
+    role
+  );
+}
+
 export type LeadInquiry = {
   id: string;
   lead_id: string;
@@ -791,12 +884,6 @@ export type InquiryTrackingInfo = {
   approved_inquiry_approved_at: string | null;
 };
 
-type InquiryConfirmationLite = {
-  id: string;
-  status: string;
-  created_at: string;
-};
-
 /**
  * Get inquiry tracking statuses for all leads belonging to the current sales agent.
  * Used by the Pipeline view to show which leads have inquiries sent/approved.
@@ -1071,20 +1158,15 @@ export async function getInquiriesForLead(leadId: string) {
     const supabase = await createAdminClient();
 
     if (session.role === 'sales_agent') {
-      const { data: salesAgent } = await supabase
-        .from('sales_agents')
-        .select('id')
-        .eq('username', session.username)
-        .maybeSingle();
+      const [agentResult, leadResult] = await Promise.all([
+        supabase.from('sales_agents').select('id').eq('username', session.username).maybeSingle(),
+        supabase.from('leads').select('id, sales_agent_id').eq('id', leadId).maybeSingle(),
+      ]);
+
+      const salesAgent = agentResult.data;
+      const lead = leadResult.data;
 
       if (!salesAgent) return { error: 'Unauthorized' };
-
-      const { data: lead } = await supabase
-        .from('leads')
-        .select('id, sales_agent_id')
-        .eq('id', leadId)
-        .maybeSingle();
-
       if (!lead || lead.sales_agent_id !== salesAgent.id) {
         return { error: 'Unauthorized' };
       }
@@ -1092,53 +1174,9 @@ export async function getInquiriesForLead(leadId: string) {
       return { error: 'Unauthorized' };
     }
 
-    const { data, error } = await supabase
-      .from('lead_inquiries')
-      .select(`
-        *,
-        inquiry_confirmations (
-          id,
-          status,
-          created_at
-        )
-      `)
-      .eq('lead_id', leadId)
-      .order('version_number', { ascending: false })
-      .order('created_at', { ascending: false });
-
-    if (error) return { error: error.message };
-
-    const rows = (data || []) as (LeadInquiry & { inquiry_confirmations?: InquiryConfirmationLite[] })[];
-    const visibleRows =
-      session.role === 'sales_agent'
-        ? rows.filter((row) => row.approval_status !== 'rejected')
-        : rows;
-    const sanitized = visibleRows.map((row) => ({
-      ...row,
-      inquiry_confirmations:
-        session.role === 'sales_agent'
-          ? (row.inquiry_confirmations || []).filter((c) => c.status === 'approved')
-          : (row.inquiry_confirmations || []),
-    }));
-
-    const approvedCandidate = [...sanitized]
-      .filter((row) => row.approval_status === 'approved' || (row.inquiry_confirmations || []).some((c) => c.status === 'approved'))
-      .sort((a, b) => {
-        const aApproved =
-          a.approved_at ||
-          (a.inquiry_confirmations || []).find((c) => c.status === 'approved')?.created_at ||
-          a.updated_at;
-        const bApproved =
-          b.approved_at ||
-          (b.inquiry_confirmations || []).find((c) => c.status === 'approved')?.created_at ||
-          b.updated_at;
-        return new Date(bApproved || 0).getTime() - new Date(aApproved || 0).getTime();
-      })[0];
-
-    return {
-      inquiries: sanitized,
-      approvedInquiryId: approvedCandidate?.id || null,
-    };
+    const result = await listInquiriesForLead(supabase, leadId, session.role);
+    if ('error' in result) return result;
+    return result;
   } catch (err) {
     return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };
   }

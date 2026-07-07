@@ -51,6 +51,137 @@ export type InquiryConfirmationWithLead = InquiryConfirmation & {
   } | null;
 };
 
+/** Slim row for the admin list table — heavy fields load on detail view only. */
+export type InquiryConfirmationListItem = {
+  id: string;
+  lead_number: string;
+  product_name: string;
+  total_weight: string;
+  cbm: string;
+  quantity: string;
+  status: ConfirmationStatus;
+  submitted_by: string;
+  created_at: string;
+  leads: {
+    name: string;
+    sales_agents?: { name: string } | null;
+  } | null;
+};
+
+const ADMIN_CONFIRMATION_LIST_SELECT = `
+  id,
+  lead_number,
+  product_name,
+  total_weight,
+  cbm,
+  quantity,
+  status,
+  submitted_by,
+  created_at,
+  leads (
+    name,
+    sales_agents!leads_sales_agent_id_fkey (
+      name
+    )
+  )
+`;
+
+const ADMIN_CONFIRMATION_DETAIL_SELECT = `
+  *,
+  leads (
+    id,
+    name,
+    number,
+    lead_id_formatted,
+    source,
+    sales_agent_id,
+    sales_agents!leads_sales_agent_id_fkey (
+      id,
+      name,
+      username
+    )
+  )
+`;
+
+type InquiryAttachmentSnapshot = {
+  image_url: string | null;
+  additional_image_urls: string[];
+  calculator_values: Record<string, string> | null;
+};
+
+function mergeConfirmationWithInquiryData(
+  row: InquiryConfirmationWithLead,
+  inquiryData?: InquiryAttachmentSnapshot | null
+): InquiryConfirmationWithLead {
+  return {
+    ...row,
+    original_image_url: row.original_image_url || inquiryData?.image_url || null,
+    sales_additional_image_urls:
+      Array.isArray(row.sales_additional_image_urls) && row.sales_additional_image_urls.length > 0
+        ? row.sales_additional_image_urls
+        : inquiryData?.additional_image_urls || [],
+    calculator_values:
+      row.calculator_values && Object.keys(row.calculator_values).length > 0
+        ? row.calculator_values
+        : inquiryData?.calculator_values || {},
+  };
+}
+
+async function fetchInquiryAttachmentSnapshot(
+  supabase: Awaited<ReturnType<typeof createAdminClient>>,
+  inquiryId: string
+): Promise<InquiryAttachmentSnapshot | null> {
+  const { data: inquiryRow } = await supabase
+    .from('lead_inquiries')
+    .select('image_url, additional_image_urls, calculator_values')
+    .eq('id', inquiryId)
+    .maybeSingle();
+
+  if (!inquiryRow) return null;
+
+  return {
+    image_url: inquiryRow.image_url || null,
+    additional_image_urls: Array.isArray(inquiryRow.additional_image_urls)
+      ? inquiryRow.additional_image_urls.filter(
+          (url: unknown) => typeof url === 'string' && String(url).trim().length > 0
+        )
+      : [],
+    calculator_values:
+      inquiryRow.calculator_values && typeof inquiryRow.calculator_values === 'object'
+        ? (inquiryRow.calculator_values as Record<string, string>)
+        : null,
+  };
+}
+
+function normalizeAdminConfirmationListRow(row: Record<string, unknown>): InquiryConfirmationListItem {
+  const rawLead = Array.isArray(row.leads)
+    ? (row.leads[0] as Record<string, unknown> | undefined)
+    : (row.leads as Record<string, unknown> | undefined);
+  const rawSalesAgent = rawLead && Array.isArray(rawLead.sales_agents)
+    ? (rawLead.sales_agents[0] as Record<string, unknown> | undefined)
+    : (rawLead?.sales_agents as Record<string, unknown> | undefined);
+
+  return {
+    id: String(row.id || ''),
+    lead_number: String(row.lead_number || ''),
+    product_name: String(row.product_name || ''),
+    total_weight: String(row.total_weight || ''),
+    cbm: String(row.cbm || ''),
+    quantity: String(row.quantity || ''),
+    status: (row.status as ConfirmationStatus) || 'pending',
+    submitted_by: String(row.submitted_by || ''),
+    created_at: String(row.created_at || ''),
+    leads: rawLead
+      ? {
+          name: String(rawLead.name || ''),
+          sales_agents: rawSalesAgent
+            ? { name: String(rawSalesAgent.name || '') }
+            : null,
+        }
+      : null,
+  };
+}
+
 // ─── Fetch inquiry details by 6-digit lead number ───────────────────
 
 export async function getInquiryByLeadNumber(leadNumber: string) {
@@ -297,67 +428,51 @@ export async function getAllInquiryConfirmations() {
 
     const { data, error } = await supabase
       .from('inquiry_confirmations')
-      .select(`
-        *,
-        leads (
-          id,
-          name,
-          number,
-          lead_id_formatted,
-          source,
-          sales_agent_id,
-          sales_agents!leads_sales_agent_id_fkey (
-            id,
-            name,
-            username
-          )
-        )
-      `)
+      .select(ADMIN_CONFIRMATION_LIST_SELECT)
       .order('created_at', { ascending: false });
 
     if (error) return { error: error.message };
-    const rows = (data || []) as InquiryConfirmationWithLead[];
-    const inquiryIds = [...new Set(rows.map((r) => r.inquiry_id).filter(Boolean))];
-    let inquiryMap = new Map<string, { image_url: string | null; additional_image_urls: string[]; calculator_values: Record<string, string> | null }>();
-    if (inquiryIds.length > 0) {
-      const { data: inquiryRows } = await supabase
-        .from('lead_inquiries')
-        .select('id, image_url, additional_image_urls, calculator_values')
-        .in('id', inquiryIds);
-      inquiryMap = new Map(
-        (inquiryRows || []).map((row) => [
-          String(row.id),
-          {
-            image_url: row.image_url || null,
-            additional_image_urls: Array.isArray(row.additional_image_urls)
-              ? row.additional_image_urls.filter((u: unknown) => typeof u === 'string' && String(u).trim().length > 0)
-              : [],
-            calculator_values:
-              row.calculator_values && typeof row.calculator_values === 'object'
-                ? (row.calculator_values as Record<string, string>)
-                : null,
-          },
-        ])
-      );
+
+    return {
+      confirmations: (data || []).map((row) =>
+        normalizeAdminConfirmationListRow(row as Record<string, unknown>)
+      ),
+    };
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };
+  }
+}
+
+export async function getInquiryConfirmationDetail(confirmationId: string) {
+  try {
+    const session = await getSession();
+    if (!session || session.role !== 'admin') {
+      return { error: 'Unauthorized' };
     }
 
-    const confirmations = rows.map((row) => {
-      const inquiryData = inquiryMap.get(row.inquiry_id);
-      return {
-        ...row,
-        original_image_url: row.original_image_url || inquiryData?.image_url || null,
-        sales_additional_image_urls:
-          Array.isArray(row.sales_additional_image_urls) && row.sales_additional_image_urls.length > 0
-            ? row.sales_additional_image_urls
-            : inquiryData?.additional_image_urls || [],
-        calculator_values:
-          row.calculator_values && Object.keys(row.calculator_values).length > 0
-            ? row.calculator_values
-            : inquiryData?.calculator_values || {},
-      };
-    });
+    if (!confirmationId?.trim()) {
+      return { error: 'Confirmation id is required.' };
+    }
 
-    return { confirmations: confirmations as InquiryConfirmationWithLead[] };
+    const supabase = await createAdminClient();
+
+    const { data, error } = await supabase
+      .from('inquiry_confirmations')
+      .select(ADMIN_CONFIRMATION_DETAIL_SELECT)
+      .eq('id', confirmationId.trim())
+      .maybeSingle();
+
+    if (error) return { error: error.message };
+    if (!data) return { error: 'Confirmation not found.' };
+
+    const row = data as InquiryConfirmationWithLead;
+    const inquiryData = row.inquiry_id
+      ? await fetchInquiryAttachmentSnapshot(supabase, row.inquiry_id)
+      : null;
+
+    return {
+      confirmation: mergeConfirmationWithInquiryData(row, inquiryData),
+    };
   } catch (err) {
     return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };
   }

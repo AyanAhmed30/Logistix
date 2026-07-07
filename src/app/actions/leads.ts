@@ -3,6 +3,16 @@
 import { createAdminClient } from '@/utils/supabase/server';
 import { getSession } from '@/lib/auth/session';
 import { revalidatePath } from 'next/cache';
+import { after } from 'next/server';
+import {
+  debugLeadPhoneDuplicate,
+  formatLeadPhoneForStorage,
+  normalizePakistaniPhone,
+} from '@/lib/pakistan-phone';
+import { listInquiriesForLead, type LeadInquiry } from '@/app/actions/inquiries';
+
+const LEAD_DETAIL_SELECT =
+  'id, lead_id_formatted, name, number, source, status, sales_agent_id, created_by_sales_agent_id, transferred_from_sales_agent_id, transferred_at, converted, created_at, updated_at';
 
 export type LeadStatus = 'Leads' | 'Inquiry Received' | 'Quotation Sent' | 'Negotiation' | 'Win' | 'Follow up' | 'Lose';
 
@@ -91,6 +101,260 @@ async function addLeadLifecycleLog(
   }
 }
 
+type DuplicateLeadMatch = {
+  id: string;
+  name: string;
+  lead_id_formatted: string | null;
+};
+
+function formatDuplicateLeadPhoneError(duplicate: DuplicateLeadMatch): string {
+  const customerName = (duplicate.name || '').trim() || 'Unknown';
+  const leadNumber = duplicate.lead_id_formatted?.trim();
+
+  if (leadNumber) {
+    return `This phone number already exists. It is associated with Lead #${leadNumber} (${customerName}).`;
+  }
+
+  return `This phone number already exists. It is associated with ${customerName}.`;
+}
+
+function scheduleLeadDashboardRevalidation() {
+  after(() => {
+    revalidatePath('/sales-agent/dashboard');
+    revalidatePath('/admin/dashboard');
+  });
+}
+
+function randomLeadIdFormatted() {
+  return String(100000 + Math.floor(Math.random() * 900000));
+}
+
+function isDuplicateLeadIdError(error: { code?: string; message?: string } | null) {
+  if (!error) return false;
+  const message = error.message || '';
+  return (
+    error.code === '23505' &&
+    (message.includes('lead_id_formatted') || message.includes('leads_lead_id_formatted_key'))
+  );
+}
+
+async function findDuplicateLeadByPhone(
+  supabase: Awaited<ReturnType<typeof createAdminClient>>,
+  originalPhone: string,
+  canonicalPhone: string,
+  excludeLeadId?: string
+): Promise<DuplicateLeadMatch | null> {
+  debugLeadPhoneDuplicate({
+    original: originalPhone,
+    normalized: canonicalPhone,
+    query: 'leads.number_normalized = canonical',
+  });
+
+  let columnQuery = supabase
+    .from('leads')
+    .select('id, name, lead_id_formatted')
+    .eq('number_normalized', canonicalPhone)
+    .limit(1);
+
+  if (excludeLeadId) {
+    columnQuery = columnQuery.neq('id', excludeLeadId);
+  }
+
+  const { data: columnRows, error: columnError } = await columnQuery;
+  if (!columnError) {
+    const match = (columnRows || [])[0] ?? null;
+    debugLeadPhoneDuplicate({
+      original: originalPhone,
+      normalized: canonicalPhone,
+      query: 'leads.number_normalized = canonical',
+      matchingLeadId: match?.id ?? null,
+    });
+    return match;
+  }
+
+  if (!columnError.message.includes('number_normalized')) {
+    throw new Error(columnError.message);
+  }
+
+  debugLeadPhoneDuplicate({
+    original: originalPhone,
+    normalized: canonicalPhone,
+    query: 'find_lead_by_normalized_phone(p_phone, p_exclude_id)',
+  });
+
+  const { data: rpcRows, error: rpcError } = await supabase.rpc('find_lead_by_normalized_phone', {
+    p_phone: canonicalPhone,
+    p_exclude_id: excludeLeadId ?? null,
+  });
+
+  if (!rpcError) {
+    const match = ((rpcRows as DuplicateLeadMatch[] | null) || [])[0] ?? null;
+    debugLeadPhoneDuplicate({
+      original: originalPhone,
+      normalized: canonicalPhone,
+      query: 'find_lead_by_normalized_phone(p_phone, p_exclude_id)',
+      matchingLeadId: match?.id ?? null,
+    });
+    return match;
+  }
+
+  // Fallback when migration/RPC is not yet applied: exact match on raw number.
+  if (rpcError.message.includes('find_lead_by_normalized_phone')) {
+    let exactQuery = supabase
+      .from('leads')
+      .select('id, name, lead_id_formatted')
+      .eq('number', canonicalPhone)
+      .limit(1);
+
+    if (excludeLeadId) {
+      exactQuery = exactQuery.neq('id', excludeLeadId);
+    }
+
+    const { data: exactRows, error: exactError } = await exactQuery;
+    if (exactError) {
+      return null;
+    }
+
+    const match = (exactRows || [])[0] ?? null;
+    debugLeadPhoneDuplicate({
+      original: originalPhone,
+      normalized: canonicalPhone,
+      query: 'leads.number = canonical (fallback)',
+      matchingLeadId: match?.id ?? null,
+    });
+    return match;
+  }
+
+  throw new Error(rpcError.message);
+}
+
+async function finishCreateLead(input: {
+  supabase: Awaited<ReturnType<typeof createAdminClient>>;
+  session: NonNullable<Awaited<ReturnType<typeof getSession>>>;
+  salesAgent: { id: string };
+  safeName: string;
+  displayPhone: string;
+  canonicalPhone: string;
+  source: 'Meta' | 'LinkedIn' | 'WhatsApp' | 'Others';
+}) {
+  const { supabase, session, salesAgent, safeName, displayPhone, canonicalPhone, source } = input;
+
+  const leadInsertBase = {
+    name: safeName,
+    number: displayPhone,
+    number_normalized: canonicalPhone,
+    source,
+    status: 'Leads' as const,
+    sales_agent_id: salesAgent.id,
+    created_by_sales_agent_id: salesAgent.id,
+  };
+
+  let data: Lead | null = null;
+  let lastInsertError: string | null = null;
+
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const { data: inserted, error } = await supabase
+      .from('leads')
+      .insert([{ ...leadInsertBase, lead_id_formatted: randomLeadIdFormatted() }])
+      .select()
+      .single();
+
+    if (!error && inserted) {
+      data = inserted as Lead;
+      break;
+    }
+
+    if (isDuplicateLeadIdError(error)) {
+      lastInsertError = error?.message || null;
+      continue;
+    }
+
+    if (error?.message.includes('number_normalized')) {
+      const { data: normalizedRetryData, error: normalizedRetryError } = await supabase
+        .from('leads')
+        .insert([{
+          name: safeName,
+          number: displayPhone,
+          source,
+          status: 'Leads',
+          sales_agent_id: salesAgent.id,
+          created_by_sales_agent_id: salesAgent.id,
+          lead_id_formatted: randomLeadIdFormatted(),
+        }])
+        .select()
+        .single();
+
+      if (!normalizedRetryError && normalizedRetryData) {
+        data = normalizedRetryData as Lead;
+        break;
+      }
+
+      if (isDuplicateLeadIdError(normalizedRetryError)) {
+        lastInsertError = normalizedRetryError?.message || null;
+        continue;
+      }
+    }
+
+    if (error?.message.includes('created_by_sales_agent_id') || error?.message.includes('column "created_by_sales_agent_id"')) {
+      const { data: retryData, error: retryError } = await supabase
+        .from('leads')
+        .insert([{
+          name: safeName,
+          number: displayPhone,
+          source,
+          status: 'Leads',
+          sales_agent_id: salesAgent.id,
+          lead_id_formatted: randomLeadIdFormatted(),
+        }])
+        .select()
+        .single();
+
+      if (!retryError && retryData) {
+        data = retryData as Lead;
+        break;
+      }
+
+      if (isDuplicateLeadIdError(retryError)) {
+        lastInsertError = retryError?.message || null;
+        continue;
+      }
+
+      if (retryError) {
+        if (retryError.message.includes('does not exist') || retryError.message.includes('relation') || retryError.code === '42P01') {
+          return { error: 'Leads table does not exist. Please run the SQL migration in Supabase.' };
+        }
+        return { error: retryError.message };
+      }
+    }
+
+    if (error?.message.includes('does not exist') || error?.message.includes('relation') || error?.code === '42P01') {
+      return { error: 'Leads table does not exist. Please run the SQL migration in Supabase.' };
+    }
+
+    return { error: error?.message || 'Failed to create lead' };
+  }
+
+  if (!data) {
+    return { error: lastInsertError || 'Unable to generate unique Lead ID. Please try again.' };
+  }
+
+  void addLeadLifecycleLog(supabase, {
+    leadId: data.id,
+    actionType: 'lead_created',
+    actionLabel: 'Lead Created',
+    performedBy: session.username || 'sales-agent',
+    newValues: {
+      name: data.name,
+      number: data.number,
+      source: data.source,
+      status: data.status,
+    },
+  });
+
+  scheduleLeadDashboardRevalidation();
+  return { success: true, lead: data };
+}
+
 export async function createLead(formData: FormData) {
   try {
     const session = await getSession();
@@ -99,15 +363,7 @@ export async function createLead(formData: FormData) {
     }
 
     // Allow admins or sales agents with "lead" permission
-    if (session.role === 'admin') {
-      // Admin has access
-    } else if (session.role === 'sales_agent') {
-      const { hasPermission } = await import('@/lib/auth/permissions');
-      const hasAccess = await hasPermission('lead');
-      if (!hasAccess) {
-        return { error: 'Unauthorized' };
-      }
-    } else {
+    if (session.role !== 'admin' && session.role !== 'sales_agent') {
       return { error: 'Unauthorized' };
     }
 
@@ -126,139 +382,74 @@ export async function createLead(formData: FormData) {
 
     const supabase = await createAdminClient();
 
-    // Get sales agent by username
-    const { data: salesAgent, error: agentError } = await supabase
-      .from('sales_agents')
-      .select('id')
-      .eq('username', session.username)
-      .single();
+    // Normalize name: allow it to be empty; NOT NULL constraint is satisfied by using empty string instead of null
+    const safeName = (name ?? '').trim();
+    const phoneResult = normalizePakistaniPhone(number);
+    if (!phoneResult.ok) {
+      return { error: phoneResult.error };
+    }
+    const canonicalPhone = phoneResult.value;
+    const displayPhone = formatLeadPhoneForStorage(number, canonicalPhone);
+
+    const [{ data: salesAgent, error: agentError }, duplicateLead] = await Promise.all([
+      supabase
+        .from('sales_agents')
+        .select('id, permissions')
+        .eq('username', session.username)
+        .single(),
+      findDuplicateLeadByPhone(supabase, number, canonicalPhone),
+    ]);
+
+    if (agentError?.message.includes('permissions') || agentError?.message.includes('column "permissions"')) {
+      const { data: fallbackAgent, error: fallbackError } = await supabase
+        .from('sales_agents')
+        .select('id')
+        .eq('username', session.username)
+        .single();
+
+      if (fallbackError || !fallbackAgent) {
+        return { error: 'Sales agent not found' };
+      }
+
+      if (duplicateLead) {
+        return { error: formatDuplicateLeadPhoneError(duplicateLead) };
+      }
+
+      return await finishCreateLead({
+        supabase,
+        session,
+        salesAgent: fallbackAgent,
+        safeName,
+        displayPhone,
+        canonicalPhone,
+        source: source as 'Meta' | 'LinkedIn' | 'WhatsApp' | 'Others',
+      });
+    }
 
     if (agentError || !salesAgent) {
       return { error: 'Sales agent not found' };
     }
 
-    // Normalize name: allow it to be empty; NOT NULL constraint is satisfied by using empty string instead of null
-    const safeName = (name ?? '').trim();
-    const safeNumber = number.trim();
-
-    // Prevent duplicate lead creation by phone number (existing duplicates remain untouched).
-    const { data: duplicateLeadRows, error: duplicateLeadError } = await supabase
-      .from('leads')
-      .select('name, lead_id_formatted')
-      .eq('number', safeNumber)
-      .order('created_at', { ascending: true })
-      .limit(1);
-
-    if (duplicateLeadError) {
-      return { error: duplicateLeadError.message };
+    if (session.role === 'sales_agent') {
+      const permissions = (salesAgent as { permissions?: string[] | null }).permissions;
+      if (Array.isArray(permissions) && !permissions.includes('lead')) {
+        return { error: 'Unauthorized' };
+      }
     }
 
-    const duplicateLead = (duplicateLeadRows || [])[0];
     if (duplicateLead) {
-      const existingLeadName = (duplicateLead.name || 'Unknown').trim() || 'Unknown';
-      const existingLeadId = duplicateLead.lead_id_formatted ? ` (#${duplicateLead.lead_id_formatted})` : '';
-      return {
-        error: `A lead with this number already exists under the name: ${existingLeadName}${existingLeadId}. This number already has a lead created.`,
-      };
+      return { error: formatDuplicateLeadPhoneError(duplicateLead) };
     }
 
-    // Generate a unique random 6-digit Lead ID
-    let leadIdFormatted: string | null = null;
-    let attempts = 0;
-    while (attempts < 100) {
-      const candidate = String(100000 + Math.floor(Math.random() * 900000));
-      const { data: existing } = await supabase
-        .from('leads')
-        .select('id')
-        .eq('lead_id_formatted', candidate)
-        .maybeSingle();
-      if (!existing) {
-        leadIdFormatted = candidate;
-        break;
-      }
-      attempts++;
-    }
-
-    if (!leadIdFormatted) {
-      return { error: 'Unable to generate unique Lead ID. Please try again.' };
-    }
-
-    // Create the lead with initial status 'Leads'
-    const { data, error } = await supabase
-      .from('leads')
-      .insert([{
-        name: safeName,
-        number: safeNumber,
-        source: source as 'Meta' | 'LinkedIn' | 'WhatsApp' | 'Others',
-        status: 'Leads',
-        sales_agent_id: salesAgent.id,
-        created_by_sales_agent_id: salesAgent.id,
-        lead_id_formatted: leadIdFormatted,
-      }])
-      .select()
-      .single();
-
-    if (error) {
-      if (error.message.includes('created_by_sales_agent_id') || error.message.includes('column "created_by_sales_agent_id"')) {
-        const { data: retryData, error: retryError } = await supabase
-          .from('leads')
-          .insert([{
-            name: safeName,
-            number: safeNumber,
-            source: source as 'Meta' | 'LinkedIn' | 'WhatsApp' | 'Others',
-            status: 'Leads',
-            sales_agent_id: salesAgent.id,
-            lead_id_formatted: leadIdFormatted,
-          }])
-          .select()
-          .single();
-
-        if (retryError) {
-          if (retryError.message.includes('does not exist') || retryError.message.includes('relation') || retryError.code === '42P01') {
-            return { error: 'Leads table does not exist. Please run the SQL migration in Supabase.' };
-          }
-          return { error: retryError.message };
-        }
-
-        await addLeadLifecycleLog(supabase, {
-          leadId: retryData.id,
-          actionType: 'lead_created',
-          actionLabel: 'Lead Created',
-          performedBy: session.username || 'sales-agent',
-          newValues: {
-            name: retryData.name,
-            number: retryData.number,
-            source: retryData.source,
-            status: retryData.status,
-          },
-        });
-
-        revalidatePath('/sales-agent/dashboard');
-        revalidatePath('/admin/dashboard');
-        return { success: true, lead: retryData as Lead };
-      }
-      if (error.message.includes('does not exist') || error.message.includes('relation') || error.code === '42P01') {
-        return { error: 'Leads table does not exist. Please run the SQL migration in Supabase.' };
-      }
-      return { error: error.message };
-    }
-
-    await addLeadLifecycleLog(supabase, {
-      leadId: data.id,
-      actionType: 'lead_created',
-      actionLabel: 'Lead Created',
-      performedBy: session.username || 'sales-agent',
-      newValues: {
-        name: data.name,
-        number: data.number,
-        source: data.source,
-        status: data.status,
-      },
+    return await finishCreateLead({
+      supabase,
+      session,
+      salesAgent,
+      safeName,
+      displayPhone,
+      canonicalPhone,
+      source: source as 'Meta' | 'LinkedIn' | 'WhatsApp' | 'Others',
     });
-
-    revalidatePath('/sales-agent/dashboard');
-    revalidatePath('/admin/dashboard');
-    return { success: true, lead: data as Lead };
   } catch (err) {
     return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };
   }
@@ -346,50 +537,99 @@ export async function getAllLeadsForSalesAgent() {
 
 export async function getLeadForSalesAgentById(leadId: string) {
   try {
+    const result = await getSalesAgentLeadDetailBootstrap(leadId);
+    if ('error' in result) return result;
+    return { lead: result.lead };
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };
+  }
+}
+
+export type LeadDetailBootstrap = {
+  lead: Lead;
+  inquiries: LeadInquiry[];
+  approvedInquiryId: string | null;
+};
+
+/** Single round-trip bootstrap for the sales-agent lead detail page (lead + inquiries). */
+export async function getSalesAgentLeadDetailBootstrap(
+  leadId: string
+): Promise<LeadDetailBootstrap | { error: string }> {
+  try {
     const session = await getSession();
     if (!session || session.role !== 'sales_agent') {
       return { error: 'Unauthorized' };
     }
 
-    const { hasPermission } = await import('@/lib/auth/permissions');
-    const hasLead = await hasPermission('lead');
-    const hasPipeline = await hasPermission('pipeline');
-    if (!hasLead && !hasPipeline) {
-      return { error: 'Unauthorized' };
-    }
-
     const supabase = await createAdminClient();
 
-    const { data: salesAgent, error: agentError } = await supabase
-      .from('sales_agents')
-      .select('id')
-      .eq('username', session.username)
-      .single();
+    const [agentResult, leadResult, inquiryResult] = await Promise.all([
+      supabase
+        .from('sales_agents')
+        .select('id, permissions')
+        .eq('username', session.username)
+        .maybeSingle(),
+      supabase.from('leads').select(LEAD_DETAIL_SELECT).eq('id', leadId).maybeSingle(),
+      listInquiriesForLead(supabase, leadId, session.role),
+    ]);
 
-    if (agentError || !salesAgent) {
+    if (agentResult.error) {
+      if (
+        agentResult.error.message.includes('permissions') ||
+        agentResult.error.message.includes('column "permissions"')
+      ) {
+        const { data: fallbackAgent, error: fallbackError } = await supabase
+          .from('sales_agents')
+          .select('id')
+          .eq('username', session.username)
+          .maybeSingle();
+
+        if (fallbackError || !fallbackAgent) {
+          return { error: 'Sales agent not found' };
+        }
+
+        if (leadResult.error) {
+          return { error: leadResult.error.message };
+        }
+        if (!leadResult.data || leadResult.data.sales_agent_id !== fallbackAgent.id) {
+          return { error: 'Lead not found' };
+        }
+        if ('error' in inquiryResult) return inquiryResult;
+
+        const lead = leadResult.data as Lead;
+        return {
+          lead: lead.status ? lead : { ...lead, status: 'Leads' as LeadStatus },
+          inquiries: inquiryResult.inquiries,
+          approvedInquiryId: inquiryResult.approvedInquiryId,
+        };
+      }
+      return { error: agentResult.error.message };
+    }
+
+    const salesAgent = agentResult.data;
+    if (!salesAgent) {
       return { error: 'Sales agent not found' };
     }
 
-    const { data, error } = await supabase
-      .from('leads')
-      .select('*')
-      .eq('id', leadId)
-      .eq('sales_agent_id', salesAgent.id)
-      .maybeSingle();
-
-    if (error) {
-      return { error: error.message };
+    const permissions = (salesAgent as { permissions?: string[] | null }).permissions;
+    if (Array.isArray(permissions) && !permissions.includes('lead') && !permissions.includes('pipeline')) {
+      return { error: 'Unauthorized' };
     }
-    if (!data) {
+
+    if (leadResult.error) {
+      return { error: leadResult.error.message };
+    }
+    if (!leadResult.data || leadResult.data.sales_agent_id !== salesAgent.id) {
       return { error: 'Lead not found' };
     }
+    if ('error' in inquiryResult) return inquiryResult;
 
-    const lead = data as Lead;
-    const leadWithStatus: Lead = lead.status
-      ? lead
-      : { ...lead, status: 'Leads' as LeadStatus };
-
-    return { lead: leadWithStatus };
+    const lead = leadResult.data as Lead;
+    return {
+      lead: lead.status ? lead : { ...lead, status: 'Leads' as LeadStatus },
+      inquiries: inquiryResult.inquiries,
+      approvedInquiryId: inquiryResult.approvedInquiryId,
+    };
   } catch (err) {
     return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };
   }
@@ -871,6 +1111,13 @@ export async function updateLead(formData: FormData) {
       return { error: 'Sales agent not found' };
     }
 
+    const phoneResult = normalizePakistaniPhone(number);
+    if (!phoneResult.ok) {
+      return { error: phoneResult.error };
+    }
+    const canonicalPhone = phoneResult.value;
+    const displayPhone = formatLeadPhoneForStorage(number, canonicalPhone);
+
     // Verify the lead belongs to this sales agent
     const { data: lead, error: leadError } = await supabase
       .from('leads')
@@ -882,12 +1129,18 @@ export async function updateLead(formData: FormData) {
       return { error: 'Lead not found or unauthorized' };
     }
 
+    const duplicateLead = await findDuplicateLeadByPhone(supabase, number, canonicalPhone, leadId);
+    if (duplicateLead) {
+      return { error: formatDuplicateLeadPhoneError(duplicateLead) };
+    }
+
     // Update the lead
     const { data, error } = await supabase
       .from('leads')
       .update({
         name: name.trim(),
-        number: number.trim(),
+        number: displayPhone,
+        number_normalized: canonicalPhone,
         source: source as 'Meta' | 'LinkedIn' | 'WhatsApp' | 'Others',
         updated_at: new Date().toISOString()
       })
@@ -896,6 +1149,43 @@ export async function updateLead(formData: FormData) {
       .single();
 
     if (error) {
+      if (error.message.includes('number_normalized')) {
+        const { data: retryData, error: retryError } = await supabase
+          .from('leads')
+          .update({
+            name: name.trim(),
+            number: displayPhone,
+            source: source as 'Meta' | 'LinkedIn' | 'WhatsApp' | 'Others',
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', leadId)
+          .select()
+          .single();
+
+        if (!retryError) {
+          await addLeadLifecycleLog(supabase, {
+            leadId,
+            actionType: 'lead_updated',
+            actionLabel: 'Lead Updated',
+            performedBy: session.username || 'sales-agent',
+            previousValues: {
+              name: lead.name,
+              number: lead.number,
+              source: lead.source,
+            },
+            newValues: {
+              name: retryData.name,
+              number: retryData.number,
+              source: retryData.source,
+            },
+            metadata: { change_type: 'lead_profile' },
+          });
+
+          revalidatePath('/sales-agent/dashboard');
+          revalidatePath('/admin/dashboard');
+          return { success: true, lead: retryData as Lead };
+        }
+      }
       if (error.message.includes('does not exist') || error.message.includes('relation') || error.code === '42P01') {
         return { error: 'Leads table does not exist. Please run the SQL migration in Supabase.' };
       }

@@ -7,9 +7,10 @@ export type LeadInquiriesCacheEntry = {
   fetchedAt: number;
 };
 
-const CLIENT_CACHE_TTL_MS = 30000;
+const CLIENT_CACHE_TTL_MS = 120000;
 
 const cache = new Map<string, LeadInquiriesCacheEntry>();
+const inFlight = new Map<string, Promise<void>>();
 
 function isFresh(entry: LeadInquiriesCacheEntry) {
   return Date.now() - entry.fetchedAt < CLIENT_CACHE_TTL_MS;
@@ -41,11 +42,27 @@ export function invalidateCachedLeadInquiries(leadId?: string) {
 
 export async function prefetchLeadInquiries(leadId: string) {
   if (!leadId || getCachedLeadInquiries(leadId)) return;
-  const result = await getInquiriesForLead(leadId);
-  if ("error" in result) return;
-  setCachedLeadInquiries(leadId, {
-    inquiries: result.inquiries || [],
-    approvedInquiryId:
-      ("approvedInquiryId" in result ? result.approvedInquiryId : null) || null,
-  });
+
+  const existing = inFlight.get(leadId);
+  if (existing) {
+    await existing;
+    return;
+  }
+
+  const task = (async () => {
+    const result = await getInquiriesForLead(leadId);
+    if ("error" in result) return;
+    setCachedLeadInquiries(leadId, {
+      inquiries: result.inquiries || [],
+      approvedInquiryId:
+        ("approvedInquiryId" in result ? result.approvedInquiryId : null) || null,
+    });
+  })();
+
+  inFlight.set(leadId, task);
+  try {
+    await task;
+  } finally {
+    inFlight.delete(leadId);
+  }
 }

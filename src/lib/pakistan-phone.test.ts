@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { normalizePakistaniPhone, normalizePhoneDigits, formatLeadPhoneForStorage } from './pakistan-phone.ts';
+import { normalizePakistaniPhone, normalizePhoneDigits, formatLeadPhoneForStorage } from './pakistan-phone';
 
 test('normalizePhoneDigits strips formatting characters', () => {
   assert.equal(normalizePhoneDigits('  +92 (300) 123-4567 '), '923001234567');

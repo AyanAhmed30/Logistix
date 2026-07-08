@@ -26,6 +26,7 @@ import {
   setCachedInquiryConfirmations,
   invalidateCachedInquiryConfirmations,
 } from "@/lib/admin-inquiry-confirmations-cache";
+import { InquiryProformaInvoiceSection } from "@/components/admin/InquiryProformaInvoiceSection";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -526,6 +527,7 @@ export function InquiryConfirmationPanel() {
             )}
           </CardContent>
         </Card>
+        <InquiryProformaInvoiceSection />
         <Dialog open={!!imagePreview} onOpenChange={(open) => { if (!open) setImagePreview(null); }}>
           <DialogContent className="sm:max-w-5xl w-[95vw] max-h-[95vh] p-4">
             <DialogHeader>

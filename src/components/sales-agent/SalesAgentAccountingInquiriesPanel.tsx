@@ -49,6 +49,7 @@ import { SalesAgentFinalRateCard } from "@/components/sales-agent/SalesAgentFina
 import {
   classifyInquiryAttachment,
   collectInquiryAttachmentUrls,
+  collectOperationsConfirmationAttachmentUrls,
 } from "@/lib/inquiry-attachments";
 
 function downloadPdfFile(filename: string, base64: string) {
@@ -173,8 +174,7 @@ function collectDetailImageUrls(
       approvedConfirmation.sales_additional_image_urls || []
     );
     confirmationUrls.forEach(addIfImage);
-    addIfImage(approvedConfirmation.additional_image_1_url);
-    addIfImage(approvedConfirmation.additional_image_2_url);
+    collectOperationsConfirmationAttachmentUrls(approvedConfirmation).forEach(addIfImage);
   }
 
   return Array.from(urls);

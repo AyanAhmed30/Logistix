@@ -14,6 +14,7 @@ import {
   addInquiryActivity,
   addInquiryCalculatorFieldLog,
   saveInquiryCalculatorField,
+  saveInquiryCalculatorPayload,
   getLeadChatMessages,
   sendLeadChatMessage,
   type LeadInquiryWithLead,
@@ -32,12 +33,16 @@ import {
   type InquiryConfirmation,
 } from "@/app/actions/inquiry_confirmations";
 import { InquiryAttachmentList } from "@/components/inquiry/InquiryAttachmentList";
-import { InquiryPricingSummary } from "@/components/admin/InquiryPricingSummary";
+import { InquiryCalculatorSection } from "@/components/admin/InquiryCalculatorSection";
+import { EstimatedDutiesAndTaxesBlock } from "@/components/admin/EstimatedDutiesAndTaxesBlock";
 import { collectInquiryAttachmentUrls } from "@/lib/inquiry-attachments";
+import { downloadLeadManagementPdf } from "@/lib/lead-management-pdf";
 import {
-  computeInquiryTaxBreakdown,
+  getEmptyCalculatorValues,
+  parseStoredCalculatorPayload,
+  serializeCalculatorPayload,
+  withDerivedInvValue,
   parsePricingConfig,
-  sanitizeCalculatorValues,
   type CalculatorPricingConfig,
 } from "@/lib/inquiry-calculator";
 import { Card, CardContent } from "@/components/ui/card";
@@ -62,13 +67,6 @@ import {
 } from "@/components/ui/dialog";
 import { Textarea } from "@/components/ui/textarea";
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import {
   FileText,
   ClipboardList,
   Search,
@@ -87,6 +85,8 @@ import {
   Pencil,
   Trash2,
   Save,
+  Plus,
+  Download,
 } from "lucide-react";
 
 // ─── Helpers ─────────────────────────────────────────────────────────
@@ -143,6 +143,20 @@ function getLatestConfirmationStatus(inquiry: LeadInquiryWithLead): string | nul
 type ViewMode = "list" | "detail";
 const PAGE_SIZE = 20;
 
+type OperationsFormAttachment = {
+  id: string;
+  file: File | null;
+  preview: string | null;
+};
+
+function createOperationsAttachment(): OperationsFormAttachment {
+  return {
+    id: `att-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+    file: null,
+    preview: null,
+  };
+}
+
 export function OperationsLeadsInquiryPanel({
   focusLeadId,
   focusInquiryId,
@@ -171,16 +185,14 @@ export function OperationsLeadsInquiryPanel({
   const [formWeight, setFormWeight] = useState("");
   const [formCbm, setFormCbm] = useState("");
   const [formQuantity, setFormQuantity] = useState("");
-  const [additionalImage1, setAdditionalImage1] = useState<File | null>(null);
-  const [additionalImage1Preview, setAdditionalImage1Preview] = useState<string | null>(null);
-  const [additionalImage2, setAdditionalImage2] = useState<File | null>(null);
-  const [additionalImage2Preview, setAdditionalImage2Preview] = useState<string | null>(null);
+  const [operationsAttachments, setOperationsAttachments] = useState<OperationsFormAttachment[]>(() => [
+    createOperationsAttachment(),
+  ]);
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [activeUploadSlot, setActiveUploadSlot] = useState<1 | 2>(1);
-  const img1Ref = useRef<HTMLInputElement>(null);
-  const img2Ref = useRef<HTMLInputElement>(null);
-  const dropZone1Ref = useRef<HTMLDivElement>(null);
-  const dropZone2Ref = useRef<HTMLDivElement>(null);
+  const [isDownloadingPdf, setIsDownloadingPdf] = useState(false);
+  const [activeAttachmentId, setActiveAttachmentId] = useState<string | null>(null);
+  const operationsFileInputRef = useRef<HTMLInputElement>(null);
+  const leadManagementPdfRef = useRef<HTMLDivElement>(null);
   const activeInquiryIdRef = useRef<string | null>(null);
   const syncedCalculatorInquiryIdRef = useRef<string | null>(null);
 
@@ -213,100 +225,80 @@ export function OperationsLeadsInquiryPanel({
   const [imagePreview, setImagePreview] = useState<{ url: string; title: string } | null>(null);
 
   // Duty calculator state (Operations detail view)
-  const [calcInvValue, setCalcInvValue] = useState("0");
-  const [calcExchangeRate, setCalcExchangeRate] = useState("0");
-  const [calcCustomDutyRate, setCalcCustomDutyRate] = useState("0");
-  const [calcAddCdRate, setCalcAddCdRate] = useState("0");
-  const [calcGstRate, setCalcGstRate] = useState("0");
-  const [calcAddGstRate, setCalcAddGstRate] = useState("0");
-  const [calcIncomeTaxRate, setCalcIncomeTaxRate] = useState("0");
-  const [calcExciseRate, setCalcExciseRate] = useState("0");
-  const [calcRegularDutyRate, setCalcRegularDutyRate] = useState("0");
-  const [calcStampDutyRate, setCalcStampDutyRate] = useState("0");
-  const [calcInvFine, setCalcInvFine] = useState("0");
-  const [calcUom, setCalcUom] = useState("KG");
-  const [calcQuantity, setCalcQuantity] = useState("0");
-  const [calcHsCode, setCalcHsCode] = useState("");
-  const [lastCalcSnapshot, setLastCalcSnapshot] = useState<Record<string, string>>({});
+  const [calculators, setCalculators] = useState<Record<string, string>[]>(() => [
+    getEmptyCalculatorValues(),
+  ]);
+  const [operationsDescription, setOperationsDescription] = useState("");
+  const [lastCalcSnapshot, setLastCalcSnapshot] = useState<Record<string, string>>(() =>
+    getEmptyCalculatorValues()
+  );
   const [pricingConfig, setPricingConfig] = useState<CalculatorPricingConfig>(() =>
     parsePricingConfig(initialBootstrap?.calculatorValues ?? {})
   );
 
-  const getDefaultCalculatorValues = useCallback(() => ({
-    inv_value: "0",
-    exchange_rate: "0",
-    custom_duty_rate: "0",
-    add_cd_rate: "0",
-    gst_rate: "0",
-    add_gst_rate: "0",
-    income_tax_rate: "0",
-    excise_rate: "0",
-    regular_duty_rate: "0",
-    stamp_duty_rate: "0",
-    inv_fine: "0",
-    uom: "KG",
-    quantity: "0",
-    hs_code: "",
-  }), []);
+  const getDefaultCalculatorValues = useCallback(() => getEmptyCalculatorValues(), []);
 
-  const applyCalculatorValues = useCallback((values: Record<string, string>) => {
-    setCalcInvValue(values.inv_value ?? "0");
-    setCalcExchangeRate(values.exchange_rate ?? "0");
-    setCalcCustomDutyRate(values.custom_duty_rate ?? "0");
-    setCalcAddCdRate(values.add_cd_rate ?? "0");
-    setCalcGstRate(values.gst_rate ?? "0");
-    setCalcAddGstRate(values.add_gst_rate ?? "0");
-    setCalcIncomeTaxRate(values.income_tax_rate ?? "0");
-    setCalcExciseRate(values.excise_rate ?? "0");
-    setCalcRegularDutyRate(values.regular_duty_rate ?? "0");
-    setCalcStampDutyRate(values.stamp_duty_rate ?? "0");
-    setCalcInvFine(values.inv_fine ?? "0");
-    setCalcUom(values.uom ?? "KG");
-    setCalcQuantity(values.quantity ?? "0");
-    setCalcHsCode(values.hs_code ?? "");
+  const buildCalculatorsForInquiry = useCallback((inquiry: LeadInquiryWithLead) => {
+    const inquiryQuantity = inquiry.quantity?.trim() || "0";
+    const parsed = parseStoredCalculatorPayload(inquiry.calculator_values);
+    const resolved = parsed.calculators.map((values) => ({
+      ...getEmptyCalculatorValues(),
+      ...values,
+      quantity: String(values.quantity ?? inquiryQuantity).trim() || inquiryQuantity,
+    }));
+    return {
+      calculators: resolved.length > 0 ? resolved : [{ ...getEmptyCalculatorValues(), quantity: inquiryQuantity }],
+      operationsDescription: parsed.operationsDescription,
+    };
   }, []);
-
-  const resolveCalculatorValuesForInquiry = useCallback(
-    (inquiry: LeadInquiryWithLead) => {
-      const defaults = getDefaultCalculatorValues();
-      const inquiryQuantity = inquiry.quantity?.trim() || "0";
-      const saved =
-        inquiry.calculator_values && typeof inquiry.calculator_values === "object"
-          ? sanitizeCalculatorValues(inquiry.calculator_values as Record<string, unknown>)
-          : {};
-      const hasSaved = Object.keys(saved).length > 0;
-
-      if (hasSaved) {
-        return {
-          ...defaults,
-          ...saved,
-          quantity: String(saved.quantity ?? inquiryQuantity).trim() || inquiryQuantity,
-        };
-      }
-
-      // Fresh inquiry: empty defaults only (no values carried from shared config or prior inquiries).
-      return {
-        ...defaults,
-        quantity: inquiryQuantity,
-      };
-    },
-    [getDefaultCalculatorValues]
-  );
 
   const initializeCalculatorForInquiry = useCallback(
     (inquiry: LeadInquiryWithLead) => {
-      const resolved = resolveCalculatorValuesForInquiry(inquiry);
-      applyCalculatorValues(resolved);
-      setLastCalcSnapshot(resolved);
+      const { calculators: resolvedCalculators, operationsDescription: resolvedDescription } =
+        buildCalculatorsForInquiry(inquiry);
+      setCalculators(resolvedCalculators);
+      setOperationsDescription(resolvedDescription);
+      setLastCalcSnapshot(resolvedCalculators[0] ?? getEmptyCalculatorValues());
     },
-    [applyCalculatorValues, resolveCalculatorValuesForInquiry]
+    [buildCalculatorsForInquiry]
   );
 
   const resetCalculatorState = useCallback(() => {
-    const defaults = getDefaultCalculatorValues();
-    applyCalculatorValues(defaults);
+    const defaults = getEmptyCalculatorValues();
+    setCalculators([defaults]);
+    setOperationsDescription("");
     setLastCalcSnapshot(defaults);
-  }, [applyCalculatorValues, getDefaultCalculatorValues]);
+  }, []);
+
+  const updateCalculatorAt = useCallback((index: number, values: Record<string, string>) => {
+    setCalculators((prev) => {
+      const next = [...prev];
+      next[index] = withDerivedInvValue(values);
+      return next;
+    });
+  }, []);
+
+  const addCalculator = useCallback(() => {
+    setCalculators((prev) => [...prev, getEmptyCalculatorValues()]);
+  }, []);
+
+  const persistCalculatorPayload = useCallback(async () => {
+    if (!selectedInquiry) return;
+    const payload = serializeCalculatorPayload(calculators, operationsDescription);
+    const result = await saveInquiryCalculatorPayload(selectedInquiry.id, payload);
+    if ("error" in result) {
+      toast.error(result.error || "Failed to save calculator data.");
+      return;
+    }
+    setSelectedInquiry((prev) =>
+      prev
+        ? {
+            ...prev,
+            calculator_values: payload as Record<string, unknown>,
+          }
+        : prev
+    );
+  }, [selectedInquiry, calculators, operationsDescription]);
 
   const refreshInquiryLogs = useCallback(async (leadId: string, inquiryId?: string) => {
     try {
@@ -344,6 +336,12 @@ export function OperationsLeadsInquiryPanel({
       );
 
       setLastCalcSnapshot((prev) => ({ ...prev, [field]: currentValue }));
+      setCalculators((prev) => {
+        if (prev.length === 0) return prev;
+        const next = [...prev];
+        next[0] = withDerivedInvValue({ ...next[0], [field]: currentValue });
+        return next;
+      });
       await refreshInquiryLogs(selectedInquiry.lead_id, selectedInquiry.id);
     },
     [lastCalcSnapshot, refreshInquiryLogs, selectedInquiry]
@@ -484,7 +482,8 @@ export function OperationsLeadsInquiryPanel({
     }
 
     const defaults = getDefaultCalculatorValues();
-    applyCalculatorValues(defaults);
+    setCalculators([defaults]);
+    setOperationsDescription("");
     setLastCalcSnapshot(defaults);
     initializeCalculatorForInquiry(selectedInquiry);
     syncedCalculatorInquiryIdRef.current = inquiryId;
@@ -492,7 +491,6 @@ export function OperationsLeadsInquiryPanel({
     view,
     selectedInquiry,
     initializeCalculatorForInquiry,
-    applyCalculatorValues,
     getDefaultCalculatorValues,
   ]);
 
@@ -502,7 +500,8 @@ export function OperationsLeadsInquiryPanel({
     syncedCalculatorInquiryIdRef.current = null;
 
     const defaults = getDefaultCalculatorValues();
-    applyCalculatorValues(defaults);
+    setCalculators([defaults]);
+    setOperationsDescription("");
     setLastCalcSnapshot(defaults);
 
     setSelectedInquiry(inquiry);
@@ -646,10 +645,12 @@ export function OperationsLeadsInquiryPanel({
     setFormWeight("");
     setFormCbm("");
     setFormQuantity("");
-    setAdditionalImage1(null);
-    setAdditionalImage1Preview(null);
-    setAdditionalImage2(null);
-    setAdditionalImage2Preview(null);
+    setOperationsAttachments([createOperationsAttachment()]);
+    setActiveAttachmentId(null);
+  }
+
+  function addOperationsAttachment() {
+    setOperationsAttachments((prev) => [...prev, createOperationsAttachment()]);
   }
 
   // ─── Edit helpers ──────────────────────────────────────────────────
@@ -696,7 +697,17 @@ export function OperationsLeadsInquiryPanel({
           description: editDescription.trim(),
         };
         setSelectedInquiry(updatedInquiry);
-        setCalcQuantity(editQuantity.trim() || "0");
+        setCalculators((prev) => {
+          if (prev.length === 0) {
+            return [{ ...getEmptyCalculatorValues(), quantity: editQuantity.trim() || "0" }];
+          }
+          const next = [...prev];
+          next[0] = withDerivedInvValue({
+            ...next[0],
+            quantity: editQuantity.trim() || next[0].quantity || "0",
+          });
+          return next;
+        });
         setLastCalcSnapshot((prev) => ({ ...prev, quantity: editQuantity.trim() || "0" }));
         setIsEditing(false);
         await refreshInquiryLogs(selectedInquiry.lead_id, selectedInquiry.id);
@@ -782,58 +793,60 @@ export function OperationsLeadsInquiryPanel({
     return extractImageFileFromItems(data.items);
   }, [extractImageFileFromFileList, extractImageFileFromItems]);
 
-  const processImageUpload = useCallback((file: File | null, slot: 1 | 2) => {
-    if (!file) return false;
-    const ext = (file.name.split(".").pop() || "").toLowerCase();
-    const imageExts = new Set(["jpg", "jpeg", "png", "gif", "webp", "bmp", "svg", "heic", "heif", "avif"]);
-    const isImageLike = file.type?.startsWith("image/") || imageExts.has(ext);
-    if (!isSupportedAttachmentFile(file)) {
-      toast.error("Unsupported file type.");
-      return false;
-    }
-    if (file.size > 5 * 1024 * 1024) {
-      toast.error("File must be less than 5 MB.");
-      return false;
-    }
+  const updateOperationsAttachment = useCallback(
+    (attachmentId: string, patch: Partial<OperationsFormAttachment>) => {
+      setOperationsAttachments((prev) =>
+        prev.map((item) => (item.id === attachmentId ? { ...item, ...patch } : item))
+      );
+    },
+    []
+  );
 
-    if (slot === 1) {
-      setAdditionalImage1(file);
-    } else {
-      setAdditionalImage2(file);
-    }
-
-    if (!isImageLike) {
-      const label = `doc://${encodeURIComponent(file.name)}`;
-      if (slot === 1) {
-        setAdditionalImage1Preview(label);
-      } else {
-        setAdditionalImage2Preview(label);
+  const processImageUpload = useCallback(
+    (file: File | null, attachmentId: string) => {
+      if (!file) return false;
+      const ext = (file.name.split(".").pop() || "").toLowerCase();
+      const imageExts = new Set(["jpg", "jpeg", "png", "gif", "webp", "bmp", "svg", "heic", "heif", "avif"]);
+      const isImageLike = file.type?.startsWith("image/") || imageExts.has(ext);
+      if (!isSupportedAttachmentFile(file)) {
+        toast.error("Unsupported file type.");
+        return false;
       }
+      if (file.size > 5 * 1024 * 1024) {
+        toast.error("File must be less than 5 MB.");
+        return false;
+      }
+
+      updateOperationsAttachment(attachmentId, { file });
+
+      if (!isImageLike) {
+        updateOperationsAttachment(attachmentId, {
+          file,
+          preview: `doc://${encodeURIComponent(file.name)}`,
+        });
+        return true;
+      }
+
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        const url = e.target?.result as string;
+        updateOperationsAttachment(attachmentId, { file, preview: url });
+      };
+      reader.onerror = () => {
+        toast.error("Unable to read selected file. Please try another file.");
+      };
+      reader.readAsDataURL(file);
       return true;
-    }
+    },
+    [isSupportedAttachmentFile, updateOperationsAttachment]
+  );
 
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      const url = e.target?.result as string;
-      if (slot === 1) {
-        setAdditionalImage1Preview(url);
-      } else {
-        setAdditionalImage2Preview(url);
-      }
-    };
-    reader.onerror = () => {
-      toast.error("Unable to read selected file. Please try another file.");
-    };
-    reader.readAsDataURL(file);
-    return true;
-  }, [isSupportedAttachmentFile]);
-
-  function handleDrop(e: React.DragEvent, slot: 1 | 2) {
+  function handleDrop(e: React.DragEvent, attachmentId: string) {
     e.preventDefault();
     e.stopPropagation();
-    setActiveUploadSlot(slot);
+    setActiveAttachmentId(attachmentId);
     const file = extractImageFileFromFileList(e.dataTransfer.files);
-    processImageUpload(file, slot);
+    processImageUpload(file, attachmentId);
   }
 
   function handleDragOver(e: React.DragEvent) {
@@ -850,64 +863,84 @@ export function OperationsLeadsInquiryPanel({
 
       e.preventDefault();
 
-      const activeEl = document.activeElement as Node | null;
-      const isInSlot1 =
-        !!activeEl &&
-        !!dropZone1Ref.current &&
-        (activeEl === dropZone1Ref.current || dropZone1Ref.current.contains(activeEl));
-      const isInSlot2 =
-        !!activeEl &&
-        !!dropZone2Ref.current &&
-        (activeEl === dropZone2Ref.current || dropZone2Ref.current.contains(activeEl));
-
-      let targetSlot: 1 | 2 = activeUploadSlot;
-      if (isInSlot1) {
-        targetSlot = 1;
-      } else if (isInSlot2) {
-        targetSlot = 2;
-      } else if (!additionalImage1) {
-        targetSlot = 1;
-      } else if (!additionalImage2) {
-        targetSlot = 2;
-      }
-
-      setActiveUploadSlot(targetSlot);
-      processImageUpload(file, targetSlot);
+      setOperationsAttachments((prev) => {
+        const empty = prev.find((item) => !item.file && !item.preview);
+        if (empty) {
+          setTimeout(() => processImageUpload(file, empty.id), 0);
+          return prev;
+        }
+        const newAttachment = createOperationsAttachment();
+        setTimeout(() => processImageUpload(file, newAttachment.id), 0);
+        return [...prev, newAttachment];
+      });
     }
 
-    // Capture phase helps when focused controls stop bubbling paste events.
     document.addEventListener("paste", handleGlobalPaste, true);
     return () => document.removeEventListener("paste", handleGlobalPaste, true);
-  }, [showForm, additionalImage1, additionalImage2, activeUploadSlot, extractImageFileFromClipboardData, processImageUpload]);
+  }, [showForm, extractImageFileFromClipboardData, processImageUpload]);
 
-  function handleZonePaste(e: React.ClipboardEvent, slot: 1 | 2) {
+  function handleZonePaste(e: React.ClipboardEvent, attachmentId: string) {
     const file = extractImageFileFromClipboardData(e.clipboardData);
     if (!file) return;
     e.preventDefault();
-    setActiveUploadSlot(slot);
-    processImageUpload(file, slot);
+    setActiveAttachmentId(attachmentId);
+    processImageUpload(file, attachmentId);
   }
 
-  function handleFileInputChange(e: React.ChangeEvent<HTMLInputElement>, slot: 1 | 2) {
-    setActiveUploadSlot(slot);
+  function handleFileInputChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const attachmentId = e.currentTarget.dataset.attachmentId || activeAttachmentId;
+    if (!attachmentId) return;
     const file = extractImageFileFromFileList(e.target.files);
     if (!file && e.target.files && e.target.files.length > 0) {
       toast.error("Selected file is not a supported attachment format.");
     } else {
-      processImageUpload(file, slot);
+      processImageUpload(file, attachmentId);
     }
     e.target.value = "";
   }
 
-  function removeImage(slot: 1 | 2) {
-    if (slot === 1) {
-      setAdditionalImage1(null);
-      setAdditionalImage1Preview(null);
-      if (img1Ref.current) img1Ref.current.value = "";
-    } else {
-      setAdditionalImage2(null);
-      setAdditionalImage2Preview(null);
-      if (img2Ref.current) img2Ref.current.value = "";
+  function removeOperationsAttachment(attachmentId: string) {
+    setOperationsAttachments((prev) => {
+      const next = prev.filter((item) => item.id !== attachmentId);
+      return next.length > 0 ? next : [createOperationsAttachment()];
+    });
+  }
+
+  function openOperationsAttachmentPicker(attachmentId: string) {
+    setActiveAttachmentId(attachmentId);
+    const input = operationsFileInputRef.current as (HTMLInputElement & { showPicker?: () => void }) | null;
+    if (!input) return;
+    input.value = "";
+    input.dataset.attachmentId = attachmentId;
+    try {
+      requestAnimationFrame(() => {
+        if (typeof input.showPicker === "function") {
+          input.showPicker();
+          return;
+        }
+        input.click();
+      });
+    } catch {
+      input.click();
+    }
+  }
+
+  async function handleDownloadLeadManagementPdf() {
+    if (!leadManagementPdfRef.current) {
+      toast.error("PDF content is not ready yet.");
+      return;
+    }
+    setIsDownloadingPdf(true);
+    try {
+      await downloadLeadManagementPdf(leadManagementPdfRef.current, {
+        leadNumber: selectedInquiry?.leads?.lead_id_formatted,
+        productName: formProductName,
+      });
+    } catch (error) {
+      console.error("Lead management PDF export failed:", error);
+      toast.error("Failed to generate PDF. Please try again.");
+    } finally {
+      setIsDownloadingPdf(false);
     }
   }
 
@@ -940,28 +973,20 @@ export function OperationsLeadsInquiryPanel({
     setIsSubmitting(true);
     try {
       // Upload additional images to storage and keep only URLs in DB/logs.
-      let img1Url: string | null = null;
-      let img2Url: string | null = null;
       const uploadErrors: string[] = [];
+      const operationsImageUrls: string[] = [];
 
-      if (additionalImage1) {
-        const upload1 = await uploadConfirmationImage(additionalImage1, "additional_1");
-        if ("error" in upload1) {
-          uploadErrors.push(`Image 1: ${upload1.error}`);
-          // Fall back to data URL for storage
-          img1Url = additionalImage1Preview || await fileToDataUrl(additionalImage1);
-        } else {
-          img1Url = upload1.url || null;
-        }
-      }
-      if (additionalImage2) {
-        const upload2 = await uploadConfirmationImage(additionalImage2, "additional_2");
-        if ("error" in upload2) {
-          uploadErrors.push(`Image 2: ${upload2.error}`);
-          // Fall back to data URL for storage
-          img2Url = additionalImage2Preview || await fileToDataUrl(additionalImage2);
-        } else {
-          img2Url = upload2.url || null;
+      for (let i = 0; i < operationsAttachments.length; i++) {
+        const attachment = operationsAttachments[i];
+        if (!attachment.file) continue;
+
+        const upload = await uploadConfirmationImage(attachment.file, `additional_${i + 1}`);
+        if ("error" in upload) {
+          uploadErrors.push(`Attachment ${i + 1}: ${upload.error}`);
+          const fallbackUrl = attachment.preview || (await fileToDataUrl(attachment.file));
+          if (fallbackUrl) operationsImageUrls.push(fallbackUrl);
+        } else if (upload.url) {
+          operationsImageUrls.push(upload.url);
         }
       }
 
@@ -970,11 +995,25 @@ export function OperationsLeadsInquiryPanel({
         toast.warning(`Some images couldn't be uploaded to storage but will be saved locally: ${uploadErrors.join(", ")}`);
       }
 
+      const primaryCalculator = calculators[0] ?? getEmptyCalculatorValues();
       const resolvedQuantity =
-        calcQuantity.trim() ||
+        primaryCalculator.quantity?.trim() ||
         (isEditing ? editQuantity : selectedInquiry.quantity)?.trim() ||
         formQuantity.trim() ||
         "0";
+
+      const calculatorsForSubmit = calculators.map((calcValues, index) => ({
+        ...calcValues,
+        quantity:
+          index === 0
+            ? resolvedQuantity
+            : calcValues.quantity?.trim() || resolvedQuantity,
+      }));
+
+      const serializedCalculatorValues = serializeCalculatorPayload(
+        calculatorsForSubmit,
+        operationsDescription
+      );
 
       const result = await submitInquiryForConfirmation({
         inquiry_id: selectedInquiry.id,
@@ -984,29 +1023,15 @@ export function OperationsLeadsInquiryPanel({
         total_weight: formWeight,
         cbm: formCbm,
         quantity: resolvedQuantity,
-        hs_code: calcHsCode,
-        calculator_values: {
-          inv_value: calcInvValue,
-          exchange_rate: calcExchangeRate,
-          custom_duty_rate: calcCustomDutyRate,
-          add_cd_rate: calcAddCdRate,
-          gst_rate: calcGstRate,
-          add_gst_rate: calcAddGstRate,
-          income_tax_rate: calcIncomeTaxRate,
-          excise_rate: calcExciseRate,
-          regular_duty_rate: calcRegularDutyRate,
-          stamp_duty_rate: calcStampDutyRate,
-          inv_fine: calcInvFine,
-          uom: calcUom,
-          quantity: resolvedQuantity,
-          hs_code: calcHsCode,
-        },
+        hs_code: primaryCalculator.hs_code ?? "",
+        calculator_values: serializedCalculatorValues,
         original_image_url: selectedInquiry.image_url,
         sales_additional_image_urls: Array.isArray(selectedInquiry.additional_image_urls)
           ? selectedInquiry.additional_image_urls
           : [],
-        additional_image_1_url: img1Url,
-        additional_image_2_url: img2Url,
+        operations_additional_image_urls: operationsImageUrls,
+        additional_image_1_url: operationsImageUrls[0] || null,
+        additional_image_2_url: operationsImageUrls[1] || null,
       });
 
       if ("error" in result) {
@@ -1036,50 +1061,28 @@ export function OperationsLeadsInquiryPanel({
   // ═══════════════════════════════════════════════════════════════════
 
   function ImageUploadSection({
-    slot,
+    attachmentId,
+    index,
     preview,
-    dropRef,
-    inputRef,
     onPreviewClick,
   }: {
-    slot: 1 | 2;
+    attachmentId: string;
+    index: number;
     preview: string | null;
-    dropRef: React.RefObject<HTMLDivElement | null>;
-    inputRef: React.RefObject<HTMLInputElement | null>;
     onPreviewClick: (url: string) => void;
   }) {
-    const inputId = `lead-management-image-${slot}`;
-    const openSystemPicker = () => {
-      setActiveUploadSlot(slot);
-      const input = inputRef.current as (HTMLInputElement & { showPicker?: () => void }) | null;
-      if (!input) return;
-      input.value = "";
-      try {
-        requestAnimationFrame(() => {
-          if (typeof input.showPicker === "function") {
-            input.showPicker();
-            return;
-          }
-          input.click();
-        });
-      } catch {
-        // Some browsers throw on showPicker for hidden inputs; fallback keeps file picker reliable.
-        input.click();
-      }
-    };
     return (
       <div className="space-y-2">
         <label className="text-xs font-medium text-slate-600">
-          Operations Attachment {slot}
+          Operations Attachment {index}
         </label>
         {preview ? (
           <div
-            ref={dropRef}
-            onDrop={(e) => handleDrop(e, slot)}
+            onDrop={(e) => handleDrop(e, attachmentId)}
             onDragOver={handleDragOver}
-            onPaste={(e) => handleZonePaste(e, slot)}
-            onFocus={() => setActiveUploadSlot(slot)}
-            onClick={() => setActiveUploadSlot(slot)}
+            onPaste={(e) => handleZonePaste(e, attachmentId)}
+            onFocus={() => setActiveAttachmentId(attachmentId)}
+            onClick={() => setActiveAttachmentId(attachmentId)}
             tabIndex={0}
             className="border rounded-lg p-2 space-y-2 focus:outline-none focus:ring-2 focus:ring-teal-500/30"
           >
@@ -1094,7 +1097,7 @@ export function OperationsLeadsInquiryPanel({
               ) : preview.startsWith("data:image/") || /\.(jpe?g|png|gif|webp)(\?|$)/i.test(preview) ? (
                 <img
                   src={preview}
-                  alt={`Additional ${slot}`}
+                  alt={`Additional ${index}`}
                   className="max-h-40 rounded object-contain cursor-zoom-in"
                   onClick={() => onPreviewClick(preview)}
                 />
@@ -1104,14 +1107,14 @@ export function OperationsLeadsInquiryPanel({
                   className="text-left text-sm text-teal-700 hover:underline max-w-full truncate"
                   onClick={() => onPreviewClick(preview)}
                 >
-                  {preview.split("/").pop()?.split("?")[0] || `Attachment ${slot}`}
+                  {preview.split("/").pop()?.split("?")[0] || `Attachment ${index}`}
                 </button>
               )}
               <button
                 type="button"
                 onClick={(e) => {
                   e.stopPropagation();
-                  removeImage(slot);
+                  removeOperationsAttachment(attachmentId);
                 }}
                 className="absolute -top-2 -right-2 bg-red-500 text-white rounded-full p-0.5 hover:bg-red-600"
               >
@@ -1124,25 +1127,24 @@ export function OperationsLeadsInquiryPanel({
                 size="sm"
                 variant="outline"
                 className="h-7 text-xs"
-                onClick={openSystemPicker}
+                onClick={() => openOperationsAttachmentPicker(attachmentId)}
               >
-                Change Image
+                Change File
               </Button>
               <span className="text-[11px] text-slate-400">You can also paste (Ctrl+V) to replace.</span>
             </div>
           </div>
         ) : (
           <div
-            ref={dropRef}
-            onDrop={(e) => handleDrop(e, slot)}
+            onDrop={(e) => handleDrop(e, attachmentId)}
             onDragOver={handleDragOver}
-            onPaste={(e) => handleZonePaste(e, slot)}
-            onFocus={() => setActiveUploadSlot(slot)}
-            onClick={openSystemPicker}
+            onPaste={(e) => handleZonePaste(e, attachmentId)}
+            onFocus={() => setActiveAttachmentId(attachmentId)}
+            onClick={() => openOperationsAttachmentPicker(attachmentId)}
             onKeyDown={(e) => {
               if (e.key === "Enter" || e.key === " ") {
                 e.preventDefault();
-                openSystemPicker();
+                openOperationsAttachmentPicker(attachmentId);
               }
             }}
             tabIndex={0}
@@ -1155,14 +1157,6 @@ export function OperationsLeadsInquiryPanel({
             <p className="text-xs text-slate-400 mt-1">Max 5 MB</p>
           </div>
         )}
-        <input
-          id={inputId}
-          ref={inputRef}
-          type="file"
-          accept="image/*,application/pdf,.doc,.docx,.xlsx,.xls,.txt,.csv"
-          className="absolute -left-[9999px] h-px w-px opacity-0"
-          onChange={(e) => handleFileInputChange(e, slot)}
-        />
       </div>
     );
   }
@@ -1182,95 +1176,20 @@ export function OperationsLeadsInquiryPanel({
       const n = parseFloat(String(v ?? "").replace(/,/g, ""));
       return Number.isFinite(n) ? n : 0;
     };
-    const fmtMoney = (n: number) =>
-      Number.isFinite(n)
-        ? n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
-        : "-";
-    const fmtRate = (v: string) => `${toNum(v).toFixed(2)}%`;
 
     const weightKg = toNum(isEditing ? editWeight : inq.total_weight);
     const cbm = toNum(isEditing ? editCbm : inq.cbm);
     const inquiryQuantity = (isEditing ? editQuantity : inq.quantity)?.trim() || "0";
 
-    const calculatorValuesRecord = {
-      inv_value: calcInvValue,
-      exchange_rate: calcExchangeRate,
-      custom_duty_rate: calcCustomDutyRate,
-      add_cd_rate: calcAddCdRate,
-      gst_rate: calcGstRate,
-      add_gst_rate: calcAddGstRate,
-      income_tax_rate: calcIncomeTaxRate,
-      excise_rate: calcExciseRate,
-      regular_duty_rate: calcRegularDutyRate,
-      stamp_duty_rate: calcStampDutyRate,
-      inv_fine: calcInvFine,
-      quantity: calcQuantity || inquiryQuantity,
-      uom: calcUom,
-      hs_code: calcHsCode,
-    };
-
-    const taxBreakdown = computeInquiryTaxBreakdown(calculatorValuesRecord);
-
-    const invValue = taxBreakdown?.invValue ?? toNum(calcInvValue);
-    const customDutyRate = toNum(calcCustomDutyRate);
-    const addCdRate = toNum(calcAddCdRate);
-    const gstRate = toNum(calcGstRate);
-    const addGstRate = toNum(calcAddGstRate);
-    const incomeTaxRate = toNum(calcIncomeTaxRate);
-    const exciseRate = toNum(calcExciseRate);
-    const regularDutyRate = toNum(calcRegularDutyRate);
-    const stampDutyRate = toNum(calcStampDutyRate);
-
-    const calc = {
-      invValue,
-      pkrValue: taxBreakdown?.pkrValue ?? 0,
-      assessedValue: taxBreakdown?.assessedValue ?? 0,
-      customDuty: taxBreakdown?.customDuty ?? 0,
-      addCd: taxBreakdown?.addCd ?? 0,
-      gst: taxBreakdown?.gst ?? 0,
-      addGst: taxBreakdown?.addGst ?? 0,
-      incomeTax: taxBreakdown?.incomeTax ?? 0,
-      excise: taxBreakdown?.excise ?? 0,
-      regularDuty: taxBreakdown?.regularDuty ?? 0,
-      stampDuty: taxBreakdown?.stampDuty ?? 0,
-      invFine: taxBreakdown?.invFine ?? 0,
-      sumOfAllTaxes: taxBreakdown?.sumOfAllTaxes ?? 0,
-    };
-
-    const fmtDecimal4 = (n: number) =>
-      Number.isFinite(n)
-        ? n.toLocaleString(undefined, { minimumFractionDigits: 4, maximumFractionDigits: 4 })
-        : "0.0000";
-    const fmtAmount = (n: number) =>
-      Number.isFinite(n) ? Math.round(n).toLocaleString() : "0";
-
-    const exchangeRateDisplay = taxBreakdown?.exchangeRate ?? toNum(calcExchangeRate);
-    const importValue = taxBreakdown?.pkrValue ?? calc.pkrValue;
-    const unitPrice = taxBreakdown?.invValue ?? invValue;
-    const hsCodeDisplay = calcHsCode.trim() || "-";
-    const quantityDisplay = formQuantity || calcQuantity || inquiryQuantity || "0";
-
-    const estimatedDutyRows = [
-      { name: "Customs Duty", rate: customDutyRate, amount: calc.customDuty },
-      { name: "Add CD", rate: addCdRate, amount: calc.addCd },
-      { name: "Sales Tax", rate: gstRate, amount: calc.gst },
-      { name: "Add GST", rate: addGstRate, amount: calc.addGst },
-      { name: "Income Tax", rate: incomeTaxRate, amount: calc.incomeTax },
-      { name: "Excise", rate: exciseRate, amount: calc.excise },
-      { name: "Regular Duty", rate: regularDutyRate, amount: calc.regularDuty },
-      { name: "Stamp Duty", rate: stampDutyRate, amount: calc.stampDuty },
-      { name: "INV Fine", rate: null as number | null, amount: calc.invFine },
-    ].filter(
-      (row) =>
-        row.name === "Customs Duty" ||
-        row.name === "Sales Tax" ||
-        row.name === "Income Tax" ||
-        row.rate === null ||
-        row.rate > 0 ||
-        Math.abs(row.amount) > 0
+    const formCalculators = calculators.map((calcValues, index) =>
+      withDerivedInvValue({
+        ...calcValues,
+        quantity:
+          calcValues.quantity?.trim() ||
+          (index === 0 ? formQuantity || inquiryQuantity : inquiryQuantity) ||
+          "0",
+      })
     );
-
-    const dutiesGrandTotal = estimatedDutyRows.reduce((sum, row) => sum + row.amount, 0);
 
     const fieldLabels: Record<string, string> = {
       product_name: "Product",
@@ -1283,6 +1202,7 @@ export function OperationsLeadsInquiryPanel({
       sent_to_accounting: "Sent to Accounting",
       sent_at: "Sent At",
       inv_value: "INV Value",
+      unit_value: "Unit Value",
       exchange_rate: "Exchange Rate",
       custom_duty_rate: "Custom Duty %",
       add_cd_rate: "Add CD %",
@@ -1499,6 +1419,16 @@ export function OperationsLeadsInquiryPanel({
                       rows={3}
                     />
                   </div>
+                  <div className="space-y-1.5 md:col-span-2">
+                    <label className="text-xs text-slate-500 font-medium">Description</label>
+                    <Textarea
+                      value={operationsDescription}
+                      onChange={(e) => setOperationsDescription(e.target.value)}
+                      onBlur={() => void persistCalculatorPayload()}
+                      placeholder="Enter description..."
+                      rows={3}
+                    />
+                  </div>
                 </div>
               ) : (
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-3">
@@ -1524,173 +1454,44 @@ export function OperationsLeadsInquiryPanel({
               )}
             </div>
 
-            {/* Additional Calculator */}
-            <div className="border-t pt-4" key={`calculator-${inq.id}`}>
-              <h3 className="text-sm font-semibold text-slate-700 mb-3">Calculation on Actual</h3>
-              <div className="border rounded-lg overflow-hidden">
-                <div className="grid grid-cols-12 bg-slate-50 border-b text-xs font-semibold text-slate-600">
-                  <div className="col-span-5 px-3 py-2 border-r">Item</div>
-                  <div className="col-span-3 px-3 py-2 border-r">Rate / Input</div>
-                  <div className="col-span-4 px-3 py-2 text-right">Amount</div>
-                </div>
-
-                <div className="grid grid-cols-12 border-b">
-                  <div className="col-span-5 px-3 py-2 border-r text-sm">UOM</div>
-                  <div className="col-span-7 px-2 py-1.5">
-                    <Select
-                      value={calcUom}
-                      onValueChange={(value) => {
-                        setCalcUom(value);
-                        void logCalculatorFieldChange("uom", value);
-                      }}
-                    >
-                      <SelectTrigger className="h-8 text-xs">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="KG">KG</SelectItem>
-                        <SelectItem value="M³">M³</SelectItem>
-                        <SelectItem value="PCS/U">PCS/U</SelectItem>
-                        <SelectItem value="Pairs (2U)">Pairs (2U)</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-12 border-b">
-                  <div className="col-span-5 px-3 py-2 border-r text-sm">Quantity</div>
-                  <div className="col-span-7 px-2 py-1.5">
-                    <Input
-                      value={calcQuantity}
-                      onChange={(e) => setCalcQuantity(e.target.value.replace(/\D/g, ""))}
-                      onBlur={() => void logCalculatorFieldChange("quantity", calcQuantity)}
-                      className="h-8 text-xs"
-                    />
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-12 border-b">
-                  <div className="col-span-5 px-3 py-2 border-r text-sm">HS Code</div>
-                  <div className="col-span-7 px-2 py-1.5">
-                    <Input
-                      value={calcHsCode}
-                      onChange={(e) => setCalcHsCode(e.target.value)}
-                      onBlur={() => void logCalculatorFieldChange("hs_code", calcHsCode)}
-                      className="h-8 text-xs"
-                    />
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-12 border-b">
-                  <div className="col-span-5 px-3 py-2 border-r text-sm font-medium">INV Value</div>
-                  <div className="col-span-3 px-2 py-1.5 border-r">
-                    <Input
-                      value={calcInvValue}
-                      onChange={(e) => setCalcInvValue(e.target.value)}
-                      onBlur={() => void logCalculatorFieldChange("inv_value", calcInvValue)}
-                      className="h-8 text-xs"
-                    />
-                  </div>
-                  <div className="col-span-4 px-3 py-2 text-right text-sm font-semibold">{calc.invValue || "-"}</div>
-                </div>
-
-                <div className="grid grid-cols-12 border-b">
-                  <div className="col-span-5 px-3 py-2 border-r text-sm font-medium">@ (Exchange Rate)</div>
-                  <div className="col-span-3 px-2 py-1.5 border-r">
-                    <Input
-                      value={calcExchangeRate}
-                      onChange={(e) => setCalcExchangeRate(e.target.value)}
-                      onBlur={() => void logCalculatorFieldChange("exchange_rate", calcExchangeRate)}
-                      className="h-8 text-xs"
-                    />
-                  </div>
-                  <div className="col-span-4 px-3 py-2 text-right text-sm font-semibold">{calcExchangeRate || "-"}</div>
-                </div>
-
-                {(!adminCalculatorMode || calc.pkrValue !== 0) && (
-                  <div className="grid grid-cols-12 border-b">
-                    <div className="col-span-8 px-3 py-2 border-r text-sm font-medium">PKR Value</div>
-                    <div className="col-span-4 px-3 py-2 text-right text-sm font-semibold">{fmtMoney(calc.pkrValue)}</div>
-                  </div>
-                )}
-                {(!adminCalculatorMode || calc.assessedValue !== 0) && (
-                  <div className="grid grid-cols-12 border-b">
-                    <div className="col-span-8 px-3 py-2 border-r text-sm font-medium">Assessed Value</div>
-                    <div className="col-span-4 px-3 py-2 text-right text-sm font-semibold">{fmtMoney(calc.assessedValue)}</div>
-                  </div>
-                )}
-
-                {[
-                  { field: "custom_duty_rate", label: "Custom Duty", rate: calcCustomDutyRate, setRate: setCalcCustomDutyRate, amount: calc.customDuty },
-                  { field: "add_cd_rate", label: "Add CD", rate: calcAddCdRate, setRate: setCalcAddCdRate, amount: calc.addCd },
-                  { field: "gst_rate", label: "Sales Tax", rate: calcGstRate, setRate: setCalcGstRate, amount: calc.gst },
-                  { field: "add_gst_rate", label: "Add GST", rate: calcAddGstRate, setRate: setCalcAddGstRate, amount: calc.addGst },
-                  { field: "income_tax_rate", label: "Income Tax", rate: calcIncomeTaxRate, setRate: setCalcIncomeTaxRate, amount: calc.incomeTax },
-                  { field: "excise_rate", label: "Excise", rate: calcExciseRate, setRate: setCalcExciseRate, amount: calc.excise },
-                  { field: "regular_duty_rate", label: "Regular Duty", rate: calcRegularDutyRate, setRate: setCalcRegularDutyRate, amount: calc.regularDuty },
-                  { field: "stamp_duty_rate", label: "Stamp Duty", rate: calcStampDutyRate, setRate: setCalcStampDutyRate, amount: calc.stampDuty },
-                ].map((row) => (
-                  <div key={row.label} className="grid grid-cols-12 border-b">
-                    <div className="col-span-5 px-3 py-2 border-r text-sm">{row.label}</div>
-                    <div className="col-span-3 px-2 py-1.5 border-r">
-                      <Input
-                        value={row.rate}
-                        onChange={(e) => row.setRate(e.target.value)}
-                        onBlur={() => void logCalculatorFieldChange(row.field, row.rate)}
-                        className="h-8 text-xs"
-                      />
-                      <div className="text-[10px] text-slate-500 mt-0.5">{fmtRate(row.rate)}</div>
-                    </div>
-                    <div className="col-span-4 px-3 py-2 text-right text-sm font-semibold">{fmtMoney(row.amount)}</div>
-                  </div>
-                ))}
-
-                {[
-                  { field: "inv_fine", label: "INV Fine", value: calcInvFine, setValue: setCalcInvFine, amount: calc.invFine },
-                ].map((row) => (
-                  <div key={row.label} className="grid grid-cols-12 border-b">
-                    <div className="col-span-5 px-3 py-2 border-r text-sm">{row.label}</div>
-                    <div className="col-span-3 px-2 py-1.5 border-r">
-                      <Input
-                        value={row.value}
-                        onChange={(e) => row.setValue(e.target.value)}
-                        onBlur={() => void logCalculatorFieldChange(row.field, row.value)}
-                        className="h-8 text-xs"
-                      />
-                    </div>
-                    <div className="col-span-4 px-3 py-2 text-right text-sm font-semibold">{fmtMoney(row.amount)}</div>
-                  </div>
-                ))}
-
-                <div className="grid grid-cols-12 border-b bg-slate-50">
-                  <div className="col-span-8 px-3 py-2 border-r text-sm font-bold text-slate-800">Sum of All Taxes</div>
-                  <div className="col-span-4 px-3 py-2 text-right text-sm font-bold text-slate-900">{fmtMoney(calc.sumOfAllTaxes)}</div>
-                </div>
-              </div>
-
-              <div className="mt-4">
-                <InquiryPricingSummary
-                  calculatorValues={calculatorValuesRecord}
+            {calculators.map((calcValues, calcIndex) => (
+              <div key={`calculator-${inq.id}-${calcIndex}`}>
+                <InquiryCalculatorSection
+                  values={calcValues}
+                  onChange={(values) => updateCalculatorAt(calcIndex, values)}
+                  onFieldBlur={
+                    calcIndex === 0
+                      ? (field, value) => void logCalculatorFieldChange(field, value)
+                      : undefined
+                  }
+                  inquiryQuantity={inquiryQuantity}
                   totalWeightKg={weightKg}
                   cbm={cbm}
                   pricingConfig={pricingConfig}
+                  adminCalculatorMode={adminCalculatorMode}
+                  title={
+                    calculators.length > 1
+                      ? `Calculation on Actual (Calculator ${calcIndex + 1})`
+                      : "Calculation on Actual"
+                  }
                 />
               </div>
+            ))}
 
-              <div className="mt-3 grid grid-cols-1 md:grid-cols-3 gap-x-8 gap-y-2">
-                {(!adminCalculatorMode || weightKg !== 0) && (
-                  <div>
-                    <div className="text-xs text-slate-500 font-medium">Weight (kg)</div>
-                    <div className="text-sm font-semibold text-slate-800 mt-0.5">{weightKg || "-"}</div>
-                  </div>
-                )}
-                {(!adminCalculatorMode || cbm !== 0) && (
-                  <div>
-                    <div className="text-xs text-slate-500 font-medium">CBM</div>
-                    <div className="text-sm font-semibold text-slate-800 mt-0.5">{cbm || "-"}</div>
-                  </div>
-                )}
-              </div>
+            <div className="pt-2">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="gap-1.5"
+                onClick={() => {
+                  addCalculator();
+                  void persistCalculatorPayload();
+                }}
+              >
+                <Plus className="h-4 w-4" />
+                + Add Calculator
+              </Button>
             </div>
 
             {/* Separator */}
@@ -1711,6 +1512,20 @@ export function OperationsLeadsInquiryPanel({
                 <div className="mt-1 bg-slate-50 border rounded-lg p-3 text-sm whitespace-pre-wrap min-h-[40px]">
                   {inq.description}
                 </div>
+              </div>
+            )}
+
+            {!isEditing && (
+              <div>
+                <label className="text-xs text-slate-500 font-medium">Description</label>
+                <Textarea
+                  value={operationsDescription}
+                  onChange={(e) => setOperationsDescription(e.target.value)}
+                  onBlur={() => void persistCalculatorPayload()}
+                  placeholder="Enter description..."
+                  rows={3}
+                  className="mt-1"
+                />
               </div>
             )}
               </CardContent>
@@ -2014,6 +1829,7 @@ export function OperationsLeadsInquiryPanel({
             </DialogHeader>
 
             <div className="space-y-5">
+              <div id="lead-management-pdf-document" ref={leadManagementPdfRef}>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div className="space-y-1.5">
                   <label className="text-sm font-medium text-slate-700">
@@ -2053,115 +1869,49 @@ export function OperationsLeadsInquiryPanel({
 
               <div className="border-t pt-4" />
 
-              <p className="text-sm text-slate-800">
-                Disclaimer : Calculated duties and taxes are indicative only by assuming Landing Charges
-                &amp; Insurance 1% and current Exchange Rate:{" "}
-                {exchangeRateDisplay > 0 ? exchangeRateDisplay.toFixed(6) : "0.000000"}
-              </p>
-
-              <div className="border border-slate-300 rounded-sm overflow-hidden text-sm">
-                <div className="bg-gradient-to-b from-[#d4d4d4] to-[#b8b8b8] border-b border-slate-400 px-3 py-2 font-bold text-slate-900">
-                  Estimated Duties And Taxes
+              {formCalculators.map((calcValues, calcIndex) => (
+                <div key={`lead-form-calculator-${calcIndex}`} className="space-y-5">
+                  {formCalculators.length > 1 && (
+                    <h4 className="text-sm font-semibold text-slate-700">
+                      Calculator {calcIndex + 1}
+                    </h4>
+                  )}
+                  <EstimatedDutiesAndTaxesBlock
+                    calculatorValues={calcValues}
+                    quantityFallback={formQuantity || inquiryQuantity}
+                    showDisclaimer={calcIndex === 0}
+                  />
                 </div>
+              ))}
 
-                <table className="w-full border-collapse">
-                  <thead>
-                    <tr className="bg-gradient-to-b from-[#ececec] to-[#d8d8d8] border-b border-slate-300">
-                      <th className="border-r border-slate-300 px-3 py-2 text-left font-semibold text-slate-800">
-                        HS Code
-                      </th>
-                      <th className="border-r border-slate-300 px-3 py-2 text-center font-semibold text-slate-800">
-                        Unit Price
-                      </th>
-                      <th className="border-r border-slate-300 px-3 py-2 text-center font-semibold text-slate-800">
-                        Quantity
-                      </th>
-                      <th className="px-3 py-2 text-center font-semibold text-slate-800">
-                        Import Value
-                      </th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    <tr className="bg-white border-b border-slate-300">
-                      <td className="border-r border-slate-300 px-3 py-2">
-                        <span className="inline-flex items-center gap-2">
-                          <span className="text-slate-700 font-bold leading-none">−</span>
-                          <span className="font-bold text-slate-900">{hsCodeDisplay}</span>
-                        </span>
-                      </td>
-                      <td className="border-r border-slate-300 px-3 py-2 text-center text-slate-800">
-                        {fmtDecimal4(unitPrice)}
-                      </td>
-                      <td className="border-r border-slate-300 px-3 py-2 text-center text-slate-800">
-                        {quantityDisplay}
-                      </td>
-                      <td className="px-3 py-2 text-center text-slate-800">
-                        {fmtDecimal4(importValue)}
-                      </td>
-                    </tr>
-                  </tbody>
-                </table>
+              <div className="space-y-1.5">
+                <label className="text-sm font-medium text-slate-700">Description</label>
+                <Textarea
+                  value={operationsDescription}
+                  onChange={(e) => setOperationsDescription(e.target.value)}
+                  onBlur={() => void persistCalculatorPayload()}
+                  placeholder="Enter description..."
+                  rows={3}
+                />
+              </div>
+              </div>
 
-                <div className="bg-white">
-                  <table className="w-full border-collapse">
-                    <thead>
-                      <tr className="bg-gradient-to-b from-[#ececec] to-[#d8d8d8] border-b border-slate-300">
-                        <th className="border-r border-slate-300 px-3 py-2 text-left font-semibold text-slate-800 w-[40%]">
-                          Duty Name
-                        </th>
-                        <th className="border-r border-slate-300 px-3 py-2 text-center font-semibold text-slate-800 w-[30%]">
-                          Applicable Rate
-                        </th>
-                        <th className="px-3 py-2 text-center font-semibold text-slate-800 w-[30%]">
-                          Net Payable Amount
-                        </th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {estimatedDutyRows.length > 0 ? (
-                        estimatedDutyRows.map((row) => (
-                          <tr
-                            key={row.name}
-                            className={`border-b border-slate-300 ${
-                              row.name === "Sales Tax" ? "bg-sky-100" : "bg-white"
-                            }`}
-                          >
-                            <td className="border-r border-slate-300 px-3 py-2 text-slate-800">
-                              {row.name}
-                            </td>
-                            <td className="border-r border-slate-300 px-3 py-2 text-center text-slate-800">
-                              {row.rate === null ? "—" : `${row.rate.toFixed(0)}%`}
-                            </td>
-                            <td className="px-3 py-2 text-center text-slate-800">
-                              {fmtAmount(row.amount)}
-                            </td>
-                          </tr>
-                        ))
-                      ) : (
-                        <tr className="bg-white border-b border-slate-300">
-                          <td colSpan={3} className="px-3 py-4 text-center text-slate-500">
-                            No duty values entered in the calculator yet.
-                          </td>
-                        </tr>
-                      )}
-                    </tbody>
-                    {estimatedDutyRows.length > 0 && (
-                      <tfoot>
-                        <tr className="bg-white">
-                          <td
-                            colSpan={2}
-                            className="border-r border-slate-300 border-t border-slate-300 px-3 py-2 text-center font-bold text-slate-900"
-                          >
-                            Grand Total
-                          </td>
-                          <td className="border-t border-slate-300 px-3 py-2 text-center font-bold text-slate-900">
-                            {fmtAmount(dutiesGrandTotal)}
-                          </td>
-                        </tr>
-                      </tfoot>
-                    )}
-                  </table>
-                </div>
+              <div className="flex justify-end">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="gap-1.5"
+                  onClick={() => void handleDownloadLeadManagementPdf()}
+                  disabled={isDownloadingPdf}
+                >
+                  {isDownloadingPdf ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <Download className="h-4 w-4" />
+                  )}
+                  Download PDF
+                </Button>
               </div>
 
               <div className="border-t pt-4" />
@@ -2185,22 +1935,35 @@ export function OperationsLeadsInquiryPanel({
                 )}
 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <ImageUploadSection
-                  slot={1}
-                  preview={additionalImage1Preview}
-                  dropRef={dropZone1Ref}
-                  inputRef={img1Ref}
-                  onPreviewClick={(url) => openImagePreview(url, "Additional Image 1")}
-                />
-
-                <ImageUploadSection
-                  slot={2}
-                  preview={additionalImage2Preview}
-                  dropRef={dropZone2Ref}
-                  inputRef={img2Ref}
-                  onPreviewClick={(url) => openImagePreview(url, "Additional Image 2")}
-                />
+                  {operationsAttachments.map((attachment, index) => (
+                    <ImageUploadSection
+                      key={attachment.id}
+                      attachmentId={attachment.id}
+                      index={index + 1}
+                      preview={attachment.preview}
+                      onPreviewClick={(url) => openImagePreview(url, `Additional Attachment ${index + 1}`)}
+                    />
+                  ))}
                 </div>
+
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="gap-1.5"
+                  onClick={addOperationsAttachment}
+                >
+                  <Plus className="h-4 w-4" />
+                  Add Attachment
+                </Button>
+
+                <input
+                  ref={operationsFileInputRef}
+                  type="file"
+                  accept="image/*,application/pdf,.doc,.docx,.xlsx,.xls,.txt,.csv"
+                  className="absolute -left-[9999px] h-px w-px opacity-0"
+                  onChange={handleFileInputChange}
+                />
               </div>
             </div>
 

@@ -15,9 +15,10 @@ import { InquiryAttachmentList } from "@/components/inquiry/InquiryAttachmentLis
 import { getSharedInquiryCalculatorValues } from "@/app/actions/inquiries";
 import { InquiryPricingSummary } from "@/components/admin/InquiryPricingSummary";
 import { EstimatedDutiesAndTaxesTable } from "@/components/inquiry/EstimatedDutiesAndTaxesTable";
-import { collectInquiryAttachmentUrls } from "@/lib/inquiry-attachments";
+import { collectInquiryAttachmentUrls, collectOperationsConfirmationAttachmentUrls } from "@/lib/inquiry-attachments";
 import {
   buildEstimatedDutiesDisplay,
+  parseStoredCalculatorPayload,
   parsePricingConfig,
   type CalculatorPricingConfig,
 } from "@/lib/inquiry-calculator";
@@ -324,9 +325,7 @@ export function InquiryConfirmationPanel() {
 
     const c = selected;
     const calculatorValues =
-      c.calculator_values && typeof c.calculator_values === "object"
-        ? (c.calculator_values as Record<string, string>)
-        : {};
+      parseStoredCalculatorPayload(c.calculator_values).calculators[0] ?? {};
     const estimatedDuties = buildEstimatedDutiesDisplay(calculatorValues, {
       hsCode: c.hs_code || calculatorValues.hs_code,
       quantity: c.quantity || calculatorValues.quantity,
@@ -460,9 +459,7 @@ export function InquiryConfirmationPanel() {
                 onPreviewImage={(url, title) => setImagePreview({ url, title })}
               />
               <InquiryAttachmentList
-                urls={[c.additional_image_1_url, c.additional_image_2_url].filter(
-                  (url): url is string => typeof url === "string" && url.trim().length > 0
-                )}
+                urls={collectOperationsConfirmationAttachmentUrls(c)}
                 title="Operations Attachments"
                 onPreviewImage={(url, title) => setImagePreview({ url, title })}
               />

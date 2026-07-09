@@ -5,6 +5,7 @@ import { getSession } from '@/lib/auth/session';
 import { revalidatePath } from 'next/cache';
 import {
   buildApprovedInquiryPricing,
+  getPrimaryCalculatorValues,
   parsePricingConfig,
   type ApprovedInquiryPricing,
 } from '@/lib/inquiry-calculator';
@@ -21,10 +22,11 @@ export type InquiryConfirmation = {
   cbm: string;
   quantity: string;
   hs_code: string;
-  calculator_values: Record<string, string> | null;
+  calculator_values: Record<string, string> | Record<string, unknown> | null;
   original_image_url: string | null;
   additional_image_1_url: string | null;
   additional_image_2_url: string | null;
+  operations_additional_image_urls?: string[] | null;
   sales_additional_image_urls?: string[] | null;
   rejection_reason?: string | null;
   status: ConfirmationStatus;
@@ -106,8 +108,23 @@ const ADMIN_CONFIRMATION_DETAIL_SELECT = `
 type InquiryAttachmentSnapshot = {
   image_url: string | null;
   additional_image_urls: string[];
-  calculator_values: Record<string, string> | null;
+  calculator_values: Record<string, string> | Record<string, unknown> | null;
 };
+
+function isMissingColumnError(message: string | undefined, column: string) {
+  return new RegExp(column, 'i').test(message || '');
+}
+
+function withOperationsAttachmentUrls(
+  calculatorValues: Record<string, string> | Record<string, unknown>,
+  urls: string[]
+): Record<string, unknown> {
+  const base = { ...(calculatorValues as Record<string, unknown>) };
+  if (urls.length > 0) {
+    base.operations_attachment_urls = urls;
+  }
+  return base;
+}
 
 function mergeConfirmationWithInquiryData(
   row: InquiryConfirmationWithLead,
@@ -260,9 +277,10 @@ export async function submitInquiryForConfirmation(data: {
   cbm: string;
   quantity: string;
   hs_code: string;
-  calculator_values: Record<string, string>;
+  calculator_values: Record<string, string> | Record<string, unknown>;
   original_image_url: string | null;
   sales_additional_image_urls?: string[] | null;
+  operations_additional_image_urls?: string[] | null;
   additional_image_1_url: string | null;
   additional_image_2_url: string | null;
 }) {
@@ -283,31 +301,69 @@ export async function submitInquiryForConfirmation(data: {
       .eq('id', data.inquiry_id)
       .maybeSingle();
 
-    const { data: result, error } = await supabase
+    const operationsImageUrls = Array.isArray(data.operations_additional_image_urls)
+      ? data.operations_additional_image_urls.filter((u) => typeof u === 'string' && u.trim().length > 0)
+      : [data.additional_image_1_url, data.additional_image_2_url].filter(
+          (u): u is string => typeof u === 'string' && u.trim().length > 0
+        );
+
+    const salesImageUrls = Array.isArray(data.sales_additional_image_urls)
+      ? data.sales_additional_image_urls.filter((u) => typeof u === 'string' && u.trim().length > 0)
+      : [];
+
+    const insertBase = {
+      inquiry_id: data.inquiry_id,
+      lead_id: data.lead_id,
+      lead_number: data.lead_number.trim(),
+      product_name: data.product_name.trim(),
+      total_weight: data.total_weight.trim(),
+      cbm: data.cbm.trim(),
+      quantity: data.quantity.trim(),
+      hs_code: (data.hs_code || '').trim(),
+      original_image_url: data.original_image_url || null,
+      sales_additional_image_urls: salesImageUrls,
+      additional_image_1_url: operationsImageUrls[0] || null,
+      additional_image_2_url: operationsImageUrls[1] || null,
+      status: 'pending' as const,
+      submitted_by: session.username || 'admin',
+    };
+
+    let result: InquiryConfirmation | null = null;
+    let error: { message: string } | null = null;
+
+    ({
+      data: result,
+      error,
+    } = await supabase
       .from('inquiry_confirmations')
       .insert([{
-        inquiry_id: data.inquiry_id,
-        lead_id: data.lead_id,
-        lead_number: data.lead_number.trim(),
-        product_name: data.product_name.trim(),
-        total_weight: data.total_weight.trim(),
-        cbm: data.cbm.trim(),
-        quantity: data.quantity.trim(),
-        hs_code: (data.hs_code || '').trim(),
+        ...insertBase,
         calculator_values: data.calculator_values || {},
-        original_image_url: data.original_image_url || null,
-        sales_additional_image_urls: Array.isArray(data.sales_additional_image_urls)
-          ? data.sales_additional_image_urls.filter((u) => typeof u === 'string' && u.trim().length > 0)
-          : [],
-        additional_image_1_url: data.additional_image_1_url || null,
-        additional_image_2_url: data.additional_image_2_url || null,
-        status: 'pending',
-        submitted_by: session.username || 'admin',
+        operations_additional_image_urls: operationsImageUrls,
       }])
       .select()
-      .single();
+      .single());
 
-    if (error) return { error: error.message };
+    if (error && isMissingColumnError(error.message, 'operations_additional_image_urls')) {
+      ({
+        data: result,
+        error,
+      } = await supabase
+        .from('inquiry_confirmations')
+        .insert([{
+          ...insertBase,
+          calculator_values: withOperationsAttachmentUrls(
+            data.calculator_values || {},
+            operationsImageUrls
+          ),
+        }])
+        .select()
+        .single());
+    }
+
+    if (error || !result) {
+      return { error: error?.message || 'Failed to create confirmation.' };
+    }
 
     const previousValues: Record<string, unknown> = {};
     const newValues: Record<string, unknown> = {};
@@ -347,15 +403,14 @@ export async function submitInquiryForConfirmation(data: {
       }]);
     }
 
-    const hasAdditionalImages = !!data.additional_image_1_url || !!data.additional_image_2_url;
+    const hasAdditionalImages = operationsImageUrls.length > 0;
     if (hasAdditionalImages) {
       await supabase.from('inquiry_logs').insert([{
         inquiry_id: data.inquiry_id,
         action: 'image_uploaded',
         previous_values: null,
         new_values: {
-          additional_image_1: data.additional_image_1_url ? 'Attached' : 'None',
-          additional_image_2: data.additional_image_2_url ? 'Attached' : 'None',
+          operations_attachments: `${operationsImageUrls.length} file(s)`,
         },
         performed_by: session.username || 'operations',
       }]);
@@ -598,13 +653,21 @@ export async function approveInquiryConfirmation(confirmationId: string) {
 
     const approvedCalculatorValues =
       confirmationData.calculator_values && typeof confirmationData.calculator_values === 'object'
-        ? { ...(confirmationData.calculator_values as Record<string, string>) }
+        ? { ...(confirmationData.calculator_values as Record<string, unknown>) }
         : {};
+    const primaryCalculator = getPrimaryCalculatorValues(confirmationData.calculator_values);
     const approvedHsCode =
       (confirmationData.hs_code || '').trim() ||
-      (approvedCalculatorValues.hs_code || '').trim();
+      (primaryCalculator.hs_code || '').trim();
     if (approvedHsCode) {
-      approvedCalculatorValues.hs_code = approvedHsCode;
+      if (Array.isArray(approvedCalculatorValues.calculators)) {
+        const calculators = (approvedCalculatorValues.calculators as Record<string, unknown>[]).map(
+          (entry, index) => (index === 0 ? { ...entry, hs_code: approvedHsCode } : entry)
+        );
+        approvedCalculatorValues.calculators = calculators;
+      } else {
+        approvedCalculatorValues.hs_code = approvedHsCode;
+      }
     }
 
     await supabase

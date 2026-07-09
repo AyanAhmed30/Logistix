@@ -91,12 +91,146 @@ export function computeVolumetricWeight(cbm: number): number {
   return safeCbm * VOLUMETRIC_CBM_FACTOR;
 }
 
+export function getEmptyCalculatorValues(): Record<string, string> {
+  return {
+    inv_value: "0",
+    unit_value: "0",
+    exchange_rate: "0",
+    custom_duty_rate: "0",
+    add_cd_rate: "0",
+    gst_rate: "0",
+    add_gst_rate: "0",
+    income_tax_rate: "0",
+    excise_rate: "0",
+    regular_duty_rate: "0",
+    stamp_duty_rate: "0",
+    inv_fine: "0",
+    uom: "KG",
+    quantity: "0",
+    hs_code: "",
+  };
+}
+
+/** Derives invoice value from quantity × unit value, with legacy inv_value fallback. */
+export function deriveInvValue(values: Record<string, unknown> | null | undefined): number {
+  if (!values || typeof values !== "object") return 0;
+  const quantity = toNum(values.quantity);
+  const unitValue = toNum(values.unit_value);
+  if (quantity > 0 && unitValue > 0) {
+    const product = quantity * unitValue;
+    return Number.isFinite(product) ? product : 0;
+  }
+  return toNum(values.inv_value ?? values["PKR Value"]);
+}
+
+export function computeInvValueString(quantity: string, unitValue: string): string {
+  const q = toNum(quantity);
+  const u = toNum(unitValue);
+  if (q > 0 && u > 0) {
+    const product = q * u;
+    return Number.isFinite(product) ? String(product) : "0";
+  }
+  return "0";
+}
+
+export function withDerivedInvValue(values: Record<string, string>): Record<string, string> {
+  return {
+    ...values,
+    inv_value: computeInvValueString(values.quantity ?? "0", values.unit_value ?? "0"),
+  };
+}
+
+export type StoredCalculatorPayload = {
+  calculators: Record<string, string>[];
+  operationsDescription: string;
+};
+
+const CALCULATOR_PAYLOAD_METADATA_KEYS = new Set(["calculators", "operations_description"]);
+
+function sanitizeSingleCalculatorValues(
+  values: Record<string, unknown> | null | undefined
+): Record<string, string> {
+  const sanitized = sanitizeCalculatorValues(values);
+  for (const key of CALCULATOR_PAYLOAD_METADATA_KEYS) {
+    delete sanitized[key];
+  }
+  return withDerivedInvValue(sanitized);
+}
+
+export function parseStoredCalculatorPayload(raw: unknown): StoredCalculatorPayload {
+  if (Array.isArray(raw)) {
+    const calculators = raw
+      .filter((item) => item && typeof item === "object")
+      .map((item) => sanitizeSingleCalculatorValues(item as Record<string, unknown>));
+    return {
+      calculators: calculators.length > 0 ? calculators : [getEmptyCalculatorValues()],
+      operationsDescription: "",
+    };
+  }
+
+  if (raw && typeof raw === "object") {
+    const obj = raw as Record<string, unknown>;
+    if (Array.isArray(obj.calculators)) {
+      const calculators = obj.calculators
+        .filter((item) => item && typeof item === "object")
+        .map((item) => sanitizeSingleCalculatorValues(item as Record<string, unknown>));
+      return {
+        calculators: calculators.length > 0 ? calculators : [getEmptyCalculatorValues()],
+        operationsDescription: String(obj.operations_description ?? "").trim(),
+      };
+    }
+
+    const operationsDescription = String(obj.operations_description ?? "").trim();
+    const calculatorOnly = sanitizeSingleCalculatorValues(obj);
+    if (Object.keys(calculatorOnly).length > 0) {
+      return {
+        calculators: [calculatorOnly],
+        operationsDescription,
+      };
+    }
+  }
+
+  return {
+    calculators: [getEmptyCalculatorValues()],
+    operationsDescription: "",
+  };
+}
+
+export function serializeCalculatorPayload(
+  calculators: Record<string, string>[],
+  operationsDescription?: string
+): Record<string, unknown> {
+  const normalized = calculators.map((entry) =>
+    sanitizeSingleCalculatorValues(entry as Record<string, unknown>)
+  );
+  const description = String(operationsDescription ?? "").trim();
+
+  if (normalized.length === 1 && !description) {
+    return { ...normalized[0] };
+  }
+  if (normalized.length === 1 && description) {
+    return {
+      ...normalized[0],
+      operations_description: description,
+    };
+  }
+  const payload: Record<string, unknown> = { calculators: normalized };
+  if (description) {
+    payload.operations_description = description;
+  }
+  return payload;
+}
+
+export function getPrimaryCalculatorValues(raw: unknown): Record<string, string> {
+  return parseStoredCalculatorPayload(raw).calculators[0] ?? getEmptyCalculatorValues();
+}
+
 export function computeInquiryTaxBreakdown(
   values: Record<string, unknown> | null | undefined
 ): InquiryTaxBreakdown | null {
   if (!values || typeof values !== "object") return null;
 
-  const invValue = toNum(values.inv_value ?? values["PKR Value"]);
+  const invValue = deriveInvValue(values);
   const exchangeRate = toNum(values.exchange_rate ?? values["Exchange Rate"]);
   const customDutyRate = toNum(values.custom_duty_rate);
   const addCdRate = toNum(values.add_cd_rate);
@@ -235,11 +369,12 @@ export function computeCalculatorTotals(
     pricingConfig?: CalculatorPricingConfig | Record<string, unknown> | null;
   }
 ): CalculatorTotals | null {
-  const taxBreakdown = computeInquiryTaxBreakdown(values);
+  const normalizedValues = getPrimaryCalculatorValues(values);
+  const taxBreakdown = computeInquiryTaxBreakdown(normalizedValues);
   if (!taxBreakdown) return null;
 
   const weightKg = Math.max(toNum(options?.weightKg), 0);
-  const quantity = Math.max(toNum(options?.quantity ?? values?.quantity ?? 1), 1) || 1;
+  const quantity = Math.max(toNum(options?.quantity ?? normalizedValues?.quantity ?? 1), 1) || 1;
   const cbm = toNum(options?.cbm);
   const pricingConfig = parsePricingConfig(
     options?.pricingConfig && typeof options.pricingConfig === "object" && "grossWeightValue" in options.pricingConfig
@@ -295,11 +430,9 @@ export function buildEstimatedDutiesDisplay(
   calculatorValues: Record<string, unknown> | null | undefined,
   options?: { hsCode?: string; quantity?: string }
 ): EstimatedDutiesDisplay | null {
-  const taxBreakdown = computeInquiryTaxBreakdown(calculatorValues);
+  const values = getPrimaryCalculatorValues(calculatorValues);
+  const taxBreakdown = computeInquiryTaxBreakdown(values);
   if (!taxBreakdown) return null;
-
-  const values =
-    calculatorValues && typeof calculatorValues === "object" ? calculatorValues : {};
 
   const customDutyRate = toNum(values.custom_duty_rate);
   const addCdRate = toNum(values.add_cd_rate);
@@ -381,6 +514,7 @@ export function buildApprovedInquiryPricing(
 
 export const CALCULATOR_FIELD_LABELS: Record<string, string> = {
   inv_value: "Invoice Value",
+  unit_value: "Unit Value",
   exchange_rate: "Exchange Rate",
   custom_duty_rate: "Custom Duty %",
   add_cd_rate: "ADD CD %",

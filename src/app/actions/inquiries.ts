@@ -124,7 +124,7 @@ export type LeadInquiry = {
   sent_at: string | null;
   approval_status?: 'sent' | 'approved' | 'rejected';
   approved_at?: string | null;
-  calculator_values: Record<string, string> | null;
+  calculator_values: Record<string, string> | Record<string, unknown> | null;
   created_at: string;
   updated_at: string;
   inquiry_confirmations?: {
@@ -2215,6 +2215,39 @@ export async function saveInquiryCalculatorField(
     revalidatePath('/admin/dashboard');
     revalidatePath('/operations/dashboard');
     return { success: true, calculatorValues: nextValues };
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };
+  }
+}
+
+export async function saveInquiryCalculatorPayload(
+  inquiryId: string,
+  calculatorValues: Record<string, unknown>
+) {
+  try {
+    const session = await getSession();
+    if (!session || (session.role !== 'admin' && session.role !== 'operations')) {
+      return { error: 'Unauthorized' };
+    }
+
+    if (!inquiryId.trim()) {
+      return { error: 'Inquiry ID is required.' };
+    }
+
+    const supabase = await createAdminClient();
+    const { error } = await supabase
+      .from('lead_inquiries')
+      .update({
+        calculator_values: calculatorValues,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', inquiryId);
+
+    if (error) return { error: error.message };
+
+    revalidatePath('/admin/dashboard');
+    revalidatePath('/operations/dashboard');
+    return { success: true };
   } catch (err) {
     return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };
   }

@@ -33,6 +33,7 @@ import {
   type LeadInquiry,
   type InquiryQuotation,
 } from "@/app/actions/inquiries";
+import { parseStoredCalculatorPayload } from "@/lib/inquiry-calculator";
 import type { Lead, LeadStatus } from "@/app/actions/leads";
 
 type OverviewNote = SalesAgentOverviewDetail["notes"][number];
@@ -491,7 +492,8 @@ function LeadDetailsDialog({
                   {fullInquiries.map((inq, idx) => {
                     const badge = inquiryApprovalBadge(inq.approval_status);
                     const quotes = quotationsByInquiry[inq.id] || [];
-                    const calculator = inq.calculator_values || {};
+                    const parsedCalculator = parseStoredCalculatorPayload(inq.calculator_values);
+                    const calculator = parsedCalculator.calculators[0] ?? {};
                     const calcKeys = Object.keys(calculator);
                     const extraImages = inq.additional_image_urls || [];
                     const confirmations = inq.inquiry_confirmations || [];

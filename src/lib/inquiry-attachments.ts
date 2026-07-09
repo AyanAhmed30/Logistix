@@ -94,6 +94,35 @@ export function collectInquiryAttachmentUrls(
   return urls;
 }
 
+export function collectOperationsConfirmationAttachmentUrls(
+  confirmation: {
+    operations_additional_image_urls?: string[] | null;
+    additional_image_1_url?: string | null;
+    additional_image_2_url?: string | null;
+    calculator_values?: Record<string, unknown> | null;
+  }
+): string[] {
+  const fromArray = Array.isArray(confirmation.operations_additional_image_urls)
+    ? confirmation.operations_additional_image_urls.filter(
+        (u) => typeof u === "string" && u.trim().length > 0
+      )
+    : [];
+  if (fromArray.length > 0) return fromArray;
+
+  const calculatorValues = confirmation.calculator_values;
+  const fromCalculator = calculatorValues?.operations_attachment_urls;
+  if (Array.isArray(fromCalculator)) {
+    const urls = fromCalculator.filter(
+      (u): u is string => typeof u === "string" && u.trim().length > 0
+    );
+    if (urls.length > 0) return urls;
+  }
+
+  return [confirmation.additional_image_1_url, confirmation.additional_image_2_url].filter(
+    (u): u is string => typeof u === "string" && u.trim().length > 0
+  );
+}
+
 export function formatFileSize(bytes: number): string {
   if (!Number.isFinite(bytes) || bytes <= 0) return "";
   if (bytes < 1024) return `${bytes} B`;

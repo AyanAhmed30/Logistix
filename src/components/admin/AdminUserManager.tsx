@@ -24,7 +24,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { PlusCircle, UsersRound, X, Truck, Bell, Package, Container, FileText, TrendingUp, ShoppingCart, Settings, ClipboardList, Receipt, UserCog, Calculator, MessageSquare, ClipboardCheck, Wrench, FolderTree, BookOpen, BookText, DollarSign, BookUser } from "lucide-react";
+import { PlusCircle, UsersRound, X, Truck, Bell, Package, Container, FileText, TrendingUp, ShoppingCart, Settings, ClipboardList, Receipt, UserCog, Calculator, MessageSquare, ClipboardCheck, Wrench, FolderTree, BookOpen, BookText, DollarSign, BookUser, Building2 } from "lucide-react";
 import { OrderTrackingPanel } from "@/components/admin/OrderTrackingPanel";
 import { AdminNotificationsPanel } from "@/components/admin/AdminNotificationsPanel";
 import { OrderManagementPanel } from "@/components/admin/OrderManagementPanel";
@@ -52,6 +52,7 @@ import { VendorBillsPanel } from "@/components/admin/VendorBillsPanel";
 import { PaymentsPanel } from "@/components/admin/PaymentsPanel";
 import { ReconciliationPanel } from "@/components/admin/ReconciliationPanel";
 import { ContactsPanel } from "@/components/admin/ContactsPanel";
+import { OrganizationPanel } from "@/components/admin/OrganizationPanel";
 
 type AppUser = {
   id: string;
@@ -82,7 +83,8 @@ type Props = {
     | "accounting"
     | "inquiry-confirmation"
     | "calculator-config"
-    | "contacts";
+    | "contacts"
+    | "organization";
   onTabChange: (
     tab:
       | "dashboard"
@@ -101,6 +103,7 @@ type Props = {
       | "inquiry-confirmation"
       | "calculator-config"
       | "contacts"
+      | "organization"
   ) => void;
   quotationPayload?: {
     contactId?: string | null;
@@ -326,6 +329,7 @@ export function AdminUserManager({
       | "inquiry-confirmation"
       | "calculator-config"
       | "contacts"
+      | "organization"
   ) {
     onTabChange(tab);
     onSidebarClose();
@@ -453,6 +457,15 @@ export function AdminUserManager({
             {!isSidebarCollapsed && <span className="sidebar-text">Contacts</span>}
           </Button>
           <Button
+            variant={activeTab === "organization" ? "default" : "outline"}
+            className="justify-start gap-2 sidebar-button"
+            onClick={() => handleTabSelect("organization")}
+            title="Organization"
+          >
+            <Building2 className="h-4 w-4 shrink-0 sidebar-icon" />
+            {!isSidebarCollapsed && <span className="sidebar-text">Organization</span>}
+          </Button>
+          <Button
             variant={activeTab === "operations" ? "default" : "outline"}
             className="justify-start gap-2 sidebar-button"
             onClick={() => handleTabSelect("operations")}
@@ -541,6 +554,8 @@ export function AdminUserManager({
           <SalesPanel />
         ) : activeTab === "contacts" ? (
           <ContactsPanel initialPayload={contactPayload ?? undefined} />
+        ) : activeTab === "organization" ? (
+          <OrganizationPanel />
         ) : activeTab === "operations" ? (
           <div className="space-y-6">
             {/* Sub-tabs */}

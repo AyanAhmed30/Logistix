@@ -973,8 +973,8 @@ export function OperationsLeadsInquiryPanel({
     setIsSubmitting(true);
     try {
       // Upload additional images to storage and keep only URLs in DB/logs.
-      const uploadErrors: string[] = [];
       const operationsImageUrls: string[] = [];
+      const unsavedAttachments: number[] = [];
 
       for (let i = 0; i < operationsAttachments.length; i++) {
         const attachment = operationsAttachments[i];
@@ -982,17 +982,21 @@ export function OperationsLeadsInquiryPanel({
 
         const upload = await uploadConfirmationImage(attachment.file, `additional_${i + 1}`);
         if ("error" in upload) {
-          uploadErrors.push(`Attachment ${i + 1}: ${upload.error}`);
           const fallbackUrl = attachment.preview || (await fileToDataUrl(attachment.file));
-          if (fallbackUrl) operationsImageUrls.push(fallbackUrl);
+          if (fallbackUrl) {
+            operationsImageUrls.push(fallbackUrl);
+          } else {
+            unsavedAttachments.push(i + 1);
+          }
         } else if (upload.url) {
           operationsImageUrls.push(upload.url);
         }
       }
 
-      // Show warning if any uploads failed (but don't block submission)
-      if (uploadErrors.length > 0) {
-        toast.warning(`Some images couldn't be uploaded to storage but will be saved locally: ${uploadErrors.join(", ")}`);
+      if (unsavedAttachments.length > 0) {
+        toast.error(`Could not save attachment(s): ${unsavedAttachments.join(", ")}`);
+        setIsSubmitting(false);
+        return;
       }
 
       const primaryCalculator = calculators[0] ?? getEmptyCalculatorValues();

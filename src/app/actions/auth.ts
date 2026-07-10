@@ -5,6 +5,7 @@ import { redirect } from 'next/navigation';
 import { isRedirectError } from 'next/dist/client/components/redirect-error';
 import { createAdminClient } from '@/utils/supabase/server';
 import { encrypt, getSessionCookieOptions } from '@/lib/auth/session';
+import { authenticateOrganization } from '@/app/actions/organizations';
 
 const ADMIN_USERNAME = 'admin';
 const ADMIN_PASSWORD = 'admin123';
@@ -30,7 +31,7 @@ export async function login(formData: FormData) {
 
         // 2. Check DB-backed users in parallel to reduce login latency.
         const supabase = await createAdminClient();
-        const [salesAgentResult, opsUserResult, appUserResult] = await Promise.all([
+        const [salesAgentResult, opsUserResult, appUserResult, organizationAuth] = await Promise.all([
             supabase
                 .from('sales_agents')
                 .select('username')
@@ -49,6 +50,7 @@ export async function login(formData: FormData) {
                 .eq('username', username)
                 .eq('password', password)
                 .maybeSingle(),
+            authenticateOrganization(username, password),
         ]);
 
         if (salesAgentResult.error) {
@@ -73,6 +75,21 @@ export async function login(formData: FormData) {
             const session = await encrypt({ username: opsUser.username, role: 'operations', ...sessionBase });
             (await cookies()).set('session', session, cookieOptions);
             redirect('/operations/dashboard');
+        }
+
+        if (organizationAuth && 'inactive' in organizationAuth) {
+            return { error: 'This organization account is inactive. Please contact the administrator.' };
+        }
+
+        if (organizationAuth && 'username' in organizationAuth) {
+            const session = await encrypt({
+                username: organizationAuth.username,
+                role: 'organization',
+                organizationName: organizationAuth.organizationName,
+                ...sessionBase,
+            });
+            (await cookies()).set('session', session, cookieOptions);
+            redirect('/organization/dashboard');
         }
 
         const user = appUserResult.data;

@@ -52,7 +52,8 @@ export async function middleware(request: NextRequest) {
         pathname.startsWith('/admin') ||
         pathname.startsWith('/user') ||
         pathname.startsWith('/sales-agent') ||
-        pathname.startsWith('/operations');
+        pathname.startsWith('/operations') ||
+        pathname.startsWith('/organization');
 
     if (requiresAuth && !session) {
         return hadInvalidToken
@@ -80,7 +81,12 @@ export async function middleware(request: NextRequest) {
         return hadInvalidToken ? redirectToSessionExpired(request) : redirectToLogin(request);
     }
 
-    // 8. If logged in and hitting login, redirect to dashboard
+    // 8. Protect Organization Routes
+    if (pathname.startsWith('/organization') && (!session || session.role !== 'organization')) {
+        return hadInvalidToken ? redirectToSessionExpired(request) : redirectToLogin(request);
+    }
+
+    // 9. If logged in and hitting login, redirect to dashboard
     if (pathname === '/login' && session) {
         if (session.role === 'admin') {
             return NextResponse.redirect(new URL('/admin/dashboard', request.url));
@@ -88,6 +94,8 @@ export async function middleware(request: NextRequest) {
             return NextResponse.redirect(new URL('/sales-agent/dashboard', request.url));
         } else if (session.role === 'operations') {
             return NextResponse.redirect(new URL('/operations/dashboard', request.url));
+        } else if (session.role === 'organization') {
+            return NextResponse.redirect(new URL('/organization/dashboard', request.url));
         } else {
             return NextResponse.redirect(new URL('/user/dashboard', request.url));
         }

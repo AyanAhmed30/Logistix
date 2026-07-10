@@ -38,6 +38,7 @@ export async function refreshSession(): Promise<RefreshSessionResult> {
         const refreshed = await encrypt({
             username: payload.username,
             role: payload.role,
+            organizationName: payload.organizationName,
             lastActivity: Date.now(),
         });
 

@@ -8,6 +8,7 @@ import {
   type InquiryProductFields,
 } from '@/lib/inquiry-form-validation';
 import { sanitizeCalculatorValues } from '@/lib/inquiry-calculator';
+import { uploadToInquiryImagesBucket } from '@/lib/inquiry-storage';
 
 export type InquiryStatus = 'pending' | 'in_progress' | 'quotation_sent' | 'completed';
 
@@ -2762,22 +2763,18 @@ export async function uploadInquiryAttachment(leadId: string, file: File) {
     const fileName = `inquiry_${leadId}_${Date.now()}_${sanitizedName}`;
     const filePath = `inquiries/${fileName}`;
 
-    const { error: uploadError } = await supabase.storage
-      .from('inquiry-images')
-      .upload(filePath, file, {
-        contentType: file.type || 'application/octet-stream',
-        upsert: false,
-      });
+    const upload = await uploadToInquiryImagesBucket(
+      supabase,
+      filePath,
+      file,
+      file.type || 'application/octet-stream'
+    );
 
-    if (uploadError) {
-      return { error: uploadError.message || 'File upload failed. Please try again.' };
+    if ('error' in upload) {
+      return { error: upload.error };
     }
 
-    const { data: urlData } = supabase.storage
-      .from('inquiry-images')
-      .getPublicUrl(filePath);
-
-    return { success: true, url: urlData.publicUrl };
+    return { success: true, url: upload.url };
   } catch (err) {
     return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };
   }

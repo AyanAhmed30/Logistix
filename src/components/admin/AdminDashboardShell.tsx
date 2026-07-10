@@ -39,6 +39,7 @@ export function AdminDashboardShell({ users, dbError }: Props) {
     | "inquiry-confirmation"
     | "calculator-config"
     | "contacts"
+    | "organization"
   >("dashboard");
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const [unreadCount, setUnreadCount] = useState(0);

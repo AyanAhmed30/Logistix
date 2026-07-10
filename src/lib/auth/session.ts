@@ -10,11 +10,12 @@ import {
 
 const SECRET_KEY = Buffer.from(process.env.SUPABASE_SERVICE_ROLE_KEY || 'default_secret_key_for_development', 'utf-8');
 
-export type SessionRole = 'admin' | 'user' | 'sales_agent' | 'operations';
+export type SessionRole = 'admin' | 'user' | 'sales_agent' | 'operations' | 'organization';
 
 export type SessionPayload = {
     username: string;
     role: SessionRole;
+    organizationName?: string;
     /** Unix timestamp (ms) of the user's last recorded activity. */
     lastActivity?: number;
     /** Legacy informational field — real expiry is JWT `exp`. */

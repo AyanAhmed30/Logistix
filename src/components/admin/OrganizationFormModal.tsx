@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import Image from 'next/image';
 import { Camera, PlusCircle, Trash2 } from 'lucide-react';
 import type { Organization } from '@/app/actions/organizations';
@@ -78,12 +78,9 @@ export function OrganizationFormModal({
 }: OrganizationFormModalProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [activeTab, setActiveTab] = useState<'general' | 'branches'>('general');
-  const [branches, setBranches] = useState<OrganizationBranch[]>([]);
-
-  useEffect(() => {
-    setBranches(parseBranches(organization?.branches));
-    setActiveTab('general');
-  }, [organization]);
+  const [branches, setBranches] = useState<OrganizationBranch[]>(() =>
+    parseBranches(organization?.branches)
+  );
 
   const logoDisplay = logoPreview || organization?.logo_url || null;
 

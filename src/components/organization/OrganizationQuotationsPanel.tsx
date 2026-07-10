@@ -244,6 +244,7 @@ export function OrganizationQuotationsPanel({ organization }: Props) {
             </p>
           ) : (
             <OrganizationQuotationForm
+              key={nextQuotationNumber || "new-quotation"}
               organization={organization}
               customers={customers}
               quotationNumber={nextQuotationNumber}
@@ -262,6 +263,7 @@ export function OrganizationQuotationsPanel({ organization }: Props) {
           </DialogHeader>
           {selectedQuotation ? (
             <OrganizationQuotationForm
+              key={selectedQuotation.id}
               organization={organization}
               customers={customers}
               quotation={selectedQuotation}

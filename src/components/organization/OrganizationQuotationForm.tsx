@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import {
   computeOrganizationQuotationLine,
   computeOrganizationQuotationTotals,
@@ -100,12 +100,6 @@ export function OrganizationQuotationForm({
   const [lineItems, setLineItems] = useState<LineItemDraft[]>(
     quotation ? toDraftItems(quotation.line_items) : [emptyLineItem()]
   );
-
-  useEffect(() => {
-    if (!quotation && quotationNumber) {
-      setPaymentCommunication(quotationNumber);
-    }
-  }, [quotation, quotationNumber]);
 
   const selectedCustomer = useMemo(
     () => customers.find((customer) => customer.id === customerId) || null,

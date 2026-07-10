@@ -57,6 +57,7 @@ export function OrganizationPanel() {
   const [editStatus, setEditStatus] = useState<"active" | "inactive">("active");
   const [createLogoPreview, setCreateLogoPreview] = useState<string | null>(null);
   const [createLogoFile, setCreateLogoFile] = useState<File | null>(null);
+  const [createFormKey, setCreateFormKey] = useState(0);
   const [editLogoPreview, setEditLogoPreview] = useState<string | null>(null);
   const [editLogoFile, setEditLogoFile] = useState<File | null>(null);
   const [isPending, startTransition] = useTransition();
@@ -144,6 +145,7 @@ export function OrganizationPanel() {
 
   function openCreate() {
     resetCreateFormState();
+    setCreateFormKey((key) => key + 1);
     setCreateOpen(true);
   }
 
@@ -266,6 +268,7 @@ export function OrganizationPanel() {
           </DialogHeader>
           <form key="create-org-form" onSubmit={handleCreateSubmit}>
             <OrganizationFormModal
+              key={`create-${createFormKey}`}
               mode="create"
               status={createStatus}
               onStatusChange={setCreateStatus}
@@ -299,6 +302,7 @@ export function OrganizationPanel() {
           </DialogHeader>
           <form key={editOrganization?.id ?? "edit-org-form"} onSubmit={handleEditSubmit}>
             <OrganizationFormModal
+              key={editOrganization?.id ?? "edit-org-form"}
               mode="edit"
               organization={editOrganization}
               status={editStatus}

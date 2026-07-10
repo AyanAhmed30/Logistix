@@ -96,7 +96,6 @@ export function AdminCalculatorPanel() {
 
   const taxBreakdown = computeInquiryTaxBreakdown(calcValues);
   const invValue = taxBreakdown?.invValue ?? toNum(calcValues.inv_value);
-  const exchangeRate = taxBreakdown?.exchangeRate ?? toNum(calcValues.exchange_rate);
   const pkrValue = taxBreakdown?.pkrValue ?? 0;
   const assessedValue = taxBreakdown?.assessedValue ?? 0;
   const customDuty = taxBreakdown?.customDuty ?? 0;

@@ -9,6 +9,10 @@ import {
   parseOrganizationQuotationLineItems,
   type OrganizationQuotationLineItem,
 } from '@/lib/organization-quotation';
+import {
+  generateOrganizationRfqNumber,
+  reserveUniqueOrganizationRfqNumber,
+} from '@/lib/organization-rfq-number';
 
 export type OrganizationQuotation = {
   id: string;
@@ -36,6 +40,8 @@ export type OrganizationQuotation = {
     address: string;
     city: string;
     country: string;
+    postal_code: string;
+    tax_vat_number: string;
   } | null;
 };
 
@@ -64,7 +70,9 @@ const QUOTATION_SELECT = `
     phone,
     address,
     city,
-    country
+    country,
+    postal_code,
+    tax_vat_number
   )
 `;
 
@@ -84,7 +92,7 @@ async function generateOrganizationQuotationNumber(
   organizationId: string
 ) {
   const year = new Date().getFullYear();
-  const prefix = `INV/${year}/`;
+  const prefix = `QT/${year}/`;
 
   const { data } = await supabase
     .from('organization_quotations')
@@ -97,7 +105,7 @@ async function generateOrganizationQuotationNumber(
   let nextNum = 1;
   const latest = data?.[0]?.quotation_number;
   if (latest) {
-    const match = latest.match(/INV\/\d{4}\/(\d+)/);
+    const match = latest.match(/QT\/\d{4}\/(\d+)/);
     if (match) {
       nextNum = parseInt(match[1], 10) + 1;
     }
@@ -131,8 +139,7 @@ function parseLineItemsFromForm(formData: FormData) {
         description,
         String(row.quantity || ''),
         String(row.quantity_uom || 'kg'),
-        parseFloat(String(row.unit_price || '0')) || 0,
-        parseFloat(String(row.tax_rate || '0')) || 0
+        parseFloat(String(row.unit_price || '0')) || 0
       );
     })
     .filter((item): item is OrganizationQuotationLineItem => Boolean(item));
@@ -180,7 +187,8 @@ export async function getNextOrganizationQuotationNumber() {
       ctx.supabase,
       ctx.organization.id
     );
-    return { quotation_number };
+    const rfq_number = await generateOrganizationRfqNumber(ctx.supabase, ctx.organization.id);
+    return { quotation_number, rfq_number };
   } catch (err) {
     return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };
   }
@@ -194,13 +202,13 @@ export async function createOrganizationQuotation(formData: FormData) {
     const organization_customer_id = String(formData.get('organization_customer_id') || '').trim();
     const invoice_date = String(formData.get('invoice_date') || '').trim();
     const due_date = String(formData.get('due_date') || '').trim();
-    const source_reference = String(formData.get('source_reference') || '').trim();
     const payment_communication = String(formData.get('payment_communication') || '').trim();
     const bank_account = String(formData.get('bank_account') || '').trim();
-    const discount_total = parseFloat(String(formData.get('discount_total') || '0')) || 0;
+    const discount_percent = parseFloat(String(formData.get('discount_percent') || '0')) || 0;
+    const sales_tax_percent = parseFloat(String(formData.get('sales_tax_percent') || '0')) || 0;
 
     if (!organization_customer_id) return { error: 'Customer is required' };
-    if (!invoice_date || !due_date) return { error: 'Invoice date and due date are required' };
+    if (!invoice_date || !due_date) return { error: 'Quotation date and valid until date are required' };
 
     const { data: customer, error: customerError } = await ctx.supabase
       .from('organization_customers')
@@ -216,8 +224,16 @@ export async function createOrganizationQuotation(formData: FormData) {
     const lineItemsResult = parseLineItemsFromForm(formData);
     if ('error' in lineItemsResult) return { error: lineItemsResult.error };
 
-    const totals = computeOrganizationQuotationTotals(lineItemsResult.lineItems, discount_total);
+    const totals = computeOrganizationQuotationTotals(
+      lineItemsResult.lineItems,
+      discount_percent,
+      sales_tax_percent
+    );
     const quotation_number = await generateOrganizationQuotationNumber(
+      ctx.supabase,
+      ctx.organization.id
+    );
+    const source_reference = await reserveUniqueOrganizationRfqNumber(
       ctx.supabase,
       ctx.organization.id
     );
@@ -232,7 +248,7 @@ export async function createOrganizationQuotation(formData: FormData) {
           source_reference,
           invoice_date,
           due_date,
-          payment_communication: payment_communication || quotation_number,
+          payment_communication: payment_communication,
           bank_account,
           line_items: lineItemsResult.lineItems,
           subtotal: totals.subtotal,
@@ -268,14 +284,14 @@ export async function updateOrganizationQuotation(formData: FormData) {
     const organization_customer_id = String(formData.get('organization_customer_id') || '').trim();
     const invoice_date = String(formData.get('invoice_date') || '').trim();
     const due_date = String(formData.get('due_date') || '').trim();
-    const source_reference = String(formData.get('source_reference') || '').trim();
     const payment_communication = String(formData.get('payment_communication') || '').trim();
     const bank_account = String(formData.get('bank_account') || '').trim();
-    const discount_total = parseFloat(String(formData.get('discount_total') || '0')) || 0;
+    const discount_percent = parseFloat(String(formData.get('discount_percent') || '0')) || 0;
+    const sales_tax_percent = parseFloat(String(formData.get('sales_tax_percent') || '0')) || 0;
 
     if (!id) return { error: 'Quotation id is required' };
     if (!organization_customer_id) return { error: 'Customer is required' };
-    if (!invoice_date || !due_date) return { error: 'Invoice date and due date are required' };
+    if (!invoice_date || !due_date) return { error: 'Quotation date and valid until date are required' };
 
     const { data: customer, error: customerError } = await ctx.supabase
       .from('organization_customers')
@@ -291,7 +307,11 @@ export async function updateOrganizationQuotation(formData: FormData) {
     const lineItemsResult = parseLineItemsFromForm(formData);
     if ('error' in lineItemsResult) return { error: lineItemsResult.error };
 
-    const totals = computeOrganizationQuotationTotals(lineItemsResult.lineItems, discount_total);
+    const totals = computeOrganizationQuotationTotals(
+      lineItemsResult.lineItems,
+      discount_percent,
+      sales_tax_percent
+    );
 
     const { data, error } = await ctx.supabase
       .from('organization_quotations')
@@ -299,7 +319,6 @@ export async function updateOrganizationQuotation(formData: FormData) {
         organization_customer_id,
         invoice_date,
         due_date,
-        source_reference,
         payment_communication,
         bank_account,
         line_items: lineItemsResult.lineItems,

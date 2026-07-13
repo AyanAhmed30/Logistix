@@ -84,22 +84,9 @@ export function OrganizationDashboardShell({ organization, username }: Props) {
                 <X className="h-4 w-4" />
               </button>
             </div>
-            <div className={`space-y-3 ${isSidebarCollapsed ? "hidden md:flex md:flex-col md:items-center" : ""}`}>
-              <OrganizationLogo
-                logoUrl={organization.logo_url}
-                alt={`${organization.organization_name} logo`}
-                width={isSidebarCollapsed ? 48 : 80}
-                height={isSidebarCollapsed ? 48 : 80}
-                className={
-                  isSidebarCollapsed
-                    ? "h-12 w-12 rounded-lg object-cover border border-slate-200"
-                    : "h-16 w-16 rounded-lg object-cover border border-slate-200"
-                }
-              />
-              <div className={`space-y-1 ${isSidebarCollapsed ? "hidden" : ""}`}>
-                <h2 className="text-lg font-black text-primary-dark">{organization.organization_name}</h2>
-                <p className="text-xs text-secondary-muted">Signed in as {username}</p>
-              </div>
+            <div className={`space-y-1 ${isSidebarCollapsed ? "hidden" : ""}`}>
+              <h2 className="text-lg font-black text-primary-dark">{organization.organization_name}</h2>
+              <p className="text-xs text-secondary-muted">Signed in as {username}</p>
             </div>
             <div className="grid gap-2 sidebar-buttons">
               <Button
@@ -142,18 +129,9 @@ export function OrganizationDashboardShell({ organization, username }: Props) {
           <div className="mb-6">
             <Card className="bg-white border shadow-sm">
               <CardHeader className="pb-3">
-                <div className="flex items-center gap-4">
-                  <OrganizationLogo
-                    logoUrl={organization.logo_url}
-                    alt={`${organization.organization_name} logo`}
-                    width={64}
-                    height={64}
-                    className="h-16 w-16 rounded-lg object-cover border border-slate-200"
-                  />
-                  <CardTitle className="text-2xl text-primary-dark">
-                    Welcome, {organization.organization_name}
-                  </CardTitle>
-                </div>
+                <CardTitle className="text-2xl text-primary-dark">
+                  Welcome, {organization.organization_name}
+                </CardTitle>
               </CardHeader>
               <CardContent className="text-secondary-muted">
                 Manage your customers and quotations from the sidebar.

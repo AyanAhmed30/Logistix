@@ -9,11 +9,37 @@ export type OrganizationQuotationLineItem = {
 };
 
 export type OrganizationQuotationTotals = {
+  gross_total: number;
+  discount_percent: number;
+  discount_amount: number;
+  sales_tax_percent: number;
+  sales_tax_amount: number;
+  grand_total: number;
   subtotal: number;
   discount_total: number;
   tax_total: number;
-  grand_total: number;
 };
+
+export const ORGANIZATION_QUOTATION_ITEM_SEPARATOR = ' | ';
+
+export function combineQuotationItemDescription(item: string, description: string) {
+  const itemName = item.trim();
+  const itemDescription = description.trim();
+  if (!itemName) return itemDescription;
+  if (!itemDescription) return itemName;
+  return `${itemName}${ORGANIZATION_QUOTATION_ITEM_SEPARATOR}${itemDescription}`;
+}
+
+export function splitQuotationItemDescription(stored: string) {
+  const separatorIndex = stored.indexOf(ORGANIZATION_QUOTATION_ITEM_SEPARATOR);
+  if (separatorIndex === -1) {
+    return { item: '', description: stored };
+  }
+  return {
+    item: stored.slice(0, separatorIndex),
+    description: stored.slice(separatorIndex + ORGANIZATION_QUOTATION_ITEM_SEPARATOR.length),
+  };
+}
 
 export function parseOrganizationQuotationLineItems(value: unknown): OrganizationQuotationLineItem[] {
   if (!Array.isArray(value)) return [];
@@ -21,58 +47,77 @@ export function parseOrganizationQuotationLineItems(value: unknown): Organizatio
     .map((item) => {
       if (!item || typeof item !== 'object') return null;
       const row = item as Record<string, unknown>;
-      return {
-        description: String(row.description || '').trim(),
-        quantity: String(row.quantity || '').trim(),
-        quantity_uom: String(row.quantity_uom || 'kg').trim(),
-        unit_price: Number(row.unit_price) || 0,
-        tax_rate: Number(row.tax_rate) || 0,
-        tax_amount: Number(row.tax_amount) || 0,
-        line_total: Number(row.line_total) || 0,
-      } satisfies OrganizationQuotationLineItem;
+      const description = String(row.description || '').trim();
+      if (!description) return null;
+      return computeOrganizationQuotationLine(
+        description,
+        String(row.quantity || ''),
+        String(row.quantity_uom || 'kg'),
+        Number(row.unit_price) || 0
+      );
     })
-    .filter((item): item is OrganizationQuotationLineItem => Boolean(item && item.description));
+    .filter((item): item is OrganizationQuotationLineItem => Boolean(item));
 }
 
 export function computeOrganizationQuotationLine(
   description: string,
   quantity: string,
   quantityUom: string,
-  unitPrice: number,
-  taxRate: number
+  unitPrice: number
 ): OrganizationQuotationLineItem {
   const qty = parseFloat(quantity.replace(/,/g, '')) || 0;
   const price = Number.isFinite(unitPrice) ? unitPrice : 0;
-  const rate = Number.isFinite(taxRate) ? taxRate : 0;
-  const lineSubtotal = qty * price;
-  const taxAmount = lineSubtotal * (rate / 100);
-  const lineTotal = lineSubtotal + taxAmount;
+  const lineTotal = qty * price;
 
   return {
     description: description.trim(),
     quantity: quantity.trim(),
     quantity_uom: quantityUom.trim() || 'kg',
     unit_price: price,
-    tax_rate: rate,
-    tax_amount: taxAmount,
+    tax_rate: 0,
+    tax_amount: 0,
     line_total: lineTotal,
   };
 }
 
 export function computeOrganizationQuotationTotals(
   lineItems: OrganizationQuotationLineItem[],
-  discountTotal = 0
+  discountPercent = 0,
+  salesTaxPercent = 0
 ): OrganizationQuotationTotals {
-  const subtotal = lineItems.reduce((sum, item) => sum + item.unit_price * (parseFloat(item.quantity.replace(/,/g, '')) || 0), 0);
-  const tax_total = lineItems.reduce((sum, item) => sum + item.tax_amount, 0);
-  const discount = Number.isFinite(discountTotal) ? discountTotal : 0;
-  const grand_total = Math.max(0, subtotal - discount + tax_total);
+  const gross_total = lineItems.reduce((sum, item) => sum + item.line_total, 0);
+  const discount_percent = Number.isFinite(discountPercent) ? Math.max(0, discountPercent) : 0;
+  const sales_tax_percent = Number.isFinite(salesTaxPercent) ? Math.max(0, salesTaxPercent) : 0;
+  const discount_amount = gross_total * (discount_percent / 100);
+  const sales_tax_amount = gross_total * (sales_tax_percent / 100);
+  const grand_total = Math.max(0, gross_total - discount_amount + sales_tax_amount);
 
   return {
-    subtotal,
-    discount_total: discount,
-    tax_total,
+    gross_total,
+    discount_percent,
+    discount_amount,
+    sales_tax_percent,
+    sales_tax_amount,
     grand_total,
+    subtotal: gross_total,
+    discount_total: discount_amount,
+    tax_total: sales_tax_amount,
+  };
+}
+
+export function deriveQuotationPercentages(quotation: {
+  subtotal: number;
+  discount_total: number;
+  tax_total: number;
+}) {
+  const grossTotal = quotation.subtotal || 0;
+  if (grossTotal <= 0) {
+    return { discountPercent: 0, salesTaxPercent: 0 };
+  }
+
+  return {
+    discountPercent: (quotation.discount_total / grossTotal) * 100,
+    salesTaxPercent: (quotation.tax_total / grossTotal) * 100,
   };
 }
 

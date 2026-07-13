@@ -50,6 +50,7 @@ export function OrganizationQuotationsPanel({ organization }: Props) {
   const [archiveOpen, setArchiveOpen] = useState(false);
   const [selectedQuotation, setSelectedQuotation] = useState<OrganizationQuotation | null>(null);
   const [nextQuotationNumber, setNextQuotationNumber] = useState("");
+  const [nextRfqNumber, setNextRfqNumber] = useState("");
   const [isPending, startTransition] = useTransition();
 
   useEffect(() => {
@@ -91,6 +92,7 @@ export function OrganizationQuotationsPanel({ organization }: Props) {
       return;
     }
     setNextQuotationNumber(result.quotation_number || "");
+    setNextRfqNumber(result.rfq_number || "");
     setCreateOpen(true);
   }
 
@@ -169,7 +171,7 @@ export function OrganizationQuotationsPanel({ organization }: Props) {
                   <TableRow>
                     <TableHead>Quotation Number</TableHead>
                     <TableHead>Customer</TableHead>
-                    <TableHead>Date</TableHead>
+                    <TableHead>Quotation Date</TableHead>
                     <TableHead>Total Amount</TableHead>
                     <TableHead>Status</TableHead>
                     <TableHead className="text-right">Actions</TableHead>
@@ -244,10 +246,11 @@ export function OrganizationQuotationsPanel({ organization }: Props) {
             </p>
           ) : (
             <OrganizationQuotationForm
-              key={nextQuotationNumber || "new-quotation"}
+              key={`${nextQuotationNumber}-${nextRfqNumber}`}
               organization={organization}
               customers={customers}
               quotationNumber={nextQuotationNumber}
+              rfqNumber={nextRfqNumber}
               onSubmit={handleCreate}
               isPending={isPending}
             />

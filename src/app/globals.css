@@ -5,6 +5,12 @@
 @custom-variant dark (&:is(.dark *));
 
 :root {
+  /* Local font stacks — avoids next/font/google network fetch at build time */
+  --font-geist-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
+    "Helvetica Neue", Arial, "Noto Sans", sans-serif;
+  --font-geist-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+    "Liberation Mono", "Courier New", monospace;
+
   /* User Provided Palette */
   --primary-dark: #AAC6CF;
   --primary-accent: #218C94;
@@ -67,6 +73,9 @@
 }
 
 @theme inline {
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+
   --color-primary-dark: var(--p-dark);
   --color-primary-accent: var(--p-accent);
   --color-secondary-muted: var(--s-muted);

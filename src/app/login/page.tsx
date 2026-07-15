@@ -17,10 +17,32 @@ export default function LoginPage() {
         setIsLoading(true);
         const formData = new FormData(e.currentTarget);
 
-        const result = await login(formData);
+        try {
+            const result = await login(formData);
 
-        if (result?.error) {
-            toast.error(result.error);
+            if (!result) {
+                toast.error('Login failed. Please try again.');
+                setIsLoading(false);
+                return;
+            }
+
+            if ('error' in result && result.error) {
+                toast.error(result.error);
+                setIsLoading(false);
+                return;
+            }
+
+            if ('redirectTo' in result && result.redirectTo) {
+                // Hard navigation is faster than soft RSC redirect after auth —
+                // cookie is already set; go straight to the dashboard.
+                window.location.assign(result.redirectTo);
+                return;
+            }
+
+            toast.error('Login failed. Please try again.');
+            setIsLoading(false);
+        } catch {
+            toast.error('Login failed. Please try again.');
             setIsLoading(false);
         }
     }
@@ -59,7 +81,7 @@ export default function LoginPage() {
                                 placeholder="Enter username"
                                 required
                                 className="border-light-bg focus:border-primary-accent focus:ring-primary-accent text-lg py-6"
-                                autoComplete="off"
+                                autoComplete="username"
                             />
                         </div>
                         <div className="space-y-2">
@@ -71,6 +93,7 @@ export default function LoginPage() {
                                 placeholder="••••••••"
                                 required
                                 className="border-light-bg focus:border-primary-accent focus:ring-primary-accent text-lg py-6"
+                                autoComplete="current-password"
                             />
                         </div>
                     </CardContent>
@@ -80,7 +103,7 @@ export default function LoginPage() {
                             type="submit"
                             disabled={isLoading}
                         >
-                            {isLoading ? 'Authenticating...' : 'Sign In Securely'}
+                            {isLoading ? 'Signing you in...' : 'Sign In Securely'}
                         </Button>
                     </CardFooter>
                 </form>

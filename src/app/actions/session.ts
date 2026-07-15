@@ -39,6 +39,7 @@ export async function refreshSession(): Promise<RefreshSessionResult> {
             username: payload.username,
             role: payload.role,
             organizationName: payload.organizationName,
+            permissions: payload.permissions,
             lastActivity: Date.now(),
         });
 

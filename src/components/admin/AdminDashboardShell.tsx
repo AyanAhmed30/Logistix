@@ -7,6 +7,7 @@ import { LogOut, Bell } from "lucide-react";
 import Image from "next/image";
 import { AdminUserManager } from "@/components/admin/AdminUserManager";
 import { getAdminNotifications } from "@/app/actions/orders";
+import { getAppUsers } from "@/app/actions/user";
 import {
   type AdminModule,
   type AdminTab,
@@ -22,11 +23,13 @@ type AppUser = {
 };
 
 type Props = {
-  users: AppUser[];
+  users?: AppUser[];
   dbError?: string | null;
 };
 
-export function AdminDashboardShell({ users, dbError }: Props) {
+export function AdminDashboardShell({ users: initialUsers = [], dbError: initialDbError = null }: Props) {
+  const [users, setUsers] = useState<AppUser[]>(initialUsers);
+  const [dbError, setDbError] = useState<string | null>(initialDbError);
   const [activeTab, setActiveTab] = useState<AdminTab>("dashboard");
   const [activeModule, setActiveModule] = useState<AdminModule | null>(null);
   const [unreadCount, setUnreadCount] = useState(0);
@@ -61,6 +64,27 @@ export function AdminDashboardShell({ users, dbError }: Props) {
     setActiveModule(null);
     setActiveTab("dashboard");
   }
+
+  useEffect(() => {
+    let isMounted = true;
+    void getAppUsers()
+      .then((result) => {
+        if (!isMounted) return;
+        if ("users" in result && Array.isArray(result.users)) {
+          setUsers(result.users);
+        }
+        if ("error" in result && result.error && result.error !== "Unauthorized") {
+          setDbError(result.error);
+        }
+      })
+      .catch(() => {
+        if (!isMounted) return;
+        setDbError("Failed to load users");
+      });
+    return () => {
+      isMounted = false;
+    };
+  }, []);
 
   useEffect(() => {
     function onOpenQuotation(e: Event) {

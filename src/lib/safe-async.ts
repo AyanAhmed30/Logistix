@@ -13,6 +13,18 @@ export class ActionTimeoutError extends Error {
 }
 
 export function getErrorMessage(error: unknown, fallback = "Something went wrong. Please try again."): string {
+  // Never surface Next.js control-flow exceptions as user-facing errors.
+  if (
+    (typeof error === "object" &&
+      error !== null &&
+      "digest" in error &&
+      typeof (error as { digest?: unknown }).digest === "string" &&
+      String((error as { digest: string }).digest).startsWith("NEXT_REDIRECT")) ||
+    (error instanceof Error && error.message.includes("NEXT_REDIRECT")) ||
+    (typeof error === "string" && error.includes("NEXT_REDIRECT"))
+  ) {
+    return fallback;
+  }
   if (error instanceof ActionTimeoutError) return error.message;
   if (error instanceof Error && error.message.trim()) return error.message;
   if (typeof error === "string" && error.trim()) return error;

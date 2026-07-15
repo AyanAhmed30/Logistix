@@ -82,3 +82,27 @@ export async function deleteUser(formData: FormData) {
     revalidatePath('/admin/dashboard');
     return { success: true };
 }
+
+export async function getAppUsers() {
+    const session = await getSession();
+    if (!session || session.role !== 'admin') {
+        return { error: 'Unauthorized' as const };
+    }
+
+    const supabase = await createAdminClient();
+    const { data: users, error } = await supabase
+        .from('app_users')
+        .select('id, username, password, created_at')
+        .order('created_at', { ascending: false });
+
+    if (error) {
+        return { error: error.message, users: [] as Array<{
+            id: string;
+            username: string;
+            password: string;
+            created_at: string;
+        }> };
+    }
+
+    return { users: users ?? [] };
+}

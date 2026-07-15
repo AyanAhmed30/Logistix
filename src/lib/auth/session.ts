@@ -16,6 +16,8 @@ export type SessionPayload = {
     username: string;
     role: SessionRole;
     organizationName?: string;
+    /** Sales-agent module permissions captured at login for instant dashboard chrome. */
+    permissions?: string[];
     /** Unix timestamp (ms) of the user's last recorded activity. */
     lastActivity?: number;
     /** Legacy informational field — real expiry is JWT `exp`. */

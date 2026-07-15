@@ -2,113 +2,184 @@
 
 import { cookies } from 'next/headers';
 import { redirect } from 'next/navigation';
-import { isRedirectError } from 'next/dist/client/components/redirect-error';
 import { createAdminClient } from '@/utils/supabase/server';
-import { encrypt, getSessionCookieOptions } from '@/lib/auth/session';
-import { authenticateOrganization } from '@/app/actions/organizations';
+import { encrypt, getSessionCookieOptions, type SessionRole } from '@/lib/auth/session';
+import { verifyPassword } from '@/lib/auth/password';
 
 const ADMIN_USERNAME = 'admin';
 const ADMIN_PASSWORD = 'admin123';
 
-export async function login(formData: FormData) {
+const DASHBOARD_BY_ROLE: Record<SessionRole, string> = {
+  admin: '/admin/dashboard',
+  sales_agent: '/sales-agent/dashboard',
+  operations: '/operations/dashboard',
+  organization: '/organization/dashboard',
+  user: '/user/dashboard',
+};
+
+function parsePermissions(raw: unknown): string[] {
+  if (Array.isArray(raw)) {
+    return raw.filter((item): item is string => typeof item === 'string');
+  }
+  if (typeof raw === 'string' && raw.trim()) {
     try {
-        const username = String(formData.get('username') || '').trim();
-        const password = String(formData.get('password') || '').trim();
-
-        if (!username || !password) {
-            return { error: 'Username and password are required' };
-        }
-
-        const cookieOptions = getSessionCookieOptions();
-        const sessionBase = { lastActivity: Date.now() };
-
-        // 1. Check Admin Credentials
-        if (username === ADMIN_USERNAME && password === ADMIN_PASSWORD) {
-            const session = await encrypt({ username, role: 'admin', ...sessionBase });
-            (await cookies()).set('session', session, cookieOptions);
-            redirect('/admin/dashboard');
-        }
-
-        // 2. Check DB-backed users in parallel to reduce login latency.
-        const supabase = await createAdminClient();
-        const [salesAgentResult, opsUserResult, appUserResult, organizationAuth] = await Promise.all([
-            supabase
-                .from('sales_agents')
-                .select('username')
-                .eq('username', username)
-                .eq('password', password)
-                .maybeSingle(),
-            supabase
-                .from('operations_users')
-                .select('username')
-                .eq('username', username)
-                .eq('password', password)
-                .maybeSingle(),
-            supabase
-                .from('app_users')
-                .select('username, role')
-                .eq('username', username)
-                .eq('password', password)
-                .maybeSingle(),
-            authenticateOrganization(username, password),
-        ]);
-
-        if (salesAgentResult.error) {
-            return { error: salesAgentResult.error.message };
-        }
-        if (opsUserResult.error && !opsUserResult.error.message.includes('does not exist') && !opsUserResult.error.message.includes('relation')) {
-            return { error: opsUserResult.error.message };
-        }
-        if (appUserResult.error) {
-            return { error: appUserResult.error.message };
-        }
-
-        const salesAgent = salesAgentResult.data;
-        if (salesAgent) {
-            const session = await encrypt({ username: salesAgent.username, role: 'sales_agent', ...sessionBase });
-            (await cookies()).set('session', session, cookieOptions);
-            redirect('/sales-agent/dashboard');
-        }
-
-        const opsUser = opsUserResult.data;
-        if (opsUser) {
-            const session = await encrypt({ username: opsUser.username, role: 'operations', ...sessionBase });
-            (await cookies()).set('session', session, cookieOptions);
-            redirect('/operations/dashboard');
-        }
-
-        if (organizationAuth && 'inactive' in organizationAuth) {
-            return { error: 'This organization account is inactive. Please contact the administrator.' };
-        }
-
-        if (organizationAuth && 'username' in organizationAuth) {
-            const session = await encrypt({
-                username: organizationAuth.username,
-                role: 'organization',
-                organizationName: organizationAuth.organizationName,
-                ...sessionBase,
-            });
-            (await cookies()).set('session', session, cookieOptions);
-            redirect('/organization/dashboard');
-        }
-
-        const user = appUserResult.data;
-        if (user) {
-            const session = await encrypt({ username: user.username, role: 'user', ...sessionBase });
-            (await cookies()).set('session', session, cookieOptions);
-            redirect('/user/dashboard');
-        }
-
-        return { error: 'Invalid username or password' };
-    } catch (error) {
-        if (isRedirectError(error)) {
-            throw error;
-        }
-        return { error: 'Login failed. Please try again.' };
+      const parsed = JSON.parse(raw) as unknown;
+      if (Array.isArray(parsed)) {
+        return parsed.filter((item): item is string => typeof item === 'string');
+      }
+    } catch {
+      return [];
     }
+  }
+  return [];
+}
+
+async function establishSession(params: {
+  username: string;
+  role: SessionRole;
+  organizationName?: string;
+  permissions?: string[];
+}) {
+  const cookieOptions = getSessionCookieOptions();
+  const session = await encrypt({
+    username: params.username,
+    role: params.role,
+    organizationName: params.organizationName,
+    permissions: params.permissions,
+    lastActivity: Date.now(),
+  });
+  (await cookies()).set('session', session, cookieOptions);
+  return { redirectTo: DASHBOARD_BY_ROLE[params.role] };
+}
+
+export async function login(formData: FormData) {
+  try {
+    const username = String(formData.get('username') || '').trim();
+    const password = String(formData.get('password') || '').trim();
+
+    if (!username || !password) {
+      return { error: 'Username and password are required' };
+    }
+
+    // Fast path: admin never hits the database.
+    if (username === ADMIN_USERNAME && password === ADMIN_PASSWORD) {
+      return await establishSession({ username, role: 'admin' });
+    }
+
+    // Single shared client + one round-trip per role table (no nested auth helpers).
+    const supabase = await createAdminClient();
+    const [salesAgentResult, opsUserResult, appUserResult, organizationResult] = await Promise.all([
+      supabase
+        .from('sales_agents')
+        .select('username, permissions')
+        .eq('username', username)
+        .eq('password', password)
+        .maybeSingle(),
+      supabase
+        .from('operations_users')
+        .select('username')
+        .eq('username', username)
+        .eq('password', password)
+        .maybeSingle(),
+      supabase
+        .from('app_users')
+        .select('username, role')
+        .eq('username', username)
+        .eq('password', password)
+        .maybeSingle(),
+      supabase
+        .from('organizations')
+        .select('username, password, organization_name, status')
+        .eq('username', username)
+        .maybeSingle(),
+    ]);
+
+    if (salesAgentResult.error) {
+      // Permissions column may be missing on older schemas — retry without it.
+      if (
+        salesAgentResult.error.message.includes('permissions') ||
+        salesAgentResult.error.message.includes('column "permissions"')
+      ) {
+        const retry = await supabase
+          .from('sales_agents')
+          .select('username')
+          .eq('username', username)
+          .eq('password', password)
+          .maybeSingle();
+        if (retry.error) return { error: retry.error.message };
+        if (retry.data) {
+          return await establishSession({
+            username: retry.data.username,
+            role: 'sales_agent',
+            permissions: [],
+          });
+        }
+      } else {
+        return { error: salesAgentResult.error.message };
+      }
+    } else if (salesAgentResult.data) {
+      return await establishSession({
+        username: salesAgentResult.data.username,
+        role: 'sales_agent',
+        permissions: parsePermissions(salesAgentResult.data.permissions),
+      });
+    }
+
+    if (
+      opsUserResult.error &&
+      !opsUserResult.error.message.includes('does not exist') &&
+      !opsUserResult.error.message.includes('relation')
+    ) {
+      return { error: opsUserResult.error.message };
+    }
+    if (opsUserResult.data) {
+      return await establishSession({
+        username: opsUserResult.data.username,
+        role: 'operations',
+      });
+    }
+
+    if (
+      organizationResult.error &&
+      !organizationResult.error.message.includes('does not exist') &&
+      !organizationResult.error.message.includes('relation')
+    ) {
+      return { error: organizationResult.error.message };
+    }
+
+    if (organizationResult.data) {
+      const org = organizationResult.data;
+      if (verifyPassword(password, org.password)) {
+        if (org.status === 'inactive') {
+          return {
+            error: 'This organization account is inactive. Please contact the administrator.',
+          };
+        }
+        return await establishSession({
+          username: org.username,
+          role: 'organization',
+          organizationName: org.organization_name,
+        });
+      }
+    }
+
+    if (appUserResult.error) {
+      return { error: appUserResult.error.message };
+    }
+    if (appUserResult.data) {
+      return await establishSession({
+        username: appUserResult.data.username,
+        role: 'user',
+      });
+    }
+
+    return { error: 'Invalid username or password' };
+  } catch {
+    return { error: 'Login failed. Please try again.' };
+  }
 }
 
 export async function logout() {
-    (await cookies()).set('session', '', { expires: new Date(0) });
-    redirect('/login');
+  (await cookies()).set('session', '', { expires: new Date(0) });
+  redirect('/login');
 }

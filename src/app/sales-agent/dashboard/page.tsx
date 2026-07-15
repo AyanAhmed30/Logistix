@@ -1,7 +1,6 @@
 import { getSession } from '@/lib/auth/session';
 import { redirect } from 'next/navigation';
 import { SalesAgentDashboardShell } from '@/components/sales-agent/SalesAgentDashboardShell';
-import { getSalesAgentByUsername } from '@/app/actions/sales_agents';
 
 export default async function SalesAgentDashboard() {
     const session = await getSession();
@@ -10,19 +9,14 @@ export default async function SalesAgentDashboard() {
         redirect('/login');
     }
 
-    // Fetch sales agent permissions
-    let permissions: string[] = [];
-    try {
-        const result = await getSalesAgentByUsername(session.username);
-        if (result && 'salesAgent' in result && result.salesAgent) {
-            permissions = Array.isArray(result.salesAgent.permissions) 
-                ? result.salesAgent.permissions 
-                : [];
-        }
-    } catch {
-        // If there's an error fetching permissions, use empty array
-        permissions = [];
-    }
+    // Permissions are stored in the session at login so the shell can paint immediately
+    // without an extra database round-trip on every dashboard load.
+    const permissions = Array.isArray(session.permissions) ? session.permissions : [];
 
-    return <SalesAgentDashboardShell username={session.username} permissions={permissions} />;
+    return (
+        <SalesAgentDashboardShell
+            username={session.username}
+            permissions={permissions}
+        />
+    );
 }

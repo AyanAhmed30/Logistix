@@ -77,9 +77,10 @@ export function SessionManager() {
   }, []);
 
   useEffect(() => {
+    // Defer first refresh so it does not compete with dashboard first paint after login.
     const initialRefreshTimer = window.setTimeout(() => {
       void tryRefresh();
-    }, 0);
+    }, 2500);
 
     const onActivity = () => {
       recordActivity();

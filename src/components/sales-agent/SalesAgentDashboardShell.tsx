@@ -133,15 +133,37 @@ function useIsHydrated() {
   );
 }
 
-export function SalesAgentDashboardShell({ username, permissions }: Props) {
+export function SalesAgentDashboardShell({ username, permissions: initialPermissions }: Props) {
   const router = useRouter();
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   const mounted = useIsHydrated();
+  const [permissions, setPermissions] = useState(initialPermissions);
   const [notifications, setNotifications] = useState<LeadChatNotification[]>([]);
   const [unreadCount, setUnreadCount] = useState(0);
   const [notificationsError, setNotificationsError] = useState<string | null>(null);
 
   const [activeTab, setActiveTab] = useState<TabKey>("dashboard");
+
+  useEffect(() => {
+    setPermissions(initialPermissions);
+  }, [initialPermissions]);
+
+  // Refresh permissions in the background without blocking first paint.
+  useEffect(() => {
+    let cancelled = false;
+    void import("@/app/actions/sales_agents").then(({ getSalesAgentByUsername }) =>
+      getSalesAgentByUsername(username).then((result) => {
+        if (cancelled || !result || !("salesAgent" in result) || !result.salesAgent) return;
+        const next = Array.isArray(result.salesAgent.permissions)
+          ? result.salesAgent.permissions
+          : [];
+        setPermissions(next);
+      })
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [username]);
 
   const tabs = useMemo(() => {
     const defaultKeys = DEFAULT_TABS.map((t) => t.key);

@@ -10,7 +10,7 @@ import {
   updateOrganization,
   type Organization,
 } from "@/app/actions/organizations";
-import { OrganizationFormModal } from "@/components/admin/OrganizationFormModal";
+import { OrganizationCompanyForm } from "@/components/admin/OrganizationCompanyForm";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
@@ -29,7 +29,10 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { Building2, Edit, PlusCircle, Trash2 } from "lucide-react";
+import { ArrowLeft, Building2, Edit, PlusCircle, Trash2 } from "lucide-react";
+
+const CREATE_HASH = "#organization-create";
+const CREATE_EVENT = "logistix:organization-create";
 
 function formatAddress(organization: Organization) {
   const parts = [
@@ -44,11 +47,16 @@ function formatAddress(organization: Organization) {
   return organization.address || "—";
 }
 
+function isCreateHash() {
+  if (typeof window === "undefined") return false;
+  return window.location.hash === CREATE_HASH;
+}
+
 export function OrganizationPanel() {
   const router = useRouter();
   const [organizations, setOrganizations] = useState<Organization[]>([]);
   const [isLoading, setIsLoading] = useState(false);
-  const [createOpen, setCreateOpen] = useState(false);
+  const [view, setView] = useState<"list" | "create">("list");
   const [editOpen, setEditOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [editOrganization, setEditOrganization] = useState<Organization | null>(null);
@@ -64,6 +72,23 @@ export function OrganizationPanel() {
 
   useEffect(() => {
     void fetchData();
+  }, []);
+
+  useEffect(() => {
+    function syncViewFromHash() {
+      const open = isCreateHash();
+      setView(open ? "create" : "list");
+      window.dispatchEvent(
+        new CustomEvent(CREATE_EVENT, { detail: { open } })
+      );
+    }
+    syncViewFromHash();
+    window.addEventListener("hashchange", syncViewFromHash);
+    window.addEventListener("popstate", syncViewFromHash);
+    return () => {
+      window.removeEventListener("hashchange", syncViewFromHash);
+      window.removeEventListener("popstate", syncViewFromHash);
+    };
   }, []);
 
   function resetCreateFormState() {
@@ -96,6 +121,32 @@ export function OrganizationPanel() {
     }
   }
 
+  function notifyCreateView(open: boolean) {
+    window.dispatchEvent(new CustomEvent(CREATE_EVENT, { detail: { open } }));
+  }
+
+  function openCreate() {
+    resetCreateFormState();
+    setCreateFormKey((key) => key + 1);
+    setView("create");
+    notifyCreateView(true);
+    if (window.location.hash !== CREATE_HASH) {
+      window.history.pushState({ organizationCreate: true }, "", CREATE_HASH);
+    }
+  }
+
+  function closeCreate(options?: { replace?: boolean }) {
+    resetCreateFormState();
+    setView("list");
+    notifyCreateView(false);
+    const target = window.location.pathname + window.location.search;
+    if (options?.replace) {
+      window.history.replaceState(null, "", target);
+    } else if (window.location.hash === CREATE_HASH) {
+      window.history.pushState(null, "", target);
+    }
+  }
+
   function handleCreateSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const formData = new FormData(event.currentTarget);
@@ -111,8 +162,7 @@ export function OrganizationPanel() {
         return;
       }
       toast.success("Organization created successfully");
-      setCreateOpen(false);
-      resetCreateFormState();
+      closeCreate({ replace: true });
       router.refresh();
       await fetchData();
     });
@@ -141,12 +191,6 @@ export function OrganizationPanel() {
       router.refresh();
       await fetchData();
     });
-  }
-
-  function openCreate() {
-    resetCreateFormState();
-    setCreateFormKey((key) => key + 1);
-    setCreateOpen(true);
   }
 
   function openEdit(organization: Organization) {
@@ -179,6 +223,62 @@ export function OrganizationPanel() {
       router.refresh();
       await fetchData();
     });
+  }
+
+  if (view === "create") {
+    return (
+      <div className="min-h-[70vh]">
+        <form key={`create-org-page-${createFormKey}`} onSubmit={handleCreateSubmit} className="flex flex-col min-h-[70vh]">
+          {/* Odoo-style sticky action bar */}
+          <div className="sticky top-16 z-20 flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 bg-white/95 px-4 py-3 backdrop-blur md:px-6">
+            <div className="flex flex-wrap items-center gap-3 min-w-0">
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="gap-2 text-secondary-muted"
+                onClick={() => closeCreate({ replace: true })}
+              >
+                <ArrowLeft className="h-4 w-4" />
+                Back
+              </Button>
+              <div className="min-w-0">
+                <p className="text-xs uppercase tracking-widest text-secondary-muted">Companies</p>
+                <h1 className="text-lg font-bold text-primary-dark truncate md:text-xl">New Company</h1>
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => closeCreate({ replace: true })}
+                disabled={isPending}
+              >
+                Discard
+              </Button>
+              <Button type="submit" disabled={isPending} className="create-console-btn">
+                {isPending ? "Saving..." : "Save"}
+              </Button>
+            </div>
+          </div>
+
+          <div className="flex-1 px-4 py-6 md:px-8 md:py-8 max-w-6xl mx-auto w-full">
+            <div className="rounded-lg border border-slate-200 bg-white shadow-sm p-4 md:p-8">
+              <OrganizationCompanyForm
+                key={`create-page-${createFormKey}`}
+                mode="create"
+                layout="page"
+                status={createStatus}
+                onStatusChange={setCreateStatus}
+                logoPreview={createLogoPreview}
+                onLogoPreviewChange={setCreateLogoPreview}
+                onLogoFileChange={setCreateLogoFile}
+              />
+            </div>
+          </div>
+        </form>
+      </div>
+    );
   }
 
   return (
@@ -255,40 +355,6 @@ export function OrganizationPanel() {
       </Card>
 
       <Dialog
-        open={createOpen}
-        onOpenChange={(open) => {
-          setCreateOpen(open);
-          if (!open) resetCreateFormState();
-        }}
-      >
-        <DialogContent className="sm:max-w-3xl max-h-[90vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle>Add Organization</DialogTitle>
-            <DialogDescription>Create a new organization and its login credentials.</DialogDescription>
-          </DialogHeader>
-          <form key="create-org-form" onSubmit={handleCreateSubmit}>
-            <OrganizationFormModal
-              key={`create-${createFormKey}`}
-              mode="create"
-              status={createStatus}
-              onStatusChange={setCreateStatus}
-              logoPreview={createLogoPreview}
-              onLogoPreviewChange={setCreateLogoPreview}
-              onLogoFileChange={setCreateLogoFile}
-            />
-            <DialogFooter className="sm:justify-start pt-4">
-              <Button variant="outline" type="button" onClick={() => setCreateOpen(false)}>
-                Cancel
-              </Button>
-              <Button type="submit" disabled={isPending} className="create-console-btn">
-                {isPending ? "Saving..." : "Save"}
-              </Button>
-            </DialogFooter>
-          </form>
-        </DialogContent>
-      </Dialog>
-
-      <Dialog
         open={editOpen}
         onOpenChange={(open) => {
           setEditOpen(open);
@@ -301,9 +367,10 @@ export function OrganizationPanel() {
             <DialogDescription>Update organization details and login credentials.</DialogDescription>
           </DialogHeader>
           <form key={editOrganization?.id ?? "edit-org-form"} onSubmit={handleEditSubmit}>
-            <OrganizationFormModal
+            <OrganizationCompanyForm
               key={editOrganization?.id ?? "edit-org-form"}
               mode="edit"
+              layout="compact"
               organization={editOrganization}
               status={editStatus}
               onStatusChange={setEditStatus}
@@ -328,7 +395,8 @@ export function OrganizationPanel() {
           <DialogHeader>
             <DialogTitle>Delete Organization</DialogTitle>
             <DialogDescription>
-              Delete {deleteTarget?.organization_name}? This will remove the organization and its login credentials.
+              Delete {deleteTarget?.organization_name}? This will remove the organization and its login
+              credentials.
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>

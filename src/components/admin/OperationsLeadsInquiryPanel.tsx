@@ -41,6 +41,7 @@ import {
   getEmptyCalculatorValues,
   parseStoredCalculatorPayload,
   serializeCalculatorPayload,
+  hasMeaningfulCalculatorData,
   withDerivedInvValue,
   parsePricingConfig,
   type CalculatorPricingConfig,
@@ -278,13 +279,15 @@ export function OperationsLeadsInquiryPanel({
     });
   }, []);
 
-  const addCalculator = useCallback(() => {
-    setCalculators((prev) => [...prev, getEmptyCalculatorValues()]);
-  }, []);
-
-  const persistCalculatorPayload = useCallback(async () => {
+  const persistCalculatorPayload = useCallback(async (
+    nextCalculators?: Record<string, string>[],
+    nextDescription?: string
+  ) => {
     if (!selectedInquiry) return;
-    const payload = serializeCalculatorPayload(calculators, operationsDescription);
+    const payload = serializeCalculatorPayload(
+      nextCalculators ?? calculators,
+      nextDescription ?? operationsDescription
+    );
     const result = await saveInquiryCalculatorPayload(selectedInquiry.id, payload);
     if ("error" in result) {
       toast.error(result.error || "Failed to save calculator data.");
@@ -299,6 +302,14 @@ export function OperationsLeadsInquiryPanel({
         : prev
     );
   }, [selectedInquiry, calculators, operationsDescription]);
+
+  const addCalculator = useCallback(() => {
+    setCalculators((prev) => {
+      const next = [...prev, getEmptyCalculatorValues()];
+      void persistCalculatorPayload(next);
+      return next;
+    });
+  }, [persistCalculatorPayload]);
 
   const refreshInquiryLogs = useCallback(async (leadId: string, inquiryId?: string) => {
     try {
@@ -342,6 +353,16 @@ export function OperationsLeadsInquiryPanel({
         next[0] = withDerivedInvValue({ ...next[0], [field]: currentValue });
         return next;
       });
+      if ("calculatorValues" in saveResult && saveResult.calculatorValues) {
+        setSelectedInquiry((prev) =>
+          prev
+            ? {
+                ...prev,
+                calculator_values: saveResult.calculatorValues as Record<string, unknown>,
+              }
+            : prev
+        );
+      }
       await refreshInquiryLogs(selectedInquiry.lead_id, selectedInquiry.id);
     },
     [lastCalcSnapshot, refreshInquiryLogs, selectedInquiry]
@@ -1019,6 +1040,17 @@ export function OperationsLeadsInquiryPanel({
         operationsDescription
       );
 
+      if (!hasMeaningfulCalculatorData(serializedCalculatorValues)) {
+        toast.error(
+          "Please complete the calculator (unit value, exchange rate, and duties) before sending."
+        );
+        setIsSubmitting(false);
+        return;
+      }
+
+      // Persist to inquiry first so Admin fallback always has calculator data.
+      await saveInquiryCalculatorPayload(selectedInquiry.id, serializedCalculatorValues);
+
       const result = await submitInquiryForConfirmation({
         inquiry_id: selectedInquiry.id,
         lead_id: selectedInquiry.lead_id,
@@ -1490,7 +1522,6 @@ export function OperationsLeadsInquiryPanel({
                 className="gap-1.5"
                 onClick={() => {
                   addCalculator();
-                  void persistCalculatorPayload();
                 }}
               >
                 <Plus className="h-4 w-4" />

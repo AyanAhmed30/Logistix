@@ -3,10 +3,16 @@
 import { useEffect, useState } from "react";
 import { logout } from "@/app/actions/auth";
 import { Button } from "@/components/ui/button";
-import { LogOut, Menu, Bell } from "lucide-react";
+import { LogOut, Bell } from "lucide-react";
 import Image from "next/image";
 import { AdminUserManager } from "@/components/admin/AdminUserManager";
 import { getAdminNotifications } from "@/app/actions/orders";
+import {
+  type AdminModule,
+  type AdminTab,
+  getDefaultTabForModule,
+  getModuleForTab,
+} from "@/lib/admin-navigation";
 
 type AppUser = {
   id: string;
@@ -21,30 +27,10 @@ type Props = {
 };
 
 export function AdminDashboardShell({ users, dbError }: Props) {
-  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
-  const [activeTab, setActiveTab] = useState<
-    | "dashboard"
-    | "create"
-    | "profiles"
-    | "tracking"
-    | "notifications"
-    | "management"
-    | "console"
-    | "loading-instruction"
-    | "sales"
-    | "operations"
-    | "import-packing-list"
-    | "import-invoice"
-    | "accounting"
-    | "inquiry-confirmation"
-    | "calculator-config"
-    | "contacts"
-    | "organization"
-  >("dashboard");
-  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
+  const [activeTab, setActiveTab] = useState<AdminTab>("dashboard");
+  const [activeModule, setActiveModule] = useState<AdminModule | null>(null);
   const [unreadCount, setUnreadCount] = useState(0);
 
-  // Cross-module navigation payloads
   const [quotationPayload, setQuotationPayload] = useState<{
     contactId?: string | null;
     quotationId?: string | null;
@@ -59,7 +45,23 @@ export function AdminDashboardShell({ users, dbError }: Props) {
     token: number;
   } | null>(null);
 
-  // Listen for module-to-module navigation events.
+  function handleTabChange(tab: AdminTab) {
+    setActiveTab(tab);
+    if (tab === "dashboard") return;
+    const module = getModuleForTab(tab);
+    if (module) setActiveModule(module);
+  }
+
+  function handleModuleSelect(module: AdminModule) {
+    setActiveModule(module);
+    setActiveTab(getDefaultTabForModule(module));
+  }
+
+  function handleBackToModules() {
+    setActiveModule(null);
+    setActiveTab("dashboard");
+  }
+
   useEffect(() => {
     function onOpenQuotation(e: Event) {
       const detail = (e as CustomEvent).detail || {};
@@ -68,7 +70,7 @@ export function AdminDashboardShell({ users, dbError }: Props) {
         quotationId: detail.quotationId ?? null,
         token: Date.now(),
       });
-      // QuotationPanel lives under the Accounting tab → Quotation sub-tab.
+      setActiveModule("operations");
       setActiveTab("accounting");
     }
     function onOpenContact(e: Event) {
@@ -78,6 +80,7 @@ export function AdminDashboardShell({ users, dbError }: Props) {
         contactId: String(detail.contactId),
         token: Date.now(),
       });
+      setActiveModule("sales");
       setActiveTab("contacts");
     }
     function onOpenInvoice(e: Event) {
@@ -86,6 +89,7 @@ export function AdminDashboardShell({ users, dbError }: Props) {
         invoiceId: detail.invoiceId ? String(detail.invoiceId) : null,
         token: Date.now(),
       });
+      setActiveModule("operations");
       setActiveTab("accounting");
     }
     window.addEventListener("admin:open-quotation", onOpenQuotation);
@@ -145,19 +149,6 @@ export function AdminDashboardShell({ users, dbError }: Props) {
       <header className="fixed top-0 inset-x-0 h-16 bg-white border-b z-50">
         <div className="h-full px-6 md:px-8 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <button
-              className="inline-flex items-center justify-center h-9 w-9 rounded-md border border-slate-200 text-primary-dark hover:bg-slate-50"
-              onClick={() => {
-                if (typeof window !== "undefined" && window.innerWidth < 768) {
-                  setIsSidebarOpen((open) => !open);
-                } else {
-                  setIsSidebarCollapsed((collapsed) => !collapsed);
-                }
-              }}
-              aria-label="Toggle sidebar"
-            >
-              <Menu className="h-5 w-5" />
-            </button>
             <div className="bg-white p-1 rounded-md">
               <Image src="/logo.jpg" alt="Logo" width={130} height={40} className="h-9 w-auto" />
             </div>
@@ -169,7 +160,10 @@ export function AdminDashboardShell({ users, dbError }: Props) {
           <div className="flex items-center gap-4 md:gap-6">
             <button
               className="text-secondary-muted hover:text-primary-dark transition-colors relative"
-              onClick={() => setActiveTab("notifications")}
+              onClick={() => {
+                setActiveModule(null);
+                setActiveTab("notifications");
+              }}
               aria-label="Notifications"
             >
               <Bell className="h-5 w-5" />
@@ -196,11 +190,11 @@ export function AdminDashboardShell({ users, dbError }: Props) {
       <AdminUserManager
         users={users}
         userCount={users.length}
-        isSidebarOpen={isSidebarOpen}
-        isSidebarCollapsed={isSidebarCollapsed}
-        onSidebarClose={() => setIsSidebarOpen(false)}
         activeTab={activeTab}
-        onTabChange={setActiveTab}
+        activeModule={activeModule}
+        onTabChange={handleTabChange}
+        onModuleSelect={handleModuleSelect}
+        onBackToModules={handleBackToModules}
         quotationPayload={quotationPayload}
         contactPayload={contactPayload}
         invoicePayload={invoicePayload}

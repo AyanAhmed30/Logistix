@@ -7,7 +7,14 @@ import {
   validateInquiryProductInfoForSend,
   type InquiryProductFields,
 } from '@/lib/inquiry-form-validation';
-import { sanitizeCalculatorValues } from '@/lib/inquiry-calculator';
+import {
+  getEmptyCalculatorValues,
+  parseStoredCalculatorPayload,
+  sanitizeCalculatorValues,
+  serializeCalculatorPayload,
+  SHARED_CALCULATOR_DEFAULT_KEYS,
+  withDerivedInvValue,
+} from '@/lib/inquiry-calculator';
 import { uploadToInquiryImagesBucket } from '@/lib/inquiry-storage';
 
 export type InquiryStatus = 'pending' | 'in_progress' | 'quotation_sent' | 'completed';
@@ -2163,7 +2170,7 @@ export async function addInquiryCalculatorFieldLog(
 }
 
 export async function saveInquiryCalculatorField(
-  _inquiryId: string,
+  inquiryId: string,
   field: string,
   value: string
 ) {
@@ -2171,6 +2178,10 @@ export async function saveInquiryCalculatorField(
     const session = await getSession();
     if (!session || (session.role !== 'admin' && session.role !== 'operations')) {
       return { error: 'Unauthorized' };
+    }
+
+    if (!inquiryId?.trim()) {
+      return { error: 'Inquiry ID is required.' };
     }
 
     if (!field.trim()) {
@@ -2183,39 +2194,75 @@ export async function saveInquiryCalculatorField(
 
     const supabase = await createAdminClient();
 
-    const { data: configRow, error: fetchError } = await supabase
-      .from('inquiry_calculator_config')
-      .select('values')
-      .eq('id', 'shared')
+    const { data: inquiryRow, error: fetchError } = await supabase
+      .from('lead_inquiries')
+      .select('calculator_values')
+      .eq('id', inquiryId)
       .maybeSingle();
 
     if (fetchError) {
       return { error: fetchError.message };
     }
 
-    const currentValues =
-      configRow?.values && typeof configRow.values === 'object'
-        ? configRow.values as Record<string, string>
+    const existingRaw =
+      inquiryRow?.calculator_values && typeof inquiryRow.calculator_values === 'object'
+        ? (inquiryRow.calculator_values as Record<string, unknown>)
         : {};
 
-    const nextValues = sanitizeCalculatorValues({
-      ...currentValues,
+    const parsed = parseStoredCalculatorPayload(existingRaw);
+    const primary = {
+      ...(parsed.calculators[0] ?? getEmptyCalculatorValues()),
       [field]: value ?? '',
-    });
+    };
+    const nextCalculators = [
+      withDerivedInvValue(sanitizeCalculatorValues(primary)),
+      ...parsed.calculators.slice(1),
+    ];
+    const nextPayload = serializeCalculatorPayload(
+      nextCalculators,
+      parsed.operationsDescription
+    );
 
     const { error: updateError } = await supabase
-      .from('inquiry_calculator_config')
-      .upsert({
-        id: 'shared',
-        values: nextValues,
+      .from('lead_inquiries')
+      .update({
+        calculator_values: nextPayload,
         updated_at: new Date().toISOString(),
-      }, { onConflict: 'id' });
+      })
+      .eq('id', inquiryId);
 
     if (updateError) return { error: updateError.message };
 
+    // Keep shared admin rate defaults in sync only for shared rate keys
+    // (does not store inquiry-specific fields like unit_value / hs_code).
+    if ((SHARED_CALCULATOR_DEFAULT_KEYS as readonly string[]).includes(field)) {
+      const { data: configRow } = await supabase
+        .from('inquiry_calculator_config')
+        .select('values')
+        .eq('id', 'shared')
+        .maybeSingle();
+
+      const currentShared =
+        configRow?.values && typeof configRow.values === 'object'
+          ? (configRow.values as Record<string, string>)
+          : {};
+
+      await supabase.from('inquiry_calculator_config').upsert(
+        {
+          id: 'shared',
+          values: sanitizeCalculatorValues({
+            ...currentShared,
+            [field]: value ?? '',
+          }),
+          updated_at: new Date().toISOString(),
+        },
+        { onConflict: 'id' }
+      );
+    }
+
     revalidatePath('/admin/dashboard');
     revalidatePath('/operations/dashboard');
-    return { success: true, calculatorValues: nextValues };
+    return { success: true, calculatorValues: nextPayload };
   } catch (err) {
     return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };
   }

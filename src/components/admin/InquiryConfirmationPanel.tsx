@@ -18,6 +18,8 @@ import { EstimatedDutiesAndTaxesTable } from "@/components/inquiry/EstimatedDuti
 import { collectInquiryAttachmentUrls, collectOperationsConfirmationAttachmentUrls } from "@/lib/inquiry-attachments";
 import {
   buildEstimatedDutiesDisplay,
+  CALCULATOR_FIELD_LABELS,
+  hasMeaningfulCalculatorData,
   parseStoredCalculatorPayload,
   parsePricingConfig,
   type CalculatorPricingConfig,
@@ -324,14 +326,23 @@ export function InquiryConfirmationPanel() {
     }
 
     const c = selected;
-    const calculatorValues =
-      parseStoredCalculatorPayload(c.calculator_values).calculators[0] ?? {};
+    const parsedCalculator = parseStoredCalculatorPayload(c.calculator_values);
+    const calculatorValues = parsedCalculator.calculators[0] ?? {};
+    const hasCalculatorData = hasMeaningfulCalculatorData(c.calculator_values);
     const estimatedDuties = buildEstimatedDutiesDisplay(calculatorValues, {
       hsCode: c.hs_code || calculatorValues.hs_code,
       quantity: c.quantity || calculatorValues.quantity,
     });
     const weightKg = parseFloat(String(c.total_weight || "").replace(/,/g, "")) || 0;
     const cbm = parseFloat(String(c.cbm || "").replace(/,/g, "")) || 0;
+    const calculatorFieldEntries = Object.entries(CALCULATOR_FIELD_LABELS).filter(([key]) => {
+      const value = calculatorValues[key];
+      if (value === undefined || value === null) return false;
+      const text = String(value).trim();
+      if (!text) return false;
+      if (key === "hs_code" || key === "uom") return true;
+      return text !== "0";
+    });
 
     return (
       <div className="space-y-4">
@@ -413,15 +424,48 @@ export function InquiryConfirmationPanel() {
             {/* Calculator Values */}
             <div>
               <h3 className="text-sm font-semibold text-slate-700 mb-3">Calculator Values</h3>
-              {estimatedDuties ? (
-                <EstimatedDutiesAndTaxesTable data={estimatedDuties} />
-              ) : (
-                <div className="rounded border border-dashed text-sm text-slate-400 px-3 py-2">
-                  No calculator values were submitted with this inquiry.
-                </div>
-              )}
-              {Object.keys(calculatorValues).length > 0 ? (
-                <div className="mt-4">
+              {hasCalculatorData ? (
+                <div className="space-y-4">
+                  {calculatorFieldEntries.length > 0 ? (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 rounded-lg border bg-slate-50/60 p-3">
+                      {calculatorFieldEntries.map(([key, label]) => (
+                        <div key={key} className="min-w-0">
+                          <div className="text-[11px] uppercase tracking-wide text-slate-500 font-medium">
+                            {label}
+                          </div>
+                          <div className="text-sm font-semibold text-slate-800 mt-0.5 break-all">
+                            {calculatorValues[key]}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : null}
+
+                  {parsedCalculator.operationsDescription ? (
+                    <div>
+                      <div className="text-xs text-slate-500 font-medium mb-1">Operations Description</div>
+                      <div className="rounded-md border bg-white px-3 py-2 text-sm whitespace-pre-wrap">
+                        {parsedCalculator.operationsDescription}
+                      </div>
+                    </div>
+                  ) : null}
+
+                  {parsedCalculator.calculators.length > 1 ? (
+                    <div className="text-xs text-secondary-muted">
+                      {parsedCalculator.calculators.length} calculator entries were submitted.
+                      Showing primary calculator results below.
+                    </div>
+                  ) : null}
+
+                  {estimatedDuties ? (
+                    <EstimatedDutiesAndTaxesTable data={estimatedDuties} />
+                  ) : (
+                    <div className="rounded border border-amber-200 bg-amber-50 text-sm text-amber-800 px-3 py-2">
+                      Calculator inputs were saved. Estimated duties could not be computed yet
+                      because invoice value and exchange rate must both be greater than zero.
+                    </div>
+                  )}
+
                   <InquiryPricingSummary
                     calculatorValues={calculatorValues}
                     totalWeightKg={weightKg}
@@ -429,7 +473,11 @@ export function InquiryConfirmationPanel() {
                     pricingConfig={pricingConfig}
                   />
                 </div>
-              ) : null}
+              ) : (
+                <div className="rounded border border-dashed text-sm text-slate-400 px-3 py-2">
+                  No calculator values were submitted with this inquiry.
+                </div>
+              )}
             </div>
 
             {c.status === "rejected" && c.rejection_reason ? (

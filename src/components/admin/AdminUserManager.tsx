@@ -24,13 +24,38 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { PlusCircle, UsersRound, X, Truck, Bell, Package, Container, FileText, TrendingUp, ShoppingCart, Settings, ClipboardList, Receipt, UserCog, Calculator, MessageSquare, ClipboardCheck, Wrench, FolderTree, BookOpen, BookText, DollarSign, BookUser, Building2 } from "lucide-react";
+import {
+  ArrowLeft,
+  Settings,
+  UserCog,
+  Calculator,
+  MessageSquare,
+  Wrench,
+  FolderTree,
+  BookOpen,
+  BookText,
+  DollarSign,
+  ClipboardList,
+  FileText,
+  UsersRound,
+  Receipt,
+  ClipboardCheck,
+  PlusCircle,
+} from "lucide-react";
+import {
+  type AdminModule,
+  type AdminTab,
+  getModuleDefinition,
+  getSidebarItemsForModule,
+} from "@/lib/admin-navigation";
+import { AdminModuleCards } from "@/components/admin/AdminModuleCards";
+import { AdminAnalyticsPlaceholder } from "@/components/admin/AdminAnalyticsPlaceholder";
+import { AdminSettingsLayout } from "@/components/admin/AdminSettingsLayout";
 import { OrderTrackingPanel } from "@/components/admin/OrderTrackingPanel";
 import { AdminNotificationsPanel } from "@/components/admin/AdminNotificationsPanel";
 import { OrderManagementPanel } from "@/components/admin/OrderManagementPanel";
 import { ConsolePanel } from "@/components/admin/ConsolePanel";
 import { LoadingInstructionPanel } from "@/components/admin/LoadingInstructionPanel";
-import { AdminDashboardOverview } from "@/components/admin/AdminDashboardOverview";
 import { SalesPanel } from "@/components/admin/SalesPanel";
 import { OperationsPanel } from "@/components/admin/OperationsPanel";
 import { OperationsLeadsInquiryPanel } from "@/components/admin/OperationsLeadsInquiryPanel";
@@ -64,47 +89,11 @@ type AppUser = {
 type Props = {
   users: AppUser[];
   userCount: number;
-  isSidebarOpen: boolean;
-  isSidebarCollapsed: boolean;
-  onSidebarClose: () => void;
-  activeTab:
-    | "dashboard"
-    | "create"
-    | "profiles"
-    | "tracking"
-    | "notifications"
-    | "management"
-    | "console"
-    | "loading-instruction"
-    | "sales"
-    | "operations"
-    | "import-packing-list"
-    | "import-invoice"
-    | "accounting"
-    | "inquiry-confirmation"
-    | "calculator-config"
-    | "contacts"
-    | "organization";
-  onTabChange: (
-    tab:
-      | "dashboard"
-      | "create"
-      | "profiles"
-      | "tracking"
-      | "notifications"
-      | "management"
-      | "console"
-      | "loading-instruction"
-      | "sales"
-      | "operations"
-      | "import-packing-list"
-      | "import-invoice"
-      | "accounting"
-      | "inquiry-confirmation"
-      | "calculator-config"
-      | "contacts"
-      | "organization"
-  ) => void;
+  activeTab: AdminTab;
+  activeModule: AdminModule | null;
+  onTabChange: (tab: AdminTab) => void;
+  onModuleSelect: (module: AdminModule) => void;
+  onBackToModules: () => void;
   quotationPayload?: {
     contactId?: string | null;
     quotationId?: string | null;
@@ -123,11 +112,11 @@ type Props = {
 export function AdminUserManager({
   users,
   userCount,
-  isSidebarOpen,
-  isSidebarCollapsed,
-  onSidebarClose,
   activeTab,
+  activeModule,
   onTabChange,
+  onModuleSelect,
+  onBackToModules,
   quotationPayload,
   contactPayload,
   invoicePayload,
@@ -311,235 +300,102 @@ export function AdminUserManager({
     setEditOpen(true);
   }
 
-  function handleTabSelect(
-    tab:
-      | "dashboard"
-      | "create"
-      | "profiles"
-      | "tracking"
-      | "notifications"
-      | "management"
-      | "console"
-      | "loading-instruction"
-      | "sales"
-      | "operations"
-      | "import-packing-list"
-      | "import-invoice"
-      | "accounting"
-      | "inquiry-confirmation"
-      | "calculator-config"
-      | "contacts"
-      | "organization"
-  ) {
+  function handleTabSelect(tab: AdminTab) {
     onTabChange(tab);
-    onSidebarClose();
   }
 
-  const sidebarWidth = isSidebarCollapsed ? "md:w-20" : "md:w-72";
-  const mainContentMargin = isSidebarCollapsed ? "md:pl-20" : "md:pl-72";
+  const moduleNavItems = getSidebarItemsForModule(activeModule).filter(
+    (item) => item.module !== null
+  );
+  const moduleDefinition = activeModule ? getModuleDefinition(activeModule) : null;
+  const isSettingsModule = activeModule === "settings";
+  const isSettingsTab =
+    activeTab === "create" || activeTab === "organization" || activeTab === "profiles";
+
+  function handleSettingsTabSelect(tab: AdminTab) {
+    if (tab === "create") {
+      handleTabSelect("create");
+      setCreateSubTab("user");
+      return;
+    }
+    handleTabSelect(tab);
+  }
 
   return (
-    <div className={`pt-20 ${mainContentMargin}`}>
-      <aside
-        className={`fixed inset-y-0 left-0 z-50 ${sidebarWidth} bg-white border-r shadow-lg transform transition-all duration-200 md:translate-x-0 md:top-16 md:h-[calc(100vh-4rem)] md:shadow-none overflow-y-auto ${
-          isSidebarOpen ? "translate-x-0" : "-translate-x-full md:translate-x-0"
-        }`}
-      >
-        <div className="p-5 space-y-4">
-          <div className="flex items-center justify-between md:hidden">
-            <h2 className="text-sm font-semibold text-secondary-muted uppercase tracking-widest">
-              Menu
-            </h2>
-            <button
-              className="inline-flex items-center justify-center h-8 w-8 rounded-md border border-slate-200 text-primary-dark hover:bg-slate-50"
-              onClick={onSidebarClose}
-              aria-label="Close sidebar"
-            >
-              <X className="h-4 w-4" />
-            </button>
+    <div className="pt-20">
+      <section className="px-6 pb-10 md:px-10 space-y-6">
+        {activeModule &&
+        moduleDefinition &&
+        activeTab !== "notifications" &&
+        !isSettingsModule ? (
+          <div className="space-y-4">
+            <div className="flex flex-wrap items-center gap-3">
+              <Button
+                variant="outline"
+                className="gap-2 border-dashed"
+                onClick={onBackToModules}
+                title="Back to Modules"
+              >
+                <ArrowLeft className="h-4 w-4 shrink-0" />
+                <span>Back to Modules</span>
+              </Button>
+              <div>
+                <h2 className="text-lg font-black text-primary-dark">{moduleDefinition.label}</h2>
+                <p className="text-xs text-secondary-muted">{moduleDefinition.description}</p>
+              </div>
+            </div>
+            {moduleNavItems.length > 0 ? (
+              <div className="flex flex-wrap gap-2 border-b pb-3">
+                {moduleNavItems.map((item) => {
+                  const Icon = item.icon;
+                  return (
+                    <Button
+                      key={item.tab}
+                      variant={activeTab === item.tab ? "default" : "outline"}
+                      className="justify-start gap-2"
+                      title={item.title}
+                      onClick={() => {
+                        if (item.tab === "create") {
+                          handleTabSelect("create");
+                          setCreateSubTab("user");
+                          return;
+                        }
+                        if (item.tab === "inquiry-confirmation") {
+                          void prefetchInquiryConfirmationsList().catch(() => undefined);
+                        }
+                        handleTabSelect(item.tab);
+                      }}
+                      onMouseEnter={
+                        item.tab === "inquiry-confirmation"
+                          ? () => {
+                              void prefetchInquiryConfirmationsList().catch(() => undefined);
+                            }
+                          : undefined
+                      }
+                      onFocus={
+                        item.tab === "inquiry-confirmation"
+                          ? () => {
+                              void prefetchInquiryConfirmationsList().catch(() => undefined);
+                            }
+                          : undefined
+                      }
+                    >
+                      <Icon className="h-4 w-4 shrink-0" />
+                      <span>{item.label}</span>
+                    </Button>
+                  );
+                })}
+              </div>
+            ) : null}
           </div>
-          <div className={`space-y-1 ${isSidebarCollapsed ? "hidden md:block" : ""}`}>
-            <h2 className="text-lg font-black text-primary-dark">Admin Tools</h2>
-            <p className="text-xs text-secondary-muted">Manage access and profiles</p>
-          </div>
-          <div className="grid gap-2 sidebar-buttons">
-          <Button
-          variant={activeTab === "dashboard" ? "default" : "outline"}
-          className="justify-start gap-2 sidebar-button"
-          onClick={() => handleTabSelect("dashboard")}
-          title="Dashboard"
-          >
-            <TrendingUp className="h-4 w-4 shrink-0 sidebar-icon" />
-            {!isSidebarCollapsed && <span className="sidebar-text">Dashboard</span>}
-          </Button>
-          <Button
-            variant={activeTab === "create" ? "default" : "outline"}
-            className="justify-start gap-2 sidebar-button"
-            title="Create New User or Sales Agent"
-            onClick={() => {
-              handleTabSelect("create");
-              setCreateSubTab("user");
-            }}
-          >
-            <PlusCircle className="h-4 w-4 shrink-0 sidebar-icon" />
-            {!isSidebarCollapsed && <span className="sidebar-text">Create New User</span>}
-          </Button>
-          <Button
-            variant={activeTab === "profiles" ? "default" : "outline"}
-            className="justify-start gap-2 sidebar-button"
-            onClick={() => handleTabSelect("profiles")}
-            title="User Profiles"
-          >
-            <UsersRound className="h-4 w-4 shrink-0 sidebar-icon" />
-            {!isSidebarCollapsed && <span className="sidebar-text">User Profiles</span>}
-          </Button>
-          <Button
-            variant={activeTab === "tracking" ? "default" : "outline"}
-            className="justify-start gap-2 sidebar-button"
-            onClick={() => handleTabSelect("tracking")}
-            title="Order Tracking"
-          >
-            <Truck className="h-4 w-4 shrink-0 sidebar-icon" />
-            {!isSidebarCollapsed && <span className="sidebar-text">Order Tracking</span>}
-          </Button>
-          <Button
-            variant={activeTab === "notifications" ? "default" : "outline"}
-            className="justify-start gap-2 sidebar-button"
-            onClick={() => handleTabSelect("notifications")}
-            title="Notifications"
-          >
-            <Bell className="h-4 w-4 shrink-0 sidebar-icon" />
-            {!isSidebarCollapsed && <span className="sidebar-text">Notifications</span>}
-          </Button>
-          <Button
-            variant={activeTab === "management" ? "default" : "outline"}
-            className="justify-start gap-2 sidebar-button"
-            onClick={() => handleTabSelect("management")}
-            title="Order Management"
-          >
-            <Package className="h-4 w-4 shrink-0 sidebar-icon" />
-            {!isSidebarCollapsed && <span className="sidebar-text">Order Management</span>}
-          </Button>
-          <Button
-            variant={activeTab === "console" ? "default" : "outline"}
-            className="justify-start gap-2 sidebar-button"
-            onClick={() => handleTabSelect("console")}
-            title="Console"
-          >
-            <Container className="h-4 w-4 shrink-0 sidebar-icon" />
-            {!isSidebarCollapsed && <span className="sidebar-text">Console</span>}
-          </Button>
-          <Button
-            variant={activeTab === "loading-instruction" ? "default" : "outline"}
-            className="justify-start gap-2 sidebar-button"
-            onClick={() => handleTabSelect("loading-instruction")}
-            title="Loading Instruction"
-          >
-            <FileText className="h-4 w-4 shrink-0 sidebar-icon" />
-            {!isSidebarCollapsed && <span className="sidebar-text">Loading Instruction</span>}
-          </Button>
-          <Button
-            variant={activeTab === "sales" ? "default" : "outline"}
-            className="justify-start gap-2 sidebar-button"
-            onClick={() => handleTabSelect("sales")}
-            title="Sales"
-          >
-            <ShoppingCart className="h-4 w-4 shrink-0 sidebar-icon" />
-            {!isSidebarCollapsed && <span className="sidebar-text">Sales</span>}
-          </Button>
-          <Button
-            variant={activeTab === "contacts" ? "default" : "outline"}
-            className="justify-start gap-2 sidebar-button"
-            onClick={() => handleTabSelect("contacts")}
-            title="Contacts"
-          >
-            <BookUser className="h-4 w-4 shrink-0 sidebar-icon" />
-            {!isSidebarCollapsed && <span className="sidebar-text">Contacts</span>}
-          </Button>
-          <Button
-            variant={activeTab === "organization" ? "default" : "outline"}
-            className="justify-start gap-2 sidebar-button"
-            onClick={() => handleTabSelect("organization")}
-            title="Organization"
-          >
-            <Building2 className="h-4 w-4 shrink-0 sidebar-icon" />
-            {!isSidebarCollapsed && <span className="sidebar-text">Organization</span>}
-          </Button>
-          <Button
-            variant={activeTab === "operations" ? "default" : "outline"}
-            className="justify-start gap-2 sidebar-button"
-            onClick={() => handleTabSelect("operations")}
-            title="Operations"
-          >
-            <Settings className="h-4 w-4 shrink-0 sidebar-icon" />
-            {!isSidebarCollapsed && <span className="sidebar-text">Operations</span>}
-          </Button>
-          <Button
-            variant={activeTab === "import-packing-list" ? "default" : "outline"}
-            className="justify-start gap-2 sidebar-button"
-            onClick={() => handleTabSelect("import-packing-list")}
-            title="Import Packing List"
-          >
-            <ClipboardList className="h-4 w-4 shrink-0 sidebar-icon" />
-            {!isSidebarCollapsed && <span className="sidebar-text">Import Packing List</span>}
-          </Button>
-          <Button
-            variant={activeTab === "import-invoice" ? "default" : "outline"}
-            className="justify-start gap-2 sidebar-button"
-            onClick={() => handleTabSelect("import-invoice")}
-            title="Import Invoice"
-          >
-          <Receipt className="h-4 w-4 shrink-0 sidebar-icon" />
-          {!isSidebarCollapsed && <span className="sidebar-text">Import Invoice</span>}
-          </Button>
-          <Button
-            variant={activeTab === "accounting" ? "default" : "outline"}
-            className="justify-start gap-2 sidebar-button"
-            onClick={() => handleTabSelect("accounting")}
-            title="Accounting"
-          >
-            <Calculator className="h-4 w-4 shrink-0 sidebar-icon" />
-            {!isSidebarCollapsed && <span className="sidebar-text">Accounting</span>}
-          </Button>
-          <Button
-            variant={activeTab === "inquiry-confirmation" ? "default" : "outline"}
-            className="justify-start gap-2 sidebar-button"
-            onClick={() => handleTabSelect("inquiry-confirmation")}
-            onMouseEnter={() => {
-              void prefetchInquiryConfirmationsList().catch(() => undefined);
-            }}
-            onFocus={() => {
-              void prefetchInquiryConfirmationsList().catch(() => undefined);
-            }}
-            title="Inquiry Confirmation"
-          >
-            <ClipboardCheck className="h-4 w-4 shrink-0 sidebar-icon" />
-            {!isSidebarCollapsed && <span className="sidebar-text">Inquiry Confirmation</span>}
-          </Button>
-          <Button
-            variant={activeTab === "calculator-config" ? "default" : "outline"}
-            className="justify-start gap-2 sidebar-button"
-            onClick={() => handleTabSelect("calculator-config")}
-            title="Calculator Configuration"
-          >
-            <Calculator className="h-4 w-4 shrink-0 sidebar-icon" />
-            {!isSidebarCollapsed && <span className="sidebar-text">Calculator Config</span>}
-          </Button>
-          </div>
-        </div>
-      </aside>
+        ) : null}
 
-      {isSidebarOpen && (
-        <button
-          className="fixed inset-0 z-40 bg-black/20 md:hidden"
-          onClick={onSidebarClose}
-          aria-label="Close sidebar"
-        />
-      )}
-
-      <section className="px-6 pb-10 md:px-10">
         {activeTab === "dashboard" ? (
-          <AdminDashboardOverview />
+          activeModule === "analytics" ? (
+            <AdminAnalyticsPlaceholder />
+          ) : (
+            <AdminModuleCards onModuleSelect={onModuleSelect} />
+          )
         ) : activeTab === "notifications" ? (
           <AdminNotificationsPanel />
         ) : activeTab === "tracking" ? (
@@ -554,8 +410,6 @@ export function AdminUserManager({
           <SalesPanel />
         ) : activeTab === "contacts" ? (
           <ContactsPanel initialPayload={contactPayload ?? undefined} />
-        ) : activeTab === "organization" ? (
-          <OrganizationPanel />
         ) : activeTab === "operations" ? (
           <div className="space-y-6">
             {/* Sub-tabs */}
@@ -737,7 +591,13 @@ export function AdminUserManager({
               <ReconciliationPanel />
             )}
           </div>
-        ) : activeTab === "create" ? (
+        ) : isSettingsTab ? (
+          <AdminSettingsLayout
+            activeTab={activeTab}
+            onTabSelect={handleSettingsTabSelect}
+            onBackToModules={onBackToModules}
+          >
+            {activeTab === "create" ? (
           <div className="space-y-6">
             {/* Sub-tabs */}
             <div className="flex gap-2 border-b overflow-x-auto">
@@ -871,7 +731,9 @@ export function AdminUserManager({
             )}
 
           </div>
-        ) : activeTab === "profiles" ? (
+            ) : activeTab === "organization" ? (
+              <OrganizationPanel />
+            ) : (
           <div className="space-y-6">
             {/* Sub-tabs */}
             <div className="flex gap-2 border-b overflow-x-auto">
@@ -1000,6 +862,8 @@ export function AdminUserManager({
               />
             )}
           </div>
+            )}
+          </AdminSettingsLayout>
         ) : null}
       </section>
 

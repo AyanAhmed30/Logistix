@@ -134,9 +134,20 @@ export function computeInvValueString(quantity: string, unitValue: string): stri
 }
 
 export function withDerivedInvValue(values: Record<string, string>): Record<string, string> {
+  const quantity = values.quantity ?? "0";
+  const unitValue = values.unit_value ?? "0";
+  const derived = computeInvValueString(quantity, unitValue);
+  const canDerive = toNum(quantity) > 0 && toNum(unitValue) > 0;
+  // Never wipe a stored inv_value when qty × unit cannot be derived yet.
+  const invValue = canDerive
+    ? derived
+    : toNum(values.inv_value) > 0
+      ? String(values.inv_value)
+      : derived;
+
   return {
     ...values,
-    inv_value: computeInvValueString(values.quantity ?? "0", values.unit_value ?? "0"),
+    inv_value: invValue,
   };
 }
 
@@ -145,7 +156,27 @@ export type StoredCalculatorPayload = {
   operationsDescription: string;
 };
 
-const CALCULATOR_PAYLOAD_METADATA_KEYS = new Set(["calculators", "operations_description"]);
+const CALCULATOR_PAYLOAD_METADATA_KEYS = new Set([
+  "calculators",
+  "operations_description",
+  "operations_attachment_urls",
+]);
+
+const MEANINGFUL_CALCULATOR_KEYS = [
+  "unit_value",
+  "inv_value",
+  "exchange_rate",
+  "custom_duty_rate",
+  "add_cd_rate",
+  "gst_rate",
+  "add_gst_rate",
+  "income_tax_rate",
+  "excise_rate",
+  "regular_duty_rate",
+  "stamp_duty_rate",
+  "inv_fine",
+  "hs_code",
+] as const;
 
 function sanitizeSingleCalculatorValues(
   values: Record<string, unknown> | null | undefined
@@ -157,9 +188,73 @@ function sanitizeSingleCalculatorValues(
   return withDerivedInvValue(sanitized);
 }
 
+/** Coerce jsonb that may arrive as a JSON string (double-encoded rows). */
+export function coerceCalculatorRaw(raw: unknown): unknown {
+  if (typeof raw !== "string") return raw;
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+  try {
+    return JSON.parse(trimmed);
+  } catch {
+    return null;
+  }
+}
+
+export function hasMeaningfulCalculatorData(raw: unknown): boolean {
+  const coerced = coerceCalculatorRaw(raw);
+  if (!coerced || typeof coerced !== "object") return false;
+
+  const payload = parseStoredCalculatorPayload(coerced);
+  for (const calc of payload.calculators) {
+    for (const key of MEANINGFUL_CALCULATOR_KEYS) {
+      const value = calc[key];
+      if (key === "hs_code") {
+        if (String(value || "").trim()) return true;
+        continue;
+      }
+      if (toNum(value) > 0) return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Choose the best calculator payload between confirmation snapshot and inquiry row.
+ * Confirmation wins when it has real calculator data; otherwise fall back to inquiry.
+ */
+export function resolveCalculatorValues(
+  confirmationValues: unknown,
+  inquiryValues?: unknown
+): Record<string, unknown> {
+  const confirmation = coerceCalculatorRaw(confirmationValues);
+  const inquiry = coerceCalculatorRaw(inquiryValues);
+
+  if (hasMeaningfulCalculatorData(confirmation)) {
+    return (confirmation && typeof confirmation === "object"
+      ? (confirmation as Record<string, unknown>)
+      : {}) as Record<string, unknown>;
+  }
+  if (hasMeaningfulCalculatorData(inquiry)) {
+    return (inquiry && typeof inquiry === "object"
+      ? (inquiry as Record<string, unknown>)
+      : {}) as Record<string, unknown>;
+  }
+
+  // Prefer non-empty confirmation shell over empty object for attachment meta etc.
+  if (confirmation && typeof confirmation === "object" && Object.keys(confirmation as object).length > 0) {
+    return confirmation as Record<string, unknown>;
+  }
+  if (inquiry && typeof inquiry === "object") {
+    return inquiry as Record<string, unknown>;
+  }
+  return {};
+}
+
 export function parseStoredCalculatorPayload(raw: unknown): StoredCalculatorPayload {
-  if (Array.isArray(raw)) {
-    const calculators = raw
+  const coerced = coerceCalculatorRaw(raw);
+
+  if (Array.isArray(coerced)) {
+    const calculators = coerced
       .filter((item) => item && typeof item === "object")
       .map((item) => sanitizeSingleCalculatorValues(item as Record<string, unknown>));
     return {
@@ -168,8 +263,8 @@ export function parseStoredCalculatorPayload(raw: unknown): StoredCalculatorPayl
     };
   }
 
-  if (raw && typeof raw === "object") {
-    const obj = raw as Record<string, unknown>;
+  if (coerced && typeof coerced === "object") {
+    const obj = coerced as Record<string, unknown>;
     if (Array.isArray(obj.calculators)) {
       const calculators = obj.calculators
         .filter((item) => item && typeof item === "object")
@@ -185,6 +280,13 @@ export function parseStoredCalculatorPayload(raw: unknown): StoredCalculatorPayl
     if (Object.keys(calculatorOnly).length > 0) {
       return {
         calculators: [calculatorOnly],
+        operationsDescription,
+      };
+    }
+
+    if (operationsDescription) {
+      return {
+        calculators: [getEmptyCalculatorValues()],
         operationsDescription,
       };
     }

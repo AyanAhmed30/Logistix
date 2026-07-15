@@ -5,8 +5,11 @@ import { getSession } from '@/lib/auth/session';
 import { revalidatePath } from 'next/cache';
 import {
   buildApprovedInquiryPricing,
+  coerceCalculatorRaw,
   getPrimaryCalculatorValues,
+  hasMeaningfulCalculatorData,
   parsePricingConfig,
+  resolveCalculatorValues,
   type ApprovedInquiryPricing,
 } from '@/lib/inquiry-calculator';
 import {
@@ -141,10 +144,10 @@ function mergeConfirmationWithInquiryData(
       Array.isArray(row.sales_additional_image_urls) && row.sales_additional_image_urls.length > 0
         ? row.sales_additional_image_urls
         : inquiryData?.additional_image_urls || [],
-    calculator_values:
-      row.calculator_values && Object.keys(row.calculator_values).length > 0
-        ? row.calculator_values
-        : inquiryData?.calculator_values || {},
+    calculator_values: resolveCalculatorValues(
+      row.calculator_values,
+      inquiryData?.calculator_values
+    ),
   };
 }
 
@@ -168,8 +171,11 @@ async function fetchInquiryAttachmentSnapshot(
         )
       : [],
     calculator_values:
-      inquiryRow.calculator_values && typeof inquiryRow.calculator_values === 'object'
-        ? (inquiryRow.calculator_values as Record<string, string>)
+      inquiryRow.calculator_values != null
+        ? ((coerceCalculatorRaw(inquiryRow.calculator_values) as
+            | Record<string, string>
+            | Record<string, unknown>
+            | null) ?? null)
         : null,
   };
 }
@@ -296,6 +302,13 @@ export async function submitInquiryForConfirmation(data: {
 
     if (!data.product_name.trim()) {
       return { error: 'Product Name is required.' };
+    }
+
+    if (!hasMeaningfulCalculatorData(data.calculator_values)) {
+      return {
+        error:
+          'Calculator values are required before sending for confirmation. Please complete the calculator and try again.',
+      };
     }
 
     const supabase = await createAdminClient();
@@ -529,8 +542,26 @@ export async function getInquiryConfirmationDetail(confirmationId: string) {
       ? await fetchInquiryAttachmentSnapshot(supabase, row.inquiry_id)
       : null;
 
+    const merged = mergeConfirmationWithInquiryData(row, inquiryData);
+
+    // Permanent repair: if confirmation row lost calculator data but inquiry still
+    // has it, backfill the confirmation snapshot so future loads stay correct.
+    if (
+      row.id &&
+      !hasMeaningfulCalculatorData(row.calculator_values) &&
+      hasMeaningfulCalculatorData(merged.calculator_values)
+    ) {
+      await supabase
+        .from('inquiry_confirmations')
+        .update({
+          calculator_values: merged.calculator_values,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', row.id);
+    }
+
     return {
-      confirmation: mergeConfirmationWithInquiryData(row, inquiryData),
+      confirmation: merged,
     };
   } catch (err) {
     return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };
@@ -595,8 +626,11 @@ export async function getConfirmationsForInquiry(inquiryId: string) {
       ? inquiry.additional_image_urls.filter((u: unknown) => typeof u === 'string' && String(u).trim().length > 0)
       : [];
     const inquiryCalculator =
-      inquiry?.calculator_values && typeof inquiry.calculator_values === 'object'
-        ? (inquiry.calculator_values as Record<string, string>)
+      inquiry?.calculator_values != null
+        ? ((coerceCalculatorRaw(inquiry.calculator_values) as
+            | Record<string, string>
+            | Record<string, unknown>
+            | null) ?? {})
         : {};
 
     const confirmations = rows.map((row) => ({
@@ -606,10 +640,7 @@ export async function getConfirmationsForInquiry(inquiryId: string) {
         Array.isArray(row.sales_additional_image_urls) && row.sales_additional_image_urls.length > 0
           ? row.sales_additional_image_urls
           : inquiryImages,
-      calculator_values:
-        row.calculator_values && Object.keys(row.calculator_values).length > 0
-          ? row.calculator_values
-          : inquiryCalculator,
+      calculator_values: resolveCalculatorValues(row.calculator_values, inquiryCalculator),
     }));
 
     return { confirmations };

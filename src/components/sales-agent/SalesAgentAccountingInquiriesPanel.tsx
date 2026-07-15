@@ -5,10 +5,8 @@ import { useEffect, useState, useCallback } from "react";
 import { toast } from "sonner";
 import {
   getAllInquiriesForSalesAgent,
-  updateInquiryForAccounting,
   getInquiryLogs,
   type LeadInquiryWithLead,
-  type InquiryLog,
 } from "@/app/actions/inquiries";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -130,16 +128,6 @@ function getEffectiveStatus(inquiry: LeadInquiryWithLead): string {
     (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
   );
   return sorted[0].status;
-}
-
-function formatLogAction(action: string) {
-  switch (action) {
-    case "created": return "Created";
-    case "updated": return "Updated";
-    case "deleted": return "Deleted";
-    case "status_changed": return "Status Changed";
-    default: return action;
-  }
 }
 
 function collectDetailImageUrls(

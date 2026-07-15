@@ -28,7 +28,6 @@ import {
   ArrowLeft,
   Settings,
   UserCog,
-  Calculator,
   MessageSquare,
   Wrench,
   FolderTree,

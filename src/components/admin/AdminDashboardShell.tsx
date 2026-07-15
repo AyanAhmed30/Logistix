@@ -48,13 +48,13 @@ export function AdminDashboardShell({ users, dbError }: Props) {
   function handleTabChange(tab: AdminTab) {
     setActiveTab(tab);
     if (tab === "dashboard") return;
-    const module = getModuleForTab(tab);
-    if (module) setActiveModule(module);
+    const resolvedModule = getModuleForTab(tab);
+    if (resolvedModule) setActiveModule(resolvedModule);
   }
 
-  function handleModuleSelect(module: AdminModule) {
-    setActiveModule(module);
-    setActiveTab(getDefaultTabForModule(module));
+  function handleModuleSelect(nextModule: AdminModule) {
+    setActiveModule(nextModule);
+    setActiveTab(getDefaultTabForModule(nextModule));
   }
 
   function handleBackToModules() {

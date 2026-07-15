@@ -467,7 +467,7 @@ export async function downloadOrganizationQuotationPdf(
 
   let y = PAGE.margin;
 
-  function ensureSpace(_height: number, _extraReserve = 0) {
+  function ensureSpace() {
     // Single-page PDF: content scale is pre-calculated to fit one A4 page.
   }
 
@@ -597,7 +597,7 @@ export async function downloadOrganizationQuotationPdf(
     const valueHeight = measureHorizontalTableRow(fields, false);
     const tableHeight = headerHeight + valueHeight;
 
-    ensureSpace(tableHeight + 4);
+    ensureSpace();
 
     let rowTop = y;
     setStroke(COLORS.border);
@@ -707,7 +707,7 @@ export async function downloadOrganizationQuotationPdf(
 
   function drawTableHeader() {
     const headerHeight = LAYOUT.tableHeaderHeight;
-    ensureSpace(headerHeight + 4);
+    ensureSpace();
 
     drawTableGrid(y, headerHeight, COLORS.tableHeader);
 
@@ -813,8 +813,7 @@ export async function downloadOrganizationQuotationPdf(
     notesHeight += LAYOUT.cardPadding;
   }
 
-  const bottomSectionHeight = notesHeight + LAYOUT.sectionGap;
-  ensureSpace(bottomSectionHeight, 4);
+  ensureSpace();
 
   const bottomY = y;
 
@@ -846,7 +845,6 @@ export async function downloadOrganizationQuotationPdf(
 
   y = bottomY + notesHeight + LAYOUT.sectionGap;
 
-  const pageCount = 1;
   doc.setPage(1);
   drawAccentBar();
 

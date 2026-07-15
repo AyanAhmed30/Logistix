@@ -547,7 +547,7 @@ export function LeadInquiryWorkspace({
         setIsLoading(false);
       }
     },
-    [lead, mode, layout, mainTab, hydrateFormFromInquiry, fetchPricingForInquiries, fetchLogsForInquiry, initialInquiryBootstrap, leadInquiries.length]
+    [lead, layout, mainTab, hydrateFormFromInquiry, fetchPricingForInquiries, fetchLogsForInquiry, initialInquiryBootstrap, leadInquiries.length]
   );
 
   useEffect(() => {
@@ -608,7 +608,7 @@ export function LeadInquiryWorkspace({
     setFieldErrors({});
     setShowSendValidation(false);
     setConfirmationStatus("none");
-  }, [active, lead?.id, layout, mainTab]);
+  }, [active, lead, layout, mainTab]);
 
   useEffect(() => {
     if (active && lead) {
@@ -655,7 +655,7 @@ export function LeadInquiryWorkspace({
         image_count: 0,
       });
     }
-  }, [active, lead?.id, fetchInquiryData, initialInquiryBootstrap, leadInquiries.length]);
+  }, [active, lead, fetchInquiryData, initialInquiryBootstrap, leadInquiries.length]);
 
   const readImageAsDataUrl = useCallback((file: File) => {
     return new Promise<string>((resolve, reject) => {
@@ -898,7 +898,7 @@ export function LeadInquiryWorkspace({
     return "Updated";
   }
 
-  async function fetchChatForInquiry(leadId: string, inquiryId: string) {
+  const fetchChatForInquiry = useCallback(async (leadId: string, inquiryId: string) => {
     try {
       const result = await getLeadChatMessages(leadId, inquiryId);
       if ("error" in result) {
@@ -909,7 +909,7 @@ export function LeadInquiryWorkspace({
     } catch {
       setChatMessages([]);
     }
-  }
+  }, []);
 
   const handleSelectInquiry = useCallback(
     (inquiryItem: LeadInquiry) => {
@@ -940,7 +940,7 @@ export function LeadInquiryWorkspace({
       void fetchLogsForInquiry(inquiryItem.id);
       void fetchChatForInquiry(inquiryItem.lead_id, inquiryItem.id);
     },
-    [approvedInquiryId]
+    [approvedInquiryId, fetchLogsForInquiry, fetchChatForInquiry]
   );
 
   useEffect(() => {
@@ -950,7 +950,7 @@ export function LeadInquiryWorkspace({
       void fetchChatForInquiry(lead.id, inquiry.id);
     }, 5000);
     return () => clearInterval(timer);
-  }, [inquiry?.id, lead?.id, mainTab]);
+  }, [inquiry?.id, lead?.id, mainTab, fetchChatForInquiry]);
 
   async function handleSendChatMessage() {
     if (!inquiry?.id || !lead?.id) return;

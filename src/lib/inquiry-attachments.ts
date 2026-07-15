@@ -129,3 +129,30 @@ export function formatFileSize(bytes: number): string {
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
+
+/** Max size for a single ops confirmation attachment (keeps server action payload safe). */
+export const MAX_CONFIRMATION_ATTACHMENT_BYTES = 4 * 1024 * 1024;
+
+/**
+ * Only persist/serve storage or http(s) URLs.
+ * Rejects data: URLs and other inline payloads that blow past server action body limits.
+ */
+export function isSafeInquiryAttachmentUrl(url: unknown): url is string {
+  if (typeof url !== "string") return false;
+  const trimmed = url.trim();
+  if (!trimmed) return false;
+  if (/^data:/i.test(trimmed)) return false;
+  if (/^blob:/i.test(trimmed)) return false;
+  if (/^doc:\/\//i.test(trimmed)) return false;
+  return /^https?:\/\//i.test(trimmed) || trimmed.startsWith("/");
+}
+
+export function sanitizeInquiryAttachmentUrls(urls: unknown): string[] {
+  if (!Array.isArray(urls)) return [];
+  return urls.filter(isSafeInquiryAttachmentUrl).map((url) => url.trim());
+}
+
+export function sanitizeInquiryAttachmentUrl(url: unknown): string | null {
+  return isSafeInquiryAttachmentUrl(url) ? url.trim() : null;
+}
+

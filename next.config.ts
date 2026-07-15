@@ -7,7 +7,8 @@ const nextConfig: NextConfig = {
   },
   experimental: {
     serverActions: {
-      bodySizeLimit: '5mb',
+      // Allow multi-file confirmation uploads; payloads no longer embed base64 images.
+      bodySizeLimit: "12mb",
     },
   },
 };

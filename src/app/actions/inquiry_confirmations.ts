@@ -16,6 +16,12 @@ import {
   resolveInquiryAttachmentContentType,
   uploadToInquiryImagesBucket,
 } from '@/lib/inquiry-storage';
+import {
+  MAX_CONFIRMATION_ATTACHMENT_BYTES,
+  formatFileSize,
+  sanitizeInquiryAttachmentUrl,
+  sanitizeInquiryAttachmentUrls,
+} from '@/lib/inquiry-attachments';
 
 export type ConfirmationStatus = 'pending' | 'approved' | 'rejected';
 
@@ -127,8 +133,9 @@ function withOperationsAttachmentUrls(
   urls: string[]
 ): Record<string, unknown> {
   const base = { ...(calculatorValues as Record<string, unknown>) };
-  if (urls.length > 0) {
-    base.operations_attachment_urls = urls;
+  const safeUrls = sanitizeInquiryAttachmentUrls(urls);
+  if (safeUrls.length > 0) {
+    base.operations_attachment_urls = safeUrls;
   }
   return base;
 }
@@ -288,11 +295,12 @@ export async function submitInquiryForConfirmation(data: {
   quantity: string;
   hs_code: string;
   calculator_values: Record<string, string> | Record<string, unknown>;
-  original_image_url: string | null;
+  /** Optional — prefer server-side inquiry row. Large data: URLs are rejected. */
+  original_image_url?: string | null;
   sales_additional_image_urls?: string[] | null;
   operations_additional_image_urls?: string[] | null;
-  additional_image_1_url: string | null;
-  additional_image_2_url: string | null;
+  additional_image_1_url?: string | null;
+  additional_image_2_url?: string | null;
 }) {
   try {
     const session = await getSession();
@@ -314,19 +322,36 @@ export async function submitInquiryForConfirmation(data: {
     const supabase = await createAdminClient();
     const { data: currentInquiry } = await supabase
       .from('lead_inquiries')
-      .select('product_name, total_weight, cbm, quantity')
+      .select('product_name, total_weight, cbm, quantity, image_url, additional_image_urls')
       .eq('id', data.inquiry_id)
       .maybeSingle();
 
-    const operationsImageUrls = Array.isArray(data.operations_additional_image_urls)
-      ? data.operations_additional_image_urls.filter((u) => typeof u === 'string' && u.trim().length > 0)
-      : [data.additional_image_1_url, data.additional_image_2_url].filter(
-          (u): u is string => typeof u === 'string' && u.trim().length > 0
-        );
+    // Load sales attachments from DB so the client does not re-post huge image payloads.
+    const originalImageUrl =
+      sanitizeInquiryAttachmentUrl(currentInquiry?.image_url) ||
+      sanitizeInquiryAttachmentUrl(data.original_image_url);
 
-    const salesImageUrls = Array.isArray(data.sales_additional_image_urls)
-      ? data.sales_additional_image_urls.filter((u) => typeof u === 'string' && u.trim().length > 0)
-      : [];
+    const salesImageUrls = (() => {
+      const fromInquiry = sanitizeInquiryAttachmentUrls(currentInquiry?.additional_image_urls);
+      if (fromInquiry.length > 0) return fromInquiry;
+      return sanitizeInquiryAttachmentUrls(data.sales_additional_image_urls);
+    })();
+
+    const operationsImageUrlsRaw = Array.isArray(data.operations_additional_image_urls)
+      ? data.operations_additional_image_urls
+      : [data.additional_image_1_url, data.additional_image_2_url];
+
+    const operationsImageUrls = sanitizeInquiryAttachmentUrls(operationsImageUrlsRaw);
+
+    const rejectedInlineAttachments = (operationsImageUrlsRaw || []).filter(
+      (url) => typeof url === 'string' && /^data:/i.test(url.trim())
+    );
+    if (rejectedInlineAttachments.length > 0) {
+      return {
+        error:
+          'Attachment upload failed. Inline image data cannot be submitted. Please re-attach the file and try again.',
+      };
+    }
 
     const insertBase = {
       inquiry_id: data.inquiry_id,
@@ -337,7 +362,7 @@ export async function submitInquiryForConfirmation(data: {
       cbm: data.cbm.trim(),
       quantity: data.quantity.trim(),
       hs_code: (data.hs_code || '').trim(),
-      original_image_url: data.original_image_url || null,
+      original_image_url: originalImageUrl,
       sales_additional_image_urls: salesImageUrls,
       additional_image_1_url: operationsImageUrls[0] || null,
       additional_image_2_url: operationsImageUrls[1] || null,
@@ -406,8 +431,10 @@ export async function submitInquiryForConfirmation(data: {
     if ((data.hs_code || '').trim().length > 0) {
       newValues.hs_code = data.hs_code.trim();
     }
+    // Log calculator summary only — never put full calculator JSON in logs (size/noise).
     if (data.calculator_values && Object.keys(data.calculator_values).length > 0) {
-      newValues.calculator_values = data.calculator_values;
+      newValues.calculator_updated = true;
+      newValues.hs_code = (data.hs_code || '').trim() || undefined;
     }
 
     if (Object.keys(newValues).length > 0) {
@@ -453,30 +480,34 @@ export async function submitInquiryForConfirmation(data: {
       .eq('id', data.inquiry_id);
 
     // Notify the Sales Agent that inquiry was forwarded to Admin for approval.
-    const { data: lead } = await supabase
-      .from('leads')
-      .select('lead_id_formatted, sales_agent_id')
-      .eq('id', data.lead_id)
-      .maybeSingle();
-    if (lead?.sales_agent_id) {
-      const { data: salesAgent } = await supabase
-        .from('sales_agents')
-        .select('username')
-        .eq('id', lead.sales_agent_id)
+    try {
+      const { data: lead } = await supabase
+        .from('leads')
+        .select('lead_id_formatted, sales_agent_id')
+        .eq('id', data.lead_id)
         .maybeSingle();
-      if (salesAgent?.username) {
-        await supabase.from('inquiry_lifecycle_notifications').insert([{
-          lead_id: data.lead_id,
-          inquiry_id: data.inquiry_id,
-          confirmation_id: result.id,
-          sender_role: 'operations',
-          sender_username: session.username || 'operations',
-          recipient_role: 'sales_agent',
-          recipient_username: salesAgent.username,
-          event_type: 'sent_for_admin_approval',
-          message: `Inquiry for Lead #${lead.lead_id_formatted || data.lead_number} was forwarded to Admin for approval.`,
-        }]);
+      if (lead?.sales_agent_id) {
+        const { data: salesAgent } = await supabase
+          .from('sales_agents')
+          .select('username')
+          .eq('id', lead.sales_agent_id)
+          .maybeSingle();
+        if (salesAgent?.username) {
+          await supabase.from('inquiry_lifecycle_notifications').insert([{
+            lead_id: data.lead_id,
+            inquiry_id: data.inquiry_id,
+            confirmation_id: result.id,
+            sender_role: 'operations',
+            sender_username: session.username || 'operations',
+            recipient_role: 'sales_agent',
+            recipient_username: salesAgent.username,
+            event_type: 'sent_for_admin_approval',
+            message: `Inquiry for Lead #${lead.lead_id_formatted || data.lead_number} was forwarded to Admin for approval.`,
+          }]);
+        }
       }
+    } catch {
+      // Notification failure must not block confirmation success.
     }
 
     revalidatePath('/admin/dashboard');
@@ -892,10 +923,20 @@ export async function uploadConfirmationImage(file: File, label: string) {
     const session = await getSession();
     if (!session) return { error: 'Unauthorized' };
 
+    if (!(file instanceof File) || file.size <= 0) {
+      return { error: 'Invalid attachment file.' };
+    }
+
+    if (file.size > MAX_CONFIRMATION_ATTACHMENT_BYTES) {
+      return {
+        error: `Attachment is too large (${formatFileSize(file.size)}). Maximum allowed is ${formatFileSize(MAX_CONFIRMATION_ATTACHMENT_BYTES)}.`,
+      };
+    }
+
     const supabase = await createAdminClient();
 
     const fileExt = file.name.split('.').pop()?.toLowerCase() || '';
-    const fileName = `confirmation_${label}_${Date.now()}.${fileExt}`;
+    const fileName = `confirmation_${label}_${Date.now()}.${fileExt || 'bin'}`;
     const filePath = `confirmations/${fileName}`;
     const contentType = resolveInquiryAttachmentContentType(file);
 

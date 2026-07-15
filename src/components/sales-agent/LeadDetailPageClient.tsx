@@ -5,6 +5,7 @@ import type { Lead, LeadDetailBootstrap } from "@/app/actions/leads";
 import { LeadInquiryWorkspace, type LeadInquiryWorkspaceTab } from "@/components/sales-agent/LeadInquiryWorkspace";
 import { setCachedLeadInquiries } from "@/lib/sales-agent-lead-inquiries-cache";
 import { useEffect } from "react";
+import { ClientErrorBoundary } from "@/components/error/ClientErrorBoundary";
 
 function tabFromSearchParams(searchParams: URLSearchParams): LeadInquiryWorkspaceTab | undefined {
   const raw = searchParams.get("tab");
@@ -38,24 +39,30 @@ export function LeadDetailPageClient({
   }, [lead.id, initialInquiries, initialApprovedInquiryId]);
 
   return (
-    <LeadInquiryWorkspace
-      key={remountKey}
-      lead={lead}
-      mode="view"
-      active
-      layout="page"
-      initialMainTab={initialTab}
-      initialInquiryId={initialInquiryId}
-      allowInquiry={allowInquiry}
-      boardStatus={boardStatus}
-      initialInquiryBootstrap={
-        initialInquiries
-          ? {
-              inquiries: initialInquiries,
-              approvedInquiryId: initialApprovedInquiryId ?? null,
-            }
-          : undefined
-      }
-    />
+    <ClientErrorBoundary
+      resetKey={remountKey}
+      title="Lead workspace unavailable"
+      description="Something went wrong while loading this lead. Try again or return to your dashboard."
+    >
+      <LeadInquiryWorkspace
+        key={remountKey}
+        lead={lead}
+        mode="view"
+        active
+        layout="page"
+        initialMainTab={initialTab}
+        initialInquiryId={initialInquiryId}
+        allowInquiry={allowInquiry}
+        boardStatus={boardStatus}
+        initialInquiryBootstrap={
+          initialInquiries
+            ? {
+                inquiries: initialInquiries,
+                approvedInquiryId: initialApprovedInquiryId ?? null,
+              }
+            : undefined
+        }
+      />
+    </ClientErrorBoundary>
   );
 }

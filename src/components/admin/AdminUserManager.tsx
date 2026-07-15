@@ -50,6 +50,7 @@ import {
 import { AdminModuleCards } from "@/components/admin/AdminModuleCards";
 import { AdminAnalyticsPlaceholder } from "@/components/admin/AdminAnalyticsPlaceholder";
 import { AdminSettingsLayout } from "@/components/admin/AdminSettingsLayout";
+import { ClientErrorBoundary } from "@/components/error/ClientErrorBoundary";
 import { OrderTrackingPanel } from "@/components/admin/OrderTrackingPanel";
 import { AdminNotificationsPanel } from "@/components/admin/AdminNotificationsPanel";
 import { OrderManagementPanel } from "@/components/admin/OrderManagementPanel";
@@ -320,6 +321,15 @@ export function AdminUserManager({
     handleTabSelect(tab);
   }
 
+  const panelResetKey = [
+    activeTab,
+    activeModule ?? "none",
+    operationsSubTab,
+    accountingSubTab,
+    createSubTab,
+    profilesSubTab,
+  ].join(":");
+
   return (
     <div className="pt-20">
       <section className="px-6 pb-10 md:px-10 space-y-6">
@@ -389,6 +399,12 @@ export function AdminUserManager({
           </div>
         ) : null}
 
+        <ClientErrorBoundary
+          resetKey={panelResetKey}
+          title="This section is temporarily unavailable"
+          description="Something went wrong in this module. Try again or switch to another tab."
+          compact
+        >
         {activeTab === "dashboard" ? (
           activeModule === "analytics" ? (
             <AdminAnalyticsPlaceholder />
@@ -864,6 +880,7 @@ export function AdminUserManager({
             )}
           </AdminSettingsLayout>
         ) : null}
+        </ClientErrorBoundary>
       </section>
 
 

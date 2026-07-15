@@ -107,16 +107,21 @@ export function AdminDashboardShell({ users, dbError }: Props) {
     const lastSeenRaw = localStorage.getItem("admin_notifications_seen_at");
     const lastSeen = lastSeenRaw ? new Date(lastSeenRaw).getTime() : 0;
 
-    getAdminNotifications().then((result) => {
-      if (!isMounted) return;
-      if ("notifications" in result && Array.isArray(result.notifications)) {
-        const unread = result.notifications.filter((item) => {
-          const createdAt = new Date(item.created_at).getTime();
-          return createdAt > lastSeen;
-        }).length;
-        setUnreadCount(unread);
-      }
-    });
+    getAdminNotifications()
+      .then((result) => {
+        if (!isMounted) return;
+        if ("notifications" in result && Array.isArray(result.notifications)) {
+          const unread = result.notifications.filter((item) => {
+            const createdAt = new Date(item.created_at).getTime();
+            return createdAt > lastSeen;
+          }).length;
+          setUnreadCount(unread);
+        }
+      })
+      .catch(() => {
+        if (!isMounted) return;
+        setUnreadCount(0);
+      });
 
     return () => {
       isMounted = false;
@@ -125,17 +130,21 @@ export function AdminDashboardShell({ users, dbError }: Props) {
 
   useEffect(() => {
     if (activeTab !== "notifications") return;
-    getAdminNotifications().then((result) => {
-      if ("notifications" in result && Array.isArray(result.notifications) && result.notifications.length > 0) {
-        localStorage.setItem(
-          "admin_notifications_seen_at",
-          result.notifications[0].created_at
-        );
-      } else {
-        localStorage.setItem("admin_notifications_seen_at", new Date().toISOString());
-      }
-      setUnreadCount(0);
-    });
+    getAdminNotifications()
+      .then((result) => {
+        if ("notifications" in result && Array.isArray(result.notifications) && result.notifications.length > 0) {
+          localStorage.setItem(
+            "admin_notifications_seen_at",
+            result.notifications[0].created_at
+          );
+        } else {
+          localStorage.setItem("admin_notifications_seen_at", new Date().toISOString());
+        }
+        setUnreadCount(0);
+      })
+      .catch(() => {
+        setUnreadCount(0);
+      });
   }, [activeTab]);
 
   return (

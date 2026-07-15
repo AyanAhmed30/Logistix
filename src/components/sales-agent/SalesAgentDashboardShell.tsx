@@ -58,6 +58,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { useRouter } from "next/navigation";
+import { ClientErrorBoundary } from "@/components/error/ClientErrorBoundary";
 
 type Props = {
   username: string;
@@ -456,6 +457,12 @@ export function SalesAgentDashboardShell({ username, permissions }: Props) {
 
           {/* Main content */}
           <main className="flex-1 bg-[#F4F6F9] px-4 md:px-8 py-6 space-y-6 overflow-x-hidden">
+            <ClientErrorBoundary
+              resetKey={resolvedActiveTab}
+              title="This section is temporarily unavailable"
+              description="Something went wrong in this module. Try again or switch to another tab."
+              compact
+            >
             {resolvedActiveTab === "lead" && <LeadPanel />}
             {resolvedActiveTab === "pipeline" && <PipelinePanel />}
             {resolvedActiveTab === "customer-list" && <CustomerListPanel />}
@@ -517,6 +524,7 @@ export function SalesAgentDashboardShell({ username, permissions }: Props) {
                 </CardContent>
               </Card>
             )}
+            </ClientErrorBoundary>
           </main>
         </div>
     </div>

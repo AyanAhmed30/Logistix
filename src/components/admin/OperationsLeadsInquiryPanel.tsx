@@ -36,6 +36,10 @@ import { InquiryAttachmentList } from "@/components/inquiry/InquiryAttachmentLis
 import { InquiryCalculatorSection } from "@/components/admin/InquiryCalculatorSection";
 import { EstimatedDutiesAndTaxesBlock } from "@/components/admin/EstimatedDutiesAndTaxesBlock";
 import { collectInquiryAttachmentUrls } from "@/lib/inquiry-attachments";
+import {
+  formatFileSize,
+  MAX_CONFIRMATION_ATTACHMENT_BYTES,
+} from "@/lib/inquiry-attachments";
 import { downloadLeadManagementPdf } from "@/lib/lead-management-pdf";
 import {
   getEmptyCalculatorValues,
@@ -970,15 +974,6 @@ export function OperationsLeadsInquiryPanel({
     setImagePreview({ url, title });
   }
 
-  function fileToDataUrl(file: File): Promise<string> {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => resolve(String(reader.result || ""));
-      reader.onerror = () => reject(new Error("Failed to read image"));
-      reader.readAsDataURL(file);
-    });
-  }
-
   // ─── Submit form ──────────────────────────────────────────────────
 
   async function handleSendForConfirmation() {
@@ -990,40 +985,53 @@ export function OperationsLeadsInquiryPanel({
       toast.error("Product Name is required.");
       return;
     }
+    if (isSubmitting) return;
 
+    const inquirySnapshot = selectedInquiry;
     setIsSubmitting(true);
     try {
-      // Upload additional images to storage and keep only URLs in DB/logs.
+      // Upload ops attachments to storage only — never embed data: URLs in the server action
+      // (that exceeds the production body size limit and crashes the client).
       const operationsImageUrls: string[] = [];
-      const unsavedAttachments: number[] = [];
+      const attachmentsWithFiles = operationsAttachments.filter((item) => item.file);
 
-      for (let i = 0; i < operationsAttachments.length; i++) {
-        const attachment = operationsAttachments[i];
-        if (!attachment.file) continue;
+      for (let i = 0; i < attachmentsWithFiles.length; i++) {
+        const attachment = attachmentsWithFiles[i];
+        const file = attachment.file!;
 
-        const upload = await uploadConfirmationImage(attachment.file, `additional_${i + 1}`);
-        if ("error" in upload) {
-          const fallbackUrl = attachment.preview || (await fileToDataUrl(attachment.file));
-          if (fallbackUrl) {
-            operationsImageUrls.push(fallbackUrl);
-          } else {
-            unsavedAttachments.push(i + 1);
-          }
-        } else if (upload.url) {
-          operationsImageUrls.push(upload.url);
+        if (file.size > MAX_CONFIRMATION_ATTACHMENT_BYTES) {
+          toast.error(
+            `Attachment ${i + 1} is too large (${formatFileSize(file.size)}). Max ${formatFileSize(MAX_CONFIRMATION_ATTACHMENT_BYTES)}.`
+          );
+          return;
         }
-      }
 
-      if (unsavedAttachments.length > 0) {
-        toast.error(`Could not save attachment(s): ${unsavedAttachments.join(", ")}`);
-        setIsSubmitting(false);
-        return;
+        let upload: Awaited<ReturnType<typeof uploadConfirmationImage>>;
+        try {
+          upload = await uploadConfirmationImage(file, `additional_${i + 1}`);
+        } catch (uploadErr) {
+          console.error("Attachment upload failed:", uploadErr);
+          toast.error(
+            `Failed to upload attachment ${i + 1}. Please try a smaller file or check your connection.`
+          );
+          return;
+        }
+
+        if ("error" in upload) {
+          toast.error(upload.error || `Failed to upload attachment ${i + 1}.`);
+          return;
+        }
+        if (!upload.url || !/^https?:\/\//i.test(upload.url)) {
+          toast.error(`Attachment ${i + 1} upload did not return a valid URL. Please try again.`);
+          return;
+        }
+        operationsImageUrls.push(upload.url);
       }
 
       const primaryCalculator = calculators[0] ?? getEmptyCalculatorValues();
       const resolvedQuantity =
         primaryCalculator.quantity?.trim() ||
-        (isEditing ? editQuantity : selectedInquiry.quantity)?.trim() ||
+        (isEditing ? editQuantity : inquirySnapshot.quantity)?.trim() ||
         formQuantity.trim() ||
         "0";
 
@@ -1044,49 +1052,64 @@ export function OperationsLeadsInquiryPanel({
         toast.error(
           "Please complete the calculator (unit value, exchange rate, and duties) before sending."
         );
-        setIsSubmitting(false);
         return;
       }
 
-      // Persist to inquiry first so Admin fallback always has calculator data.
-      await saveInquiryCalculatorPayload(selectedInquiry.id, serializedCalculatorValues);
+      // Persist calculator to inquiry first (small JSON payload only).
+      const persistResult = await saveInquiryCalculatorPayload(
+        inquirySnapshot.id,
+        serializedCalculatorValues
+      );
+      if (persistResult && "error" in persistResult) {
+        toast.error(persistResult.error || "Failed to save calculator data before send.");
+        return;
+      }
 
+      // Do not re-send sales / original image blobs — server loads them from the inquiry row.
       const result = await submitInquiryForConfirmation({
-        inquiry_id: selectedInquiry.id,
-        lead_id: selectedInquiry.lead_id,
-        lead_number: selectedInquiry.leads.lead_id_formatted || "",
+        inquiry_id: inquirySnapshot.id,
+        lead_id: inquirySnapshot.lead_id,
+        lead_number: inquirySnapshot.leads?.lead_id_formatted || "",
         product_name: formProductName,
         total_weight: formWeight,
         cbm: formCbm,
         quantity: resolvedQuantity,
         hs_code: primaryCalculator.hs_code ?? "",
         calculator_values: serializedCalculatorValues,
-        original_image_url: selectedInquiry.image_url,
-        sales_additional_image_urls: Array.isArray(selectedInquiry.additional_image_urls)
-          ? selectedInquiry.additional_image_urls
-          : [],
         operations_additional_image_urls: operationsImageUrls,
         additional_image_1_url: operationsImageUrls[0] || null,
         additional_image_2_url: operationsImageUrls[1] || null,
       });
 
-      if ("error" in result) {
-        toast.error(result.error);
-      } else {
-        toast.success("Inquiry sent for confirmation! Status: Pending");
-        setShowForm(false);
-        resetForm();
-        // Refresh confirmations
-        if (selectedInquiry) {
-          const confResult = await getConfirmationsForInquiry(selectedInquiry.id);
-          if (!("error" in confResult)) {
-            setConfirmations(confResult.confirmations || []);
-          }
-          await refreshInquiryLogs(selectedInquiry.lead_id, selectedInquiry.id);
-        }
+      if (!result || "error" in result) {
+        toast.error(
+          (result && "error" in result && result.error) ||
+            "Failed to send for confirmation. Please try again."
+        );
+        return;
       }
-    } catch {
-      toast.error("Failed to submit. Please try again.");
+
+      toast.success("Inquiry sent for confirmation! Status: Pending");
+      setShowForm(false);
+      resetForm();
+
+      try {
+        const confResult = await getConfirmationsForInquiry(inquirySnapshot.id);
+        if (!("error" in confResult)) {
+          setConfirmations(confResult.confirmations || []);
+        }
+        await refreshInquiryLogs(inquirySnapshot.lead_id, inquirySnapshot.id);
+      } catch (refreshErr) {
+        console.error("Post-submit refresh failed:", refreshErr);
+        // Confirmation already succeeded — don't surface as a hard failure.
+      }
+    } catch (err) {
+      console.error("Send for confirmation failed:", err);
+      const message =
+        err instanceof Error && /Body exceeded|too large|Payload/i.test(err.message)
+          ? "Submission payload was too large. Please use smaller attachments and try again."
+          : "Failed to submit. Please try again.";
+      toast.error(message);
     } finally {
       setIsSubmitting(false);
     }

@@ -21,6 +21,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { ClientErrorBoundary } from "@/components/error/ClientErrorBoundary";
 
 type Props = {
   username: string;
@@ -270,6 +271,12 @@ export function OperationsDashboardShell({ username }: Props) {
       {/* Main Content */}
       <main className="pt-20 md:pl-64">
         <section className="px-6 pb-10 md:px-10">
+          <ClientErrorBoundary
+            resetKey={activeSubTab}
+            title="This section is temporarily unavailable"
+            description="Something went wrong in this module. Try again or switch to another tab."
+            compact
+          >
           <div className={activeSubTab === "operations" ? undefined : "hidden"}>
             <OperationsPanel />
           </div>
@@ -283,6 +290,7 @@ export function OperationsDashboardShell({ username }: Props) {
               }}
             />
           </div>
+          </ClientErrorBoundary>
         </section>
       </main>
     </div>

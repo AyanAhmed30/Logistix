@@ -101,22 +101,11 @@ async function addLeadLifecycleLog(
   }
 }
 
-type DuplicateLeadMatch = {
+type ExistingLeadByPhone = {
   id: string;
   name: string;
   lead_id_formatted: string | null;
 };
-
-function formatDuplicateLeadPhoneError(duplicate: DuplicateLeadMatch): string {
-  const customerName = (duplicate.name || '').trim() || 'Unknown';
-  const leadNumber = duplicate.lead_id_formatted?.trim();
-
-  if (leadNumber) {
-    return `This phone number already exists. It is associated with Lead #${leadNumber} (${customerName}).`;
-  }
-
-  return `This phone number already exists. It is associated with ${customerName}.`;
-}
 
 function scheduleLeadDashboardRevalidation() {
   after(() => {
@@ -138,12 +127,13 @@ function isDuplicateLeadIdError(error: { code?: string; message?: string } | nul
   );
 }
 
-async function findDuplicateLeadByPhone(
+/** Find an existing lead with the same normalized phone (oldest first → stable lead number). */
+async function findExistingLeadByPhone(
   supabase: Awaited<ReturnType<typeof createAdminClient>>,
   originalPhone: string,
   canonicalPhone: string,
   excludeLeadId?: string
-): Promise<DuplicateLeadMatch | null> {
+): Promise<ExistingLeadByPhone | null> {
   debugLeadPhoneDuplicate({
     original: originalPhone,
     normalized: canonicalPhone,
@@ -154,6 +144,7 @@ async function findDuplicateLeadByPhone(
     .from('leads')
     .select('id, name, lead_id_formatted')
     .eq('number_normalized', canonicalPhone)
+    .order('created_at', { ascending: true })
     .limit(1);
 
   if (excludeLeadId) {
@@ -188,7 +179,7 @@ async function findDuplicateLeadByPhone(
   });
 
   if (!rpcError) {
-    const match = ((rpcRows as DuplicateLeadMatch[] | null) || [])[0] ?? null;
+    const match = ((rpcRows as ExistingLeadByPhone[] | null) || [])[0] ?? null;
     debugLeadPhoneDuplicate({
       original: originalPhone,
       normalized: canonicalPhone,
@@ -204,6 +195,7 @@ async function findDuplicateLeadByPhone(
       .from('leads')
       .select('id, name, lead_id_formatted')
       .eq('number', canonicalPhone)
+      .order('created_at', { ascending: true })
       .limit(1);
 
     if (excludeLeadId) {
@@ -236,8 +228,21 @@ async function finishCreateLead(input: {
   displayPhone: string;
   canonicalPhone: string;
   source: 'Meta' | 'LinkedIn' | 'WhatsApp' | 'Others';
+  /** When phone already exists, reuse that lead's displayed lead number. */
+  preferredLeadIdFormatted?: string | null;
 }) {
-  const { supabase, session, salesAgent, safeName, displayPhone, canonicalPhone, source } = input;
+  const {
+    supabase,
+    session,
+    salesAgent,
+    safeName,
+    displayPhone,
+    canonicalPhone,
+    source,
+    preferredLeadIdFormatted,
+  } = input;
+
+  const sharedLeadId = preferredLeadIdFormatted?.trim() || null;
 
   const leadInsertBase = {
     name: safeName,
@@ -253,9 +258,10 @@ async function finishCreateLead(input: {
   let lastInsertError: string | null = null;
 
   for (let attempt = 0; attempt < 5; attempt++) {
+    const leadIdFormatted = sharedLeadId || randomLeadIdFormatted();
     const { data: inserted, error } = await supabase
       .from('leads')
-      .insert([{ ...leadInsertBase, lead_id_formatted: randomLeadIdFormatted() }])
+      .insert([{ ...leadInsertBase, lead_id_formatted: leadIdFormatted }])
       .select()
       .single();
 
@@ -266,6 +272,13 @@ async function finishCreateLead(input: {
 
     if (isDuplicateLeadIdError(error)) {
       lastInsertError = error?.message || null;
+      // Prefered shared ID collided with UNIQUE constraint — migration not applied yet.
+      if (sharedLeadId) {
+        return {
+          error:
+            'Unable to create duplicate lead with the same phone number. Please run the database migration that allows shared lead numbers (allow_duplicate_lead_id_formatted).',
+        };
+      }
       continue;
     }
 
@@ -279,7 +292,7 @@ async function finishCreateLead(input: {
           status: 'Leads',
           sales_agent_id: salesAgent.id,
           created_by_sales_agent_id: salesAgent.id,
-          lead_id_formatted: randomLeadIdFormatted(),
+          lead_id_formatted: leadIdFormatted,
         }])
         .select()
         .single();
@@ -291,6 +304,12 @@ async function finishCreateLead(input: {
 
       if (isDuplicateLeadIdError(normalizedRetryError)) {
         lastInsertError = normalizedRetryError?.message || null;
+        if (sharedLeadId) {
+          return {
+            error:
+              'Unable to create duplicate lead with the same phone number. Please run the database migration that allows shared lead numbers (allow_duplicate_lead_id_formatted).',
+          };
+        }
         continue;
       }
     }
@@ -304,7 +323,7 @@ async function finishCreateLead(input: {
           source,
           status: 'Leads',
           sales_agent_id: salesAgent.id,
-          lead_id_formatted: randomLeadIdFormatted(),
+          lead_id_formatted: leadIdFormatted,
         }])
         .select()
         .single();
@@ -316,6 +335,12 @@ async function finishCreateLead(input: {
 
       if (isDuplicateLeadIdError(retryError)) {
         lastInsertError = retryError?.message || null;
+        if (sharedLeadId) {
+          return {
+            error:
+              'Unable to create duplicate lead with the same phone number. Please run the database migration that allows shared lead numbers (allow_duplicate_lead_id_formatted).',
+          };
+        }
         continue;
       }
 
@@ -348,6 +373,8 @@ async function finishCreateLead(input: {
       number: data.number,
       source: data.source,
       status: data.status,
+      lead_id_formatted: data.lead_id_formatted,
+      reused_lead_number: Boolean(sharedLeadId),
     },
   });
 
@@ -391,14 +418,16 @@ export async function createLead(formData: FormData) {
     const canonicalPhone = phoneResult.value;
     const displayPhone = formatLeadPhoneForStorage(number, canonicalPhone);
 
-    const [{ data: salesAgent, error: agentError }, duplicateLead] = await Promise.all([
+    const [{ data: salesAgent, error: agentError }, existingLeadByPhone] = await Promise.all([
       supabase
         .from('sales_agents')
         .select('id, permissions')
         .eq('username', session.username)
         .single(),
-      findDuplicateLeadByPhone(supabase, number, canonicalPhone),
+      findExistingLeadByPhone(supabase, number, canonicalPhone),
     ]);
+
+    const preferredLeadIdFormatted = existingLeadByPhone?.lead_id_formatted?.trim() || null;
 
     if (agentError?.message.includes('permissions') || agentError?.message.includes('column "permissions"')) {
       const { data: fallbackAgent, error: fallbackError } = await supabase
@@ -411,10 +440,6 @@ export async function createLead(formData: FormData) {
         return { error: 'Sales agent not found' };
       }
 
-      if (duplicateLead) {
-        return { error: formatDuplicateLeadPhoneError(duplicateLead) };
-      }
-
       return await finishCreateLead({
         supabase,
         session,
@@ -423,6 +448,7 @@ export async function createLead(formData: FormData) {
         displayPhone,
         canonicalPhone,
         source: source as 'Meta' | 'LinkedIn' | 'WhatsApp' | 'Others',
+        preferredLeadIdFormatted,
       });
     }
 
@@ -437,10 +463,6 @@ export async function createLead(formData: FormData) {
       }
     }
 
-    if (duplicateLead) {
-      return { error: formatDuplicateLeadPhoneError(duplicateLead) };
-    }
-
     return await finishCreateLead({
       supabase,
       session,
@@ -449,6 +471,7 @@ export async function createLead(formData: FormData) {
       displayPhone,
       canonicalPhone,
       source: source as 'Meta' | 'LinkedIn' | 'WhatsApp' | 'Others',
+      preferredLeadIdFormatted,
     });
   } catch (err) {
     return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };
@@ -1129,35 +1152,48 @@ export async function updateLead(formData: FormData) {
       return { error: 'Lead not found or unauthorized' };
     }
 
-    const duplicateLead = await findDuplicateLeadByPhone(supabase, number, canonicalPhone, leadId);
-    if (duplicateLead) {
-      return { error: formatDuplicateLeadPhoneError(duplicateLead) };
+    const existingLeadByPhone = await findExistingLeadByPhone(
+      supabase,
+      number,
+      canonicalPhone,
+      leadId
+    );
+    const preferredLeadIdFormatted = existingLeadByPhone?.lead_id_formatted?.trim() || null;
+
+    // Update the lead — duplicate phones are allowed; reuse existing lead number when phone matches.
+    const updatePayload: Record<string, unknown> = {
+      name: name.trim(),
+      number: displayPhone,
+      number_normalized: canonicalPhone,
+      source: source as 'Meta' | 'LinkedIn' | 'WhatsApp' | 'Others',
+      updated_at: new Date().toISOString(),
+    };
+    if (preferredLeadIdFormatted) {
+      updatePayload.lead_id_formatted = preferredLeadIdFormatted;
     }
 
-    // Update the lead
     const { data, error } = await supabase
       .from('leads')
-      .update({
-        name: name.trim(),
-        number: displayPhone,
-        number_normalized: canonicalPhone,
-        source: source as 'Meta' | 'LinkedIn' | 'WhatsApp' | 'Others',
-        updated_at: new Date().toISOString()
-      })
+      .update(updatePayload)
       .eq('id', leadId)
       .select()
       .single();
 
     if (error) {
       if (error.message.includes('number_normalized')) {
+        const retryPayload: Record<string, unknown> = {
+          name: name.trim(),
+          number: displayPhone,
+          source: source as 'Meta' | 'LinkedIn' | 'WhatsApp' | 'Others',
+          updated_at: new Date().toISOString(),
+        };
+        if (preferredLeadIdFormatted) {
+          retryPayload.lead_id_formatted = preferredLeadIdFormatted;
+        }
+
         const { data: retryData, error: retryError } = await supabase
           .from('leads')
-          .update({
-            name: name.trim(),
-            number: displayPhone,
-            source: source as 'Meta' | 'LinkedIn' | 'WhatsApp' | 'Others',
-            updated_at: new Date().toISOString(),
-          })
+          .update(retryPayload)
           .eq('id', leadId)
           .select()
           .single();

@@ -3,7 +3,7 @@
 import { cookies } from 'next/headers';
 import { redirect } from 'next/navigation';
 import { createAdminClient } from '@/utils/supabase/server';
-import { encrypt, getSessionCookieOptions, type SessionRole } from '@/lib/auth/session';
+import { encrypt, getSessionCookieOptions } from '@/lib/auth/session';
 import { verifyPassword } from '@/lib/auth/password';
 import { parsePermissionKeys } from '@/lib/module-permissions';
 import { SUPER_ADMIN_USERNAME } from '@/lib/auth/super-admin';
@@ -123,7 +123,7 @@ export async function login(formData: FormData) {
         full_name?: string | null;
       } | null = null;
 
-      let appUserResult = await supabase
+      const appUserResult = await supabase
         .from('app_users')
         .select('id, username, role, permissions, default_organization, full_name')
         .eq('username', username)

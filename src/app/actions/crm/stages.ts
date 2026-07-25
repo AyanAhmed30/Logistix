@@ -1,6 +1,5 @@
 'use server';
 
-import { revalidatePath } from 'next/cache';
 import { createAdminClient } from '@/utils/supabase/server';
 import { requireAnyChildModule, isAccessDenied } from '@/lib/auth/require-access';
 import { requireCrmOrganizationScope, revalidateCrmPipelinePaths } from '@/app/actions/crm/shared';

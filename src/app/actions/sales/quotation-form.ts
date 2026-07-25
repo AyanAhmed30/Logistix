@@ -1,7 +1,7 @@
 'use server';
 
 import { createAdminClient } from '@/utils/supabase/server';
-import { getSession } from '@/lib/auth/session';
+import { getSession, type SessionPayload } from '@/lib/auth/session';
 import { sessionHasSalesAccess } from '@/lib/auth/require-access';
 import {
   mapQuotationDbStatusToUi,
@@ -252,7 +252,7 @@ async function assertSalesRecordAccess(
   const { resolveSalesAccessRole, salesRoleSeesAllOrgRecords } = await import(
     '@/lib/sales-roles'
   );
-  const role = resolveSalesAccessRole(session as any);
+  const role = resolveSalesAccessRole(session as SessionPayload);
   if (salesRoleSeesAllOrgRecords(role)) return null;
 
   if (String(row.created_by || '') === session.username) return null;

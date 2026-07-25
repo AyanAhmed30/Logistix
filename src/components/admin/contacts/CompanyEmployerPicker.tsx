@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Building2, ChevronDown, X } from "lucide-react";
 import {
   getCompanyContactOptions,
@@ -64,6 +64,45 @@ export function CompanyEmployerPicker({
     setInputValue(companyName);
   }, [selected, companyName, parentId]);
 
+  const selectCompany = useCallback(
+    (company: CompanyContactOption | null) => {
+      if (!company) {
+        onParentIdChange(null);
+        onCompanyNameChange("");
+        setInputValue("");
+      } else {
+        onParentIdChange(company.id);
+        onCompanyNameChange(company.name);
+        setInputValue(company.name);
+      }
+      setOpen(false);
+    },
+    [onParentIdChange, onCompanyNameChange]
+  );
+
+  const commitInput = useCallback(
+    (raw: string) => {
+      const trimmed = raw.trim();
+      if (!trimmed) {
+        selectCompany(null);
+        return;
+      }
+
+      const exact = companies.find(
+        (company) => company.name.toLowerCase() === trimmed.toLowerCase()
+      );
+      if (exact) {
+        selectCompany(exact);
+        return;
+      }
+
+      onParentIdChange(null);
+      onCompanyNameChange(trimmed);
+      setInputValue(trimmed);
+    },
+    [companies, selectCompany, onParentIdChange, onCompanyNameChange]
+  );
+
   useEffect(() => {
     if (!open) return;
     function onPointerDown(event: MouseEvent) {
@@ -74,7 +113,7 @@ export function CompanyEmployerPicker({
     }
     document.addEventListener("mousedown", onPointerDown);
     return () => document.removeEventListener("mousedown", onPointerDown);
-  }, [open, inputValue]);
+  }, [open, inputValue, commitInput]);
 
   const filtered = useMemo(() => {
     const needle = inputValue.trim().toLowerCase();
@@ -83,39 +122,6 @@ export function CompanyEmployerPicker({
       company.name.toLowerCase().includes(needle)
     );
   }, [companies, inputValue]);
-
-  function selectCompany(company: CompanyContactOption | null) {
-    if (!company) {
-      onParentIdChange(null);
-      onCompanyNameChange("");
-      setInputValue("");
-    } else {
-      onParentIdChange(company.id);
-      onCompanyNameChange(company.name);
-      setInputValue(company.name);
-    }
-    setOpen(false);
-  }
-
-  function commitInput(raw: string) {
-    const trimmed = raw.trim();
-    if (!trimmed) {
-      selectCompany(null);
-      return;
-    }
-
-    const exact = companies.find(
-      (company) => company.name.toLowerCase() === trimmed.toLowerCase()
-    );
-    if (exact) {
-      selectCompany(exact);
-      return;
-    }
-
-    onParentIdChange(null);
-    onCompanyNameChange(trimmed);
-    setInputValue(trimmed);
-  }
 
   function handleInputChange(next: string) {
     setInputValue(next);

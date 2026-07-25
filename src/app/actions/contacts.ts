@@ -288,7 +288,7 @@ export async function getContacts(search?: string) {
       );
     }
 
-    let { data: contacts, error } = await query;
+    const { data: contacts, error } = await query;
 
     if (error && isMissingOrganizationColumnError(error)) {
       return {
@@ -694,7 +694,7 @@ export async function getCompanyContactOptions(options?: {
       query = applyOrganizationFilter(query, org.organizationId);
     }
 
-    let { data, error } = await query;
+    const { data, error } = await query;
 
     if (error && isMissingOrganizationColumnError(error)) {
       return {

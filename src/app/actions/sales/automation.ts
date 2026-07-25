@@ -104,7 +104,7 @@ export async function getSalesEmailTemplates() {
     if ('error' in scope && scope.error) return { error: scope.error };
 
     const supabase = await createAdminClient();
-    let query = supabase
+    const query = supabase
       .from('sales_email_templates')
       .select('*')
       .eq('is_active', true)

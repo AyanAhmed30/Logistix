@@ -289,7 +289,7 @@ export async function getAllConvertedCustomersForAdmin() {
 
     const supabase = await createAdminClient();
 
-    let customersQuery = applyOrganizationFilter(
+    const customersQuery = applyOrganizationFilter(
       supabase.from('customers').select('*').not('lead_id', 'is', null),
       scope.organizationId
     );

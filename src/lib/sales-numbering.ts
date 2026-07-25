@@ -3,10 +3,12 @@
  * Falls back to scanning quotations if sequences table is missing.
  */
 
-type SupabaseLike = {
-  from: (table: string) => any;
-  rpc?: (...args: any[]) => any;
-};
+/**
+ * Accepts the admin Supabase client without importing generated DB types.
+ * Runtime only uses the query methods below.
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type SupabaseLike = { from: (table: string) => any };
 
 function padQt(n: number) {
   return `QT${String(n).padStart(5, '0')}`;

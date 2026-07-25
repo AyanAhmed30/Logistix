@@ -201,7 +201,7 @@ export async function getSalesOrdersToInvoice(filters: {
       .order(sortBy, { ascending, nullsFirst: false })
       .range((page - 1) * pageSize, page * pageSize - 1);
 
-    let { data, error, count } = await query;
+    const { data, error, count } = await query;
 
     if (error && /invoice_status|column/i.test(error.message)) {
       return {

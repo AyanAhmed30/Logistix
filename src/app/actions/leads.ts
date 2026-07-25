@@ -15,13 +15,6 @@ import { listInquiriesForLead, type LeadInquiry } from '@/app/actions/inquiries'
 import { resolveSalesAgentForSession } from '@/lib/legacy-user-bridge';
 import type { SessionPayload } from '@/lib/auth/session';
 
-type SalesAgentActor = {
-  id: string;
-  permissions?: string[];
-  username?: string | null;
-  name?: string | null;
-};
-
 async function fetchSalesAgentBySession(
   supabase: Awaited<ReturnType<typeof createAdminClient>>,
   session: SessionPayload,
@@ -732,7 +725,7 @@ export async function getAllLeadsForAdmin() {
 
     const supabase = await createAdminClient();
 
-    let query = applyOrganizationFilter(
+    const query = applyOrganizationFilter(
       supabase
         .from('leads')
         .select(`

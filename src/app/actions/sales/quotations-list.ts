@@ -1,7 +1,7 @@
 'use server';
 
 import { createAdminClient } from '@/utils/supabase/server';
-import { getSession } from '@/lib/auth/session';
+import { getSession, type SessionPayload } from '@/lib/auth/session';
 import { sessionHasSalesAccess } from '@/lib/auth/require-access';
 import {
   mapQuotationDbStatusToUi,
@@ -137,7 +137,7 @@ export async function getSalesQuotationsList(
       const { resolveCurrentSalespersonId } = await import(
         '@/app/actions/sales/automation'
       );
-      const role = resolveSalesAccessRole(scope.session as any);
+      const role = resolveSalesAccessRole(scope.session as SessionPayload);
       if (!salesRoleSeesAllOrgRecords(role)) {
         const agentId = await resolveCurrentSalespersonId();
         ownershipOr = agentId

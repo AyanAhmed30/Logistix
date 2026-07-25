@@ -287,7 +287,7 @@ export async function getCrmReportsDashboard(
 
   // Activities
   const oppIds = enriched.map((o) => o.id);
-  let activity_summary = { scheduled: 0, done: 0, overdue: 0 };
+  const activity_summary = { scheduled: 0, done: 0, overdue: 0 };
   let activities_by_type: CrmReportNamedCount[] = [];
 
   if (oppIds.length) {

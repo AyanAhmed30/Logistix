@@ -312,8 +312,8 @@ export async function getContacts(search?: string) {
 
     const contactIds = contacts.map((c) => c.id);
 
-    let tagLinks: { contact_id: string; tag_id: string }[] = [];
-    let tags: ContactTag[] = [];
+    const tagLinks: { contact_id: string; tag_id: string }[] = [];
+    const tags: ContactTag[] = [];
     if (contactIds.length > 0) {
       // Chunk .in() filters — thousands of UUIDs in one request → PostgREST 400 Bad Request
       const IN_CHUNK = 120;

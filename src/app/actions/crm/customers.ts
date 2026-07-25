@@ -96,8 +96,8 @@ export async function getCrmCustomers(search?: string) {
     }
 
     const contactIds = filtered.map((c) => c.id);
-    let tagLinks: { contact_id: string; tag_id: string }[] = [];
-    let tags: ContactTag[] = [];
+    const tagLinks: { contact_id: string; tag_id: string }[] = [];
+    const tags: ContactTag[] = [];
 
     if (contactIds.length > 0) {
       const IN_CHUNK = 120;

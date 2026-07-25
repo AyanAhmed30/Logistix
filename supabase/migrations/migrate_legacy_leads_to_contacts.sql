@@ -298,8 +298,16 @@ BEGIN
 
   SELECT id INTO v_sole_org_id
   FROM public.organizations
-  ORDER BY id ASC
+  WHERE status = 'active' OR status IS NULL
+  ORDER BY created_at ASC NULLS LAST, id ASC
   LIMIT 1;
+
+  IF v_sole_org_id IS NULL THEN
+    SELECT id INTO v_sole_org_id
+    FROM public.organizations
+    ORDER BY created_at ASC NULLS LAST, id ASC
+    LIMIT 1;
+  END IF;
 
   SELECT id INTO v_tag_legacy
   FROM public.contact_tags

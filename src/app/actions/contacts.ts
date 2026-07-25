@@ -246,33 +246,19 @@ export async function getContacts(search?: string) {
 
     const supabase = await createAdminClient();
 
-    let query = supabase
-      .from('contacts')
-      .select('*')
-      .or('parent_id.is.null,and(company_type.eq.person,contact_kind.eq.contact)');
+    // Top-level contacts only. Do not stack multiple .or() filters — PostgREST
+    // overwrites/rejects them and the UI shows "Bad Request".
+    let query = supabase.from('contacts').select('*').is('parent_id', null);
 
     if (!('unscoped' in org)) {
       query = applyOrganizationFilter(query, org.organizationId);
     }
 
-    // Odoo Own Documents: only assigned / created contacts
     try {
-      const { resolveSalesAccessRole, salesRoleSeesAllOrgRecords } = await import(
-        '@/lib/sales-roles'
-      );
-      const role = resolveSalesAccessRole(session as never);
-      if (role && !salesRoleSeesAllOrgRecords(role)) {
-        const { resolveCurrentSalespersonId } = await import(
-          '@/app/actions/sales/automation'
-        );
-        const agentId = await resolveCurrentSalespersonId();
-        if (agentId) {
-          query = query.or(
-            `salesperson_id.eq.${agentId},created_by.eq.${session.username}`
-          );
-        } else {
-          query = query.eq('created_by', session.username);
-        }
+      const { buildSalesOwnershipOrFilter } = await import('@/lib/sales-roles');
+      const ownershipOr = await buildSalesOwnershipOrFilter(session as never);
+      if (ownershipOr) {
+        query = query.or(ownershipOr);
       }
     } catch {
       // ownership filter is best-effort
@@ -280,15 +266,7 @@ export async function getContacts(search?: string) {
 
     query = query.order('created_at', { ascending: false });
 
-    const needle = String(search || '').trim();
-    if (needle) {
-      const like = `%${needle}%`;
-      query = query.or(
-        `name.ilike.${like},email.ilike.${like},phone.ilike.${like},company_name.ilike.${like},country.ilike.${like}`
-      );
-    }
-
-    const { data: contacts, error } = await query;
+    const { data: rows, error } = await query;
 
     if (error && isMissingOrganizationColumnError(error)) {
       return {
@@ -297,9 +275,28 @@ export async function getContacts(search?: string) {
       };
     }
 
-    if (error) return { error: error.message };
+    if (error) {
+      return {
+        error:
+          error.message === 'Bad Request' || /bad request/i.test(error.message)
+            ? `Contacts query failed (${error.code || '400'}). ${error.details || error.hint || error.message}`
+            : error.message,
+      };
+    }
 
-    const contactIds = (contacts || []).map((c) => c.id);
+    // Search in memory so we never need a second PostgREST .or()
+    const needle = String(search || '').trim().toLowerCase();
+    let contacts = rows || [];
+    if (needle) {
+      contacts = contacts.filter((c) => {
+        const hay = [c.name, c.email, c.phone, c.company_name, c.country]
+          .map((v) => String(v || '').toLowerCase())
+          .join(' ');
+        return hay.includes(needle);
+      });
+    }
+
+    const contactIds = contacts.map((c) => c.id);
 
     let tagLinks: { contact_id: string; tag_id: string }[] = [];
     let tags: ContactTag[] = [];
@@ -334,7 +331,7 @@ export async function getContacts(search?: string) {
       tagsByContact.set(link.contact_id, list);
     }
 
-    const enriched: ContactWithRelations[] = (contacts || []).map((c) => ({
+    const enriched: ContactWithRelations[] = contacts.map((c) => ({
       ...(c as Contact),
       tags: tagsByContact.get(c.id) || [],
       children: [],

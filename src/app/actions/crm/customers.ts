@@ -38,48 +38,27 @@ export async function getCrmCustomers(search?: string) {
 
     const supabase = await createAdminClient();
 
+    // Avoid stacked .or() filters (PostgREST Bad Request).
     let query = supabase
       .from('contacts')
       .select('*')
-      .or('parent_id.is.null,and(company_type.eq.person,contact_kind.eq.contact)');
+      .is('parent_id', null);
 
     if (scope && !('error' in scope) && scope.organizationId) {
       query = applyOrganizationFilter(query, scope.organizationId);
     }
 
     try {
-      const { resolveSalesAccessRole, salesRoleSeesAllOrgRecords } = await import(
-        '@/lib/sales-roles'
-      );
-      const role = resolveSalesAccessRole(session as never);
-      if (role && !salesRoleSeesAllOrgRecords(role)) {
-        const { resolveCurrentSalespersonId } = await import(
-          '@/app/actions/sales/automation'
-        );
-        const agentId = await resolveCurrentSalespersonId();
-        if (agentId) {
-          query = query.or(
-            `salesperson_id.eq.${agentId},created_by.eq.${session.username}`
-          );
-        } else {
-          query = query.eq('created_by', session.username);
-        }
-      }
+      const { buildSalesOwnershipOrFilter } = await import('@/lib/sales-roles');
+      const ownershipOr = await buildSalesOwnershipOrFilter(session as never);
+      if (ownershipOr) query = query.or(ownershipOr);
     } catch {
       // best-effort
     }
 
     query = query.order('name', { ascending: true });
 
-    const needle = String(search || '').trim();
-    if (needle) {
-      const like = `%${needle}%`;
-      query = query.or(
-        `name.ilike.${like},email.ilike.${like},phone.ilike.${like},company_name.ilike.${like},country.ilike.${like}`
-      );
-    }
-
-    const { data: contacts, error } = await query;
+    const { data: rows, error } = await query;
 
     if (error && isMissingOrganizationColumnError(error)) {
       return {
@@ -90,8 +69,17 @@ export async function getCrmCustomers(search?: string) {
 
     if (error) return { error: error.message };
 
-    const rows = contacts || [];
-    const contactIds = rows.map((c) => c.id);
+    const needle = String(search || '').trim().toLowerCase();
+    const filtered = !needle
+      ? rows || []
+      : (rows || []).filter((c) => {
+          const hay = [c.name, c.email, c.phone, c.company_name, c.country]
+            .map((v) => String(v || '').toLowerCase())
+            .join(' ');
+          return hay.includes(needle);
+        });
+
+    const contactIds = filtered.map((c) => c.id);
     let tagLinks: { contact_id: string; tag_id: string }[] = [];
     let tags: ContactTag[] = [];
 
@@ -120,7 +108,7 @@ export async function getCrmCustomers(search?: string) {
       tagsByContact.set(link.contact_id, list);
     }
 
-    const customers: ContactWithRelations[] = rows.map((c) => ({
+    const customers: ContactWithRelations[] = filtered.map((c) => ({
       ...(c as ContactWithRelations),
       tags: tagsByContact.get(c.id) || [],
       children: [],

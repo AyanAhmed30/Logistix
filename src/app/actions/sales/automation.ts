@@ -203,7 +203,8 @@ export async function prepareSalesQuotationEmail(
       return { error: templatesRes.error };
     }
     const templates =
-      'templates' in templatesRes ? templatesRes.templates : defaultTemplatesFallback();
+      ('templates' in templatesRes ? templatesRes.templates : null) ||
+      defaultTemplatesFallback();
     const template =
       templates.find((t) => t.template_key === templateKey) || templates[0];
 
@@ -383,7 +384,7 @@ export async function getSalesQuotationsNearingExpiration(daysAhead = 7) {
       query = query.eq('organization_id', scope.organizationId);
     }
 
-    if (!salesRoleSeesAllOrgRecords(scope.role)) {
+    if (!salesRoleSeesAllOrgRecords(scope.role ?? null)) {
       const agentId = await resolveCurrentSalespersonId();
       if (agentId) {
         query = query.or(

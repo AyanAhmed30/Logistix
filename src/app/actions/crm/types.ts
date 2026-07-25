@@ -132,7 +132,7 @@ export type CrmOpportunityUpsertInput = {
   expected_revenue?: number;
   probability?: number;
   priority?: CrmOpportunityPriority;
-  salesperson_id: string;
+  salesperson_id?: string | null;
   sales_team?: string | null;
   tags?: string[];
   campaign?: string | null;

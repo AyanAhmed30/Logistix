@@ -1765,7 +1765,7 @@ export async function getAllInquiriesForOperations(input?: {
       : null;
     if (scope && 'error' in scope) {
       if (scope.status === 403) {
-        return { inquiries: [], total: 0, hasMore: false };
+        return { inquiries: [], total: 0, hasMore: false, nextOffset: 0 };
       }
       return { error: scope.error };
     }

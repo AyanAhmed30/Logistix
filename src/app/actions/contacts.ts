@@ -233,8 +233,7 @@ async function resolveContactsOrganizationId(
 
 export async function getContacts(search?: string) {
   try {
-    const session = await getSession();
-    ensureAuth(session);
+    const session = ensureAuth(await getSession());
 
     const org = await resolveContactsOrganizationId(session);
     if ('error' in org) return { error: org.error };

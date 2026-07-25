@@ -100,7 +100,7 @@ export function SalesOrdersToUpsellView() {
         list = list.filter((r) => r.invoice_status === activeFilterId);
       }
       setRows(list);
-      setTotal(activeFilterId === "all" ? res.total : list.length);
+      setTotal(activeFilterId === "all" ? (res.total ?? 0) : list.length);
     }
     setLoading(false);
   }, [searchQuery, activeFilterId, sortBy, sortDir, page]);

@@ -421,7 +421,10 @@ export function OperationsLeadsInquiryPanel({
           setCachedOperationsBootstrap(query, {
             inquiries: incoming,
             hasMore: Boolean(result.hasMore),
-            nextOffset: Number(result.nextOffset || offset + incoming.length),
+            nextOffset: Number(
+              ('nextOffset' in result ? result.nextOffset : undefined) ||
+                offset + incoming.length
+            ),
             calculatorValues:
               'calculatorValues' in result && result.calculatorValues
                 ? (result.calculatorValues as Record<string, string>)
@@ -429,7 +432,12 @@ export function OperationsLeadsInquiryPanel({
           });
         }
         setHasMore(Boolean(result.hasMore));
-        setNextOffset(Number(result.nextOffset || offset + incoming.length));
+        setNextOffset(
+          Number(
+            ('nextOffset' in result ? result.nextOffset : undefined) ||
+              offset + incoming.length
+          )
+        );
       }
     } catch {
       toast.error("An unexpected error occurred");

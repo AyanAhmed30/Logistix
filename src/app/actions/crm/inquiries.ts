@@ -3,7 +3,7 @@
 import { revalidatePath } from 'next/cache';
 import { createAdminClient } from '@/utils/supabase/server';
 import { requireAnyChildModule, isAccessDenied } from '@/lib/auth/require-access';
-import { requireCrmOrganizationScope } from '@/app/actions/crm/shared';
+import { resolveCrmOrganizationScope } from '@/app/actions/crm/shared';
 import { logOpportunityChatterAudit } from '@/app/actions/crm/chatter';
 import { canAccessLeadForInquiry } from '@/lib/inquiry-crm-access';
 import { isCrmQualifiedStage } from '@/lib/crm-inquiry-utils';
@@ -43,8 +43,34 @@ export type CrmOpportunityInquiryBootstrap = {
   allowInquiry: boolean;
 };
 
-async function loadOpportunityContext(opportunityId: string) {
-  const scope = await requireCrmOrganizationScope();
+type OpportunityInquiryContext =
+  | {
+      scope: Exclude<Awaited<ReturnType<typeof resolveCrmOrganizationScope>>, { error: string }>;
+      supabase: Awaited<ReturnType<typeof createAdminClient>>;
+      opportunity: {
+        id: string;
+        name: string;
+        stage_name: string;
+        stage_is_won: boolean;
+        stage_is_lost: boolean;
+        contact_id: string | null;
+        customer_name: string | null;
+        contact_person_name: string | null;
+        email: string | null;
+        phone: string | null;
+        mobile: string | null;
+        source: string | null;
+        salesperson_id: string | null;
+        organization_id: string;
+        salesperson_name: string | null;
+      };
+    }
+  | { error: string };
+
+async function loadOpportunityContext(
+  opportunityId: string
+): Promise<OpportunityInquiryContext> {
+  const scope = await resolveCrmOrganizationScope();
   if ('error' in scope) return { error: scope.error };
 
   const supabase = await createAdminClient();
@@ -64,7 +90,7 @@ async function loadOpportunityContext(opportunityId: string) {
   }
 
   const { data, error } = await query.maybeSingle();
-  if (error) return { error: error.message };
+  if (error) return { error: error.message || 'Failed to load opportunity.' };
   if (!data) return { error: 'Opportunity not found.' };
 
   const stageRaw = data.crm_pipeline_stages as

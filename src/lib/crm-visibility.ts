@@ -58,32 +58,30 @@ export async function resolveCrmVisibilityScope(
   return { mode: 'all', session, salesAgentId };
 }
 
-type OrgFilterableQuery<T> = T & {
-  eq: (column: string, value: string) => T;
-  or: (filters: string) => T;
-};
-
 /** Apply salesperson / creator visibility onto a query with salesperson_id + created_by. */
-export function applyCrmVisibilityFilter<T extends OrgFilterableQuery<T>>(
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export function applyCrmVisibilityFilter<T = any>(
   query: T,
   visibility: CrmVisibilityScope
 ): T {
   if (visibility.mode !== 'assigned') return query;
 
   const username = String(visibility.session.username || '').trim();
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const q = query as any;
   if (visibility.salesAgentId && username) {
-    return query.or(
+    return q.or(
       `salesperson_id.eq.${visibility.salesAgentId},created_by.eq.${username}`
-    );
+    ) as T;
   }
   if (visibility.salesAgentId) {
-    return query.eq('salesperson_id', visibility.salesAgentId);
+    return q.eq('salesperson_id', visibility.salesAgentId) as T;
   }
   if (username) {
-    return query.eq('created_by', username);
+    return q.eq('created_by', username) as T;
   }
   // No identity to scope — return empty set rather than leaking all org records
-  return query.eq('id', '00000000-0000-0000-0000-000000000000');
+  return q.eq('id', '00000000-0000-0000-0000-000000000000') as T;
 }
 
 export function canAccessCrmOpportunityRow(

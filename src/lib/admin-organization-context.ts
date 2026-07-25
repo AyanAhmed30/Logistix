@@ -82,21 +82,20 @@ export async function requireAdminOrganizationScope(): Promise<AdminOrgScopeResu
   };
 }
 
-type OrgFilterableQuery<T> = T & {
-  eq: (column: string, value: string) => T;
-};
-
 /**
  * Strict multi-company filter (Odoo-style): only rows for the active organization.
  * Does not include legacy NULL organization_id rows — those belong to no company.
  */
-export function applyOrganizationFilter<T extends OrgFilterableQuery<T>>(
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export function applyOrganizationFilter<T = any>(
   query: T,
   organizationId: string | null | undefined,
   column = 'organization_id'
 ): T {
   if (!organizationId) return query;
-  return query.eq(column, organizationId);
+  // Supabase query builders are not safely generic across PostgREST versions
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  return (query as any).eq(column, organizationId) as T;
 }
 
 /** True when PostgREST reports a missing organization_id column. */

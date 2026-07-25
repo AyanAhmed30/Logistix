@@ -266,11 +266,18 @@ export async function createOrganization(formData: FormData) {
       status: (status === 'inactive' ? 'inactive' : 'active') as 'active' | 'inactive',
     };
 
-    let { data, error } = await supabase
-      .from('organizations')
-      .insert([fullPayload])
-      .select(ORGANIZATION_SELECT)
-      .single();
+    let data: Record<string, unknown> | null = null;
+    let error: { message: string; code?: string } | null = null;
+
+    {
+      const initial = await supabase
+        .from('organizations')
+        .insert([fullPayload])
+        .select(ORGANIZATION_SELECT)
+        .single();
+      data = (initial.data as Record<string, unknown> | null) ?? null;
+      error = initial.error;
+    }
 
     // Older DBs: username/password still NOT NULL — retry with placeholder login fields
     if (
@@ -290,7 +297,7 @@ export async function createOrganization(formData: FormData) {
         ])
         .select(ORGANIZATION_SELECT)
         .single();
-      data = retry.data;
+      data = (retry.data as Record<string, unknown> | null) ?? null;
       error = retry.error;
     }
 
@@ -340,10 +347,10 @@ export async function createOrganization(formData: FormData) {
           ])
           .select(ORGANIZATION_SELECT_BASIC)
           .single();
-        data = lastRetry.data;
+        data = (lastRetry.data as Record<string, unknown> | null) ?? null;
         error = lastRetry.error;
       } else {
-        data = basicRetry.data;
+        data = (basicRetry.data as Record<string, unknown> | null) ?? null;
         error = basicRetry.error;
       }
     }
@@ -379,17 +386,24 @@ export async function getAllOrganizations() {
     }
 
     const supabase = await createAdminClient();
-    let { data, error } = await supabase
-      .from('organizations')
-      .select(ORGANIZATION_SELECT)
-      .order('created_at', { ascending: false });
+    let data: Record<string, unknown>[] | null = null;
+    let error: { message: string; code?: string } | null = null;
+
+    {
+      const initial = await supabase
+        .from('organizations')
+        .select(ORGANIZATION_SELECT)
+        .order('created_at', { ascending: false });
+      data = (initial.data as Record<string, unknown>[] | null) ?? null;
+      error = initial.error;
+    }
 
     if (error && isMissingOrganizationsColumn(error)) {
       const fallback = await supabase
         .from('organizations')
         .select(ORGANIZATION_SELECT_BASIC)
         .order('created_at', { ascending: false });
-      data = fallback.data;
+      data = (fallback.data as Record<string, unknown>[] | null) ?? null;
       error = fallback.error;
     }
 
@@ -400,7 +414,7 @@ export async function getAllOrganizations() {
       return { error: error.message };
     }
 
-    return { organizations: (data || []).map((row) => normalizeOrganizationRow(row as Record<string, unknown>)) };
+    return { organizations: (data || []).map((row) => normalizeOrganizationRow(row)) };
   } catch (err) {
     return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };
   }

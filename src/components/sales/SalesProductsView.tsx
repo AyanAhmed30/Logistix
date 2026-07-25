@@ -64,8 +64,8 @@ export function SalesProductsView() {
       setProducts([]);
       setTotal(0);
     } else if ("products" in res) {
-      setProducts(res.products);
-      setTotal(res.total);
+      setProducts(res.products ?? []);
+      setTotal(res.total ?? 0);
       if (res.error) toast.message(res.error);
     }
     setLoading(false);

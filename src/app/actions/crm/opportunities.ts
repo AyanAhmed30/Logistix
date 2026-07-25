@@ -146,7 +146,6 @@ function validateOpportunityInput(input: CrmOpportunityUpsertInput) {
   const name = String(input.name || '').trim();
   if (!name) return 'Opportunity name is required.';
   if (!input.contact_id) return 'Customer is required.';
-  if (!input.salesperson_id) return 'Salesperson is required.';
   const revenue = Number(input.expected_revenue ?? 0);
   if (!Number.isFinite(revenue) || revenue < 0) return 'Expected revenue cannot be negative.';
   return null;

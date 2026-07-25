@@ -246,22 +246,11 @@ export async function getContacts(search?: string) {
 
     const supabase = await createAdminClient();
 
-    // Top-level contacts only. Do not stack multiple .or() filters — PostgREST
-    // overwrites/rejects them and the UI shows "Bad Request".
+    // Top-level contacts only — keep the PostgREST query simple (no .or()).
     let query = supabase.from('contacts').select('*').is('parent_id', null);
 
     if (!('unscoped' in org)) {
       query = applyOrganizationFilter(query, org.organizationId);
-    }
-
-    try {
-      const { buildSalesOwnershipOrFilter } = await import('@/lib/sales-roles');
-      const ownershipOr = await buildSalesOwnershipOrFilter(session as never);
-      if (ownershipOr) {
-        query = query.or(ownershipOr);
-      }
-    } catch {
-      // ownership filter is best-effort
     }
 
     query = query.order('created_at', { ascending: false });
@@ -277,16 +266,41 @@ export async function getContacts(search?: string) {
 
     if (error) {
       return {
-        error:
-          error.message === 'Bad Request' || /bad request/i.test(error.message)
-            ? `Contacts query failed (${error.code || '400'}). ${error.details || error.hint || error.message}`
-            : error.message,
+        error: `Contacts query failed (${error.code || '400'}): ${
+          error.message
+        }${error.details ? ` — ${error.details}` : ''}${
+          error.hint ? ` Hint: ${error.hint}` : ''
+        }`,
       };
     }
 
-    // Search in memory so we never need a second PostgREST .or()
-    const needle = String(search || '').trim().toLowerCase();
     let contacts = rows || [];
+
+    // Odoo Own Documents — filter in memory (avoids PostgREST .or() Bad Request)
+    try {
+      const {
+        resolveSalesAccessRole,
+        salesRoleSeesAllOrgRecords,
+      } = await import('@/lib/sales-roles');
+      const role = resolveSalesAccessRole(session as never);
+      if (role && !salesRoleSeesAllOrgRecords(role)) {
+        const { resolveCurrentSalespersonId } = await import(
+          '@/app/actions/sales/automation'
+        );
+        const agentId = await resolveCurrentSalespersonId();
+        const username = String(session.username || '').trim();
+        contacts = contacts.filter((c) => {
+          if (agentId && c.salesperson_id === agentId) return true;
+          if (username && c.created_by === username) return true;
+          return false;
+        });
+      }
+    } catch {
+      // ownership filter is best-effort
+    }
+
+    // Search in memory
+    const needle = String(search || '').trim().toLowerCase();
     if (needle) {
       contacts = contacts.filter((c) => {
         const hay = [c.name, c.email, c.phone, c.company_name, c.country]
@@ -301,21 +315,39 @@ export async function getContacts(search?: string) {
     let tagLinks: { contact_id: string; tag_id: string }[] = [];
     let tags: ContactTag[] = [];
     if (contactIds.length > 0) {
-      const { data: linkRows, error: linkErr } = await supabase
-        .from('contact_tag_links')
-        .select('contact_id, tag_id')
-        .in('contact_id', contactIds);
-      if (linkErr) return { error: linkErr.message };
-      tagLinks = linkRows || [];
+      // Chunk .in() filters — thousands of UUIDs in one request → PostgREST 400 Bad Request
+      const IN_CHUNK = 120;
+      for (let i = 0; i < contactIds.length; i += IN_CHUNK) {
+        const chunk = contactIds.slice(i, i + IN_CHUNK);
+        const { data: linkRows, error: linkErr } = await supabase
+          .from('contact_tag_links')
+          .select('contact_id, tag_id')
+          .in('contact_id', chunk);
+        if (linkErr) {
+          return {
+            error: `Contact tags query failed: ${linkErr.message}${
+              linkErr.details ? ` (${linkErr.details})` : ''
+            }`,
+          };
+        }
+        if (linkRows?.length) tagLinks.push(...linkRows);
+      }
 
       const tagIds = Array.from(new Set(tagLinks.map((l) => l.tag_id)));
-      if (tagIds.length > 0) {
+      for (let i = 0; i < tagIds.length; i += IN_CHUNK) {
+        const chunk = tagIds.slice(i, i + IN_CHUNK);
         const { data: tagRows, error: tagErr } = await supabase
           .from('contact_tags')
           .select('*')
-          .in('id', tagIds);
-        if (tagErr) return { error: tagErr.message };
-        tags = (tagRows || []) as ContactTag[];
+          .in('id', chunk);
+        if (tagErr) {
+          return {
+            error: `Tags query failed: ${tagErr.message}${
+              tagErr.details ? ` (${tagErr.details})` : ''
+            }`,
+          };
+        }
+        if (tagRows?.length) tags.push(...(tagRows as ContactTag[]));
       }
     }
 

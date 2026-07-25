@@ -15,28 +15,27 @@ import { lookupCartonByScanIdentifier } from "@/lib/lookup-carton-by-scan-identi
 
 type AdminSupabase = Awaited<ReturnType<typeof createAdminClient>>;
 
-async function requireUserSession() {
+async function requireUserSession(moduleKey?: string) {
   const session = await getSession();
   if (!session || session.role !== "user") {
     return { error: "Unauthorized" as const, session: null };
+  }
+  if (moduleKey && session.appUserId) {
+    const { hasModulePermission } = await import("@/lib/module-permissions");
+    if (!hasModulePermission(session.permissions, moduleKey)) {
+      return { error: "Access Denied" as const, session: null };
+    }
   }
   return { session, error: null };
 }
 
 async function requireAdminOrLoadingPermission() {
-  const session = await getSession();
-  if (!session) return { error: "Unauthorized" as const, session: null };
-
-  if (session.role === "admin") return { session, error: null };
-
-  if (session.role === "sales_agent") {
-    const { hasPermission } = await import("@/lib/auth/permissions");
-    const hasConsole = await hasPermission("console");
-    const hasLoadingInstruction = await hasPermission("loading-instruction");
-    if (hasConsole || hasLoadingInstruction) return { session, error: null };
+  const { requireAnyChildModule } = await import("@/lib/auth/require-access");
+  const auth = await requireAnyChildModule(["console", "loading-instruction"]);
+  if ("error" in auth) {
+    return { error: "Unauthorized" as const, session: null };
   }
-
-  return { error: "Unauthorized" as const, session: null };
+  return { session: auth, error: null };
 }
 
 export type ConsoleLoadingStats = {
@@ -203,7 +202,7 @@ async function updateConsolePhase(supabase: AdminSupabase, consoleId: string, ph
 }
 
 export async function reportConsoleFull(consoleId: string) {
-  const auth = await requireUserSession();
+  const auth = await requireUserSession("warehouse-loading-instruction");
   if (auth.error) return { error: auth.error };
 
   const supabase = await createAdminClient();
@@ -229,7 +228,7 @@ export async function reportConsoleFull(consoleId: string) {
 }
 
 export async function reportConsoleSpaceAvailable(consoleId: string) {
-  const auth = await requireUserSession();
+  const auth = await requireUserSession("warehouse-loading-instruction");
   if (auth.error) return { error: auth.error };
 
   const supabase = await createAdminClient();
@@ -266,7 +265,7 @@ export async function reportConsoleSpaceAvailable(consoleId: string) {
 
 /** Third scan (same QR) — re-inward into warehouse after container full. */
 export async function recordCartonReInwardScan(scanIdentifier: string, consoleId: string) {
-  const auth = await requireUserSession();
+  const auth = await requireUserSession("warehouse-scan-progress");
   if (auth.error) return { error: auth.error };
 
   const trimmed = scanIdentifier.trim();

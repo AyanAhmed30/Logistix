@@ -12,11 +12,26 @@ const SECRET_KEY = Buffer.from(process.env.SUPABASE_SERVICE_ROLE_KEY || 'default
 
 export type SessionRole = 'admin' | 'user' | 'sales_agent' | 'operations' | 'organization';
 
+/** Portal account role from user creation (`app_users.role`). */
+export type SessionAppUserRole = 'user' | 'administrator';
+
 export type SessionPayload = {
     username: string;
     role: SessionRole;
+    /** Portal user id when logged in via `app_users`. */
+    appUserId?: string;
+    /** User vs Organization Administrator (portal accounts only). */
+    appUserRole?: SessionAppUserRole;
+    fullName?: string;
     organizationName?: string;
-    /** Sales-agent module permissions captured at login for instant dashboard chrome. */
+    /** Default / active organization id for portal users. */
+    organizationId?: string;
+    /** All organization ids assigned to the portal user. */
+    organizationIds?: string[];
+    /**
+     * Access rights — department keys (`sales`, `operations`) and/or
+     * granular child module keys for legacy sales/ops accounts.
+     */
     permissions?: string[];
     /** Unix timestamp (ms) of the user's last recorded activity. */
     lastActivity?: number;

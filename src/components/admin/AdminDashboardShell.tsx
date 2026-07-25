@@ -6,6 +6,9 @@ import { Button } from "@/components/ui/button";
 import { LogOut, Bell } from "lucide-react";
 import Image from "next/image";
 import { AdminUserManager } from "@/components/admin/AdminUserManager";
+import { OrganizationSwitcher } from "@/components/admin/OrganizationSwitcher";
+import { AdminOrganizationProvider, useAdminOrganization } from "@/contexts/AdminOrganizationContext";
+import type { AdminOrganizationState } from "@/app/actions/organization-context";
 import { getAdminNotifications } from "@/app/actions/orders";
 import { getAppUsers } from "@/app/actions/user";
 import {
@@ -14,6 +17,13 @@ import {
   getDefaultTabForModule,
   getModuleForTab,
 } from "@/lib/admin-navigation";
+import { DashboardAccessProvider } from "@/contexts/DashboardAccessContext";
+import type { DashboardAccessState } from "@/lib/dashboard-access";
+import { getPortalOrganizationProfile } from "@/app/actions/organization-context";
+import type { Organization } from "@/app/actions/organizations";
+import { hasModulePermission } from "@/lib/module-permissions";
+import { defaultSalesRouteForAccess } from "@/lib/dashboard-access";
+import { useRouter } from "next/navigation";
 
 type AppUser = {
   id: string;
@@ -25,9 +35,18 @@ type AppUser = {
 type Props = {
   users?: AppUser[];
   dbError?: string | null;
+  initialOrganizationState: AdminOrganizationState;
+  access: DashboardAccessState;
 };
 
-export function AdminDashboardShell({ users: initialUsers = [], dbError: initialDbError = null }: Props) {
+function AdminDashboardContent({
+  users: initialUsers = [],
+  dbError: initialDbError = null,
+  access,
+}: Omit<Props, "initialOrganizationState">) {
+  const router = useRouter();
+  const { switchVersion, organizationId } = useAdminOrganization();
+  const [portalOrganization, setPortalOrganization] = useState<Organization | null>(null);
   const [users, setUsers] = useState<AppUser[]>(initialUsers);
   const [dbError, setDbError] = useState<string | null>(initialDbError);
   const [activeTab, setActiveTab] = useState<AdminTab>("dashboard");
@@ -56,7 +75,21 @@ export function AdminDashboardShell({ users: initialUsers = [], dbError: initial
   }
 
   function handleModuleSelect(nextModule: AdminModule) {
+    if (nextModule === "sales") {
+      router.push(defaultSalesRouteForAccess(access));
+      return;
+    }
     setActiveModule(nextModule);
+    if (
+      access.isPortalAccount &&
+      (nextModule === "settings" ||
+        nextModule === "operations" ||
+        nextModule === "warehouse" ||
+        nextModule === "contacts")
+    ) {
+      setActiveTab("dashboard");
+      return;
+    }
     setActiveTab(getDefaultTabForModule(nextModule));
   }
 
@@ -66,6 +99,27 @@ export function AdminDashboardShell({ users: initialUsers = [], dbError: initial
   }
 
   useEffect(() => {
+    if (!access.isPortalAccount) return;
+    if (
+      !organizationId ||
+      (!hasModulePermission(access.permissions, "customers") &&
+        !hasModulePermission(access.permissions, "quotations") &&
+        !hasModulePermission(access.permissions, "sales"))
+    ) {
+      setPortalOrganization(null);
+      return;
+    }
+    void getPortalOrganizationProfile(organizationId).then((result) => {
+      if ("organization" in result && result.organization) {
+        setPortalOrganization(result.organization as Organization);
+      } else {
+        setPortalOrganization(null);
+      }
+    });
+  }, [access.isPortalAccount, access.permissions, organizationId, switchVersion]);
+
+  useEffect(() => {
+    if (access.isPortalAccount) return;
     let isMounted = true;
     void getAppUsers()
       .then((result) => {
@@ -84,7 +138,7 @@ export function AdminDashboardShell({ users: initialUsers = [], dbError: initial
     return () => {
       isMounted = false;
     };
-  }, []);
+  }, [access.isPortalAccount]);
 
   useEffect(() => {
     function onOpenQuotation(e: Event) {
@@ -104,8 +158,8 @@ export function AdminDashboardShell({ users: initialUsers = [], dbError: initial
         contactId: String(detail.contactId),
         token: Date.now(),
       });
-      setActiveModule("sales");
-      setActiveTab("contacts");
+      setActiveModule("contacts");
+      setActiveTab("dashboard");
     }
     function onOpenInvoice(e: Event) {
       const detail = (e as CustomEvent).detail || {};
@@ -127,6 +181,7 @@ export function AdminDashboardShell({ users: initialUsers = [], dbError: initial
   }, []);
 
   useEffect(() => {
+    if (access.isPortalAccount) return;
     let isMounted = true;
     const lastSeenRaw = localStorage.getItem("admin_notifications_seen_at");
     const lastSeen = lastSeenRaw ? new Date(lastSeenRaw).getTime() : 0;
@@ -150,7 +205,7 @@ export function AdminDashboardShell({ users: initialUsers = [], dbError: initial
     return () => {
       isMounted = false;
     };
-  }, []);
+  }, [switchVersion]);
 
   useEffect(() => {
     if (activeTab !== "notifications") return;
@@ -185,28 +240,35 @@ export function AdminDashboardShell({ users: initialUsers = [], dbError: initial
             <div className="bg-white p-1 rounded-md">
               <Image src="/logo.jpg" alt="Logo" width={130} height={40} className="h-9 w-auto" />
             </div>
-            <span className="hidden md:block font-semibold text-sm uppercase tracking-widest text-secondary-muted">
-              Administrator Portal
+            <span className="hidden md:block font-semibold text-sm text-secondary-muted truncate max-w-[220px]">
+              {access.isSuperAdmin ? (
+                <span className="uppercase tracking-widest">Administrator Portal</span>
+              ) : (
+                access.fullName?.trim() || access.username
+              )}
             </span>
           </div>
 
           <div className="flex items-center gap-4 md:gap-6">
-            <button
-              className="text-secondary-muted hover:text-primary-dark transition-colors relative"
-              onClick={() => {
-                setActiveModule(null);
-                setActiveTab("notifications");
-              }}
-              aria-label="Notifications"
-            >
-              <Bell className="h-5 w-5" />
-              <span className="absolute -top-1 -right-1 bg-primary-accent h-3 w-3 rounded-full border-2 border-white" />
-              {unreadCount > 0 && (
-                <span className="absolute -top-2 -right-2 min-w-[18px] rounded-full bg-red-600 px-1 py-0.5 text-[10px] font-bold text-white text-center">
-                  {unreadCount > 99 ? "99+" : unreadCount}
-                </span>
-              )}
-            </button>
+            <OrganizationSwitcher />
+            {!access.isPortalAccount && (
+              <button
+                className="text-secondary-muted hover:text-primary-dark transition-colors relative"
+                onClick={() => {
+                  setActiveModule(null);
+                  setActiveTab("notifications");
+                }}
+                aria-label="Notifications"
+              >
+                <Bell className="h-5 w-5" />
+                <span className="absolute -top-1 -right-1 bg-primary-accent h-3 w-3 rounded-full border-2 border-white" />
+                {unreadCount > 0 && (
+                  <span className="absolute -top-2 -right-2 min-w-[18px] rounded-full bg-red-600 px-1 py-0.5 text-[10px] font-bold text-white text-center">
+                    {unreadCount > 99 ? "99+" : unreadCount}
+                  </span>
+                )}
+              </button>
+            )}
             <form action={logout}>
               <Button
                 variant="outline"
@@ -221,6 +283,7 @@ export function AdminDashboardShell({ users: initialUsers = [], dbError: initial
       </header>
 
       <AdminUserManager
+        key={switchVersion}
         users={users}
         userCount={users.length}
         activeTab={activeTab}
@@ -231,7 +294,18 @@ export function AdminDashboardShell({ users: initialUsers = [], dbError: initial
         quotationPayload={quotationPayload}
         contactPayload={contactPayload}
         invoicePayload={invoicePayload}
+        portalOrganization={portalOrganization}
       />
     </div>
+  );
+}
+
+export function AdminDashboardShell({ initialOrganizationState, access, ...props }: Props) {
+  return (
+    <AdminOrganizationProvider initial={initialOrganizationState}>
+      <DashboardAccessProvider access={access}>
+        <AdminDashboardContent access={access} {...props} />
+      </DashboardAccessProvider>
+    </AdminOrganizationProvider>
   );
 }

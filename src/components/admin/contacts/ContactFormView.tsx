@@ -27,8 +27,6 @@ import {
   Globe,
   Tag as TagIcon,
   ImageIcon,
-  FileText,
-  ArrowUpRight,
 } from "lucide-react";
 import {
   createContact,
@@ -49,25 +47,22 @@ import {
 } from "@/app/actions/contacts";
 import { ContactChatter } from "@/components/admin/contacts/ContactChatter";
 import { ChildContactDialog } from "@/components/admin/contacts/ChildContactDialog";
-import {
-  getQuotationsByContact,
-  type Quotation,
-  type QuotationStatus,
-} from "@/app/actions/quotations";
-import {
-  getInvoicesByContact,
-  type Invoice,
-  type InvoiceStatus,
-} from "@/app/actions/invoices";
+import { ContactSmartButtons } from "@/components/admin/contacts/ContactSmartButtons";
+import { CompanyEmployerPicker } from "@/components/admin/contacts/CompanyEmployerPicker";
+import type { ContactSmartButtonCounts } from "@/lib/contacts-integration";
+import { getContactCrmSummary } from "@/app/actions/crm/contact-summary";
 
 type Props = {
   contactId: string | null;
   onBack: () => void;
   onSaved: (id: string) => void;
+  readOnly?: boolean;
+  backLabel?: string;
 };
 
 type FormState = {
   company_type: CompanyType;
+  parent_id: string | null;
   name: string;
   company_name: string;
   email: string;
@@ -107,10 +102,15 @@ type FormState = {
 
   // Notes
   notes: string;
+
+  // CRM / ranks
+  customer_rank: number;
+  vendor_rank: number;
 };
 
 const EMPTY_FORM: FormState = {
   company_type: "person",
+  parent_id: null,
   name: "",
   company_name: "",
   email: "",
@@ -142,6 +142,8 @@ const EMPTY_FORM: FormState = {
   payable_account: "",
   tax_settings: "",
   notes: "",
+  customer_rank: 0,
+  vendor_rank: 0,
 };
 
 type FormTab = "contacts" | "sales" | "accounting" | "notes";
@@ -183,7 +185,13 @@ const FISCAL_POSITION_OPTIONS = [
   "Free Zone",
 ];
 
-export function ContactFormView({ contactId, onBack, onSaved }: Props) {
+export function ContactFormView({
+  contactId,
+  onBack,
+  onSaved,
+  readOnly = false,
+  backLabel = "Contacts",
+}: Props) {
   const [form, setForm] = useState<FormState>(EMPTY_FORM);
   const [loadedContact, setLoadedContact] = useState<ContactWithRelations | null>(null);
   const [activity, setActivity] = useState<ContactActivityLog[]>([]);
@@ -197,6 +205,7 @@ export function ContactFormView({ contactId, onBack, onSaved }: Props) {
   const [childDialogOpen, setChildDialogOpen] = useState(false);
   const [savedId, setSavedId] = useState<string | null>(contactId);
   const [isPending, startTransition] = useTransition();
+  const [crmSmartCounts, setCrmSmartCounts] = useState<ContactSmartButtonCounts>({});
 
   // Load tags + salespersons
   useEffect(() => {
@@ -207,6 +216,30 @@ export function ContactFormView({ contactId, onBack, onSaved }: Props) {
       if ("salespersons" in res && res.salespersons) setSalespersons(res.salespersons);
     });
   }, []);
+
+  // Opportunity counts for smart buttons only (no CRM Activity panel)
+  useEffect(() => {
+    if (!savedId) {
+      setCrmSmartCounts({});
+      return;
+    }
+    let cancelled = false;
+    void getContactCrmSummary(savedId).then((res) => {
+      if (cancelled) return;
+      if ("summary" in res && res.summary) {
+        setCrmSmartCounts({
+          opportunities: res.summary.total_opportunities,
+          meetings: 0,
+          documents: 0,
+          sales: 0,
+          tasks: 0,
+        });
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [savedId]);
 
   // Load contact when opening existing
   useEffect(() => {
@@ -241,6 +274,7 @@ export function ContactFormView({ contactId, onBack, onSaved }: Props) {
           setSavedId(c.id);
           setForm({
             company_type: c.company_type,
+            parent_id: c.parent_id,
             name: c.name,
             company_name: c.company_name || "",
             email: c.email || "",
@@ -272,6 +306,8 @@ export function ContactFormView({ contactId, onBack, onSaved }: Props) {
             payable_account: c.payable_account || "",
             tax_settings: c.tax_settings || "",
             notes: c.notes || "",
+            customer_rank: Number(c.customer_rank) || 0,
+            vendor_rank: Number(c.vendor_rank) || 0,
           });
           setSelectedTagIds(c.tags.map((t) => t.id));
         }
@@ -350,6 +386,16 @@ export function ContactFormView({ contactId, onBack, onSaved }: Props) {
         toast.success(savedId ? "Contact updated" : "Contact created");
       }
       setSavedId(res.contact.id);
+      const refreshed = await getContactById(res.contact.id);
+      if ("contact" in refreshed && refreshed.contact) {
+        const c = refreshed.contact;
+        setLoadedContact(c);
+        setForm((prev) => ({
+          ...prev,
+          parent_id: c.parent_id,
+          company_name: c.company_name || "",
+        }));
+      }
       const activityRes = await getContactActivity(res.contact.id);
       if ("activity" in activityRes && activityRes.activity) {
         setActivity(activityRes.activity);
@@ -388,6 +434,7 @@ export function ContactFormView({ contactId, onBack, onSaved }: Props) {
       const c = loadedContact;
       setForm({
         company_type: c.company_type,
+        parent_id: c.parent_id,
         name: c.name,
         company_name: c.company_name || "",
         email: c.email || "",
@@ -419,6 +466,8 @@ export function ContactFormView({ contactId, onBack, onSaved }: Props) {
         payable_account: c.payable_account || "",
         tax_settings: c.tax_settings || "",
         notes: c.notes || "",
+        customer_rank: Number(c.customer_rank) || 0,
+        vendor_rank: Number(c.vendor_rank) || 0,
       });
       setSelectedTagIds(c.tags.map((t) => t.id));
     } else {
@@ -473,12 +522,13 @@ export function ContactFormView({ contactId, onBack, onSaved }: Props) {
           className="gap-1.5 h-8 px-2"
         >
           <ArrowLeft className="h-4 w-4" />
-          Contacts
+          {backLabel}
         </Button>
         <span className="text-secondary-muted">/</span>
         <span className="font-medium text-violet-700">
           {savedId ? form.name || "Untitled" : "New"}
         </span>
+        {!readOnly ? (
         <div className="flex items-center gap-1 ml-1">
           <button
             type="button"
@@ -510,12 +560,21 @@ export function ContactFormView({ contactId, onBack, onSaved }: Props) {
             </button>
           )}
         </div>
+        ) : null}
       </div>
 
       {loading ? (
         <div className="py-16 text-center text-secondary-muted">Loading contact…</div>
       ) : (
-        <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_380px] gap-4">
+        <div className="space-y-3">
+          <ContactSmartButtons
+            contactSaved={Boolean(savedId)}
+            contactId={savedId}
+            counts={crmSmartCounts}
+          />
+
+          <fieldset disabled={readOnly} className="space-y-3 border-0 p-0 m-0 min-w-0">
+          <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_380px] gap-4">
           {/* LEFT: Form */}
           <div className="bg-white border rounded-lg shadow-sm">
             {/* Header section with avatar + name */}
@@ -536,7 +595,9 @@ export function ContactFormView({ contactId, onBack, onSaved }: Props) {
                   <div className="flex items-center gap-1 bg-slate-100 rounded-md p-0.5 w-fit text-xs">
                     <button
                       type="button"
-                      onClick={() => update("company_type", "person")}
+                      onClick={() => {
+                        update("company_type", "person");
+                      }}
                       className={`px-3 py-1 rounded-md transition-colors ${
                         form.company_type === "person"
                           ? "bg-white shadow-sm text-primary-dark font-semibold"
@@ -550,7 +611,13 @@ export function ContactFormView({ contactId, onBack, onSaved }: Props) {
                     </button>
                     <button
                       type="button"
-                      onClick={() => update("company_type", "company")}
+                      onClick={() => {
+                        setForm((prev) => ({
+                          ...prev,
+                          company_type: "company",
+                          parent_id: null,
+                        }));
+                      }}
                       className={`px-3 py-1 rounded-md transition-colors ${
                         form.company_type === "company"
                           ? "bg-white shadow-sm text-primary-dark font-semibold"
@@ -573,12 +640,16 @@ export function ContactFormView({ contactId, onBack, onSaved }: Props) {
                   />
 
                   {/* Icon rows */}
-                  <IconField
-                    icon={<Building2 className="h-3.5 w-3.5" />}
-                    value={form.company_name}
-                    onChange={(v) => update("company_name", v)}
-                    placeholder="Company Employer"
-                  />
+                  {/* Company (Employer) — individuals only (Odoo-style parent company link) */}
+                  {form.company_type === "person" ? (
+                    <CompanyEmployerPicker
+                      parentId={form.parent_id}
+                      companyName={form.company_name}
+                      onParentIdChange={(companyId) => update("parent_id", companyId)}
+                      onCompanyNameChange={(name) => update("company_name", name)}
+                      excludeContactId={savedId}
+                    />
+                  ) : null}
                   <IconField
                     icon={<Mail className="h-3.5 w-3.5" />}
                     value={form.email}
@@ -773,19 +844,12 @@ export function ContactFormView({ contactId, onBack, onSaved }: Props) {
             {/* Tab Content */}
             <div className="p-6">
               {activeTab === "contacts" && (
-                <div className="space-y-8">
-                  <ContactsTabContent
-                    relatedContacts={loadedContact?.children || []}
-                    canAddChild
-                    onAddChild={handleAddRelated}
-                    onDeleteChild={handleChildDelete}
-                  />
-                  <LinkedQuotationsSection
-                    contactId={savedId}
-                    contactName={form.name}
-                  />
-                  <LinkedInvoicesSection contactId={savedId} />
-                </div>
+                <ContactsTabContent
+                  relatedContacts={loadedContact?.children || []}
+                  canAddChild
+                  onAddChild={handleAddRelated}
+                  onDeleteChild={handleChildDelete}
+                />
               )}
 
               {activeTab === "sales" && (
@@ -821,15 +885,19 @@ export function ContactFormView({ contactId, onBack, onSaved }: Props) {
             />
           </div>
         </div>
+          </fieldset>
+        </div>
       )}
 
       {/* Child contact dialog */}
+      {!readOnly ? (
       <ChildContactDialog
         open={childDialogOpen}
         parentId={savedId}
         onOpenChange={setChildDialogOpen}
         onCreated={handleChildCreated}
       />
+      ) : null}
     </div>
   );
 }
@@ -1032,6 +1100,34 @@ function SalesPurchaseTab({
         {/* SALES */}
         <div>
           <SectionTitle>Sales</SectionTitle>
+
+          <FormRow label="Customer">
+            <label className="inline-flex items-center gap-2 text-sm text-primary-dark cursor-pointer">
+              <input
+                type="checkbox"
+                className="h-4 w-4 rounded border-slate-300 text-[#017e84] focus:ring-[#017e84]"
+                checked={form.customer_rank > 0}
+                onChange={(e) =>
+                  update("customer_rank", e.target.checked ? 1 : 0)
+                }
+              />
+              <span>Mark as Customer (show in CRM)</span>
+            </label>
+          </FormRow>
+
+          <FormRow label="Vendor">
+            <label className="inline-flex items-center gap-2 text-sm text-primary-dark cursor-pointer">
+              <input
+                type="checkbox"
+                className="h-4 w-4 rounded border-slate-300 text-[#017e84] focus:ring-[#017e84]"
+                checked={form.vendor_rank > 0}
+                onChange={(e) =>
+                  update("vendor_rank", e.target.checked ? 1 : 0)
+                }
+              />
+              <span>Mark as Vendor</span>
+            </label>
+          </FormRow>
 
           <FormRow label="Salesperson">
             <Select
@@ -1352,334 +1448,6 @@ function AccountingTab({
           Used on customer invoices.
         </p>
       </div>
-    </div>
-  );
-}
-
-// ─────────────────────────────────────────────────────────────
-// Linked Quotations section (shown on the Contacts tab)
-// ─────────────────────────────────────────────────────────────
-
-function formatQuotationStatus(status: QuotationStatus): string {
-  switch (status) {
-    case "quotation":
-      return "Quotation";
-    case "quotation_sent":
-      return "Sent";
-    case "sales_order":
-      return "Sales Order";
-    default:
-      return status;
-  }
-}
-
-function quotationStatusClasses(status: QuotationStatus): string {
-  switch (status) {
-    case "quotation":
-      return "bg-emerald-50 text-emerald-700 border-emerald-200";
-    case "quotation_sent":
-      return "bg-green-50 text-green-700 border-green-300";
-    case "sales_order":
-      return "bg-purple-50 text-purple-700 border-purple-200";
-    default:
-      return "bg-slate-50 text-slate-700 border-slate-200";
-  }
-}
-
-function formatInvoiceStatus(status: InvoiceStatus): string {
-  switch (status) {
-    case "draft":
-      return "Draft";
-    case "approved":
-      return "Approved";
-    case "confirmed":
-      return "Confirmed";
-    case "posted":
-      return "Posted";
-    case "partially_paid":
-      return "Partially Paid";
-    case "paid":
-      return "Paid";
-    case "cancelled":
-      return "Cancelled";
-    default:
-      return status;
-  }
-}
-
-function invoiceStatusClasses(status: InvoiceStatus): string {
-  switch (status) {
-    case "draft":
-      return "bg-slate-50 text-slate-700 border-slate-200";
-    case "approved":
-      return "bg-sky-50 text-sky-700 border-sky-200";
-    case "confirmed":
-      return "bg-cyan-50 text-cyan-700 border-cyan-200";
-    case "posted":
-      return "bg-indigo-50 text-indigo-700 border-indigo-200";
-    case "partially_paid":
-      return "bg-amber-50 text-amber-700 border-amber-200";
-    case "paid":
-      return "bg-emerald-50 text-emerald-700 border-emerald-200";
-    case "cancelled":
-      return "bg-rose-50 text-rose-700 border-rose-200";
-    default:
-      return "bg-slate-50 text-slate-700 border-slate-200";
-  }
-}
-
-function LinkedQuotationsSection({
-  contactId,
-  contactName,
-}: {
-  contactId: string | null;
-  contactName: string;
-}) {
-  const [quotations, setQuotations] = useState<Quotation[]>([]);
-  const [loading, setLoading] = useState(false);
-
-  useEffect(() => {
-    if (!contactId) {
-      Promise.resolve().then(() => {
-        setQuotations([]);
-      });
-      return;
-    }
-    Promise.resolve().then(() => {
-      setLoading(true);
-    });
-    getQuotationsByContact(contactId).then((res) => {
-      Promise.resolve().then(() => {
-        if ("error" in res && res.error) {
-          setQuotations([]);
-        } else if ("quotations" in res && res.quotations) {
-          setQuotations(res.quotations);
-        }
-        setLoading(false);
-      });
-    });
-  }, [contactId]);
-
-  function openQuotation(qId: string) {
-    if (typeof window === "undefined") return;
-    window.dispatchEvent(
-      new CustomEvent("admin:open-quotation", {
-        detail: { quotationId: qId },
-      })
-    );
-  }
-
-  function createQuotationForContact() {
-    if (!contactId) {
-      toast.error("Save the contact first to create a quotation.");
-      return;
-    }
-    if (typeof window === "undefined") return;
-    window.dispatchEvent(
-      new CustomEvent("admin:open-quotation", {
-        detail: { contactId, contactName },
-      })
-    );
-  }
-
-  const total = quotations.reduce((sum, q) => sum + Number(q.total_amount || 0), 0);
-
-  return (
-    <div>
-      <div className="flex items-center justify-between mb-3">
-        <div className="flex items-center gap-2">
-          <FileText className="h-4 w-4 text-slate-500" />
-          <h3 className="text-sm font-semibold text-primary-dark">Quotations</h3>
-          <span className="text-xs text-secondary-muted">
-            {quotations.length} record{quotations.length !== 1 ? "s" : ""}
-            {quotations.length > 0 && (
-              <> • Total {total.toFixed(2)} Rs.</>
-            )}
-          </span>
-        </div>
-        <Button
-          type="button"
-          size="sm"
-          variant="outline"
-          onClick={createQuotationForContact}
-          disabled={!contactId}
-          className="gap-1.5"
-        >
-          <Plus className="h-3.5 w-3.5" />
-          New Quotation
-        </Button>
-      </div>
-
-      {!contactId ? (
-        <div className="border border-dashed rounded-lg p-6 text-center text-xs text-secondary-muted">
-          Save the contact first to see linked quotations.
-        </div>
-      ) : loading ? (
-        <div className="border rounded-lg p-6 text-center text-xs text-secondary-muted">
-          Loading quotations…
-        </div>
-      ) : quotations.length === 0 ? (
-        <div className="border border-dashed rounded-lg p-6 text-center text-xs text-secondary-muted">
-          No quotations linked to this contact yet.
-        </div>
-      ) : (
-        <div className="border rounded-lg overflow-hidden">
-          <table className="w-full text-sm">
-            <thead className="bg-slate-50 text-xs text-secondary-muted">
-              <tr>
-                <th className="text-left font-medium px-3 py-2">Number</th>
-                <th className="text-left font-medium px-3 py-2">Date</th>
-                <th className="text-left font-medium px-3 py-2">Status</th>
-                <th className="text-right font-medium px-3 py-2">Total</th>
-                <th className="w-10 px-3 py-2" />
-              </tr>
-            </thead>
-            <tbody>
-              {quotations.map((q) => (
-                <tr
-                  key={q.id}
-                  className="border-t hover:bg-violet-50/50 transition-colors cursor-pointer"
-                  onClick={() => openQuotation(q.id)}
-                >
-                  <td className="px-3 py-2 font-medium text-violet-700">
-                    {q.quotation_number || `QT-${q.id.substring(0, 8).toUpperCase()}`}
-                  </td>
-                  <td className="px-3 py-2 text-slate-700">
-                    {new Date(q.created_at).toLocaleDateString()}
-                  </td>
-                  <td className="px-3 py-2">
-                    <span
-                      className={`inline-flex items-center text-[11px] font-medium px-2 py-0.5 rounded-full border ${quotationStatusClasses(
-                        q.status
-                      )}`}
-                    >
-                      {formatQuotationStatus(q.status)}
-                    </span>
-                  </td>
-                  <td className="px-3 py-2 text-right font-semibold text-slate-800">
-                    {Number(q.total_amount || 0).toFixed(2)} Rs.
-                  </td>
-                  <td className="px-3 py-2 text-slate-400">
-                    <ArrowUpRight className="h-4 w-4" />
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-    </div>
-  );
-}
-
-function LinkedInvoicesSection({ contactId }: { contactId: string | null }) {
-  const [invoices, setInvoices] = useState<Invoice[]>([]);
-  const [loading, setLoading] = useState(false);
-
-  useEffect(() => {
-    if (!contactId) {
-      Promise.resolve().then(() => {
-        setInvoices([]);
-      });
-      return;
-    }
-    Promise.resolve().then(() => {
-      setLoading(true);
-    });
-    getInvoicesByContact(contactId).then((res) => {
-      Promise.resolve().then(() => {
-        if ("error" in res && res.error) {
-          setInvoices([]);
-        } else if ("invoices" in res && res.invoices) {
-          setInvoices(res.invoices);
-        }
-        setLoading(false);
-      });
-    });
-  }, [contactId]);
-
-  function openInvoice(invoiceId: string) {
-    if (typeof window === "undefined") return;
-    window.dispatchEvent(
-      new CustomEvent("admin:open-invoice", {
-        detail: { invoiceId },
-      })
-    );
-  }
-
-  const total = invoices.reduce((sum, i) => sum + Number(i.total_amount || 0), 0);
-
-  return (
-    <div>
-      <div className="flex items-center justify-between mb-3">
-        <div className="flex items-center gap-2">
-          <FileText className="h-4 w-4 text-slate-500" />
-          <h3 className="text-sm font-semibold text-primary-dark">Invoices</h3>
-          <span className="text-xs text-secondary-muted">
-            {invoices.length} record{invoices.length !== 1 ? "s" : ""}
-            {invoices.length > 0 && <> • Total {total.toFixed(2)} Rs.</>}
-          </span>
-        </div>
-      </div>
-
-      {!contactId ? (
-        <div className="border border-dashed rounded-lg p-6 text-center text-xs text-secondary-muted">
-          Save the contact first to see linked invoices.
-        </div>
-      ) : loading ? (
-        <div className="border rounded-lg p-6 text-center text-xs text-secondary-muted">
-          Loading invoices…
-        </div>
-      ) : invoices.length === 0 ? (
-        <div className="border border-dashed rounded-lg p-6 text-center text-xs text-secondary-muted">
-          No invoices linked to this contact yet.
-        </div>
-      ) : (
-        <div className="border rounded-lg overflow-hidden">
-          <table className="w-full text-sm">
-            <thead className="bg-slate-50 text-xs text-secondary-muted">
-              <tr>
-                <th className="text-left font-medium px-3 py-2">Number</th>
-                <th className="text-left font-medium px-3 py-2">Date</th>
-                <th className="text-left font-medium px-3 py-2">Status</th>
-                <th className="text-right font-medium px-3 py-2">Total</th>
-                <th className="w-10 px-3 py-2" />
-              </tr>
-            </thead>
-            <tbody>
-              {invoices.map((i) => (
-                <tr
-                  key={i.id}
-                  className="border-t hover:bg-violet-50/50 transition-colors cursor-pointer"
-                  onClick={() => openInvoice(i.id)}
-                >
-                  <td className="px-3 py-2 font-medium text-violet-700">
-                    {i.invoice_number}
-                  </td>
-                  <td className="px-3 py-2 text-slate-700">
-                    {new Date(i.created_at).toLocaleDateString()}
-                  </td>
-                  <td className="px-3 py-2">
-                    <span
-                      className={`inline-flex items-center text-[11px] font-medium px-2 py-0.5 rounded-full border ${invoiceStatusClasses(
-                        i.invoice_status
-                      )}`}
-                    >
-                      {formatInvoiceStatus(i.invoice_status)}
-                    </span>
-                  </td>
-                  <td className="px-3 py-2 text-right font-semibold text-slate-800">
-                    {Number(i.total_amount || 0).toFixed(2)} Rs.
-                  </td>
-                  <td className="px-3 py-2 text-slate-400">
-                    <ArrowUpRight className="h-4 w-4" />
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
     </div>
   );
 }

@@ -13,13 +13,20 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
   Search,
   Plus,
   Building2,
   UserRound,
-  Clock,
   ChevronLeft,
   ChevronRight,
+  Filter,
 } from "lucide-react";
 import {
   getContacts,
@@ -34,9 +41,12 @@ type Props = {
 
 const PAGE_SIZE = 40;
 
+type TypeFilter = "all" | "person" | "company";
+
 export function ContactsListView({ onNewContact, onOpenContact, refreshToken }: Props) {
   const [contacts, setContacts] = useState<ContactWithRelations[]>([]);
   const [search, setSearch] = useState("");
+  const [typeFilter, setTypeFilter] = useState<TypeFilter>("all");
   const [loading, setLoading] = useState(false);
   const [page, setPage] = useState(1);
 
@@ -63,13 +73,15 @@ export function ContactsListView({ onNewContact, onOpenContact, refreshToken }: 
 
   const filtered = useMemo(() => {
     const needle = search.trim().toLowerCase();
-    if (!needle) return contacts;
     return contacts.filter((c) => {
+      if (typeFilter !== "all" && c.company_type !== typeFilter) return false;
+      if (!needle) return true;
+      const tagNames = (c.tags || []).map((t) => t.name).join(" ");
       const hay =
-        `${c.name} ${c.company_name || ""} ${c.email || ""} ${c.phone || ""} ${c.country || ""}`.toLowerCase();
+        `${c.name} ${c.company_name || ""} ${c.email || ""} ${c.phone || ""} ${c.country || ""} ${tagNames}`.toLowerCase();
       return hay.includes(needle);
     });
-  }, [contacts, search]);
+  }, [contacts, search, typeFilter]);
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   const currentPage = Math.min(page, totalPages);
@@ -106,9 +118,29 @@ export function ContactsListView({ onNewContact, onOpenContact, refreshToken }: 
               setSearch(e.target.value);
               setPage(1);
             }}
-            placeholder="Search…"
+            placeholder="Search contacts…"
             className="pl-9 h-9 bg-slate-50 border-slate-200"
           />
+        </div>
+
+        <div className="flex items-center gap-2">
+          <Filter className="h-4 w-4 text-secondary-muted shrink-0" aria-hidden />
+          <Select
+            value={typeFilter}
+            onValueChange={(value) => {
+              setTypeFilter(value as TypeFilter);
+              setPage(1);
+            }}
+          >
+            <SelectTrigger className="h-9 w-[140px] bg-slate-50 border-slate-200">
+              <SelectValue placeholder="Type" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All types</SelectItem>
+              <SelectItem value="person">Individuals</SelectItem>
+              <SelectItem value="company">Companies</SelectItem>
+            </SelectContent>
+          </Select>
         </div>
 
         <div className="flex items-center gap-2 ml-auto text-xs text-secondary-muted">
@@ -147,9 +179,7 @@ export function ContactsListView({ onNewContact, onOpenContact, refreshToken }: 
               <TableHead className="font-semibold text-primary-dark">Name</TableHead>
               <TableHead className="font-semibold text-primary-dark">Email</TableHead>
               <TableHead className="font-semibold text-primary-dark">Phone</TableHead>
-              <TableHead className="font-semibold text-primary-dark text-center w-28">
-                Activities
-              </TableHead>
+              <TableHead className="font-semibold text-primary-dark">Tags</TableHead>
               <TableHead className="font-semibold text-primary-dark">Country</TableHead>
             </TableRow>
           </TableHeader>
@@ -193,8 +223,8 @@ export function ContactsListView({ onNewContact, onOpenContact, refreshToken }: 
                   <TableCell className="text-secondary-muted">
                     {contact.phone || "—"}
                   </TableCell>
-                  <TableCell className="text-center">
-                    <Clock className="h-4 w-4 text-slate-300 inline-block" />
+                  <TableCell>
+                    <ContactTagsCell tags={contact.tags} />
                   </TableCell>
                   <TableCell className="text-secondary-muted">
                     {contact.country || "—"}
@@ -205,6 +235,36 @@ export function ContactsListView({ onNewContact, onOpenContact, refreshToken }: 
           </TableBody>
         </Table>
       </div>
+    </div>
+  );
+}
+
+function ContactTagsCell({
+  tags,
+}: {
+  tags?: ContactWithRelations["tags"];
+}) {
+  if (!tags?.length) {
+    return <span className="text-secondary-muted text-xs">—</span>;
+  }
+  return (
+    <div className="flex flex-wrap gap-1 max-w-[200px]">
+      {tags.slice(0, 3).map((tag) => (
+        <span
+          key={tag.id}
+          className="inline-flex rounded-full px-2 py-0.5 text-[10px] font-medium truncate max-w-[90px]"
+          style={{
+            backgroundColor: `${tag.color}20`,
+            color: tag.color,
+          }}
+          title={tag.name}
+        >
+          {tag.name}
+        </span>
+      ))}
+      {tags.length > 3 && (
+        <span className="text-[10px] text-secondary-muted">+{tags.length - 3}</span>
+      )}
     </div>
   );
 }

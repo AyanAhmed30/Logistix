@@ -2,6 +2,7 @@
 
 import { createAdminClient } from '@/utils/supabase/server';
 import { getSession } from '@/lib/auth/session';
+import { sessionHasOperationsAccess, isSalesPortalActor, requireChildModule } from '@/lib/auth/require-access';
 import { revalidatePath } from 'next/cache';
 import {
   buildApprovedInquiryPricing,
@@ -221,7 +222,7 @@ function normalizeAdminConfirmationListRow(row: Record<string, unknown>): Inquir
 export async function getInquiryByLeadNumber(leadNumber: string) {
   try {
     const session = await getSession();
-    if (!session || (session.role !== 'admin' && session.role !== 'operations')) {
+    if (!session || !sessionHasOperationsAccess(session)) {
       return { error: 'Unauthorized' };
     }
 
@@ -304,7 +305,7 @@ export async function submitInquiryForConfirmation(data: {
 }) {
   try {
     const session = await getSession();
-    if (!session || (session.role !== 'admin' && session.role !== 'operations')) {
+    if (!session || !sessionHasOperationsAccess(session)) {
       return { error: 'Unauthorized' };
     }
 
@@ -522,9 +523,9 @@ export async function submitInquiryForConfirmation(data: {
 
 export async function getAllInquiryConfirmations() {
   try {
-    const session = await getSession();
-    if (!session || session.role !== 'admin') {
-      return { error: 'Unauthorized' };
+    const auth = await requireChildModule('inquiry-confirmation');
+    if ('error' in auth) {
+      return { error: auth.error };
     }
 
     const supabase = await createAdminClient();
@@ -548,9 +549,9 @@ export async function getAllInquiryConfirmations() {
 
 export async function getInquiryConfirmationDetail(confirmationId: string) {
   try {
-    const session = await getSession();
-    if (!session || session.role !== 'admin') {
-      return { error: 'Unauthorized' };
+    const auth = await requireChildModule('inquiry-confirmation');
+    if ('error' in auth) {
+      return { error: auth.error };
     }
 
     if (!confirmationId?.trim()) {
@@ -611,7 +612,7 @@ export async function getConfirmationsForInquiry(inquiryId: string) {
     const supabase = await createAdminClient();
 
     // For sales agents, check if the inquiry belongs to their leads
-    if (session.role === 'sales_agent') {
+    if (isSalesPortalActor(session)) {
       // First get the lead_id for this inquiry
       const { data: inquiry } = await supabase
         .from('lead_inquiries')
@@ -635,7 +636,7 @@ export async function getConfirmationsForInquiry(inquiryId: string) {
           ((lead as { sales_agents?: { username?: string } }).sales_agents?.username !== session.username)) {
         return { error: 'Unauthorized - not your inquiry' };
       }
-    } else if (session.role !== 'admin' && session.role !== 'operations') {
+    } else if (!sessionHasOperationsAccess(session)) {
       return { error: 'Unauthorized' };
     }
 
@@ -684,10 +685,11 @@ export async function getConfirmationsForInquiry(inquiryId: string) {
 
 export async function approveInquiryConfirmation(confirmationId: string) {
   try {
-    const session = await getSession();
-    if (!session || session.role !== 'admin') {
-      return { error: 'Unauthorized' };
+    const auth = await requireChildModule('inquiry-confirmation');
+    if ('error' in auth) {
+      return { error: auth.error };
     }
+    const session = auth;
 
     const supabase = await createAdminClient();
 
@@ -798,10 +800,11 @@ export async function approveInquiryConfirmation(confirmationId: string) {
 
 export async function rejectInquiryConfirmation(confirmationId: string, rejectionReason: string) {
   try {
-    const session = await getSession();
-    if (!session || session.role !== 'admin') {
-      return { error: 'Unauthorized' };
+    const auth = await requireChildModule('inquiry-confirmation');
+    if ('error' in auth) {
+      return { error: auth.error };
     }
+    const session = auth;
 
     const supabase = await createAdminClient();
 

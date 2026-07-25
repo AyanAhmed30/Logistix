@@ -2,13 +2,26 @@
 
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { BarChart3 } from "lucide-react";
+import { useAdminOrganization } from "@/contexts/AdminOrganizationContext";
+import { ADMIN_CONTEXT_LABEL } from "@/lib/auth/super-admin";
 
 export function AdminAnalyticsPlaceholder() {
+  const { organizationName, isAdminContext } = useAdminOrganization();
+  const contextLabel = isAdminContext ? ADMIN_CONTEXT_LABEL : organizationName;
+
   return (
     <div className="space-y-6">
       <div>
         <h1 className="text-3xl font-bold text-primary-dark">Analytics</h1>
-        <p className="text-secondary-muted mt-1">Business intelligence and reporting workspace</p>
+        <p className="text-secondary-muted mt-1">
+          Business intelligence and reporting
+          {contextLabel ? (
+            <>
+              {" "}
+              for <span className="font-semibold text-primary-dark">{contextLabel}</span>
+            </>
+          ) : null}
+        </p>
       </div>
 
       <Card className="bg-white border shadow-sm">
@@ -18,14 +31,19 @@ export function AdminAnalyticsPlaceholder() {
           </div>
           <CardTitle className="text-2xl text-primary-dark">Coming Soon</CardTitle>
           <CardDescription className="max-w-lg mx-auto text-base mt-2">
-            Analytics dashboards, KPI reports, and trend insights will be available in this module.
-            The module card is active so you can navigate here — content will be added in a future
-            release.
+            Analytics dashboards, KPI reports, and trend insights will be scoped to the
+            organization selected in the header. When this module launches, switching
+            organizations will refresh analytics instantly without leaving the page.
           </CardDescription>
         </CardHeader>
         <CardContent className="pb-10 text-center text-sm text-secondary-muted">
-          Use <span className="font-semibold text-primary-dark">Back to Modules</span> to return to
-          the application home.
+          {contextLabel ? (
+            <p>
+              Currently viewing: <span className="font-semibold text-primary-dark">{contextLabel}</span>
+            </p>
+          ) : (
+            <p>Select an organization from the header to scope future analytics.</p>
+          )}
         </CardContent>
       </Card>
     </div>

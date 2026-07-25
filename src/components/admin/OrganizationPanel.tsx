@@ -10,6 +10,8 @@ import {
   updateOrganization,
   type Organization,
 } from "@/app/actions/organizations";
+import { refreshAdminOrganizationList } from "@/app/actions/organization-context";
+import { useAdminOrganization } from "@/contexts/AdminOrganizationContext";
 import { OrganizationCompanyForm } from "@/components/admin/OrganizationCompanyForm";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -54,6 +56,7 @@ function isCreateHash() {
 
 export function OrganizationPanel() {
   const router = useRouter();
+  const { setOrganizations: setSwitcherOrganizations } = useAdminOrganization();
   const [organizations, setOrganizations] = useState<Organization[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [view, setView] = useState<"list" | "create">("list");
@@ -121,6 +124,11 @@ export function OrganizationPanel() {
     }
   }
 
+  async function refreshOrgSwitcher() {
+    const state = await refreshAdminOrganizationList();
+    setSwitcherOrganizations(state.organizations);
+  }
+
   function notifyCreateView(open: boolean) {
     window.dispatchEvent(new CustomEvent(CREATE_EVENT, { detail: { open } }));
   }
@@ -165,6 +173,7 @@ export function OrganizationPanel() {
       closeCreate({ replace: true });
       router.refresh();
       await fetchData();
+      await refreshOrgSwitcher();
     });
   }
 
@@ -190,6 +199,7 @@ export function OrganizationPanel() {
       resetEditFormState();
       router.refresh();
       await fetchData();
+      await refreshOrgSwitcher();
     });
   }
 
@@ -222,6 +232,7 @@ export function OrganizationPanel() {
       setDeleteTarget(null);
       router.refresh();
       await fetchData();
+      await refreshOrgSwitcher();
     });
   }
 
@@ -312,7 +323,6 @@ export function OrganizationPanel() {
                     <TableHead>Email</TableHead>
                     <TableHead>Phone</TableHead>
                     <TableHead>Address</TableHead>
-                    <TableHead>Username</TableHead>
                     <TableHead>Created At</TableHead>
                     <TableHead>Status</TableHead>
                     <TableHead className="text-right">Actions</TableHead>
@@ -325,7 +335,6 @@ export function OrganizationPanel() {
                       <TableCell>{organization.email}</TableCell>
                       <TableCell>{organization.phone}</TableCell>
                       <TableCell>{formatAddress(organization)}</TableCell>
-                      <TableCell>{organization.username}</TableCell>
                       <TableCell className="text-secondary-muted">
                         {new Date(organization.created_at).toLocaleString()}
                       </TableCell>

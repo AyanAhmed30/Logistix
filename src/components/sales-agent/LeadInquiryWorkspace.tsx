@@ -100,10 +100,11 @@ function inquiryIsUnsentDraft(inq: LeadInquiry | null | undefined) {
 function resolveSaveInquiryOptions(
   inquiry: LeadInquiry | null,
   mode: "create" | "view",
-  layout: "dialog" | "page",
+  layout: "dialog" | "page" | "crm",
   mainTab: MainTab
 ) {
-  const isCreateFlow = mode === "create" || (layout === "page" && mainTab === "create");
+  const isCreateFlow =
+    mode === "create" || ((layout === "page" || layout === "crm") && mainTab === "create");
   if (!isCreateFlow) {
     return { inquiryId: inquiry?.id, forceNewInquiry: false };
   }
@@ -279,6 +280,18 @@ function buildApprovedInquiryDetailText(
   return lines.join("\n");
 }
 
+export type CrmInquiryContext = {
+  opportunityId: string;
+  opportunityName: string;
+  stageName: string;
+  customerName?: string | null;
+  contactPersonName?: string | null;
+  email?: string | null;
+  phone?: string | null;
+  salespersonName?: string | null;
+  backHref: string;
+};
+
 export function LeadInquiryWorkspace({
   lead,
   mode = "create",
@@ -290,11 +303,12 @@ export function LeadInquiryWorkspace({
   allowInquiry = true,
   boardStatus,
   initialInquiryBootstrap,
+  crmContext,
 }: {
   lead: Lead | null;
   mode?: "create" | "view";
   active: boolean;
-  layout: "dialog" | "page";
+  layout: "dialog" | "page" | "crm";
   onRequestClose?: () => void;
   /** When set on the lead detail page, selects this sidebar tab once on load. */
   initialMainTab?: MainTab;
@@ -308,10 +322,15 @@ export function LeadInquiryWorkspace({
     inquiries: LeadInquiry[];
     approvedInquiryId: string | null;
   };
+  /** CRM opportunity context — enables Odoo-style inquiry chrome + linking. */
+  crmContext?: CrmInquiryContext;
 }) {
   const router = useRouter();
   const inquiryImageInputId = "sales-inquiry-image-input";
   const bootstrapAppliedRef = useRef(false);
+  const isCrmLayout = layout === "crm";
+  const crmOpportunityId = crmContext?.opportunityId;
+  const saveInquiryOptions = crmOpportunityId ? { crmOpportunityId } : undefined;
   const [inquiry, setInquiry] = useState<LeadInquiry | null>(null);
   const [productName, setProductName] = useState("");
   const [totalWeight, setTotalWeight] = useState("");
@@ -504,7 +523,7 @@ export function LeadInquiryWorkspace({
         if ("error" in inquiryListResult) {
           setLeadInquiries([]);
           setApprovedInquiryId(null);
-          if (!(layout === "page" && mainTab === "create")) {
+          if (!((layout === "page" || layout === "crm") && mainTab === "create")) {
             hydrateFormFromInquiry(null);
           }
           setConfirmationStatus("none");
@@ -523,7 +542,7 @@ export function LeadInquiryWorkspace({
           approvedInquiryId: nextApprovedFallback,
         });
 
-        const skipFormHydration = layout === "page" && mainTab === "create";
+        const skipFormHydration = (layout === "page" || layout === "crm") && mainTab === "create";
         if (!skipFormHydration) {
           const selectedId = selectedInquiryIdRef.current;
           const selected = selectedId ? list.find((x) => x.id === selectedId) || null : null;
@@ -560,7 +579,7 @@ export function LeadInquiryWorkspace({
       approvedInquiryId: initialInquiryBootstrap.approvedInquiryId,
     });
 
-    const skipFormHydration = layout === "page" && mainTab === "create";
+    const skipFormHydration = (layout === "page" || layout === "crm") && mainTab === "create";
     if (!skipFormHydration && initialInquiryBootstrap.inquiries.length > 0) {
       const selectedId = selectedInquiryIdRef.current;
       const selected = selectedId
@@ -1055,6 +1074,7 @@ export function LeadInquiryWorkspace({
         description: otherDetails,
       }, saveOptions.inquiryId, {
         forceNewInquiry: saveOptions.forceNewInquiry,
+        ...saveInquiryOptions,
       });
       if ("error" in result) {
         toast.error(result.error);
@@ -1121,7 +1141,7 @@ export function LeadInquiryWorkspace({
             description: otherDetails,
           },
           saveOptions.inquiryId,
-          { forceNewInquiry: saveOptions.forceNewInquiry }
+          { forceNewInquiry: saveOptions.forceNewInquiry, ...saveInquiryOptions }
         );
         if ("error" in result) {
           toast.error(result.error);
@@ -1135,7 +1155,7 @@ export function LeadInquiryWorkspace({
             const filtered = prev.filter((x) => x.id !== sentInquiry.id);
             return [sentInquiry, ...filtered];
           });
-          if (layout === "page" && mainTab === "create") {
+          if ((layout === "page" || layout === "crm") && mainTab === "create") {
             selectedInquiryIdRef.current = sentInquiry.id;
             setSelectedInquiryId(sentInquiry.id);
             setMainTab("view");
@@ -1221,7 +1241,7 @@ export function LeadInquiryWorkspace({
   }
 
   const canEditForm =
-    mode === "create" || isViewEditing || (layout === "page" && mainTab === "create");
+    mode === "create" || isViewEditing || ((layout === "page" || layout === "crm") && mainTab === "create");
   const liveUnsavedEntries = useMemo(() => {
     if (!canEditForm) return [] as Array<{ key: string; label: string; oldValue: string; newValue: string }>;
     const pairs = [
@@ -1275,7 +1295,7 @@ export function LeadInquiryWorkspace({
 
   if (!lead) return null;
 
-  const tabbedPage = layout === "page" && mode === "view";
+  const tabbedPage = (layout === "page" || layout === "crm") && mode === "view";
   const isCreateFlow = mode === "create" || (tabbedPage && mainTab === "create");
   const blockWithSkeleton = isLoading && !(tabbedPage && mainTab === "create");
 
@@ -1899,6 +1919,12 @@ export function LeadInquiryWorkspace({
             const isCreateTab = t.id === "create";
             const isDisabled = isCreateTab && !allowInquiry;
 
+            const activeClass = isCrmLayout
+              ? "bg-[#017e84] text-white border-[#017e84] shadow-md"
+              : t.activeClass;
+            const iconActiveClass = isCrmLayout ? "bg-white/20 text-white" : t.iconActiveClass;
+            const iconClass = isCrmLayout ? "bg-[#017e84]/10 text-[#017e84]" : t.iconClass;
+
             return (
               <button
                 key={t.id}
@@ -1906,7 +1932,9 @@ export function LeadInquiryWorkspace({
                 onClick={() => {
                   if (isDisabled) {
                     toast.error(
-                      `Send Inquiry is only available from the "Inquiry Received" board. Current board: ${boardStatus || lead?.status}`
+                      isCrmLayout
+                        ? 'Send Inquiry is only available when the opportunity is in the Qualified stage.'
+                        : `Send Inquiry is only available from the "Inquiry Received" board. Current board: ${boardStatus || lead?.status}`
                     );
                     return;
                   }
@@ -1918,7 +1946,7 @@ export function LeadInquiryWorkspace({
                   ${isDisabled
                     ? "border-transparent bg-slate-50 text-slate-400 cursor-not-allowed"
                     : activeTab
-                    ? `${t.activeClass} border-current`
+                    ? `${activeClass} border-current`
                     : "border-transparent bg-white hover:bg-slate-50 text-slate-700"
                   }
                 `}
@@ -1926,7 +1954,7 @@ export function LeadInquiryWorkspace({
                 <div className="flex items-start gap-3">
                   <div
                     className={`w-9 h-9 rounded-lg flex items-center justify-center shrink-0 ${
-                      activeTab && !isDisabled ? t.iconActiveClass : isDisabled ? "bg-slate-200 text-slate-400" : t.iconClass
+                      activeTab && !isDisabled ? iconActiveClass : isDisabled ? "bg-slate-200 text-slate-400" : iconClass
                     }`}
                   >
                     <Icon className="h-4 w-4" />
@@ -1960,7 +1988,7 @@ export function LeadInquiryWorkspace({
 
   return (
     <>
-    <div className={layout === "page" ? "min-h-screen bg-slate-50" : ""}>
+    <div className={layout === "page" || isCrmLayout ? "min-h-0 bg-white" : ""}>
       {layout === "page" && (
         <header className="border-b border-slate-200 bg-white">
           <div className="max-w-7xl mx-auto px-4 sm:px-6 py-4 flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
@@ -1994,6 +2022,57 @@ export function LeadInquiryWorkspace({
         </header>
       )}
 
+      {isCrmLayout && crmContext && (
+        <div className="border-b border-slate-200 bg-slate-50/80 px-4 py-3">
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+            <div className="min-w-0 space-y-2">
+              <Link
+                href={crmContext.backHref}
+                className="inline-flex items-center gap-1.5 text-xs font-medium text-secondary-muted hover:text-primary-dark"
+              >
+                <ArrowLeft className="h-3.5 w-3.5" />
+                Back to opportunity
+              </Link>
+              <div>
+                <h1 className="text-lg font-semibold text-primary-dark truncate">
+                  Send Inquiry — {crmContext.opportunityName}
+                </h1>
+                <p className="text-xs text-secondary-muted mt-0.5">
+                  Stage: <span className="font-medium text-[#017e84]">{crmContext.stageName}</span>
+                </p>
+              </div>
+              <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-secondary-muted">
+                {crmContext.customerName ? (
+                  <span>
+                    Customer: <span className="text-primary-dark">{crmContext.customerName}</span>
+                  </span>
+                ) : null}
+                {crmContext.contactPersonName ? (
+                  <span>
+                    Contact: <span className="text-primary-dark">{crmContext.contactPersonName}</span>
+                  </span>
+                ) : null}
+                {crmContext.phone ? (
+                  <span>
+                    Phone: <span className="text-primary-dark">{crmContext.phone}</span>
+                  </span>
+                ) : null}
+                {crmContext.email ? (
+                  <span>
+                    Email: <span className="text-primary-dark">{crmContext.email}</span>
+                  </span>
+                ) : null}
+                {crmContext.salespersonName ? (
+                  <span>
+                    Salesperson: <span className="text-primary-dark">{crmContext.salespersonName}</span>
+                  </span>
+                ) : null}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {layout === "dialog" && (
         <div className="px-6 pt-5 pb-3 border-b border-slate-200 bg-white">
           <div className="flex items-center justify-between gap-2">
@@ -2009,7 +2088,7 @@ export function LeadInquiryWorkspace({
         </div>
       )}
 
-      <div className={layout === "page" ? "max-w-7xl mx-auto px-4 sm:px-6 py-6" : "p-4 sm:p-6"}>
+      <div className={layout === "page" ? "max-w-7xl mx-auto px-4 sm:px-6 py-6" : isCrmLayout ? "px-4 py-4" : "p-4 sm:p-6"}>
         {blockWithSkeleton ? (
           <InquiryWorkspaceSkeleton />
         ) : mode === "view" && leadInquiries.length === 0 && !tabbedPage ? (
@@ -2026,7 +2105,11 @@ export function LeadInquiryWorkspace({
               className="rounded-sm"
               onClick={() => {
                 onRequestClose?.();
-                if (layout === "page") router.push("/sales-agent/dashboard");
+                if (isCrmLayout && crmContext) {
+                  router.push(crmContext.backHref);
+                } else if (layout === "page") {
+                  router.push("/sales-agent/dashboard");
+                }
               }}
             >
               Back to dashboard

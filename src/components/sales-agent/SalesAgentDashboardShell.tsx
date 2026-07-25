@@ -11,39 +11,24 @@ import {
   UserPlus,
   Users,
   FileText,
-  Truck,
   Bell,
-  Package,
-  Container,
-  Settings,
-  ClipboardList,
-  Receipt,
-  PlusCircle,
-  UsersRound,
   ClipboardCheck,
   Calculator,
   ArrowRightLeft,
   Search,
   ChevronDown,
-  LayoutDashboard,
-  Trophy,
+  UsersRound,
 } from "lucide-react";
 import Image from "next/image";
 import { LeadPanel } from "@/components/sales-agent/LeadPanel";
 import { PipelinePanel } from "@/components/sales-agent/PipelinePanel";
 import { CustomerListPanel } from "@/components/sales-agent/CustomerListPanel";
 import { InquiryTrackingPanel } from "@/components/sales-agent/InquiryTrackingPanel";
-import { OrderTrackingPanel } from "@/components/admin/OrderTrackingPanel";
-import { AdminNotificationsPanel } from "@/components/admin/AdminNotificationsPanel";
-import { OrderManagementPanel } from "@/components/admin/OrderManagementPanel";
-import { ConsolePanel } from "@/components/admin/ConsolePanel";
-import { LoadingInstructionPanel } from "@/components/admin/LoadingInstructionPanel";
-import { OperationsPanel } from "@/components/admin/OperationsPanel";
-import { ImportPackingListPanel } from "@/components/admin/ImportPackingListPanel";
-import { ImportInvoicePanel } from "@/components/admin/ImportInvoicePanel";
 import { SalesAgentAccountingPanel } from "@/components/sales-agent/SalesAgentAccountingPanel";
 import { LeadTransferTrackingPanel } from "@/components/sales-agent/LeadTransferTrackingPanel";
-import { SalesAgentDashboardOverview } from "@/components/sales-agent/SalesAgentDashboardOverview";
+import { OrganizationCustomersPanel } from "@/components/organization/OrganizationCustomersPanel";
+import { OrganizationQuotationsPanel } from "@/components/organization/OrganizationQuotationsPanel";
+import type { Organization } from "@/app/actions/organizations";
 import {
   getMyLeadChatNotifications,
   markLeadChatNotificationRead,
@@ -63,6 +48,7 @@ import { ClientErrorBoundary } from "@/components/error/ClientErrorBoundary";
 type Props = {
   username: string;
   permissions: string[];
+  organization?: Organization | null;
 };
 
 type TabKey =
@@ -83,47 +69,40 @@ type TabKey =
   | "inquiry-tracking"
   | "accounting"
   | "lead-transfer-tracking"
-  | "leaderboard";
+  | "leaderboard"
+  | "customers"
+  | "quotations";
 
 const permissionTabs: Record<string, { key: TabKey; label: string; icon: React.ReactNode }> = {
   lead: { key: "lead", label: "Lead", icon: <UserPlus className="h-4 w-4" /> },
   pipeline: { key: "pipeline", label: "Pipeline", icon: <FileText className="h-4 w-4" /> },
   "customer-list": { key: "customer-list", label: "Customer List", icon: <Users className="h-4 w-4" /> },
-  create: { key: "create", label: "Create New User", icon: <PlusCircle className="h-4 w-4" /> },
-  profiles: { key: "profiles", label: "User Profiles", icon: <UsersRound className="h-4 w-4" /> },
-  dashboard: { key: "dashboard", label: "Dashboard", icon: <LayoutDashboard className="h-4 w-4" /> },
-  tracking: { key: "tracking", label: "Order Tracking", icon: <Truck className="h-4 w-4" /> },
-  notifications: { key: "notifications", label: "Notifications", icon: <Bell className="h-4 w-4" /> },
-  management: { key: "management", label: "Order Management", icon: <Package className="h-4 w-4" /> },
-  console: { key: "console", label: "Console", icon: <Container className="h-4 w-4" /> },
-  "loading-instruction": {
-    key: "loading-instruction",
-    label: "Loading Instruction",
-    icon: <FileText className="h-4 w-4" />,
+  "lead-transfer-tracking": {
+    key: "lead-transfer-tracking",
+    label: "Lead Transfer Tracking",
+    icon: <ArrowRightLeft className="h-4 w-4" />,
   },
-  operations: { key: "operations", label: "Operations", icon: <Settings className="h-4 w-4" /> },
-  "import-packing-list": {
-    key: "import-packing-list",
-    label: "Import Packing List",
-    icon: <ClipboardList className="h-4 w-4" />,
-  },
-  "import-invoice": { key: "import-invoice", label: "Import Invoice", icon: <Receipt className="h-4 w-4" /> },
+  accounting: { key: "accounting", label: "Accounting", icon: <Calculator className="h-4 w-4" /> },
   "inquiry-tracking": {
     key: "inquiry-tracking",
     label: "Inquiry Tracking",
     icon: <ClipboardCheck className="h-4 w-4" />,
   },
+  customers: { key: "customers", label: "Customers", icon: <UsersRound className="h-4 w-4" /> },
+  quotations: { key: "quotations", label: "Quotations", icon: <FileText className="h-4 w-4" /> },
 };
 
-const DEFAULT_TABS: { key: TabKey; label: string; icon: React.ReactNode }[] = [
-  { key: "dashboard", label: "Dashboard", icon: <LayoutDashboard className="h-4 w-4" /> },
-  { key: "lead-transfer-tracking", label: "Lead Transfer Tracking", icon: <ArrowRightLeft className="h-4 w-4" /> },
-  { key: "accounting", label: "Accounting", icon: <Calculator className="h-4 w-4" /> },
-  { key: "inquiry-tracking", label: "Inquiry Tracking", icon: <ClipboardCheck className="h-4 w-4" /> },
+/** Sidebar order for Sales Agent Dashboard (must stay in sync with module-permissions SALES list). */
+const SALES_SIDEBAR_ORDER: TabKey[] = [
+  "lead",
+  "pipeline",
+  "customer-list",
+  "lead-transfer-tracking",
+  "accounting",
+  "inquiry-tracking",
+  "customers",
+  "quotations",
 ];
-
-const DASHBOARD_TAB = DEFAULT_TABS.find((tab) => tab.key === "dashboard");
-const NON_DASHBOARD_DEFAULT_TABS = DEFAULT_TABS.filter((tab) => tab.key !== "dashboard");
 
 function useIsHydrated() {
   return useSyncExternalStore(
@@ -133,7 +112,11 @@ function useIsHydrated() {
   );
 }
 
-export function SalesAgentDashboardShell({ username, permissions: initialPermissions }: Props) {
+export function SalesAgentDashboardShell({
+  username,
+  permissions: initialPermissions,
+  organization,
+}: Props) {
   const router = useRouter();
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   const mounted = useIsHydrated();
@@ -142,7 +125,7 @@ export function SalesAgentDashboardShell({ username, permissions: initialPermiss
   const [unreadCount, setUnreadCount] = useState(0);
   const [notificationsError, setNotificationsError] = useState<string | null>(null);
 
-  const [activeTab, setActiveTab] = useState<TabKey>("dashboard");
+  const [activeTab, setActiveTab] = useState<TabKey>("lead");
 
   useEffect(() => {
     setPermissions(initialPermissions);
@@ -166,20 +149,21 @@ export function SalesAgentDashboardShell({ username, permissions: initialPermiss
   }, [username]);
 
   const tabs = useMemo(() => {
-    const defaultKeys = DEFAULT_TABS.map((t) => t.key);
-    const permissionTabsList = permissions
-      .filter((perm) => !defaultKeys.includes(perm as TabKey))
-      .map((perm) => permissionTabs[perm])
-      .filter((tab): tab is { key: TabKey; label: string; icon: React.ReactNode } => tab !== undefined);
-
-    return [...(DASHBOARD_TAB ? [DASHBOARD_TAB] : []), ...permissionTabsList, ...NON_DASHBOARD_DEFAULT_TABS];
+    const allowed = new Set(permissions);
+    // Legacy sales agents with empty permissions get the full simplified Sales menu.
+    const keys =
+      allowed.size === 0
+        ? SALES_SIDEBAR_ORDER
+        : SALES_SIDEBAR_ORDER.filter((key) => allowed.has(key));
+    return keys
+      .map((key) => permissionTabs[key])
+      .filter(Boolean) as Array<{ key: TabKey; label: string; icon: React.ReactNode }>;
   }, [permissions]);
 
   const resolvedActiveTab = useMemo<TabKey>(() => {
     const availableTabKeys = new Set(tabs.map((t) => t.key));
     if (availableTabKeys.has(activeTab)) return activeTab;
-    if (availableTabKeys.has("dashboard")) return "dashboard";
-    return tabs[0]?.key ?? "dashboard";
+    return tabs[0]?.key ?? "lead";
   }, [tabs, activeTab]);
 
   useEffect(() => {
@@ -294,18 +278,6 @@ export function SalesAgentDashboardShell({ username, permissions: initialPermiss
               </button>
             );
           })}
-          {/* Leaderboard placeholder (visual parity with image) */}
-          <button
-            onClick={() => setActiveTab("dashboard")}
-            className="group w-full flex items-center gap-3 px-4 py-2.5 rounded-lg text-sm font-medium hover:bg-white/5 transition-all"
-            type="button"
-            title="Leaderboard"
-          >
-            <span className="inline-flex h-7 w-7 items-center justify-center rounded-md bg-white/5 text-slate-300 [&_svg]:text-slate-300 group-hover:text-white group-hover:[&_svg]:text-white">
-              <Trophy className="h-4 w-4 text-slate-300" />
-            </span>
-            <span className="truncate text-slate-200 group-hover:text-white">Leaderboard</span>
-          </button>
         </nav>
 
         <div className="px-4 pb-5">
@@ -488,48 +460,18 @@ export function SalesAgentDashboardShell({ username, permissions: initialPermiss
             {resolvedActiveTab === "lead" && <LeadPanel />}
             {resolvedActiveTab === "pipeline" && <PipelinePanel />}
             {resolvedActiveTab === "customer-list" && <CustomerListPanel />}
-            {resolvedActiveTab === "dashboard" && <SalesAgentDashboardOverview />}
-            {resolvedActiveTab === "tracking" && <OrderTrackingPanel />}
-            {resolvedActiveTab === "notifications" && <AdminNotificationsPanel />}
-            {resolvedActiveTab === "management" && <OrderManagementPanel />}
-            {resolvedActiveTab === "console" && <ConsolePanel />}
-            {resolvedActiveTab === "loading-instruction" && <LoadingInstructionPanel />}
-            {resolvedActiveTab === "operations" && <OperationsPanel />}
-            {resolvedActiveTab === "import-packing-list" && <ImportPackingListPanel />}
-            {resolvedActiveTab === "import-invoice" && <ImportInvoicePanel />}
+            {resolvedActiveTab === "lead-transfer-tracking" && <LeadTransferTrackingPanel />}
             {resolvedActiveTab === "accounting" && <SalesAgentAccountingPanel />}
             {resolvedActiveTab === "inquiry-tracking" && <InquiryTrackingPanel />}
-            {resolvedActiveTab === "lead-transfer-tracking" && <LeadTransferTrackingPanel />}
-            {resolvedActiveTab === "create" && (
-              <Card className="bg-white border shadow-sm">
-                <CardHeader>
-                  <CardTitle>Create New User</CardTitle>
-                  <CardDescription>
-                    Create new user accounts. This feature requires administrator privileges.
-                  </CardDescription>
-                </CardHeader>
-                <CardContent>
-                  <div className="py-16 text-center text-secondary-muted">
-                    User creation functionality is only available to administrators.
-                  </div>
-                </CardContent>
-              </Card>
-            )}
-            {resolvedActiveTab === "profiles" && (
-              <Card className="bg-white border shadow-sm">
-                <CardHeader>
-                  <CardTitle>User Profiles</CardTitle>
-                  <CardDescription>
-                    View and manage user profiles. This feature requires administrator privileges.
-                  </CardDescription>
-                </CardHeader>
-                <CardContent>
-                  <div className="py-16 text-center text-secondary-muted">
-                    User profile management is only available to administrators.
-                  </div>
-                </CardContent>
-              </Card>
-            )}
+            {resolvedActiveTab === "customers" && <OrganizationCustomersPanel />}
+            {resolvedActiveTab === "quotations" &&
+              (organization ? (
+                <OrganizationQuotationsPanel organization={organization} />
+              ) : (
+                <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-6 text-sm text-amber-900">
+                  Company details are not available. Contact your administrator.
+                </div>
+              ))}
 
             {tabs.length === 0 && (
               <Card className="bg-white border shadow-sm">

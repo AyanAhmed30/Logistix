@@ -2,6 +2,8 @@
 
 import { createAdminClient } from '@/utils/supabase/server';
 import { getSession } from '@/lib/auth/session';
+import { isSalesPortalActor } from '@/lib/auth/require-access';
+import { isSuperAdminSession } from '@/lib/auth/super-admin';
 import { revalidatePath } from 'next/cache';
 
 export type ConvertedCustomer = {
@@ -37,9 +39,9 @@ export async function convertLeadToCustomer(leadId: string) {
     }
 
     // Allow admins or sales agents with "pipeline" permission (conversion happens from pipeline)
-    if (session.role === 'admin') {
+    if (isSuperAdminSession(session)) {
       // Admin has access
-    } else if (session.role === 'sales_agent') {
+    } else if (isSalesPortalActor(session)) {
       const { hasPermission } = await import('@/lib/auth/permissions');
       const hasAccess = await hasPermission('pipeline');
       if (!hasAccess) {
@@ -154,9 +156,9 @@ export async function getAllConvertedCustomersForSalesAgent() {
     }
 
     // Allow admins or sales agents with "customer-list" permission
-    if (session.role === 'admin') {
+    if (isSuperAdminSession(session)) {
       // Admin has access
-    } else if (session.role === 'sales_agent') {
+    } else if (isSalesPortalActor(session)) {
       const { hasPermission } = await import('@/lib/auth/permissions');
       const hasAccess = await hasPermission('customer-list');
       if (!hasAccess) {
@@ -180,7 +182,7 @@ export async function getAllConvertedCustomersForSalesAgent() {
     }
 
     // Get all converted customers for this sales agent, ordered FIFO
-    const { data, error } = await supabase
+    let customersQuery = supabase
       .from('customers')
       .select(`
         *,
@@ -192,9 +194,39 @@ export async function getAllConvertedCustomersForSalesAgent() {
         )
       `)
       .eq('sales_agent_id', salesAgent.id)
-      .not('lead_id', 'is', null)
+      .not('lead_id', 'is', null);
+
+    if (session.role === 'user' && session.organizationId) {
+      const { applyOrganizationFilter } = await import('@/lib/admin-organization-context');
+      customersQuery = applyOrganizationFilter(customersQuery, session.organizationId);
+    }
+
+    let { data, error } = await customersQuery
       .order('converted_at', { ascending: true, nullsFirst: true })
       .order('created_at', { ascending: true });
+
+    if (error && session.role === 'user' && session.organizationId) {
+      const { isMissingOrganizationColumnError } = await import('@/lib/admin-organization-context');
+      if (isMissingOrganizationColumnError(error)) {
+        const retry = await supabase
+          .from('customers')
+          .select(`
+        *,
+        leads (
+          id,
+          name,
+          number,
+          source
+        )
+      `)
+          .eq('sales_agent_id', salesAgent.id)
+          .not('lead_id', 'is', null)
+          .order('converted_at', { ascending: true, nullsFirst: true })
+          .order('created_at', { ascending: true });
+        data = retry.data;
+        error = retry.error;
+      }
+    }
 
     if (error) {
       return { error: error.message };
@@ -243,14 +275,39 @@ export async function getAllConvertedCustomersForAdmin() {
       return { error: 'Unauthorized' };
     }
 
+    const {
+      requireAdminOrganizationScope,
+      applyOrganizationFilter,
+      isMissingOrganizationColumnError,
+    } = await import('@/lib/admin-organization-context');
+
+    const scope = await requireAdminOrganizationScope();
+    if ('error' in scope) {
+      if (scope.status === 403) return { customers: [] };
+      return { error: scope.error };
+    }
+
     const supabase = await createAdminClient();
 
-    // Get all converted customers first
-    const { data: customersData, error: customersError } = await supabase
-      .from('customers')
-      .select('*')
-      .not('lead_id', 'is', null)
-      .order('converted_at', { ascending: false });
+    let customersQuery = applyOrganizationFilter(
+      supabase.from('customers').select('*').not('lead_id', 'is', null),
+      scope.organizationId
+    );
+
+    let { data: customersData, error: customersError } = await customersQuery.order(
+      'converted_at',
+      { ascending: false }
+    );
+
+    if (customersError && isMissingOrganizationColumnError(customersError)) {
+      const retry = await supabase
+        .from('customers')
+        .select('*')
+        .not('lead_id', 'is', null)
+        .order('converted_at', { ascending: false });
+      customersData = retry.data;
+      customersError = retry.error;
+    }
 
     if (customersError) {
       return { error: customersError.message };

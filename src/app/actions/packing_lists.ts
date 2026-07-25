@@ -1,7 +1,7 @@
 'use server';
 
 import { createAdminClient } from '@/utils/supabase/server';
-import { getSession } from '@/lib/auth/session';
+import { requireChildModule } from '@/lib/auth/require-access';
 import { revalidatePath } from 'next/cache';
 
 export type PackingListItem = {
@@ -50,22 +50,9 @@ export type PackingList = {
 
 export async function createPackingList(formData: FormData) {
   try {
-    const session = await getSession();
-    if (!session) {
-      return { error: 'Unauthorized' };
-    }
-
-    // Allow admins or sales agents with "import-packing-list" permission
-    if (session.role === 'admin') {
-      // Admin has access
-    } else if (session.role === 'sales_agent') {
-      const { hasPermission } = await import('@/lib/auth/permissions');
-      const hasAccess = await hasPermission('import-packing-list');
-      if (!hasAccess) {
-        return { error: 'Unauthorized' };
-      }
-    } else {
-      return { error: 'Unauthorized' };
+    const auth = await requireChildModule('import-packing-list');
+    if ('error' in auth) {
+      return { error: auth.error };
     }
 
     const invoice_no = formData.get('invoice_no') as string;
@@ -243,22 +230,9 @@ export async function createPackingList(formData: FormData) {
 
 export async function getAllPackingLists() {
   try {
-    const session = await getSession();
-    if (!session) {
-      return { error: 'Unauthorized' };
-    }
-
-    // Allow admins or sales agents with "import-packing-list" permission
-    if (session.role === 'admin') {
-      // Admin has access
-    } else if (session.role === 'sales_agent') {
-      const { hasPermission } = await import('@/lib/auth/permissions');
-      const hasAccess = await hasPermission('import-packing-list');
-      if (!hasAccess) {
-        return { error: 'Unauthorized' };
-      }
-    } else {
-      return { error: 'Unauthorized' };
+    const auth = await requireChildModule('import-packing-list');
+    if ('error' in auth) {
+      return { error: auth.error };
     }
 
     const supabase = await createAdminClient();
@@ -283,22 +257,9 @@ export async function getAllPackingLists() {
 
 export async function deletePackingList(id: string) {
   try {
-    const session = await getSession();
-    if (!session) {
-      return { error: 'Unauthorized' };
-    }
-
-    // Allow admins or sales agents with "import-packing-list" permission
-    if (session.role === 'admin') {
-      // Admin has access
-    } else if (session.role === 'sales_agent') {
-      const { hasPermission } = await import('@/lib/auth/permissions');
-      const hasAccess = await hasPermission('import-packing-list');
-      if (!hasAccess) {
-        return { error: 'Unauthorized' };
-      }
-    } else {
-      return { error: 'Unauthorized' };
+    const auth = await requireChildModule('import-packing-list');
+    if ('error' in auth) {
+      return { error: auth.error };
     }
 
     if (!id) {

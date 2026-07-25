@@ -2,6 +2,7 @@ import { getSession } from "@/lib/auth/session";
 import { redirect } from "next/navigation";
 import { getSalesAgentLeadDetailBootstrap } from "@/app/actions/leads";
 import { LeadDetailPageClient } from "@/components/sales-agent/LeadDetailPageClient";
+import { sessionHasSalesAccess } from "@/lib/auth/require-access";
 
 export default async function SalesAgentLeadDetailPage({
   params,
@@ -9,14 +10,14 @@ export default async function SalesAgentLeadDetailPage({
   params: Promise<{ leadId: string }>;
 }) {
   const session = await getSession();
-  if (!session || session.role !== "sales_agent") {
-    redirect("/login");
+  if (!session || !sessionHasSalesAccess(session)) {
+    redirect("/access-denied");
   }
 
   const { leadId } = await params;
   const result = await getSalesAgentLeadDetailBootstrap(leadId);
   if ("error" in result || !result.lead) {
-    redirect("/sales-agent/dashboard");
+    redirect(session.role === "user" ? "/user/dashboard" : "/sales-agent/dashboard");
   }
 
   return (

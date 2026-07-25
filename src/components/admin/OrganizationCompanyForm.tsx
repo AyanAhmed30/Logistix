@@ -457,30 +457,8 @@ export function OrganizationCompanyForm({
         <input type="hidden" name="existing_logo_url" value={organization.logo_url} />
       ) : null}
 
-      {/* Username / Password — preserved exactly as existing implementation */}
+      {/* Company status — credentials are managed on Users */}
       <div className="border-t border-slate-200 pt-4 space-y-4">
-        <Label className="text-sm font-semibold text-primary-dark">Login Credentials</Label>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div className="space-y-2">
-            <Label htmlFor="username">Username *</Label>
-            <Input
-              id="username"
-              name="username"
-              defaultValue={organization?.username ?? ""}
-              required
-            />
-          </div>
-          <div className="space-y-2">
-            <Label htmlFor="password">Password {mode === "create" ? "*" : ""}</Label>
-            <Input
-              id="password"
-              name="password"
-              type="password"
-              required={mode === "create"}
-              placeholder={mode === "edit" ? "Leave blank to keep current password" : ""}
-            />
-          </div>
-        </div>
         <div className="space-y-2 max-w-xs">
           <Label>Status</Label>
           <Select value={status} onValueChange={(value: "active" | "inactive") => onStatusChange(value)}>

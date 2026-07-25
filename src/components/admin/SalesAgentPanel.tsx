@@ -14,7 +14,6 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Checkbox } from "@/components/ui/checkbox";
 import {
   Dialog,
   DialogContent,
@@ -34,26 +33,21 @@ import {
 import { PlusCircle, Trash2, Edit, TrendingUp, Truck, Bell, Package, Container, FileText, Settings, ClipboardList, Receipt, UserPlus, Users, UsersRound, ClipboardCheck } from "lucide-react";
 
 
-// Available permissions that can be assigned to sales agents
-const AVAILABLE_PERMISSIONS = [
-  { key: "lead", label: "Lead", icon: UserPlus },
-  { key: "pipeline", label: "Pipeline", icon: FileText },
-  { key: "customer-list", label: "Customer List", icon: Users },
-  { key: "create", label: "Create New User", icon: PlusCircle },
-  { key: "profiles", label: "User Profiles", icon: UsersRound },
-  { key: "dashboard", label: "Dashboard", icon: TrendingUp },
-  { key: "tracking", label: "Order Tracking", icon: Truck },
-  { key: "notifications", label: "Notifications", icon: Bell },
-  { key: "management", label: "Order Management", icon: Package },
-  { key: "console", label: "Console", icon: Container },
-  { key: "loading-instruction", label: "Loading Instruction", icon: FileText },
-  { key: "operations", label: "Operations", icon: Settings },
-  { key: "import-packing-list", label: "Import Packing List", icon: ClipboardList },
-  { key: "import-invoice", label: "Import Invoice", icon: Receipt },
-  { key: "inquiry-tracking", label: "Inquiry Tracking", icon: ClipboardCheck },
-] as const;
+import {
+  SALES_ACCESS_LEVEL_OPTIONS,
+  applySalesAccessLevel,
+  getSalesAccessLevel,
+  type SalesAccessLevel,
+} from "@/lib/module-permissions";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 
-export type PermissionKey = typeof AVAILABLE_PERMISSIONS[number]["key"];
+export type PermissionKey = string;
 
 type Props = {
   initialCreateOpen?: boolean;
@@ -206,20 +200,18 @@ export function SalesAgentPanel({ initialCreateOpen = false, onCreateOpenChange 
 
   function openEdit(salesAgent: SalesAgent) {
     setEditSalesAgent(salesAgent);
-    // Load existing permissions
-    const permissions = Array.isArray(salesAgent.permissions) 
+    const permissions = Array.isArray(salesAgent.permissions)
       ? (salesAgent.permissions as PermissionKey[])
       : [];
-    setSelectedPermissions(permissions);
+    const level = getSalesAccessLevel(permissions);
+    setSelectedPermissions(
+      applySalesAccessLevel([], level === "no" ? "own" : level)
+    );
     setEditOpen(true);
   }
 
-  function togglePermission(permission: PermissionKey) {
-    setSelectedPermissions((prev) =>
-      prev.includes(permission)
-        ? prev.filter((p) => p !== permission)
-        : [...prev, permission]
-    );
+  function setAgentSalesLevel(level: SalesAccessLevel) {
+    setSelectedPermissions(applySalesAccessLevel([], level === "no" ? "own" : level));
   }
 
   function handleCreateOpenChange(open: boolean) {
@@ -227,7 +219,9 @@ export function SalesAgentPanel({ initialCreateOpen = false, onCreateOpenChange 
     if (onCreateOpenChange) {
       onCreateOpenChange(open);
     }
-    if (!open) {
+    if (open) {
+      setSelectedPermissions(applySalesAccessLevel([], "own"));
+    } else {
       setSelectedPermissions([]);
     }
   }
@@ -347,41 +341,29 @@ export function SalesAgentPanel({ initialCreateOpen = false, onCreateOpenChange 
               </form>
             </div>
 
-            {/* Right Side - Permission Selector */}
+            {/* Right Side - Sales access level */}
             <div className="space-y-4 border-l pl-6">
               <div>
-                <Label className="text-base font-semibold">Module Permissions</Label>
+                <Label className="text-base font-semibold">Sales Access</Label>
                 <p className="text-sm text-secondary-muted mt-1">
-                  Select additional modules this sales agent can access.
+                  Odoo-style Sales access level for this agent.
                 </p>
               </div>
-              <div className="space-y-3 max-h-[400px] overflow-y-auto pr-2">
-                {AVAILABLE_PERMISSIONS.map((permission) => {
-                  const Icon = permission.icon;
-                  const isSelected = selectedPermissions.includes(permission.key);
-                  return (
-                    <div
-                      key={permission.key}
-                      className="flex items-center space-x-3 p-2 rounded-md hover:bg-gray-50 cursor-pointer"
-                      onClick={() => togglePermission(permission.key)}
-                    >
-                      <Checkbox
-                        id={`create-permission-${permission.key}`}
-                        checked={isSelected}
-                        onCheckedChange={() => togglePermission(permission.key)}
-                        className="shrink-0"
-                      />
-                      <Label
-                        htmlFor={`create-permission-${permission.key}`}
-                        className="flex items-center gap-2 cursor-pointer flex-1 font-normal"
-                      >
-                        <Icon className="h-4 w-4 text-secondary-muted" />
-                        <span>{permission.label}</span>
-                      </Label>
-                    </div>
-                  );
-                })}
-              </div>
+              <Select
+                value={getSalesAccessLevel(selectedPermissions) === "no" ? "own" : getSalesAccessLevel(selectedPermissions)}
+                onValueChange={(v) => setAgentSalesLevel(v as SalesAccessLevel)}
+              >
+                <SelectTrigger className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {SALES_ACCESS_LEVEL_OPTIONS.filter((o) => o.value !== "no").map((opt) => (
+                    <SelectItem key={opt.value} value={opt.value}>
+                      {opt.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
           </div>
         </DialogContent>
@@ -435,41 +417,29 @@ export function SalesAgentPanel({ initialCreateOpen = false, onCreateOpenChange 
               </form>
             </div>
 
-            {/* Right Side - Permission Selector */}
+            {/* Right Side - Sales access level */}
             <div className="space-y-4 border-l pl-6">
               <div>
-                <Label className="text-base font-semibold">Module Permissions</Label>
+                <Label className="text-base font-semibold">Sales Access</Label>
                 <p className="text-sm text-secondary-muted mt-1">
-                  Select additional modules this sales agent can access.
+                  Odoo-style Sales access level for this agent.
                 </p>
               </div>
-              <div className="space-y-3 max-h-[400px] overflow-y-auto pr-2">
-                {AVAILABLE_PERMISSIONS.map((permission) => {
-                  const Icon = permission.icon;
-                  const isSelected = selectedPermissions.includes(permission.key);
-                  return (
-                    <div
-                      key={permission.key}
-                      className="flex items-center space-x-3 p-2 rounded-md hover:bg-gray-50 cursor-pointer"
-                      onClick={() => togglePermission(permission.key)}
-                    >
-                      <Checkbox
-                        id={`edit-permission-${permission.key}`}
-                        checked={isSelected}
-                        onCheckedChange={() => togglePermission(permission.key)}
-                        className="shrink-0"
-                      />
-                      <Label
-                        htmlFor={`edit-permission-${permission.key}`}
-                        className="flex items-center gap-2 cursor-pointer flex-1 font-normal"
-                      >
-                        <Icon className="h-4 w-4 text-secondary-muted" />
-                        <span>{permission.label}</span>
-                      </Label>
-                    </div>
-                  );
-                })}
-              </div>
+              <Select
+                value={getSalesAccessLevel(selectedPermissions) === "no" ? "own" : getSalesAccessLevel(selectedPermissions)}
+                onValueChange={(v) => setAgentSalesLevel(v as SalesAccessLevel)}
+              >
+                <SelectTrigger className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {SALES_ACCESS_LEVEL_OPTIONS.filter((o) => o.value !== "no").map((opt) => (
+                    <SelectItem key={opt.value} value={opt.value}>
+                      {opt.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
           </div>
         </DialogContent>

@@ -18,6 +18,7 @@ const CLIENT_CACHE_TTL_MS = 30000;
 
 let bootstrapCache: {
   search: string;
+  organizationId: string | null;
   fetchedAt: number;
   data: BootstrapCacheEntry;
 } | null = null;
@@ -26,16 +27,29 @@ function isFresh(entry: { fetchedAt: number }) {
   return Date.now() - entry.fetchedAt < CLIENT_CACHE_TTL_MS;
 }
 
-export function getCachedOperationsBootstrap(search = '') {
-  if (!bootstrapCache || bootstrapCache.search !== search || !isFresh(bootstrapCache)) {
+export function getCachedOperationsBootstrap(
+  search = '',
+  organizationId: string | null = null
+) {
+  if (
+    !bootstrapCache ||
+    bootstrapCache.search !== search ||
+    bootstrapCache.organizationId !== (organizationId ?? null) ||
+    !isFresh(bootstrapCache)
+  ) {
     return null;
   }
   return bootstrapCache.data;
 }
 
-export function setCachedOperationsBootstrap(search: string, data: BootstrapCacheEntry) {
+export function setCachedOperationsBootstrap(
+  search: string,
+  data: BootstrapCacheEntry,
+  organizationId: string | null = null
+) {
   bootstrapCache = {
     search,
+    organizationId: organizationId ?? null,
     fetchedAt: Date.now(),
     data,
   };
@@ -45,8 +59,11 @@ export function invalidateCachedOperationsBootstrap() {
   bootstrapCache = null;
 }
 
-export async function prefetchOperationsInquiries(search = '') {
-  const cached = getCachedOperationsBootstrap(search);
+export async function prefetchOperationsInquiries(
+  search = '',
+  organizationId: string | null = null
+) {
+  const cached = getCachedOperationsBootstrap(search, organizationId);
   if (cached) return cached;
 
   const result = await getOperationsInquiriesBootstrap({
@@ -65,12 +82,15 @@ export async function prefetchOperationsInquiries(search = '') {
     nextOffset: result.nextOffset,
     calculatorValues: result.calculatorValues,
   };
-  setCachedOperationsBootstrap(search, entry);
+  setCachedOperationsBootstrap(search, entry, organizationId);
   return entry;
 }
 
-export async function prefetchOperationsInquiriesList(search = '') {
-  const cached = getCachedOperationsBootstrap(search);
+export async function prefetchOperationsInquiriesList(
+  search = '',
+  organizationId: string | null = null
+) {
+  const cached = getCachedOperationsBootstrap(search, organizationId);
   if (cached) {
     return {
       inquiries: cached.inquiries,

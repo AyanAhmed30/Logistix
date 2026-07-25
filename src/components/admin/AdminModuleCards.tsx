@@ -3,12 +3,32 @@
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { ADMIN_MODULES, type AdminModule } from "@/lib/admin-navigation";
 import { ChevronRight } from "lucide-react";
+import { visibleModulesForAccess, defaultCrmRouteForAccess, defaultSalesRouteForAccess, type DashboardAccessState } from "@/lib/dashboard-access";
+import { useRouter } from "next/navigation";
 
 type Props = {
   onModuleSelect: (module: AdminModule) => void;
+  access: DashboardAccessState;
 };
 
-export function AdminModuleCards({ onModuleSelect }: Props) {
+export function AdminModuleCards({ onModuleSelect, access }: Props) {
+  const router = useRouter();
+  const modules = ADMIN_MODULES.filter((module) =>
+    visibleModulesForAccess(access).includes(module.id)
+  );
+
+  function handleOpenModule(module: AdminModule) {
+    if (module === "crm") {
+      router.push(defaultCrmRouteForAccess(access));
+      return;
+    }
+    if (module === "sales") {
+      router.push(defaultSalesRouteForAccess(access));
+      return;
+    }
+    onModuleSelect(module);
+  }
+
   return (
     <div className="space-y-4">
       <div>
@@ -19,13 +39,13 @@ export function AdminModuleCards({ onModuleSelect }: Props) {
       </div>
 
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        {ADMIN_MODULES.map((module) => {
+        {modules.map((module) => {
           const Icon = module.icon;
           return (
             <button
               key={module.id}
               type="button"
-              onClick={() => onModuleSelect(module.id)}
+              onClick={() => handleOpenModule(module.id)}
               className="text-left group"
             >
               <Card

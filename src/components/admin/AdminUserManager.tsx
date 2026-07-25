@@ -3,7 +3,7 @@
 import { useMemo, useState, useTransition, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
-import { createUser, deleteUser, updateUser } from "@/app/actions/user";
+import { deleteUser, updateUser } from "@/app/actions/user";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -56,18 +56,15 @@ import { AdminNotificationsPanel } from "@/components/admin/AdminNotificationsPa
 import { OrderManagementPanel } from "@/components/admin/OrderManagementPanel";
 import { ConsolePanel } from "@/components/admin/ConsolePanel";
 import { LoadingInstructionPanel } from "@/components/admin/LoadingInstructionPanel";
-import { SalesPanel } from "@/components/admin/SalesPanel";
 import { OperationsPanel } from "@/components/admin/OperationsPanel";
 import { OperationsLeadsInquiryPanel } from "@/components/admin/OperationsLeadsInquiryPanel";
 import { ImportPackingListPanel } from "@/components/admin/ImportPackingListPanel";
 import { ImportInvoicePanel } from "@/components/admin/ImportInvoicePanel";
-import { SalesAgentPanel } from "@/components/admin/SalesAgentPanel";
 import { QuotationPanel } from "@/components/admin/QuotationPanel";
 import { InvoicePanel } from "@/components/admin/InvoicePanel";
 import { AccountingInquiriesPanel } from "@/components/admin/AccountingInquiriesPanel";
 import { InquiryConfirmationPanel } from "@/components/admin/InquiryConfirmationPanel";
 import { prefetchInquiryConfirmationsList } from "@/lib/admin-inquiry-confirmations-cache";
-import { OperationsUserPanel } from "@/components/admin/OperationsUserPanel";
 import { AdminCalculatorPanel } from "@/components/admin/AdminCalculatorPanel";
 import { ChartOfAccountsPanel } from "@/components/admin/ChartOfAccountsPanel";
 import { JournalsPanel } from "@/components/admin/JournalsPanel";
@@ -78,6 +75,33 @@ import { PaymentsPanel } from "@/components/admin/PaymentsPanel";
 import { ReconciliationPanel } from "@/components/admin/ReconciliationPanel";
 import { ContactsPanel } from "@/components/admin/ContactsPanel";
 import { OrganizationPanel } from "@/components/admin/OrganizationPanel";
+import { UsersManagementPanel } from "@/components/admin/UsersManagementPanel";
+import { useDashboardAccess } from "@/contexts/DashboardAccessContext";
+import {
+  canAccessAdminTab,
+  defaultSalesRouteForAccess,
+  isPortalDashboardAccess,
+} from "@/lib/dashboard-access";
+import {
+  PortalContactsModuleContent,
+  PortalOperationsModuleContent,
+  PortalWarehouseModuleContent,
+} from "@/components/admin/PortalModulePanels";
+import { PortalUserProfilePanel } from "@/components/admin/PortalUserProfilePanel";
+import { OrganizationUsersManagementPanel } from "@/components/admin/OrganizationUsersManagementPanel";
+import type { Organization } from "@/app/actions/organizations";
+
+function LegacySalesRedirect({ href }: { href: string }) {
+  const router = useRouter();
+  useEffect(() => {
+    router.replace(href);
+  }, [router, href]);
+  return (
+    <div className="rounded-lg border border-slate-200 bg-white px-4 py-10 text-center text-sm text-secondary-muted">
+      Opening Sales module…
+    </div>
+  );
+}
 
 type AppUser = {
   id: string;
@@ -107,6 +131,7 @@ type Props = {
     invoiceId?: string | null;
     token: number;
   } | null;
+  portalOrganization?: Organization | null;
 };
 
 export function AdminUserManager({
@@ -120,17 +145,11 @@ export function AdminUserManager({
   quotationPayload,
   contactPayload,
   invoicePayload,
+  portalOrganization = null,
 }: Props) {
+  const access = useDashboardAccess();
+  const isPortal = isPortalDashboardAccess(access);
   const router = useRouter();
-  // Initialize sub-tabs based on activeTab
-  const [createSubTab, setCreateSubTab] = useState<"user" | "sales-agent" | "operations-user" | null>(
-    activeTab === "create" ? "user" : null
-  );
-  const [createSalesAgentOpen, setCreateSalesAgentOpen] = useState(false);
-  const [createOpsUserOpen, setCreateOpsUserOpen] = useState(false);
-  const [profilesSubTab, setProfilesSubTab] = useState<"users" | "sales-agent" | "operations-users" | null>(
-    activeTab === "profiles" ? "users" : null
-  );
   const [accountingSubTab, setAccountingSubTab] = useState<"quotation" | "customer-invoice" | "vendor-bills" | "payments" | "reconciliation" | "inquiries" | "chart-of-accounts" | "journals" | "journal-entries" | "partners" | null>(
     activeTab === "accounting" ? "inquiries" : null
   );
@@ -156,18 +175,6 @@ export function AdminUserManager({
       
       // Defer state updates to avoid synchronous setState in effect
       setTimeout(() => {
-        if (activeTab === "create") {
-          setCreateSubTab("user");
-        } else if (prevActiveTab === "create") {
-          setCreateSubTab(null);
-        }
-
-        if (activeTab === "profiles") {
-          setProfilesSubTab("users");
-        } else if (prevActiveTab === "profiles") {
-          setProfilesSubTab(null);
-        }
-
         if (activeTab === "accounting") {
           setAccountingSubTab("inquiries");
         } else if (prevActiveTab === "accounting") {
@@ -210,34 +217,6 @@ export function AdminUserManager({
       (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
     );
   }, [users]);
-
-  function handleCreateSubmitFromTab(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const form = event.currentTarget;
-    const formData = new FormData(event.currentTarget);
-    const username = String(formData.get("username") || "").trim();
-    const password = String(formData.get("password") || "").trim();
-
-    if (!username || !password) {
-      toast.error("Username and password are required");
-      return;
-    }
-
-    startTransition(async () => {
-      const result = await createUser(formData);
-      if (result && "error" in result) {
-        toast.error(result.error, {
-          className: "bg-red-600 text-white border-red-600",
-        });
-        return;
-      }
-      toast.success("User account generated", {
-        className: "bg-green-400 text-white border-green-400",
-      });
-      form.reset();
-      router.refresh();
-    });
-  }
 
   function handleEditSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -304,20 +283,30 @@ export function AdminUserManager({
     onTabChange(tab);
   }
 
-  const moduleNavItems = getSidebarItemsForModule(activeModule).filter(
-    (item) => item.module !== null
-  );
+  const moduleNavItems = getSidebarItemsForModule(activeModule)
+    .filter((item) => item.module !== null)
+    .filter(
+      (item) =>
+        !isPortal || canAccessAdminTab(access, item.tab, activeModule)
+    );
   const moduleDefinition = activeModule ? getModuleDefinition(activeModule) : null;
   const isSettingsModule = activeModule === "settings";
   const isSettingsTab =
-    activeTab === "create" || activeTab === "organization" || activeTab === "profiles";
+    !isPortal &&
+    (activeTab === "create" || activeTab === "organization");
+  const usesPortalModuleShell =
+    isPortal &&
+    (activeModule === "operations" ||
+      activeModule === "warehouse" ||
+      activeModule === "contacts" ||
+      activeModule === "settings");
+  const showModuleHeader =
+    activeModule &&
+    moduleDefinition &&
+    activeTab !== "notifications" &&
+    (!isSettingsModule || isPortal);
 
   function handleSettingsTabSelect(tab: AdminTab) {
-    if (tab === "create") {
-      handleTabSelect("create");
-      setCreateSubTab("user");
-      return;
-    }
     handleTabSelect(tab);
   }
 
@@ -326,17 +315,12 @@ export function AdminUserManager({
     activeModule ?? "none",
     operationsSubTab,
     accountingSubTab,
-    createSubTab,
-    profilesSubTab,
   ].join(":");
 
   return (
     <div className="pt-20">
       <section className="px-6 pb-10 md:px-10 space-y-6">
-        {activeModule &&
-        moduleDefinition &&
-        activeTab !== "notifications" &&
-        !isSettingsModule ? (
+        {showModuleHeader ? (
           <div className="space-y-4">
             <div className="flex flex-wrap items-center gap-3">
               <Button
@@ -353,7 +337,7 @@ export function AdminUserManager({
                 <p className="text-xs text-secondary-muted">{moduleDefinition.description}</p>
               </div>
             </div>
-            {moduleNavItems.length > 0 ? (
+            {moduleNavItems.length > 0 && !usesPortalModuleShell ? (
               <div className="flex flex-wrap gap-2 border-b pb-3">
                 {moduleNavItems.map((item) => {
                   const Icon = item.icon;
@@ -364,11 +348,6 @@ export function AdminUserManager({
                       className="justify-start gap-2"
                       title={item.title}
                       onClick={() => {
-                        if (item.tab === "create") {
-                          handleTabSelect("create");
-                          setCreateSubTab("user");
-                          return;
-                        }
                         if (item.tab === "inquiry-confirmation") {
                           void prefetchInquiryConfirmationsList().catch(() => undefined);
                         }
@@ -405,11 +384,25 @@ export function AdminUserManager({
           description="Something went wrong in this module. Try again or switch to another tab."
           compact
         >
-        {activeTab === "dashboard" ? (
+        {isPortal && activeModule === "sales" ? (
+          <LegacySalesRedirect href={defaultSalesRouteForAccess(access)} />
+        ) : isPortal && activeModule === "operations" ? (
+          <PortalOperationsModuleContent access={access} />
+        ) : isPortal && activeModule === "warehouse" ? (
+          <PortalWarehouseModuleContent access={access} />
+        ) : isPortal && activeModule === "contacts" ? (
+          <PortalContactsModuleContent initialPayload={contactPayload ?? undefined} />
+        ) : isPortal && activeModule === "settings" ? (
+          access.isOrganizationAdmin ? (
+            <OrganizationUsersManagementPanel />
+          ) : (
+            <PortalUserProfilePanel />
+          )
+        ) : activeTab === "dashboard" ? (
           activeModule === "analytics" ? (
             <AdminAnalyticsPlaceholder />
           ) : (
-            <AdminModuleCards onModuleSelect={onModuleSelect} />
+            <AdminModuleCards onModuleSelect={onModuleSelect} access={access} />
           )
         ) : activeTab === "notifications" ? (
           <AdminNotificationsPanel />
@@ -422,8 +415,8 @@ export function AdminUserManager({
         ) : activeTab === "loading-instruction" ? (
           <LoadingInstructionPanel />
         ) : activeTab === "sales" ? (
-          <SalesPanel />
-        ) : activeTab === "contacts" ? (
+          <LegacySalesRedirect href={defaultSalesRouteForAccess(access)} />
+        ) : activeTab === "contacts" || activeModule === "contacts" ? (
           <ContactsPanel initialPayload={contactPayload ?? undefined} />
         ) : activeTab === "operations" ? (
           <div className="space-y-6">
@@ -613,270 +606,9 @@ export function AdminUserManager({
             onBackToModules={onBackToModules}
           >
             {activeTab === "create" ? (
-          <div className="space-y-6">
-            {/* Sub-tabs */}
-            <div className="flex gap-2 border-b overflow-x-auto">
-              <Button
-                variant={createSubTab === "user" ? "default" : "ghost"}
-                onClick={() => setCreateSubTab("user")}
-                className="rounded-b-none shrink-0 sidebar-button"
-                data-variant={createSubTab === "user" ? "default" : "outline"}
-              >
-                <UsersRound className="h-4 w-4 mr-2 sidebar-icon" />
-                <span className="sidebar-text">Create User</span>
-              </Button>
-              <Button
-                variant={createSubTab === "sales-agent" ? "default" : "ghost"}
-                onClick={() => setCreateSubTab("sales-agent")}
-                className="rounded-b-none shrink-0 sidebar-button"
-                data-variant={createSubTab === "sales-agent" ? "default" : "outline"}
-              >
-                <UserCog className="h-4 w-4 mr-2 sidebar-icon" />
-                <span className="sidebar-text">Create Sales Agent</span>
-              </Button>
-              <Button
-                variant={createSubTab === "operations-user" ? "default" : "ghost"}
-                onClick={() => setCreateSubTab("operations-user")}
-                className="rounded-b-none shrink-0 sidebar-button"
-                data-variant={createSubTab === "operations-user" ? "default" : "outline"}
-              >
-                <Wrench className="h-4 w-4 mr-2 sidebar-icon" />
-                <span className="sidebar-text">Create Operations User</span>
-              </Button>
-            </div>
-
-            {/* Create User Sub-tab Content - Only show when this tab is selected */}
-            {createSubTab === "user" && (
-              <Card className="bg-white border shadow-sm">
-                <CardHeader>
-                  <CardTitle>Create New User</CardTitle>
-                  <CardDescription>
-                    Add a new member account to the Logistix system.
-                  </CardDescription>
-                </CardHeader>
-                <CardContent>
-                  <form onSubmit={handleCreateSubmitFromTab} className="space-y-4 max-w-md">
-                    <div className="space-y-2">
-                      <Label htmlFor="create-username-tab">Username</Label>
-                      <Input id="create-username-tab" name="username" placeholder="johndoe" required />
-                    </div>
-                    <div className="space-y-2">
-                      <Label htmlFor="create-password-tab">Password</Label>
-                      <Input
-                        id="create-password-tab"
-                        name="password"
-                        type="password"
-                        placeholder="••••••••"
-                        required
-                      />
-                    </div>
-                    <Button type="submit" disabled={isPending}>
-                      {isPending ? "Creating..." : "Generate User Account"}
-                    </Button>
-                  </form>
-                </CardContent>
-              </Card>
-            )}
-
-            {/* Create Sales Agent Sub-tab Content - Only show when this tab is selected */}
-            {createSubTab === "sales-agent" && (
-              <>
-                <Card className="bg-white border shadow-sm">
-                  <CardHeader>
-                    <CardTitle>Create Sales Agent</CardTitle>
-                    <CardDescription>
-                      Click the button below to open the Sales Agent creation form.
-                    </CardDescription>
-                  </CardHeader>
-                  <CardContent>
-                    <Button
-                      onClick={() => {
-                        // Stay within the "Create New User" tab and open the Sales Agent creation view
-                        setCreateSalesAgentOpen(true);
-                      }}
-                    >
-                      <UserCog className="h-4 w-4 mr-2" />
-                      Open Sales Agent Creation
-                    </Button>
-                  </CardContent>
-                </Card>
-
-                {createSalesAgentOpen && (
-                  <div className="mt-6">
-                    <SalesAgentPanel
-                      initialCreateOpen
-                      onCreateOpenChange={setCreateSalesAgentOpen}
-                    />
-                  </div>
-                )}
-              </>
-            )}
-
-            {/* Create Operations User Sub-tab Content */}
-            {createSubTab === "operations-user" && (
-              <>
-                <Card className="bg-white border shadow-sm">
-                  <CardHeader>
-                    <CardTitle>Create Operations User</CardTitle>
-                    <CardDescription>
-                      Click the button below to open the Operations User creation form.
-                    </CardDescription>
-                  </CardHeader>
-                  <CardContent>
-                    <Button
-                      onClick={() => {
-                        setCreateOpsUserOpen(true);
-                      }}
-                    >
-                      <Wrench className="h-4 w-4 mr-2" />
-                      Open Operations User Creation
-                    </Button>
-                  </CardContent>
-                </Card>
-
-                {createOpsUserOpen && (
-                  <div className="mt-6">
-                    <OperationsUserPanel
-                      initialCreateOpen
-                      onCreateOpenChange={setCreateOpsUserOpen}
-                    />
-                  </div>
-                )}
-              </>
-            )}
-
-          </div>
-            ) : activeTab === "organization" ? (
-              <OrganizationPanel />
+              <UsersManagementPanel />
             ) : (
-          <div className="space-y-6">
-            {/* Sub-tabs */}
-            <div className="flex gap-2 border-b overflow-x-auto">
-              <Button
-                variant={profilesSubTab === "users" ? "default" : "ghost"}
-                onClick={() => setProfilesSubTab("users")}
-                className="rounded-b-none shrink-0 sidebar-button"
-                data-variant={profilesSubTab === "users" ? "default" : "outline"}
-              >
-                <UsersRound className="h-4 w-4 mr-2 sidebar-icon" />
-                <span className="sidebar-text">Users</span>
-              </Button>
-              <Button
-                variant={profilesSubTab === "sales-agent" ? "default" : "ghost"}
-                onClick={() => setProfilesSubTab("sales-agent")}
-                className="rounded-b-none shrink-0 sidebar-button"
-                data-variant={profilesSubTab === "sales-agent" ? "default" : "outline"}
-              >
-                <UserCog className="h-4 w-4 mr-2 sidebar-icon" />
-                <span className="sidebar-text">Sales Agent</span>
-              </Button>
-              <Button
-                variant={profilesSubTab === "operations-users" ? "default" : "ghost"}
-                onClick={() => setProfilesSubTab("operations-users")}
-                className="rounded-b-none shrink-0 sidebar-button"
-                data-variant={profilesSubTab === "operations-users" ? "default" : "outline"}
-              >
-                <Wrench className="h-4 w-4 mr-2 sidebar-icon" />
-                <span className="sidebar-text">Operations Users</span>
-              </Button>
-            </div>
-
-            {/* Users Sub-tab Content - Only show when this tab is selected */}
-            {profilesSubTab === "users" && (
-              <>
-                <Card className="bg-white border shadow-sm">
-                  <CardHeader>
-                    <CardTitle>Admin Profile</CardTitle>
-                    <CardDescription>Total users in the system</CardDescription>
-                  </CardHeader>
-                  <CardContent>
-                    <div className="text-4xl font-black text-primary-dark">
-                      {userCount.toString().padStart(2, "0")}
-                    </div>
-                  </CardContent>
-                </Card>
-                <Card className="bg-white border shadow-sm">
-                  <CardHeader className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
-                    <div>
-                      <CardTitle>User Profiles</CardTitle>
-                      <CardDescription>
-                        View, update, and remove user accounts in real time.
-                      </CardDescription>
-                    </div>
-                    <Button onClick={() => {
-                      handleTabSelect("create");
-                      setCreateSubTab("user");
-                    }}>
-                      <PlusCircle className="h-4 w-4 mr-2" />
-                      Create New User
-                    </Button>
-                  </CardHeader>
-                  <CardContent>
-                    {sortedUsers.length === 0 ? (
-                      <div className="py-16 text-center text-secondary-muted">
-                        No users found. Create your first account to get started.
-                      </div>
-                    ) : (
-                      <Table>
-                        <TableHeader>
-                          <TableRow>
-                            <TableHead>Username</TableHead>
-                            <TableHead>Password</TableHead>
-                            <TableHead>Created</TableHead>
-                            <TableHead className="text-right">Actions</TableHead>
-                          </TableRow>
-                        </TableHeader>
-                        <TableBody>
-                          {sortedUsers.map((user) => (
-                            <TableRow key={user.id}>
-                              <TableCell className="font-semibold">{user.username}</TableCell>
-                              <TableCell className="text-secondary-muted">{user.password}</TableCell>
-                              <TableCell className="text-secondary-muted">
-                                {new Date(user.created_at).toLocaleString()}
-                              </TableCell>
-                              <TableCell className="text-right space-x-2">
-                                <Button
-                                  size="sm"
-                                  variant="outline"
-                                  onClick={() => openEdit(user)}
-                                >
-                                  Edit
-                                </Button>
-                                <Button
-                                  size="sm"
-                                  variant="destructive"
-                                  onClick={() => handleDelete(user)}
-                                  disabled={isPending}
-                                >
-                                  Delete
-                                </Button>
-                              </TableCell>
-                            </TableRow>
-                          ))}
-                        </TableBody>
-                      </Table>
-                    )}
-                  </CardContent>
-                </Card>
-              </>
-            )}
-
-            {/* Sales Agent Sub-tab Content - Only show when this tab is selected */}
-            {profilesSubTab === "sales-agent" && (
-              <SalesAgentPanel
-                initialCreateOpen={createSalesAgentOpen}
-                onCreateOpenChange={setCreateSalesAgentOpen}
-              />
-            )}
-
-            {/* Operations Users Sub-tab Content */}
-            {profilesSubTab === "operations-users" && (
-              <OperationsUserPanel
-                initialCreateOpen={createOpsUserOpen}
-                onCreateOpenChange={setCreateOpsUserOpen}
-              />
-            )}
-          </div>
+              <OrganizationPanel />
             )}
           </AdminSettingsLayout>
         ) : null}

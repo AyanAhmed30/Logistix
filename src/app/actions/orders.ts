@@ -1,7 +1,7 @@
 "use server";
 
 import { createAdminClient } from "@/utils/supabase/server";
-import { getSession } from "@/lib/auth/session";
+import { requireWarehousePortalUser } from "@/lib/auth/require-access";
 import {
   canAcceptOutwardScans,
   canAcceptReInwardScans,
@@ -50,10 +50,11 @@ export async function getNextCartonSerial() {
 
 export async function createOrderWithCartons(order: OrderInput, cartons: CartonInput[]) {
   try {
-    const session = await getSession();
-    if (!session || session.role !== "user") {
-      return { error: "Unauthorized" };
+    const auth = await requireWarehousePortalUser("warehouse-book-order");
+    if ("error" in auth) {
+      return { error: auth.status === 403 ? "Access Denied" : "Unauthorized" };
     }
+    const session = auth;
 
     if (!order.shipping_mark?.trim()) {
       return { error: "Shipping mark is required" };
@@ -134,10 +135,11 @@ export async function createOrderWithCartons(order: OrderInput, cartons: CartonI
 
 export async function getOrderHistory() {
   try {
-    const session = await getSession();
-    if (!session || session.role !== "user") {
-      return { error: "Unauthorized" };
+    const auth = await requireWarehousePortalUser("warehouse-history");
+    if ("error" in auth) {
+      return { error: auth.status === 403 ? "Access Denied" : "Unauthorized" };
     }
+    const session = auth;
 
     const supabase = await createAdminClient();
     const { data, error } = await supabase
@@ -161,24 +163,25 @@ export async function getOrderHistory() {
 
 export async function getAllOrdersForAdmin() {
   try {
-    const session = await getSession();
-    if (!session) {
-      return { error: "Unauthorized" };
+    const { requireAnyChildModule } = await import("@/lib/auth/require-access");
+    const auth = await requireAnyChildModule(["management", "tracking"]);
+    if ("error" in auth) {
+      return { error: auth.error };
     }
 
-    // Allow admins or sales agents with "management" or "tracking" permission
-    // (tracking is read-only, management includes write access)
-    if (session.role === "admin") {
-      // Admin has access
-    } else if (session.role === "sales_agent") {
-      const { hasPermission } = await import("@/lib/auth/permissions");
-      const hasManagement = await hasPermission("management");
-      const hasTracking = await hasPermission("tracking");
-      if (!hasManagement && !hasTracking) {
-        return { error: "Unauthorized" };
-      }
-    } else {
-      return { error: "Unauthorized" };
+    const {
+      requireAdminOrganizationScope,
+      applyOrganizationFilter,
+      isMissingOrganizationColumnError,
+      sessionUsesOrganizationScope,
+    } = await import("@/lib/admin-organization-context");
+
+    const scope = sessionUsesOrganizationScope(auth.role)
+      ? await requireAdminOrganizationScope()
+      : null;
+    if (scope && "error" in scope) {
+      if (scope.status === 403) return { orders: [] };
+      return { error: scope.error };
     }
 
     const supabase = await createAdminClient();
@@ -194,13 +197,28 @@ export async function getAllOrdersForAdmin() {
 
     const assignedOrderIds = new Set(assignedOrders?.map((co) => co.order_id) || []);
 
-    // Get all orders
-    const { data: allOrders, error } = await supabase
+    let ordersQuery = supabase
       .from("orders")
       .select(
         "id, username, shipping_mark, destination_country, total_cartons, item_description, created_at, cartons:cartons(weight, length, width, height, carton_index)"
-      )
-      .order("created_at", { ascending: false });
+      );
+
+    if (scope && !("error" in scope)) {
+      ordersQuery = applyOrganizationFilter(ordersQuery, scope.organizationId);
+    }
+
+    let { data: allOrders, error } = await ordersQuery.order("created_at", { ascending: false });
+
+    if (error && scope && !("error" in scope) && isMissingOrganizationColumnError(error)) {
+      const retry = await supabase
+        .from("orders")
+        .select(
+          "id, username, shipping_mark, destination_country, total_cartons, item_description, created_at, cartons:cartons(weight, length, width, height, carton_index)"
+        )
+        .order("created_at", { ascending: false });
+      allOrders = retry.data;
+      error = retry.error;
+    }
 
     if (error) {
       return { error: error.message };
@@ -219,22 +237,10 @@ export async function getAllOrdersForAdmin() {
 
 export async function getAdminNotifications() {
   try {
-    const session = await getSession();
-    if (!session) {
-      return { error: "Unauthorized" };
-    }
-
-    // Allow admins or sales agents with "notifications" permission
-    if (session.role === "admin") {
-      // Admin has access
-    } else if (session.role === "sales_agent") {
-      const { hasPermission } = await import("@/lib/auth/permissions");
-      const hasAccess = await hasPermission("notifications");
-      if (!hasAccess) {
-        return { error: "Unauthorized" };
-      }
-    } else {
-      return { error: "Unauthorized" };
+    const { requireAnyChildModule } = await import("@/lib/auth/require-access");
+    const auth = await requireAnyChildModule(["notifications", "management"]);
+    if ("error" in auth) {
+      return { error: auth.error };
     }
 
     const supabase = await createAdminClient();
@@ -782,10 +788,11 @@ export type OrderScanProgressRow = {
 
 export async function getLoadingInstructionsForUser() {
   try {
-    const session = await getSession();
-    if (!session || session.role !== "user") {
-      return { error: "Unauthorized" };
+    const auth = await requireWarehousePortalUser("warehouse-loading-instruction");
+    if ("error" in auth) {
+      return { error: auth.status === 403 ? "Access Denied" : "Unauthorized" };
     }
+    const session = auth;
 
     const supabase = await createAdminClient();
 
@@ -906,10 +913,11 @@ export type ReInwardProgressRow = {
 
 export async function getReInwardProgressForUser() {
   try {
-    const session = await getSession();
-    if (!session || session.role !== "user") {
-      return { error: "Unauthorized" };
+    const auth = await requireWarehousePortalUser("warehouse-scan-progress");
+    if ("error" in auth) {
+      return { error: auth.status === 403 ? "Access Denied" : "Unauthorized" };
     }
+    const session = auth;
 
     const supabase = await createAdminClient();
 
@@ -1030,10 +1038,11 @@ export async function getReInwardProgressForUser() {
 
 export async function getOrderScanProgressForUser() {
   try {
-    const session = await getSession();
-    if (!session || session.role !== "user") {
-      return { error: "Unauthorized" };
+    const auth = await requireWarehousePortalUser("warehouse-scan-progress");
+    if ("error" in auth) {
+      return { error: auth.status === 403 ? "Access Denied" : "Unauthorized" };
     }
+    const session = auth;
 
     const supabase = await createAdminClient();
     const orderLimit = 40;
@@ -1296,10 +1305,11 @@ export async function getOrderScanProgressForUser() {
 
 export async function getScannedCartonsForUser() {
   try {
-    const session = await getSession();
-    if (!session || session.role !== "user") {
-      return { error: "Unauthorized" };
+    const auth = await requireWarehousePortalUser("warehouse-scan-progress");
+    if ("error" in auth) {
+      return { error: auth.status === 403 ? "Access Denied" : "Unauthorized" };
     }
+    const session = auth;
 
     const supabase = await createAdminClient();
 
@@ -1411,10 +1421,11 @@ export async function getScannedCartonsForUser() {
 
 export async function deleteCartonScan(scanId: string) {
   try {
-    const session = await getSession();
-    if (!session || session.role !== "user") {
-      return { error: "Unauthorized" };
+    const auth = await requireWarehousePortalUser("warehouse-scan-progress");
+    if ("error" in auth) {
+      return { error: auth.status === 403 ? "Access Denied" : "Unauthorized" };
     }
+    const session = auth;
 
     const supabase = await createAdminClient();
     const { error } = await supabase

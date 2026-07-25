@@ -2,6 +2,8 @@
 
 import { createAdminClient } from '@/utils/supabase/server';
 import { getSession } from '@/lib/auth/session';
+import { isSalesPortalActor } from '@/lib/auth/require-access';
+import { isSuperAdminSession } from '@/lib/auth/super-admin';
 
 export async function getDashboardStats() {
   try {
@@ -11,9 +13,9 @@ export async function getDashboardStats() {
     }
 
     // Allow admins or sales agents with "dashboard" permission
-    if (session.role === 'admin') {
+    if (isSuperAdminSession(session)) {
       // Admin has access
-    } else if (session.role === 'sales_agent') {
+    } else if (isSalesPortalActor(session)) {
       const { hasPermission } = await import('@/lib/auth/permissions');
       const hasAccess = await hasPermission('dashboard');
       if (!hasAccess) {
@@ -143,7 +145,7 @@ export type SalesAgentDashboardStats = {
 export async function getSalesAgentDashboardStats() {
   try {
     const session = await getSession();
-    if (!session || session.role !== 'sales_agent') {
+    if (!session || !isSalesPortalActor(session)) {
       return { error: 'Unauthorized' };
     }
 

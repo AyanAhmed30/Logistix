@@ -153,7 +153,7 @@ function parseLineItemsFromForm(formData: FormData) {
 
 export async function getOrganizationQuotations() {
   try {
-    const ctx = await requireOrganizationContext();
+    const ctx = await requireOrganizationContext({ moduleKey: 'quotations' });
     if ('error' in ctx) return { error: ctx.error };
 
     const { data, error } = await ctx.supabase
@@ -180,7 +180,7 @@ export async function getOrganizationQuotations() {
 
 export async function getNextOrganizationQuotationNumber() {
   try {
-    const ctx = await requireOrganizationContext();
+    const ctx = await requireOrganizationContext({ moduleKey: 'quotations' });
     if ('error' in ctx) return { error: ctx.error };
 
     const quotation_number = await generateOrganizationQuotationNumber(
@@ -196,7 +196,7 @@ export async function getNextOrganizationQuotationNumber() {
 
 export async function createOrganizationQuotation(formData: FormData) {
   try {
-    const ctx = await requireOrganizationContext();
+    const ctx = await requireOrganizationContext({ moduleKey: 'quotations' });
     if ('error' in ctx) return { error: ctx.error };
 
     const organization_customer_id = String(formData.get('organization_customer_id') || '').trim();
@@ -269,6 +269,7 @@ export async function createOrganizationQuotation(formData: FormData) {
     }
 
     revalidatePath('/organization/dashboard');
+    revalidatePath('/user/dashboard');
     return { success: true, quotation: normalizeQuotation(data as Record<string, unknown>) };
   } catch (err) {
     return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };
@@ -277,7 +278,7 @@ export async function createOrganizationQuotation(formData: FormData) {
 
 export async function updateOrganizationQuotation(formData: FormData) {
   try {
-    const ctx = await requireOrganizationContext();
+    const ctx = await requireOrganizationContext({ moduleKey: 'quotations' });
     if ('error' in ctx) return { error: ctx.error };
 
     const id = String(formData.get('id') || '').trim();
@@ -338,6 +339,7 @@ export async function updateOrganizationQuotation(formData: FormData) {
     if (!data) return { error: 'Quotation not found' };
 
     revalidatePath('/organization/dashboard');
+    revalidatePath('/user/dashboard');
     return { success: true, quotation: normalizeQuotation(data as Record<string, unknown>) };
   } catch (err) {
     return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };
@@ -346,7 +348,7 @@ export async function updateOrganizationQuotation(formData: FormData) {
 
 export async function archiveOrganizationQuotation(formData: FormData) {
   try {
-    const ctx = await requireOrganizationContext();
+    const ctx = await requireOrganizationContext({ moduleKey: 'quotations' });
     if ('error' in ctx) return { error: ctx.error };
 
     const id = String(formData.get('id') || '').trim();
@@ -364,6 +366,7 @@ export async function archiveOrganizationQuotation(formData: FormData) {
     if (error) return { error: error.message };
 
     revalidatePath('/organization/dashboard');
+    revalidatePath('/user/dashboard');
     return { success: true };
   } catch (err) {
     return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };

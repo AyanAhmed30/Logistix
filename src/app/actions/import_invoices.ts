@@ -1,7 +1,7 @@
 'use server';
 
 import { createAdminClient } from '@/utils/supabase/server';
-import { getSession } from '@/lib/auth/session';
+import { requireChildModule } from '@/lib/auth/require-access';
 import { revalidatePath } from 'next/cache';
 
 export type ImportInvoiceItem = {
@@ -57,22 +57,9 @@ export type ImportInvoice = {
 
 export async function createImportInvoice(formData: FormData) {
   try {
-    const session = await getSession();
-    if (!session) {
-      return { error: 'Unauthorized' };
-    }
-
-    // Allow admins or sales agents with "import-invoice" permission
-    if (session.role === 'admin') {
-      // Admin has access
-    } else if (session.role === 'sales_agent') {
-      const { hasPermission } = await import('@/lib/auth/permissions');
-      const hasAccess = await hasPermission('import-invoice');
-      if (!hasAccess) {
-        return { error: 'Unauthorized' };
-      }
-    } else {
-      return { error: 'Unauthorized' };
+    const auth = await requireChildModule('import-invoice');
+    if ('error' in auth) {
+      return { error: auth.error };
     }
 
     const invoice_no = formData.get('invoice_no') as string;
@@ -241,22 +228,9 @@ export async function createImportInvoice(formData: FormData) {
 
 export async function getAllImportInvoices() {
   try {
-    const session = await getSession();
-    if (!session) {
-      return { error: 'Unauthorized' };
-    }
-
-    // Allow admins or sales agents with "import-invoice" permission
-    if (session.role === 'admin') {
-      // Admin has access
-    } else if (session.role === 'sales_agent') {
-      const { hasPermission } = await import('@/lib/auth/permissions');
-      const hasAccess = await hasPermission('import-invoice');
-      if (!hasAccess) {
-        return { error: 'Unauthorized' };
-      }
-    } else {
-      return { error: 'Unauthorized' };
+    const auth = await requireChildModule('import-invoice');
+    if ('error' in auth) {
+      return { error: auth.error };
     }
 
     const supabase = await createAdminClient();
@@ -281,22 +255,9 @@ export async function getAllImportInvoices() {
 
 export async function deleteImportInvoice(id: string) {
   try {
-    const session = await getSession();
-    if (!session) {
-      return { error: 'Unauthorized' };
-    }
-
-    // Allow admins or sales agents with "import-invoice" permission
-    if (session.role === 'admin') {
-      // Admin has access
-    } else if (session.role === 'sales_agent') {
-      const { hasPermission } = await import('@/lib/auth/permissions');
-      const hasAccess = await hasPermission('import-invoice');
-      if (!hasAccess) {
-        return { error: 'Unauthorized' };
-      }
-    } else {
-      return { error: 'Unauthorized' };
+    const auth = await requireChildModule('import-invoice');
+    if ('error' in auth) {
+      return { error: auth.error };
     }
 
     if (!id) {

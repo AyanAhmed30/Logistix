@@ -17,10 +17,8 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en">
-      <body className="font-sans antialiased">
-        <div className="app-shell">
-          {children}
-        </div>
+      <body className="font-sans antialiased app-shell">
+        {children}
         <Suspense fallback={null}>
           <AuthSessionGuard />
         </Suspense>

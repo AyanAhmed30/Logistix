@@ -2,7 +2,8 @@
 
 import { createAdminClient } from '@/utils/supabase/server';
 import { getSession } from '@/lib/auth/session';
-import { hashPassword, verifyPassword } from '@/lib/auth/password';
+import { isSuperAdminSession } from '@/lib/auth/super-admin';
+import { verifyPassword } from '@/lib/auth/password';
 import { revalidatePath } from 'next/cache';
 import {
   resolveInquiryAttachmentContentType,
@@ -35,7 +36,7 @@ export type Organization = {
   logo_url: string | null;
   branches: OrganizationBranch[];
   description: string | null;
-  username: string;
+  username: string | null;
   status: 'active' | 'inactive';
   created_at: string;
   updated_at: string;
@@ -44,7 +45,35 @@ export type Organization = {
 const ORGANIZATION_SELECT =
   'id, organization_name, email, phone, address, street, street_2, city, state, zip, country, website, logo_url, branches, description, username, status, created_at, updated_at';
 
+const ORGANIZATION_SELECT_BASIC =
+  'id, organization_name, email, phone, address, city, country, description, username, status, created_at, updated_at';
+
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+function isMissingOrganizationsTable(error: { message?: string; code?: string } | null | undefined) {
+  if (!error) return false;
+  if (error.code === '42P01' || error.code === 'PGRST205') return true;
+  const msg = (error.message || '').toLowerCase();
+  // Missing table — do NOT match "column X of relation organizations does not exist"
+  return (
+    (msg.includes('relation') && msg.includes('organizations') && msg.includes('does not exist')) ||
+    (msg.includes("could not find the table") && msg.includes('organizations'))
+  );
+}
+
+function isMissingOrganizationsColumn(error: { message?: string; code?: string } | null | undefined) {
+  if (!error) return false;
+  if (error.code === '42703' || error.code === 'PGRST204') return true;
+  const msg = (error.message || '').toLowerCase();
+  return (
+    (msg.includes('column') && msg.includes('does not exist')) ||
+    (msg.includes('could not find the') && msg.includes('column'))
+  );
+}
+
+function organizationSchemaMigrationHint() {
+  return 'Organizations schema is incomplete. Please run supabase/migrations/ensure_organizations_company_schema.sql in the Supabase SQL Editor.';
+}
 
 function normalizeEmail(email: string) {
   return email.trim().toLowerCase();
@@ -86,6 +115,7 @@ function normalizeOrganizationRow(row: Record<string, unknown>): Organization {
     zip: String(row.zip || ''),
     website: String(row.website || ''),
     logo_url: typeof row.logo_url === 'string' ? row.logo_url : null,
+    username: row.username == null || row.username === '' ? null : String(row.username),
     branches: parseBranchesInput(JSON.stringify(row.branches || [])),
   };
 }
@@ -127,8 +157,6 @@ async function readOrganizationForm(formData: FormData) {
   const country = String(formData.get('country') || '').trim();
   const website = String(formData.get('website') || '').trim();
   const description = String(formData.get('description') || '').trim();
-  const username = String(formData.get('username') || '').trim();
-  const password = String(formData.get('password') || '').trim();
   const status = String(formData.get('status') || 'active').trim() as 'active' | 'inactive';
   const branches = parseBranchesInput(String(formData.get('branches_json') || '[]'));
   const existingLogoUrl = String(formData.get('existing_logo_url') || '').trim();
@@ -155,40 +183,11 @@ async function readOrganizationForm(formData: FormData) {
     country,
     website,
     description,
-    username,
-    password,
     status,
     branches,
     logo_url,
     address: buildAddressSummary({ street, street_2, city, state, zip, country }),
   };
-}
-
-async function isUsernameTaken(
-  supabase: Awaited<ReturnType<typeof createAdminClient>>,
-  username: string,
-  excludeOrganizationId?: string
-) {
-  const trimmed = username.trim();
-
-  let orgQuery = supabase.from('organizations').select('id').eq('username', trimmed);
-  if (excludeOrganizationId) {
-    orgQuery = orgQuery.neq('id', excludeOrganizationId);
-  }
-  const { data: existingOrg } = await orgQuery.maybeSingle();
-  if (existingOrg) return 'Username already exists for an organization';
-
-  const [{ data: existingOps }, { data: existingSales }, { data: existingApp }] = await Promise.all([
-    supabase.from('operations_users').select('id').eq('username', trimmed).maybeSingle(),
-    supabase.from('sales_agents').select('id').eq('username', trimmed).maybeSingle(),
-    supabase.from('app_users').select('id').eq('username', trimmed).maybeSingle(),
-  ]);
-
-  if (existingOps) return 'Username already exists (used by an Operations user)';
-  if (existingSales) return 'Username already exists (used by a Sales Agent)';
-  if (existingApp) return 'Username already exists (used by another user)';
-
-  return null;
 }
 
 async function isEmailTaken(
@@ -209,7 +208,7 @@ async function isEmailTaken(
 export async function createOrganization(formData: FormData) {
   try {
     const session = await getSession();
-    if (!session || session.role !== 'admin') {
+    if (!session || !isSuperAdminSession(session)) {
       return { error: 'Unauthorized' };
     }
 
@@ -228,66 +227,139 @@ export async function createOrganization(formData: FormData) {
       country,
       website,
       description,
-      username,
-      password,
       status,
       branches,
       logo_url,
       address,
     } = parsed;
 
-    if (!organizationName || !email || !phone || !username || !password) {
-      return { error: 'Company name, email, phone, username, and password are required' };
+    if (!organizationName || !email || !phone) {
+      return { error: 'Company name, email, and phone are required' };
     }
 
     if (!EMAIL_PATTERN.test(email)) {
       return { error: 'Please enter a valid email address' };
     }
 
-    if (password.length < 6) {
-      return { error: 'Password must be at least 6 characters' };
-    }
-
     const supabase = await createAdminClient();
-
-    const usernameError = await isUsernameTaken(supabase, username);
-    if (usernameError) return { error: usernameError };
 
     const emailError = await isEmailTaken(supabase, email);
     if (emailError) return { error: emailError };
 
-    const { data, error } = await supabase
+    const fullPayload = {
+      organization_name: organizationName,
+      email,
+      phone,
+      address,
+      street,
+      street_2,
+      city,
+      state,
+      zip,
+      country,
+      website,
+      logo_url,
+      branches,
+      description: description || null,
+      username: null as string | null,
+      password: null as string | null,
+      status: (status === 'inactive' ? 'inactive' : 'active') as 'active' | 'inactive',
+    };
+
+    let { data, error } = await supabase
       .from('organizations')
-      .insert([
-        {
-          organization_name: organizationName,
-          email,
-          phone,
-          address,
-          street,
-          street_2,
-          city,
-          state,
-          zip,
-          country,
-          website,
-          logo_url,
-          branches,
-          description: description || null,
-          username,
-          password: hashPassword(password),
-          status: status === 'inactive' ? 'inactive' : 'active',
-        },
-      ])
+      .insert([fullPayload])
       .select(ORGANIZATION_SELECT)
       .single();
 
+    // Older DBs: username/password still NOT NULL — retry with placeholder login fields
+    if (
+      error &&
+      error.message.includes('null value') &&
+      (error.message.includes('username') || error.message.includes('password'))
+    ) {
+      const placeholderUser = `org_${Date.now().toString(36)}`;
+      const retry = await supabase
+        .from('organizations')
+        .insert([
+          {
+            ...fullPayload,
+            username: placeholderUser,
+            password: placeholderUser,
+          },
+        ])
+        .select(ORGANIZATION_SELECT)
+        .single();
+      data = retry.data;
+      error = retry.error;
+    }
+
+    // Older DBs: profile columns missing — retry with core company fields only
+    if (error && isMissingOrganizationsColumn(error)) {
+      const basicRetry = await supabase
+        .from('organizations')
+        .insert([
+          {
+            organization_name: organizationName,
+            email,
+            phone,
+            address,
+            city,
+            country,
+            description: description || null,
+            username: null,
+            password: null,
+            status: status === 'inactive' ? 'inactive' : 'active',
+          },
+        ])
+        .select(ORGANIZATION_SELECT_BASIC)
+        .single();
+
+      if (
+        basicRetry.error &&
+        basicRetry.error.message.includes('null value') &&
+        (basicRetry.error.message.includes('username') ||
+          basicRetry.error.message.includes('password'))
+      ) {
+        const placeholderUser = `org_${Date.now().toString(36)}`;
+        const lastRetry = await supabase
+          .from('organizations')
+          .insert([
+            {
+              organization_name: organizationName,
+              email,
+              phone,
+              address,
+              city,
+              country,
+              description: description || null,
+              username: placeholderUser,
+              password: placeholderUser,
+              status: status === 'inactive' ? 'inactive' : 'active',
+            },
+          ])
+          .select(ORGANIZATION_SELECT_BASIC)
+          .single();
+        data = lastRetry.data;
+        error = lastRetry.error;
+      } else {
+        data = basicRetry.data;
+        error = basicRetry.error;
+      }
+    }
+
     if (error) {
-      if (error.message.includes('does not exist') || error.message.includes('relation') || error.code === '42P01') {
-        return { error: 'Organizations table does not exist. Please run the SQL migration in Supabase.' };
+      if (isMissingOrganizationsTable(error)) {
+        return {
+          error:
+            'Organizations table does not exist. Please run supabase/migrations/ensure_organizations_company_schema.sql in Supabase.',
+        };
+      }
+      if (isMissingOrganizationsColumn(error)) {
+        return { error: organizationSchemaMigrationHint() };
       }
       if (error.code === '23505') {
-        return { error: 'Username or email already exists' };
+        return { error: 'Email already exists' };
       }
       return { error: error.message };
     }
@@ -302,18 +374,27 @@ export async function createOrganization(formData: FormData) {
 export async function getAllOrganizations() {
   try {
     const session = await getSession();
-    if (!session || session.role !== 'admin') {
+    if (!session || !isSuperAdminSession(session)) {
       return { error: 'Unauthorized' };
     }
 
     const supabase = await createAdminClient();
-    const { data, error } = await supabase
+    let { data, error } = await supabase
       .from('organizations')
       .select(ORGANIZATION_SELECT)
       .order('created_at', { ascending: false });
 
+    if (error && isMissingOrganizationsColumn(error)) {
+      const fallback = await supabase
+        .from('organizations')
+        .select(ORGANIZATION_SELECT_BASIC)
+        .order('created_at', { ascending: false });
+      data = fallback.data;
+      error = fallback.error;
+    }
+
     if (error) {
-      if (error.message.includes('does not exist') || error.message.includes('relation') || error.code === '42P01') {
+      if (isMissingOrganizationsTable(error)) {
         return { organizations: [] };
       }
       return { error: error.message };
@@ -328,7 +409,7 @@ export async function getAllOrganizations() {
 export async function updateOrganization(formData: FormData) {
   try {
     const session = await getSession();
-    if (!session || session.role !== 'admin') {
+    if (!session || !isSuperAdminSession(session)) {
       return { error: 'Unauthorized' };
     }
 
@@ -350,30 +431,21 @@ export async function updateOrganization(formData: FormData) {
       country,
       website,
       description,
-      username,
-      password,
       status,
       branches,
       logo_url,
       address,
     } = parsed;
 
-    if (!organizationName || !email || !phone || !username) {
-      return { error: 'Company name, email, phone, and username are required' };
+    if (!organizationName || !email || !phone) {
+      return { error: 'Company name, email, and phone are required' };
     }
 
     if (!EMAIL_PATTERN.test(email)) {
       return { error: 'Please enter a valid email address' };
     }
 
-    if (password && password.length < 6) {
-      return { error: 'Password must be at least 6 characters' };
-    }
-
     const supabase = await createAdminClient();
-
-    const usernameError = await isUsernameTaken(supabase, username, id);
-    if (usernameError) return { error: usernameError };
 
     const emailError = await isEmailTaken(supabase, email, id);
     if (emailError) return { error: emailError };
@@ -393,14 +465,9 @@ export async function updateOrganization(formData: FormData) {
       logo_url,
       branches,
       description: description || null,
-      username,
       status: status === 'inactive' ? 'inactive' : 'active',
       updated_at: new Date().toISOString(),
     };
-
-    if (password) {
-      updatePayload.password = hashPassword(password);
-    }
 
     const { data, error } = await supabase
       .from('organizations')
@@ -409,7 +476,18 @@ export async function updateOrganization(formData: FormData) {
       .select(ORGANIZATION_SELECT)
       .single();
 
-    if (error) return { error: error.message };
+    if (error) {
+      if (isMissingOrganizationsTable(error)) {
+        return {
+          error:
+            'Organizations table does not exist. Please run supabase/migrations/ensure_organizations_company_schema.sql in Supabase.',
+        };
+      }
+      if (isMissingOrganizationsColumn(error)) {
+        return { error: organizationSchemaMigrationHint() };
+      }
+      return { error: error.message };
+    }
 
     revalidatePath('/admin/dashboard');
     return { success: true, organization: normalizeOrganizationRow(data as Record<string, unknown>) };
@@ -421,7 +499,7 @@ export async function updateOrganization(formData: FormData) {
 export async function deleteOrganization(formData: FormData) {
   try {
     const session = await getSession();
-    if (!session || session.role !== 'admin') {
+    if (!session || !isSuperAdminSession(session)) {
       return { error: 'Unauthorized' };
     }
 
@@ -479,7 +557,11 @@ export async function authenticateOrganization(username: string, password: strin
     throw new Error(error.message);
   }
 
-  if (!data || !verifyPassword(password, data.password)) {
+  if (!data || !data.password || !data.username) {
+    return null;
+  }
+
+  if (!verifyPassword(password, data.password)) {
     return null;
   }
 

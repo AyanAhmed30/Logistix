@@ -141,13 +141,13 @@
   }
 }
 
-.app-shell {
+body.app-shell {
   position: relative;
   min-height: 100vh;
   background: var(--white);
 }
 
-.app-shell::before {
+body.app-shell::before {
   content: "";
   position: fixed;
   inset: 0;
@@ -160,7 +160,7 @@
   filter: grayscale(1);
 }
 
-.app-shell::after {
+body.app-shell::after {
   content: "";
   position: fixed;
   inset: 0;
@@ -169,9 +169,24 @@
   z-index: 1;
 }
 
-.app-shell > * {
+body.app-shell > * {
   position: relative;
   z-index: 2;
+}
+
+/* Radix dialogs — center via margin (avoids transform/animation conflicts) */
+[data-slot="dialog-content"] {
+  position: fixed !important;
+  inset: 0 !important;
+  margin: auto !important;
+  height: fit-content !important;
+  max-height: min(90vh, calc(100dvh - 2rem)) !important;
+  transform: none !important;
+}
+
+[data-slot="dialog-overlay"] {
+  position: fixed !important;
+  inset: 0 !important;
 }
 
 

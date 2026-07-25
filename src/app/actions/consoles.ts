@@ -1,7 +1,10 @@
 "use server";
 
 import { createAdminClient } from "@/utils/supabase/server";
-import { getSession } from "@/lib/auth/session";
+import {
+  requireAnyChildModule,
+  requireChildModule,
+} from "@/lib/auth/require-access";
 import { ensureConsoleOrderLoadingRows, logConsoleLoadingEvent } from "@/lib/loading-workflow-server";
 
 type ConsoleInput = {
@@ -17,22 +20,9 @@ type ConsoleInput = {
 
 export async function createConsole(console: ConsoleInput) {
   try {
-    const session = await getSession();
-    if (!session) {
-      return { error: "Unauthorized" };
-    }
-
-    // Allow admins or sales agents with "console" permission (creating requires full console access)
-    if (session.role === "admin") {
-      // Admin has access
-    } else if (session.role === "sales_agent") {
-      const { hasPermission } = await import("@/lib/auth/permissions");
-      const hasAccess = await hasPermission("console");
-      if (!hasAccess) {
-        return { error: "Unauthorized" };
-      }
-    } else {
-      return { error: "Unauthorized" };
+    const auth = await requireChildModule("console");
+    if ("error" in auth) {
+      return { error: auth.error };
     }
 
     if (!console.console_number?.trim()) {
@@ -95,32 +85,40 @@ export async function createConsole(console: ConsoleInput) {
 
 export async function getAllConsoles() {
   try {
-    const session = await getSession();
-    if (!session) {
-      return { error: "Unauthorized" };
+    const auth = await requireAnyChildModule(["console", "loading-instruction", "management"]);
+    if ("error" in auth) {
+      return { error: auth.error };
     }
 
-    // Allow admins or sales agents with "console" or "loading-instruction" permission
-    if (session.role === "admin") {
-      // Admin has access
-    } else if (session.role === "sales_agent") {
-      const { hasPermission } = await import("@/lib/auth/permissions");
-      const hasConsole = await hasPermission("console");
-      const hasLoadingInstruction = await hasPermission("loading-instruction");
-      if (!hasConsole && !hasLoadingInstruction) {
-        return { error: "Unauthorized" };
-      }
-    } else {
-      return { error: "Unauthorized" };
+    const {
+      requireAdminOrganizationScope,
+      applyOrganizationFilter,
+      isMissingOrganizationColumnError,
+      sessionUsesOrganizationScope,
+    } = await import("@/lib/admin-organization-context");
+
+    const scope = sessionUsesOrganizationScope(auth.role)
+      ? await requireAdminOrganizationScope()
+      : null;
+    if (scope && "error" in scope) {
+      if (scope.status === 403) return { consoles: [] };
+      return { error: scope.error };
     }
 
     const supabase = await createAdminClient();
 
-    // Get all consoles without status filter (works whether column exists or not)
-    const { data, error } = await supabase
-      .from("consoles")
-      .select("*")
-      .order("created_at", { ascending: false });
+    let query = supabase.from("consoles").select("*");
+    if (scope && !("error" in scope)) {
+      query = applyOrganizationFilter(query, scope.organizationId);
+    }
+
+    let { data, error } = await query.order("created_at", { ascending: false });
+
+    if (error && scope && !("error" in scope) && isMissingOrganizationColumnError(error)) {
+      const retry = await supabase.from("consoles").select("*").order("created_at", { ascending: false });
+      data = retry.data;
+      error = retry.error;
+    }
 
     if (error) {
       return { error: error.message || "Failed to fetch consoles" };
@@ -142,23 +140,9 @@ export async function getAllConsoles() {
 
 export async function getReadyForLoadingConsoles() {
   try {
-    const session = await getSession();
-    if (!session) {
-      return { error: "Unauthorized" };
-    }
-
-    // Allow admins or sales agents with "console" or "loading-instruction" permission
-    if (session.role === "admin") {
-      // Admin has access
-    } else if (session.role === "sales_agent") {
-      const { hasPermission } = await import("@/lib/auth/permissions");
-      const hasConsole = await hasPermission("console");
-      const hasLoadingInstruction = await hasPermission("loading-instruction");
-      if (!hasConsole && !hasLoadingInstruction) {
-        return { error: "Unauthorized" };
-      }
-    } else {
-      return { error: "Unauthorized" };
+    const auth = await requireAnyChildModule(["console", "loading-instruction"]);
+    if ("error" in auth) {
+      return { error: auth.error };
     }
 
     const supabase = await createAdminClient();
@@ -187,24 +171,11 @@ export async function getReadyForLoadingConsoles() {
 
 export async function markConsoleReadyForLoading(consoleId: string) {
   try {
-    const session = await getSession();
-    if (!session) {
-      return { error: "Unauthorized" };
+    const auth = await requireAnyChildModule(["console", "loading-instruction"]);
+    if ("error" in auth) {
+      return { error: auth.error };
     }
-
-    // Allow admins or sales agents with "console" or "loading-instruction" permission
-    if (session.role === "admin") {
-      // Admin has access
-    } else if (session.role === "sales_agent") {
-      const { hasPermission } = await import("@/lib/auth/permissions");
-      const hasConsole = await hasPermission("console");
-      const hasLoadingInstruction = await hasPermission("loading-instruction");
-      if (!hasConsole && !hasLoadingInstruction) {
-        return { error: "Unauthorized" };
-      }
-    } else {
-      return { error: "Unauthorized" };
-    }
+    const session = auth;
 
     if (!consoleId) {
       return { error: "Console ID is required" };
@@ -266,23 +237,9 @@ export async function getConsoleWithOrders(
   options?: { onlyLatestSentToLoading?: boolean }
 ) {
   try {
-    const session = await getSession();
-    if (!session) {
-      return { error: "Unauthorized" };
-    }
-
-    // Allow admins or sales agents with "console" or "loading-instruction" permission
-    if (session.role === "admin") {
-      // Admin has access
-    } else if (session.role === "sales_agent") {
-      const { hasPermission } = await import("@/lib/auth/permissions");
-      const hasConsole = await hasPermission("console");
-      const hasLoadingInstruction = await hasPermission("loading-instruction");
-      if (!hasConsole && !hasLoadingInstruction) {
-        return { error: "Unauthorized" };
-      }
-    } else {
-      return { error: "Unauthorized" };
+    const auth = await requireAnyChildModule(["console", "loading-instruction", "management"]);
+    if ("error" in auth) {
+      return { error: auth.error };
     }
 
     const supabase = await createAdminClient();
@@ -355,23 +312,11 @@ export async function getConsoleWithOrders(
 
 export async function assignOrdersToConsole(consoleId: string, orderIds: string[]) {
   try {
-    const session = await getSession();
-    if (!session) {
-      return { error: "Unauthorized" };
+    const auth = await requireAnyChildModule(["management", "console"]);
+    if ("error" in auth) {
+      return { error: auth.error };
     }
-
-    // Allow admins or sales agents with "management" permission
-    if (session.role === "admin") {
-      // Admin has access
-    } else if (session.role === "sales_agent") {
-      const { hasPermission } = await import("@/lib/auth/permissions");
-      const hasAccess = await hasPermission("management");
-      if (!hasAccess) {
-        return { error: "Unauthorized" };
-      }
-    } else {
-      return { error: "Unauthorized" };
-    }
+    const session = auth;
 
     if (!consoleId || orderIds.length === 0) {
       return { error: "Console ID and at least one order ID required" };

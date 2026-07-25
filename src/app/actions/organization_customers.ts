@@ -46,7 +46,7 @@ function validateCustomerInput(input: {
 
 export async function getOrganizationCustomers(options?: { status?: 'active' | 'archived' }) {
   try {
-    const ctx = await requireOrganizationContext();
+    const ctx = await requireOrganizationContext({ moduleKey: 'customers' });
     if ('error' in ctx) return { error: ctx.error };
 
     const status = options?.status || 'active';
@@ -73,7 +73,7 @@ export async function getOrganizationCustomers(options?: { status?: 'active' | '
 
 export async function createOrganizationCustomer(formData: FormData) {
   try {
-    const ctx = await requireOrganizationContext();
+    const ctx = await requireOrganizationContext({ moduleKey: 'customers' });
     if ('error' in ctx) return { error: ctx.error };
 
     const customer_name = String(formData.get('customer_name') || '').trim();
@@ -119,6 +119,7 @@ export async function createOrganizationCustomer(formData: FormData) {
     }
 
     revalidatePath('/organization/dashboard');
+    revalidatePath('/user/dashboard');
     return { success: true, customer: data as OrganizationCustomer };
   } catch (err) {
     return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };
@@ -127,7 +128,7 @@ export async function createOrganizationCustomer(formData: FormData) {
 
 export async function updateOrganizationCustomer(formData: FormData) {
   try {
-    const ctx = await requireOrganizationContext();
+    const ctx = await requireOrganizationContext({ moduleKey: 'customers' });
     if ('error' in ctx) return { error: ctx.error };
 
     const id = String(formData.get('id') || '').trim();
@@ -171,6 +172,7 @@ export async function updateOrganizationCustomer(formData: FormData) {
     if (!data) return { error: 'Customer not found' };
 
     revalidatePath('/organization/dashboard');
+    revalidatePath('/user/dashboard');
     return { success: true, customer: data as OrganizationCustomer };
   } catch (err) {
     return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };
@@ -179,7 +181,7 @@ export async function updateOrganizationCustomer(formData: FormData) {
 
 export async function archiveOrganizationCustomer(formData: FormData) {
   try {
-    const ctx = await requireOrganizationContext();
+    const ctx = await requireOrganizationContext({ moduleKey: 'customers' });
     if ('error' in ctx) return { error: ctx.error };
 
     const id = String(formData.get('id') || '').trim();
@@ -197,6 +199,7 @@ export async function archiveOrganizationCustomer(formData: FormData) {
     if (error) return { error: error.message };
 
     revalidatePath('/organization/dashboard');
+    revalidatePath('/user/dashboard');
     return { success: true };
   } catch (err) {
     return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };
@@ -205,7 +208,7 @@ export async function archiveOrganizationCustomer(formData: FormData) {
 
 export async function restoreOrganizationCustomer(formData: FormData) {
   try {
-    const ctx = await requireOrganizationContext();
+    const ctx = await requireOrganizationContext({ moduleKey: 'customers' });
     if ('error' in ctx) return { error: ctx.error };
 
     const id = String(formData.get('id') || '').trim();
@@ -224,6 +227,7 @@ export async function restoreOrganizationCustomer(formData: FormData) {
     if (error) return { error: error.message };
 
     revalidatePath('/organization/dashboard');
+    revalidatePath('/user/dashboard');
     return { success: true };
   } catch (err) {
     return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };

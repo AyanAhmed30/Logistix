@@ -2,6 +2,8 @@
 
 import { createAdminClient } from '@/utils/supabase/server';
 import { getSession } from '@/lib/auth/session';
+import { sessionHasSalesAccess, isSalesPortalActor } from '@/lib/auth/require-access';
+import { isSuperAdminSession } from '@/lib/auth/super-admin';
 import { revalidatePath } from 'next/cache';
 import { after } from 'next/server';
 import {
@@ -10,6 +12,39 @@ import {
   normalizePakistaniPhone,
 } from '@/lib/pakistan-phone';
 import { listInquiriesForLead, type LeadInquiry } from '@/app/actions/inquiries';
+import { resolveSalesAgentForSession } from '@/lib/legacy-user-bridge';
+import type { SessionPayload } from '@/lib/auth/session';
+
+type SalesAgentActor = {
+  id: string;
+  permissions?: string[];
+  username?: string | null;
+  name?: string | null;
+};
+
+async function fetchSalesAgentBySession(
+  supabase: Awaited<ReturnType<typeof createAdminClient>>,
+  session: SessionPayload,
+  options?: { permissions?: boolean }
+) {
+  const agent = await resolveSalesAgentForSession(supabase, session);
+  if (!agent) return { data: null, error: { message: 'Sales agent not found' } };
+  if (options?.permissions === false) {
+    return {
+      data: { id: agent.id, username: agent.username ?? null, name: agent.name ?? null },
+      error: null,
+    };
+  }
+  return {
+    data: {
+      id: agent.id,
+      permissions: agent.permissions ?? [],
+      username: agent.username ?? null,
+      name: agent.name ?? null,
+    },
+    error: null,
+  };
+}
 
 const LEAD_DETAIL_SELECT =
   'id, lead_id_formatted, name, number, source, status, sales_agent_id, created_by_sales_agent_id, transferred_from_sales_agent_id, transferred_at, converted, created_at, updated_at';
@@ -244,7 +279,7 @@ async function finishCreateLead(input: {
 
   const sharedLeadId = preferredLeadIdFormatted?.trim() || null;
 
-  const leadInsertBase = {
+  const leadInsertBase: Record<string, unknown> = {
     name: safeName,
     number: displayPhone,
     number_normalized: canonicalPhone,
@@ -253,6 +288,10 @@ async function finishCreateLead(input: {
     sales_agent_id: salesAgent.id,
     created_by_sales_agent_id: salesAgent.id,
   };
+
+  if (session.role === 'user' && session.organizationId) {
+    leadInsertBase.organization_id = session.organizationId;
+  }
 
   let data: Lead | null = null;
   let lastInsertError: string | null = null;
@@ -390,7 +429,7 @@ export async function createLead(formData: FormData) {
     }
 
     // Allow admins or sales agents with "lead" permission
-    if (session.role !== 'admin' && session.role !== 'sales_agent') {
+    if (!sessionHasSalesAccess(session)) {
       return { error: 'Unauthorized' };
     }
 
@@ -419,22 +458,18 @@ export async function createLead(formData: FormData) {
     const displayPhone = formatLeadPhoneForStorage(number, canonicalPhone);
 
     const [{ data: salesAgent, error: agentError }, existingLeadByPhone] = await Promise.all([
-      supabase
-        .from('sales_agents')
-        .select('id, permissions')
-        .eq('username', session.username)
-        .single(),
+      fetchSalesAgentBySession(supabase, session),
       findExistingLeadByPhone(supabase, number, canonicalPhone),
     ]);
 
     const preferredLeadIdFormatted = existingLeadByPhone?.lead_id_formatted?.trim() || null;
 
     if (agentError?.message.includes('permissions') || agentError?.message.includes('column "permissions"')) {
-      const { data: fallbackAgent, error: fallbackError } = await supabase
-        .from('sales_agents')
-        .select('id')
-        .eq('username', session.username)
-        .single();
+      const { data: fallbackAgent, error: fallbackError } = await fetchSalesAgentBySession(
+        supabase,
+        session,
+        { permissions: false }
+      );
 
       if (fallbackError || !fallbackAgent) {
         return { error: 'Sales agent not found' };
@@ -456,9 +491,14 @@ export async function createLead(formData: FormData) {
       return { error: 'Sales agent not found' };
     }
 
-    if (session.role === 'sales_agent') {
+    if (session.role === 'user') {
+      const { hasModulePermission } = await import('@/lib/module-permissions');
+      if (!hasModulePermission(session.permissions, 'lead')) {
+        return { error: 'Access Denied' };
+      }
+    } else if (isSalesPortalActor(session)) {
       const permissions = (salesAgent as { permissions?: string[] | null }).permissions;
-      if (Array.isArray(permissions) && !permissions.includes('lead')) {
+      if (Array.isArray(permissions) && permissions.length > 0 && !permissions.includes('lead')) {
         return { error: 'Unauthorized' };
       }
     }
@@ -487,9 +527,9 @@ export async function getAllLeadsForSalesAgent() {
 
     // Allow admins or sales agents with "lead" or "pipeline" permission
     // (pipeline needs to view leads to manage them)
-    if (session.role === 'admin') {
+    if (isSuperAdminSession(session)) {
       // Admin has access
-    } else if (session.role === 'sales_agent') {
+    } else if (isSalesPortalActor(session)) {
       const { hasPermission } = await import('@/lib/auth/permissions');
       const hasLead = await hasPermission('lead');
       const hasPipeline = await hasPermission('pipeline');
@@ -503,11 +543,11 @@ export async function getAllLeadsForSalesAgent() {
     const supabase = await createAdminClient();
 
     // Get sales agent by username
-    const { data: salesAgent, error: agentError } = await supabase
-      .from('sales_agents')
-      .select('id')
-      .eq('username', session.username)
-      .single();
+    const { data: salesAgent, error: agentError } = await fetchSalesAgentBySession(
+      supabase,
+      session,
+      { permissions: false }
+    );
 
     if (agentError || !salesAgent) {
       return { error: 'Sales agent not found' };
@@ -516,14 +556,31 @@ export async function getAllLeadsForSalesAgent() {
     const pageSize = 1000;
     let from = 0;
     const allLeads: Lead[] = [];
+    const useOrgFilter = session.role === 'user' && Boolean(session.organizationId);
+    let skipOrgFilter = false;
 
     while (true) {
-      const { data, error } = await supabase
+      let query = supabase
         .from('leads')
         .select('*')
-        .eq('sales_agent_id', salesAgent.id)
+        .eq('sales_agent_id', salesAgent.id);
+
+      if (useOrgFilter && !skipOrgFilter) {
+        const { applyOrganizationFilter } = await import('@/lib/admin-organization-context');
+        query = applyOrganizationFilter(query, session.organizationId!);
+      }
+
+      const { data, error } = await query
         .order('created_at', { ascending: false })
         .range(from, from + pageSize - 1);
+
+      if (error && useOrgFilter && !skipOrgFilter) {
+        const { isMissingOrganizationColumnError } = await import('@/lib/admin-organization-context');
+        if (isMissingOrganizationColumnError(error)) {
+          skipOrgFilter = true;
+          continue;
+        }
+      }
 
       if (error) {
         if (error.message.includes('does not exist') || error.message.includes('relation') || error.code === '42P01') {
@@ -580,18 +637,14 @@ export async function getSalesAgentLeadDetailBootstrap(
 ): Promise<LeadDetailBootstrap | { error: string }> {
   try {
     const session = await getSession();
-    if (!session || session.role !== 'sales_agent') {
+    if (!session || !isSalesPortalActor(session)) {
       return { error: 'Unauthorized' };
     }
 
     const supabase = await createAdminClient();
 
     const [agentResult, leadResult, inquiryResult] = await Promise.all([
-      supabase
-        .from('sales_agents')
-        .select('id, permissions')
-        .eq('username', session.username)
-        .maybeSingle(),
+      fetchSalesAgentBySession(supabase, session),
       supabase.from('leads').select(LEAD_DETAIL_SELECT).eq('id', leadId).maybeSingle(),
       listInquiriesForLead(supabase, leadId, session.role),
     ]);
@@ -601,11 +654,11 @@ export async function getSalesAgentLeadDetailBootstrap(
         agentResult.error.message.includes('permissions') ||
         agentResult.error.message.includes('column "permissions"')
       ) {
-        const { data: fallbackAgent, error: fallbackError } = await supabase
-          .from('sales_agents')
-          .select('id')
-          .eq('username', session.username)
-          .maybeSingle();
+        const { data: fallbackAgent, error: fallbackError } = await fetchSalesAgentBySession(
+          supabase,
+          session,
+          { permissions: false }
+        );
 
         if (fallbackError || !fallbackAgent) {
           return { error: 'Sales agent not found' };
@@ -665,12 +718,40 @@ export async function getAllLeadsForAdmin() {
       return { error: 'Unauthorized' };
     }
 
+    const {
+      requireAdminOrganizationScope,
+      applyOrganizationFilter,
+      isMissingOrganizationColumnError,
+    } = await import('@/lib/admin-organization-context');
+
+    const scope = await requireAdminOrganizationScope();
+    if ('error' in scope) {
+      if (scope.status === 403) return { leads: [] };
+      return { error: scope.error };
+    }
+
     const supabase = await createAdminClient();
 
-    // Get all leads with sales agent information
-    const { data, error } = await supabase
-      .from('leads')
-      .select(`
+    let query = applyOrganizationFilter(
+      supabase
+        .from('leads')
+        .select(`
+        *,
+        sales_agents!leads_sales_agent_id_fkey (
+          id,
+          name,
+          username
+        )
+      `),
+      scope.organizationId
+    );
+
+    let { data, error } = await query.order('created_at', { ascending: false });
+
+    if (error && isMissingOrganizationColumnError(error)) {
+      const retry = await supabase
+        .from('leads')
+        .select(`
         *,
         sales_agents!leads_sales_agent_id_fkey (
           id,
@@ -678,7 +759,10 @@ export async function getAllLeadsForAdmin() {
           username
         )
       `)
-      .order('created_at', { ascending: false });
+        .order('created_at', { ascending: false });
+      data = retry.data;
+      error = retry.error;
+    }
 
     if (error) {
       if (error.message.includes('does not exist') || error.message.includes('relation') || error.code === '42P01') {
@@ -723,9 +807,9 @@ export async function updateLeadStatus(leadId: string, status: LeadStatus) {
     }
 
     // Allow admins or sales agents with "pipeline" permission
-    if (session.role === 'admin') {
+    if (isSuperAdminSession(session)) {
       // Admin has access
-    } else if (session.role === 'sales_agent') {
+    } else if (isSalesPortalActor(session)) {
       const { hasPermission } = await import('@/lib/auth/permissions');
       const hasAccess = await hasPermission('pipeline');
       if (!hasAccess) {
@@ -746,11 +830,11 @@ export async function updateLeadStatus(leadId: string, status: LeadStatus) {
     const supabase = await createAdminClient();
 
     // Verify the lead belongs to this sales agent
-    const { data: salesAgent, error: agentError } = await supabase
-      .from('sales_agents')
-      .select('id')
-      .eq('username', session.username)
-      .single();
+    const { data: salesAgent, error: agentError } = await fetchSalesAgentBySession(
+      supabase,
+      session,
+      { permissions: false }
+    );
 
     if (agentError || !salesAgent) {
       return { error: 'Sales agent not found' };
@@ -818,18 +902,18 @@ export async function updateLeadStatus(leadId: string, status: LeadStatus) {
 export async function getLeadComments(leadId: string) {
   try {
     const session = await getSession();
-    if (!session || session.role !== 'sales_agent') {
+    if (!session || !isSalesPortalActor(session)) {
       return { error: 'Unauthorized' };
     }
 
     const supabase = await createAdminClient();
 
     // Verify the lead belongs to this sales agent
-    const { data: salesAgent, error: agentError } = await supabase
-      .from('sales_agents')
-      .select('id')
-      .eq('username', session.username)
-      .single();
+    const { data: salesAgent, error: agentError } = await fetchSalesAgentBySession(
+      supabase,
+      session,
+      { permissions: false }
+    );
 
     if (agentError || !salesAgent) {
       return { error: 'Sales agent not found' };
@@ -871,9 +955,9 @@ export async function createLeadComment(leadId: string, comment: string) {
     }
 
     // Allow admins or sales agents with "lead" or "pipeline" permission
-    if (session.role === 'admin') {
+    if (isSuperAdminSession(session)) {
       // Admin has access
-    } else if (session.role === 'sales_agent') {
+    } else if (isSalesPortalActor(session)) {
       const { hasPermission } = await import('@/lib/auth/permissions');
       const hasLead = await hasPermission('lead');
       const hasPipeline = await hasPermission('pipeline');
@@ -891,11 +975,11 @@ export async function createLeadComment(leadId: string, comment: string) {
     const supabase = await createAdminClient();
 
     // Verify the lead belongs to this sales agent
-    const { data: salesAgent, error: agentError } = await supabase
-      .from('sales_agents')
-      .select('id')
-      .eq('username', session.username)
-      .single();
+    const { data: salesAgent, error: agentError } = await fetchSalesAgentBySession(
+      supabase,
+      session,
+      { permissions: false }
+    );
 
     if (agentError || !salesAgent) {
       return { error: 'Sales agent not found' };
@@ -941,9 +1025,9 @@ export async function updateLeadComment(commentId: string, comment: string) {
     }
 
     // Allow admins or sales agents with "lead" or "pipeline" permission
-    if (session.role === 'admin') {
+    if (isSuperAdminSession(session)) {
       // Admin has access
-    } else if (session.role === 'sales_agent') {
+    } else if (isSalesPortalActor(session)) {
       const { hasPermission } = await import('@/lib/auth/permissions');
       const hasLead = await hasPermission('lead');
       const hasPipeline = await hasPermission('pipeline');
@@ -961,11 +1045,11 @@ export async function updateLeadComment(commentId: string, comment: string) {
     const supabase = await createAdminClient();
 
     // Verify the comment belongs to a lead owned by this sales agent
-    const { data: salesAgent, error: agentError } = await supabase
-      .from('sales_agents')
-      .select('id')
-      .eq('username', session.username)
-      .single();
+    const { data: salesAgent, error: agentError } = await fetchSalesAgentBySession(
+      supabase,
+      session,
+      { permissions: false }
+    );
 
     if (agentError || !salesAgent) {
       return { error: 'Sales agent not found' };
@@ -1023,9 +1107,9 @@ export async function deleteLeadComment(commentId: string) {
     }
 
     // Allow admins or sales agents with "lead" or "pipeline" permission
-    if (session.role === 'admin') {
+    if (isSuperAdminSession(session)) {
       // Admin has access
-    } else if (session.role === 'sales_agent') {
+    } else if (isSalesPortalActor(session)) {
       const { hasPermission } = await import('@/lib/auth/permissions');
       const hasLead = await hasPermission('lead');
       const hasPipeline = await hasPermission('pipeline');
@@ -1039,11 +1123,11 @@ export async function deleteLeadComment(commentId: string) {
     const supabase = await createAdminClient();
 
     // Verify the comment belongs to a lead owned by this sales agent
-    const { data: salesAgent, error: agentError } = await supabase
-      .from('sales_agents')
-      .select('id')
-      .eq('username', session.username)
-      .single();
+    const { data: salesAgent, error: agentError } = await fetchSalesAgentBySession(
+      supabase,
+      session,
+      { permissions: false }
+    );
 
     if (agentError || !salesAgent) {
       return { error: 'Sales agent not found' };
@@ -1096,9 +1180,9 @@ export async function updateLead(formData: FormData) {
     }
 
     // Allow admins or sales agents with "lead" permission
-    if (session.role === 'admin') {
+    if (isSuperAdminSession(session)) {
       // Admin has access
-    } else if (session.role === 'sales_agent') {
+    } else if (isSalesPortalActor(session)) {
       const { hasPermission } = await import('@/lib/auth/permissions');
       const hasAccess = await hasPermission('lead');
       if (!hasAccess) {
@@ -1124,11 +1208,11 @@ export async function updateLead(formData: FormData) {
     const supabase = await createAdminClient();
 
     // Get sales agent by username
-    const { data: salesAgent, error: agentError } = await supabase
-      .from('sales_agents')
-      .select('id')
-      .eq('username', session.username)
-      .single();
+    const { data: salesAgent, error: agentError } = await fetchSalesAgentBySession(
+      supabase,
+      session,
+      { permissions: false }
+    );
 
     if (agentError || !salesAgent) {
       return { error: 'Sales agent not found' };
@@ -1262,9 +1346,9 @@ export async function deleteLead(leadId: string) {
     }
 
     // Allow admins or sales agents with "lead" permission
-    if (session.role === 'admin') {
+    if (isSuperAdminSession(session)) {
       // Admin has access
-    } else if (session.role === 'sales_agent') {
+    } else if (isSalesPortalActor(session)) {
       const { hasPermission } = await import('@/lib/auth/permissions');
       const hasAccess = await hasPermission('lead');
       if (!hasAccess) {
@@ -1277,11 +1361,11 @@ export async function deleteLead(leadId: string) {
     const supabase = await createAdminClient();
 
     // Get sales agent by username
-    const { data: salesAgent, error: agentError } = await supabase
-      .from('sales_agents')
-      .select('id')
-      .eq('username', session.username)
-      .single();
+    const { data: salesAgent, error: agentError } = await fetchSalesAgentBySession(
+      supabase,
+      session,
+      { permissions: false }
+    );
 
     if (agentError || !salesAgent) {
       return { error: 'Sales agent not found' };
@@ -1322,7 +1406,7 @@ export async function deleteLead(leadId: string) {
 export async function getTransferableSalesAgents() {
   try {
     const session = await getSession();
-    if (!session || session.role !== 'sales_agent') {
+    if (!session || !isSalesPortalActor(session)) {
       return { error: 'Unauthorized' };
     }
 
@@ -1333,11 +1417,11 @@ export async function getTransferableSalesAgents() {
     }
 
     const supabase = await createAdminClient();
-    const { data: currentAgent, error: currentAgentError } = await supabase
-      .from('sales_agents')
-      .select('id')
-      .eq('username', session.username)
-      .single();
+    const { data: currentAgent, error: currentAgentError } = await fetchSalesAgentBySession(
+      supabase,
+      session,
+      { permissions: false }
+    );
 
     if (currentAgentError || !currentAgent) {
       return { error: 'Sales agent not found' };
@@ -1364,7 +1448,7 @@ export async function getTransferableSalesAgents() {
 export async function transferLeadToSalesAgent(leadId: string, targetSalesAgentId: string) {
   try {
     const session = await getSession();
-    if (!session || session.role !== 'sales_agent') {
+    if (!session || !isSalesPortalActor(session)) {
       return { error: 'Unauthorized' };
     }
 
@@ -1380,11 +1464,11 @@ export async function transferLeadToSalesAgent(leadId: string, targetSalesAgentI
 
     const supabase = await createAdminClient();
 
-    const { data: senderAgent, error: senderError } = await supabase
-      .from('sales_agents')
-      .select('id, name, username')
-      .eq('username', session.username)
-      .single();
+    const { data: senderAgent, error: senderError } = await fetchSalesAgentBySession(
+      supabase,
+      session,
+      { permissions: false }
+    );
 
     if (senderError || !senderAgent) {
       return { error: 'Sales agent not found' };
@@ -1485,7 +1569,7 @@ export async function transferLeadToSalesAgent(leadId: string, targetSalesAgentI
 export async function getLeadTransferHistoryForCurrentSalesAgent() {
   try {
     const session = await getSession();
-    if (!session || session.role !== 'sales_agent') {
+    if (!session || !isSalesPortalActor(session)) {
       return { error: 'Unauthorized' };
     }
 
@@ -1496,11 +1580,11 @@ export async function getLeadTransferHistoryForCurrentSalesAgent() {
     }
 
     const supabase = await createAdminClient();
-    const { data: currentAgent, error: currentAgentError } = await supabase
-      .from('sales_agents')
-      .select('id')
-      .eq('username', session.username)
-      .single();
+    const { data: currentAgent, error: currentAgentError } = await fetchSalesAgentBySession(
+      supabase,
+      session,
+      { permissions: false }
+    );
 
     if (currentAgentError || !currentAgent) {
       return { error: 'Sales agent not found' };

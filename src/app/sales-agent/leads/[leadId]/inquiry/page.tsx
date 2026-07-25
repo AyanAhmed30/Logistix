@@ -1,6 +1,7 @@
 import { getSession } from "@/lib/auth/session";
 import { redirect } from "next/navigation";
 import { getLeadForSalesAgentById } from "@/app/actions/leads";
+import { sessionHasSalesAccess } from "@/lib/auth/require-access";
 
 /** @deprecated Use `/sales-agent/leads/[leadId]` — inquiries live on the lead detail page only. */
 export default async function SalesAgentLeadInquiryPageRedirect({
@@ -9,14 +10,14 @@ export default async function SalesAgentLeadInquiryPageRedirect({
   params: Promise<{ leadId: string }>;
 }) {
   const session = await getSession();
-  if (!session || session.role !== "sales_agent") {
-    redirect("/login");
+  if (!session || !sessionHasSalesAccess(session)) {
+    redirect("/access-denied");
   }
 
   const { leadId } = await params;
   const result = await getLeadForSalesAgentById(leadId);
   if ("error" in result || !result.lead) {
-    redirect("/sales-agent/dashboard");
+    redirect(session.role === "user" ? "/user/dashboard" : "/sales-agent/dashboard");
   }
 
   redirect(`/sales-agent/leads/${leadId}?tab=view`);

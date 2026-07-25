@@ -2,6 +2,7 @@
 
 import { createAdminClient } from '@/utils/supabase/server';
 import { getSession } from '@/lib/auth/session';
+import { sessionHasSalesAccess, isSalesPortalActor } from '@/lib/auth/require-access';
 import { revalidatePath } from 'next/cache';
 import {
   buildInvoicePosting,
@@ -46,8 +47,8 @@ export type InvoiceLog = {
 
 type InvoiceChatterKind = 'message' | 'note' | 'activity';
 
-function ensureAdminOrSalesAgent(session: { role: string } | null) {
-  if (!session || (session.role !== 'admin' && session.role !== 'sales_agent')) {
+function ensureAdminOrSalesAgent(session: { role: string; permissions?: string[] } | null) {
+  if (!session || !sessionHasSalesAccess(session)) {
     throw new Error('Unauthorized');
   }
 }
@@ -522,7 +523,7 @@ export async function getAllInvoices(status?: InvoiceStatus) {
 export async function getAllInvoicesForSalesAgent(status?: InvoiceStatus) {
   try {
     const session = await getSession();
-    if (!session || session.role !== 'sales_agent') {
+    if (!session || !isSalesPortalActor(session)) {
       return { error: 'Unauthorized' };
     }
 

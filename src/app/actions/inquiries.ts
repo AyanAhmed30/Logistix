@@ -2,6 +2,14 @@
 
 import { createAdminClient } from '@/utils/supabase/server';
 import { getSession } from '@/lib/auth/session';
+import {
+  sessionHasSalesAccess,
+  sessionHasOperationsAccess,
+  isSalesPortalActor,
+  isOperationsPortalActor,
+} from '@/lib/auth/require-access';
+import { canAccessLeadForInquiry } from '@/lib/inquiry-crm-access';
+import { isSuperAdminSession } from '@/lib/auth/super-admin';
 import { revalidatePath } from 'next/cache';
 import {
   validateInquiryProductInfoForSend,
@@ -16,6 +24,110 @@ import {
   withDerivedInvValue,
 } from '@/lib/inquiry-calculator';
 import { uploadToInquiryImagesBucket } from '@/lib/inquiry-storage';
+import type { SessionPayload } from '@/lib/auth/session';
+
+async function resolveLeadOrganizationId(
+  supabase: Awaited<ReturnType<typeof createAdminClient>>,
+  leadId: string
+): Promise<string | null> {
+  const { data } = await supabase
+    .from('leads')
+    .select('organization_id')
+    .eq('id', leadId)
+    .maybeSingle();
+  return data?.organization_id ? String(data.organization_id) : null;
+}
+
+async function buildInquiryOrganizationFields(
+  supabase: Awaited<ReturnType<typeof createAdminClient>>,
+  leadId: string,
+  session: SessionPayload
+): Promise<{ organization_id?: string; created_by: string }> {
+  const fromLead = await resolveLeadOrganizationId(supabase, leadId);
+  const fromSession = session.organizationId ? String(session.organizationId) : null;
+  const organization_id = fromLead || fromSession || undefined;
+  return {
+    organization_id,
+    created_by: session.username || 'system',
+  };
+}
+
+async function resolveOperationsOrganizationScope() {
+  const session = await getSession();
+  if (!session || !sessionHasOperationsAccess(session)) {
+    return { error: 'Unauthorized' as const };
+  }
+
+  const {
+    requireAdminOrganizationScope,
+    sessionUsesOrganizationScope,
+  } = await import('@/lib/admin-organization-context');
+
+  const scope = sessionUsesOrganizationScope(session.role)
+    ? await requireAdminOrganizationScope()
+    : null;
+
+  if (scope && 'error' in scope) {
+    if (scope.status === 403) {
+      return { session, organizationId: null as string | null, empty: true as const };
+    }
+    return { error: scope.error };
+  }
+
+  const organizationId =
+    scope && !('error' in scope) ? scope.organizationId : null;
+
+  return { session, organizationId, empty: false as const };
+}
+
+async function getLeadIdsForOrganization(
+  supabase: Awaited<ReturnType<typeof createAdminClient>>,
+  organizationId: string
+): Promise<string[] | { error: string } | null> {
+  const { data, error } = await supabase
+    .from('leads')
+    .select('id')
+    .or(`organization_id.eq.${organizationId},organization_id.is.null`);
+
+  const { isMissingOrganizationColumnError } = await import('@/lib/admin-organization-context');
+
+  if (error) {
+    if (isMissingOrganizationColumnError(error)) return null;
+    return { error: error.message };
+  }
+
+  return (data || []).map((row) => String(row.id || '')).filter(Boolean);
+}
+
+async function assertInquiryInOrganization(
+  supabase: Awaited<ReturnType<typeof createAdminClient>>,
+  inquiryId: string,
+  organizationId: string | null | undefined
+): Promise<{ ok: true } | { error: string }> {
+  if (!organizationId) return { ok: true };
+
+  const { data, error } = await supabase
+    .from('lead_inquiries')
+    .select('id, lead_id, organization_id')
+    .eq('id', inquiryId)
+    .maybeSingle();
+
+  if (error || !data) return { error: 'Inquiry not found' };
+
+  if (data.organization_id) {
+    if (String(data.organization_id) !== organizationId) {
+      return { error: 'Access Denied' };
+    }
+    return { ok: true };
+  }
+
+  const leadOrgId = await resolveLeadOrganizationId(supabase, String(data.lead_id));
+  if (leadOrgId && leadOrgId !== organizationId) {
+    return { error: 'Access Denied' };
+  }
+
+  return { ok: true };
+}
 
 export type InquiryStatus = 'pending' | 'in_progress' | 'quotation_sent' | 'completed';
 
@@ -133,6 +245,8 @@ export type LeadInquiry = {
   approval_status?: 'sent' | 'approved' | 'rejected';
   approved_at?: string | null;
   calculator_values: Record<string, string> | Record<string, unknown> | null;
+  organization_id?: string | null;
+  created_by?: string | null;
   created_at: string;
   updated_at: string;
   inquiry_confirmations?: {
@@ -262,8 +376,14 @@ const OPERATIONS_INQUIRY_CACHE_TTL_MS = 30000;
 const OPERATIONS_INQUIRY_CACHE_MAX_ENTRIES = 120;
 const operationsInquiriesCache = new Map<string, { expiresAt: number; data: OperationsInquiriesPage }>();
 
-function buildOperationsInquiriesCacheKey(input: { role: string; limit: number; offset: number; search: string }) {
-  return `${input.role}|${input.limit}|${input.offset}|${input.search.toLowerCase()}`;
+function buildOperationsInquiriesCacheKey(input: {
+  role: string;
+  limit: number;
+  offset: number;
+  search: string;
+  organizationId?: string;
+}) {
+  return `${input.role}|${input.organizationId || 'all'}|${input.limit}|${input.offset}|${input.search.toLowerCase()}`;
 }
 
 function readOperationsInquiriesCache(key: string) {
@@ -296,33 +416,43 @@ async function canAccessLeadChat(
   session: Awaited<ReturnType<typeof getSession>>,
   leadId: string
 ): Promise<{ allowed: boolean; error?: string }> {
-  if (!session) return { allowed: false, error: 'Unauthorized' };
-  if (!leadId) return { allowed: false, error: 'Lead id is required' };
+  return canAccessLeadForInquiry(session, supabase, leadId);
+}
 
-  if (session.role === 'admin' || session.role === 'operations') {
-    return { allowed: true };
+async function linkInquiryToCrmOpportunity(
+  supabase: Awaited<ReturnType<typeof createAdminClient>>,
+  inquiryId: string,
+  crmOpportunityId?: string | null
+) {
+  if (!crmOpportunityId) return;
+  await supabase
+    .from('lead_inquiries')
+    .update({ crm_opportunity_id: crmOpportunityId })
+    .eq('id', inquiryId);
+}
+
+async function logCrmInquiryActivityFromInquiryAction(input: {
+  crmOpportunityId?: string | null;
+  organizationId?: string | null;
+  performedBy: string;
+  event: 'created' | 'sent' | 'updated';
+  inquiryId: string;
+  detail?: string;
+}) {
+  if (!input.crmOpportunityId || !input.organizationId) return;
+  try {
+    const { logCrmInquiryEvent } = await import('@/app/actions/crm/inquiries');
+    await logCrmInquiryEvent({
+      opportunityId: input.crmOpportunityId,
+      organizationId: input.organizationId,
+      performedBy: input.performedBy,
+      event: input.event,
+      inquiryId: input.inquiryId,
+      detail: input.detail,
+    });
+  } catch {
+    // Never block inquiry workflow
   }
-
-  if (session.role === 'sales_agent') {
-    const { data: salesAgent } = await supabase
-      .from('sales_agents')
-      .select('id')
-      .eq('username', session.username)
-      .maybeSingle();
-
-    if (!salesAgent) return { allowed: false, error: 'Unauthorized' };
-
-    const { data: lead } = await supabase
-      .from('leads')
-      .select('id')
-      .eq('id', leadId)
-      .eq('sales_agent_id', salesAgent.id)
-      .maybeSingle();
-
-    return { allowed: !!lead, error: lead ? undefined : 'Unauthorized' };
-  }
-
-  return { allowed: false, error: 'Unauthorized' };
 }
 
 function toComparableValue(value: unknown) {
@@ -409,6 +539,7 @@ export async function saveInquiry(
   inquiryId?: string,
   options?: {
     forceNewInquiry?: boolean;
+    crmOpportunityId?: string;
   }
 ) {
   try {
@@ -416,8 +547,15 @@ export async function saveInquiry(
     if (!session) return { error: 'Unauthorized' };
 
     const supabase = await createAdminClient();
+    const leadAccess = await canAccessLeadForInquiry(session, supabase, leadId, {
+      crmOpportunityId: options?.crmOpportunityId,
+    });
+    if (!leadAccess.allowed) {
+      return { error: leadAccess.error || 'Unauthorized' };
+    }
 
     const forceNewInquiry = Boolean(options?.forceNewInquiry);
+    const crmOpportunityId = options?.crmOpportunityId || null;
     const explicitInquiryId = forceNewInquiry ? undefined : inquiryId;
 
     let targetRow: InquirySaveTargetRow | null = null;
@@ -475,14 +613,23 @@ export async function saveInquiry(
         return { error: 'Inquiry does not belong to this lead' };
       }
 
+      const updatePayload: Record<string, unknown> = { ...inquiryData };
+      if (crmOpportunityId) {
+        updatePayload.crm_opportunity_id = crmOpportunityId;
+      }
+
       const { data: result, error } = await supabase
         .from('lead_inquiries')
-        .update(inquiryData)
+        .update(updatePayload)
         .eq('id', targetRow.id)
         .select()
         .single();
 
       if (error) return { error: error.message };
+
+      if (crmOpportunityId) {
+        await linkInquiryToCrmOpportunity(supabase, targetRow.id, crmOpportunityId);
+      }
 
       // Log only when there are actual field changes.
       const previousValues: Record<string, unknown> = {};
@@ -533,6 +680,17 @@ export async function saveInquiry(
           previousValues,
           newValues,
         });
+        if (crmOpportunityId) {
+          const orgFields = await buildInquiryOrganizationFields(supabase, leadId, session);
+          await logCrmInquiryActivityFromInquiryAction({
+            crmOpportunityId,
+            organizationId: orgFields.organization_id || null,
+            performedBy: session.username || 'sales-agent',
+            event: 'updated',
+            inquiryId: targetRow.id,
+            detail: inquiryData.product_name || undefined,
+          });
+        }
       }
 
       return { success: true, inquiry: result as LeadInquiry };
@@ -540,25 +698,36 @@ export async function saveInquiry(
       // Always insert a new row for additional inquiries on the same lead.
       const nextVersion = await getNextInquiryVersionNumber(supabase, leadId);
       const versionGroupId = crypto.randomUUID();
+      const orgFields = await buildInquiryOrganizationFields(supabase, leadId, session);
+
+      const insertPayload: Record<string, unknown> = {
+        lead_id: leadId,
+        inquiry_group_id: versionGroupId,
+        version_number: nextVersion,
+        is_current_version: true,
+        ...inquiryData,
+        ...orgFields,
+        status: 'pending',
+        sent_to_accounting: false,
+        sent_to_operations: false,
+        approval_status: 'draft',
+        approved_at: null,
+      };
+      if (crmOpportunityId) {
+        insertPayload.crm_opportunity_id = crmOpportunityId;
+      }
 
       const { data: result, error } = await supabase
         .from('lead_inquiries')
-        .insert([{
-          lead_id: leadId,
-          inquiry_group_id: versionGroupId,
-          version_number: nextVersion,
-          is_current_version: true,
-          ...inquiryData,
-          status: 'pending',
-          sent_to_accounting: false,
-          sent_to_operations: false,
-          approval_status: 'draft',
-          approved_at: null,
-        }])
+        .insert([insertPayload])
         .select()
         .single();
 
       if (error) return { error: error.message };
+
+      if (crmOpportunityId && result?.id) {
+        await linkInquiryToCrmOpportunity(supabase, String(result.id), crmOpportunityId);
+      }
 
       await supabase.from('inquiry_logs').insert([
         {
@@ -594,6 +763,17 @@ export async function saveInquiry(
         },
       });
 
+      if (crmOpportunityId && result?.id) {
+        await logCrmInquiryActivityFromInquiryAction({
+          crmOpportunityId,
+          organizationId: orgFields.organization_id || null,
+          performedBy: session.username || 'sales-agent',
+          event: 'created',
+          inquiryId: String(result.id),
+          detail: inquiryData.product_name || undefined,
+        });
+      }
+
       return { success: true, inquiry: result as LeadInquiry };
     }
   } catch (err) {
@@ -618,21 +798,14 @@ export async function sendInquiryToAccounting(inquiryId: string) {
       return { error: 'Inquiry not found. Please add inquiry details first.' };
     }
 
-    if (session.role === 'sales_agent') {
-      const { data: salesAgent } = await supabase
-        .from('sales_agents')
-        .select('id')
-        .eq('username', session.username)
-        .maybeSingle();
-      if (!salesAgent) return { error: 'Unauthorized' };
-
-      const { data: lead } = await supabase
-        .from('leads')
-        .select('id, sales_agent_id')
-        .eq('id', inquiry.lead_id)
-        .maybeSingle();
-      if (!lead || lead.sales_agent_id !== salesAgent.id) {
-        return { error: 'Unauthorized' };
+    if (!isSuperAdminSession(session) && !isOperationsPortalActor(session)) {
+      const leadAccess = await canAccessLeadForInquiry(session, supabase, String(inquiry.lead_id), {
+        crmOpportunityId: inquiry.crm_opportunity_id
+          ? String(inquiry.crm_opportunity_id)
+          : null,
+      });
+      if (!leadAccess.allowed) {
+        return { error: leadAccess.error || 'Unauthorized' };
       }
     }
 
@@ -652,6 +825,7 @@ export async function sendInquiryToAccounting(inquiryId: string) {
     }
 
     // Update inquiry status - send to accounting (operations reads from same flag)
+    const orgFields = await buildInquiryOrganizationFields(supabase, inquiry.lead_id, session);
     const updatePayload: Record<string, unknown> = {
       sent_to_accounting: true,
       sent_at: new Date().toISOString(),
@@ -660,6 +834,9 @@ export async function sendInquiryToAccounting(inquiryId: string) {
       status: 'pending',
       updated_at: new Date().toISOString(),
     };
+    if (orgFields.organization_id && !inquiry.organization_id) {
+      updatePayload.organization_id = orgFields.organization_id;
+    }
 
     const { data, error } = await supabase
       .from('lead_inquiries')
@@ -729,6 +906,23 @@ export async function sendInquiryToAccounting(inquiryId: string) {
     revalidatePath('/admin/dashboard');
     revalidatePath('/operations/dashboard');
     invalidateOperationsInquiriesCache();
+
+    const crmOpportunityId = inquiry.crm_opportunity_id
+      ? String(inquiry.crm_opportunity_id)
+      : null;
+    if (crmOpportunityId) {
+      await logCrmInquiryActivityFromInquiryAction({
+        crmOpportunityId,
+        organizationId: orgFields.organization_id || inquiry.organization_id || null,
+        performedBy: session.username || 'sales-agent',
+        event: 'sent',
+        inquiryId: String(inquiry.id),
+        detail: inquiry.product_name || undefined,
+      });
+      revalidatePath(`/crm/opportunities/${crmOpportunityId}`);
+      revalidatePath(`/crm/opportunities/${crmOpportunityId}/inquiry`);
+    }
+
     return { success: true, inquiry: data as LeadInquiry };
   } catch (err) {
     return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };
@@ -745,6 +939,7 @@ export async function saveAndSendInquiry(
   inquiryId?: string,
   options?: {
     forceNewInquiry?: boolean;
+    crmOpportunityId?: string;
   }
 ) {
   const validation = validateInquiryProductInfoForSend({
@@ -785,55 +980,53 @@ export async function saveAndSendInquiry(
   return sendInquiryToAccounting(inquiryToSendId);
 }
 
-export async function createInquiryDraft(leadId: string) {
+export async function createInquiryDraft(
+  leadId: string,
+  options?: { crmOpportunityId?: string }
+) {
   try {
     const session = await getSession();
     if (!session) return { error: 'Unauthorized' };
     const supabase = await createAdminClient();
 
-    if (session.role !== 'sales_agent') {
-      return { error: 'Unauthorized' };
-    }
-
-    const { data: salesAgent } = await supabase
-      .from('sales_agents')
-      .select('id')
-      .eq('username', session.username)
-      .maybeSingle();
-    if (!salesAgent) return { error: 'Unauthorized' };
-
-    const { data: lead } = await supabase
-      .from('leads')
-      .select('id, sales_agent_id')
-      .eq('id', leadId)
-      .maybeSingle();
-    if (!lead || lead.sales_agent_id !== salesAgent.id) {
-      return { error: 'Unauthorized' };
+    const leadAccess = await canAccessLeadForInquiry(session, supabase, leadId, {
+      crmOpportunityId: options?.crmOpportunityId,
+    });
+    if (!leadAccess.allowed) {
+      return { error: leadAccess.error || 'Unauthorized' };
     }
 
     const nextVersion = await getNextInquiryVersionNumber(supabase, leadId);
     const versionGroupId = crypto.randomUUID();
+    const orgFields = await buildInquiryOrganizationFields(supabase, leadId, session);
+    const crmOpportunityId = options?.crmOpportunityId || null;
+
+    const insertPayload: Record<string, unknown> = {
+      lead_id: leadId,
+      inquiry_group_id: versionGroupId,
+      version_number: nextVersion,
+      is_current_version: true,
+      product_name: '',
+      total_weight: '',
+      cbm: '',
+      quantity: '',
+      description: '',
+      image_url: null,
+      additional_image_urls: [],
+      ...orgFields,
+      status: 'pending',
+      sent_to_accounting: false,
+      sent_to_operations: false,
+      approval_status: 'draft',
+      approved_at: null,
+    };
+    if (crmOpportunityId) {
+      insertPayload.crm_opportunity_id = crmOpportunityId;
+    }
 
     const { data: result, error } = await supabase
       .from('lead_inquiries')
-      .insert([{
-        lead_id: leadId,
-        inquiry_group_id: versionGroupId,
-        version_number: nextVersion,
-        is_current_version: true,
-        product_name: '',
-        total_weight: '',
-        cbm: '',
-        quantity: '',
-        description: '',
-        image_url: null,
-        additional_image_urls: [],
-        status: 'pending',
-        sent_to_accounting: false,
-        sent_to_operations: false,
-        approval_status: 'draft',
-        approved_at: null,
-      }])
+      .insert([insertPayload])
       .select()
       .single();
 
@@ -1158,28 +1351,21 @@ export async function getInquiryForLead(leadId: string) {
   }
 }
 
-export async function getInquiriesForLead(leadId: string) {
+export async function getInquiriesForLead(
+  leadId: string,
+  options?: { crmOpportunityId?: string }
+) {
   try {
     const session = await getSession();
     if (!session) return { error: 'Unauthorized' };
 
     const supabase = await createAdminClient();
 
-    if (session.role === 'sales_agent') {
-      const [agentResult, leadResult] = await Promise.all([
-        supabase.from('sales_agents').select('id').eq('username', session.username).maybeSingle(),
-        supabase.from('leads').select('id, sales_agent_id').eq('id', leadId).maybeSingle(),
-      ]);
-
-      const salesAgent = agentResult.data;
-      const lead = leadResult.data;
-
-      if (!salesAgent) return { error: 'Unauthorized' };
-      if (!lead || lead.sales_agent_id !== salesAgent.id) {
-        return { error: 'Unauthorized' };
-      }
-    } else if (session.role !== 'admin' && session.role !== 'operations') {
-      return { error: 'Unauthorized' };
+    const leadAccess = await canAccessLeadForInquiry(session, supabase, leadId, {
+      crmOpportunityId: options?.crmOpportunityId,
+    });
+    if (!leadAccess.allowed && !sessionHasOperationsAccess(session)) {
+      return { error: leadAccess.error || 'Unauthorized' };
     }
 
     const result = await listInquiriesForLead(supabase, leadId, session.role);
@@ -1198,7 +1384,7 @@ export async function getInquiryAvailabilityForLead(leadId: string) {
 
     const supabase = await createAdminClient();
 
-    if (session.role === 'sales_agent') {
+    if (isSalesPortalActor(session)) {
       const { data: salesAgent } = await supabase
         .from('sales_agents')
         .select('id')
@@ -1216,7 +1402,7 @@ export async function getInquiryAvailabilityForLead(leadId: string) {
       if (!lead || lead.sales_agent_id !== salesAgent.id) {
         return { error: 'Unauthorized' };
       }
-    } else if (session.role !== 'admin' && session.role !== 'operations') {
+    } else if (!sessionHasOperationsAccess(session)) {
       return { error: 'Unauthorized' };
     }
 
@@ -1262,7 +1448,7 @@ export async function getInquiryHistoryForLead(leadId: string) {
     const supabase = await createAdminClient();
 
     // Role-based guard for sales agents: allow only their own lead.
-    if (session.role === 'sales_agent') {
+    if (isSalesPortalActor(session)) {
       const { data: salesAgent } = await supabase
         .from('sales_agents')
         .select('id')
@@ -1280,7 +1466,7 @@ export async function getInquiryHistoryForLead(leadId: string) {
       if (!lead || lead.sales_agent_id !== salesAgent.id) {
         return { error: 'Unauthorized' };
       }
-    } else if (session.role !== 'admin' && session.role !== 'operations') {
+    } else if (!sessionHasOperationsAccess(session)) {
       return { error: 'Unauthorized' };
     }
 
@@ -1457,15 +1643,21 @@ function normalizeOperationsInquiryRow(row: Record<string, unknown>): LeadInquir
 
 async function queryOperationsInquiriesPage(
   supabase: Awaited<ReturnType<typeof createAdminClient>>,
-  input: { pageLimit: number; offset: number; search: string }
+  input: { pageLimit: number; offset: number; search: string; organizationId?: string | null }
 ): Promise<OperationsInquiriesPage | { error: string }> {
-  const { pageLimit, offset, search } = input;
+  const { pageLimit, offset, search, organizationId } = input;
+
+  const { applyOrganizationFilter, isMissingOrganizationColumnError } = await import(
+    '@/lib/admin-organization-context'
+  );
 
   let matchedLeadIds: string[] = [];
   if (search) {
-    const { data: leadRows } = await supabase
-      .from('leads')
-      .select('id')
+    let leadSearch = supabase.from('leads').select('id');
+    if (organizationId) {
+      leadSearch = applyOrganizationFilter(leadSearch, organizationId);
+    }
+    const { data: leadRows, error: leadSearchError } = await leadSearch
       .or(
         [
           `name.ilike.%${search}%`,
@@ -1475,35 +1667,76 @@ async function queryOperationsInquiriesPage(
         ].join(',')
       )
       .limit(200);
-    matchedLeadIds = (leadRows || []).map((row) => String(row.id || '')).filter(Boolean);
+
+    if (leadSearchError && organizationId && isMissingOrganizationColumnError(leadSearchError)) {
+      const { data: fallbackLeadRows } = await supabase
+        .from('leads')
+        .select('id')
+        .or(
+          [
+            `name.ilike.%${search}%`,
+            `number.ilike.%${search}%`,
+            `source.ilike.%${search}%`,
+            `lead_id_formatted.ilike.%${search}%`,
+          ].join(',')
+        )
+        .limit(200);
+      matchedLeadIds = (fallbackLeadRows || []).map((row) => String(row.id || '')).filter(Boolean);
+    } else {
+      matchedLeadIds = (leadRows || []).map((row) => String(row.id || '')).filter(Boolean);
+    }
   }
 
-  let query = supabase
-    .from('lead_inquiries')
-    .select(OPERATIONS_LIST_INQUIRY_SELECT)
-    .eq('sent_to_accounting', true)
-    .order('sent_at', { ascending: false })
-    .range(offset, offset + pageLimit);
+  async function runPageQuery(filterByLeadIds?: string[] | null) {
+    if (filterByLeadIds && filterByLeadIds.length === 0) {
+      return { data: [] as Record<string, unknown>[], error: null };
+    }
 
-  if (search) {
-    const leadIdClause = matchedLeadIds.length > 0 ? `,lead_id.in.(${matchedLeadIds.join(',')})` : '';
-    query = query.or(
-      [
-        `product_name.ilike.%${search}%`,
-        `description.ilike.%${search}%`,
-        `status.ilike.%${search}%`,
-        `total_weight.ilike.%${search}%`,
-        `cbm.ilike.%${search}%`,
-        `quantity.ilike.%${search}%`,
-      ].join(',') + leadIdClause
-    );
+    let query = supabase
+      .from('lead_inquiries')
+      .select(OPERATIONS_LIST_INQUIRY_SELECT)
+      .eq('sent_to_accounting', true);
+
+    if (organizationId && filterByLeadIds === undefined) {
+      query = applyOrganizationFilter(query, organizationId);
+    }
+
+    if (filterByLeadIds && filterByLeadIds.length > 0) {
+      query = query.in('lead_id', filterByLeadIds);
+    }
+
+    query = query.order('sent_at', { ascending: false }).range(offset, offset + pageLimit);
+
+    if (search) {
+      const leadIdClause =
+        matchedLeadIds.length > 0 ? `,lead_id.in.(${matchedLeadIds.join(',')})` : '';
+      query = query.or(
+        [
+          `product_name.ilike.%${search}%`,
+          `description.ilike.%${search}%`,
+          `status.ilike.%${search}%`,
+          `total_weight.ilike.%${search}%`,
+          `cbm.ilike.%${search}%`,
+          `quantity.ilike.%${search}%`,
+        ].join(',') + leadIdClause
+      );
+    }
+
+    query = query
+      .order('created_at', { foreignTable: 'inquiry_confirmations', ascending: false })
+      .limit(1, { foreignTable: 'inquiry_confirmations' });
+
+    return query;
   }
 
-  query = query
-    .order('created_at', { foreignTable: 'inquiry_confirmations', ascending: false })
-    .limit(1, { foreignTable: 'inquiry_confirmations' });
+  let pageResult = await runPageQuery();
+  if (pageResult.error && organizationId && isMissingOrganizationColumnError(pageResult.error)) {
+    const leadIds = await getLeadIdsForOrganization(supabase, organizationId);
+    if (leadIds && 'error' in leadIds) return { error: leadIds.error };
+    pageResult = await runPageQuery(leadIds);
+  }
 
-  const { data, error } = await query;
+  const { data, error } = pageResult;
   if (error) return { error: error.message };
 
   const rows = ((data || []) as Array<Record<string, unknown>>).map(normalizeOperationsInquiryRow);
@@ -1520,8 +1753,21 @@ export async function getAllInquiriesForOperations(input?: {
 }) {
   try {
     const session = await getSession();
-    if (!session || (session.role !== 'admin' && session.role !== 'operations')) {
+    if (!session || !sessionHasOperationsAccess(session)) {
       return { error: 'Unauthorized' };
+    }
+
+    const { requireAdminOrganizationScope, sessionUsesOrganizationScope } = await import(
+      '@/lib/admin-organization-context'
+    );
+    const scope = sessionUsesOrganizationScope(session.role)
+      ? await requireAdminOrganizationScope()
+      : null;
+    if (scope && 'error' in scope) {
+      if (scope.status === 403) {
+        return { inquiries: [], total: 0, hasMore: false };
+      }
+      return { error: scope.error };
     }
 
     const supabase = await createAdminClient();
@@ -1529,18 +1775,26 @@ export async function getAllInquiriesForOperations(input?: {
     const pageLimit = Math.min(Math.max(Number(input?.limit || 20), 1), 100);
     const offset = Math.max(Number(input?.offset || 0), 0);
     const search = String(input?.search || "").trim();
+    const organizationId =
+      scope && !('error' in scope) ? scope.organizationId : null;
     const cacheKey = buildOperationsInquiriesCacheKey({
       role: session.role,
       limit: pageLimit,
       offset,
       search,
+      organizationId: organizationId || undefined,
     });
     const cached = readOperationsInquiriesCache(cacheKey);
     if (cached) {
       return cached;
     }
 
-    const result = await queryOperationsInquiriesPage(supabase, { pageLimit, offset, search });
+    const result = await queryOperationsInquiriesPage(supabase, {
+      pageLimit,
+      offset,
+      search,
+      organizationId,
+    });
     if ('error' in result) return result;
     writeOperationsInquiriesCache(cacheKey, result);
     return result;
@@ -1551,13 +1805,20 @@ export async function getAllInquiriesForOperations(input?: {
 
 export async function getInquiryForOperations(inquiryId: string) {
   try {
-    const session = await getSession();
-    if (!session || (session.role !== 'admin' && session.role !== 'operations')) {
-      return { error: 'Unauthorized' };
-    }
+    const scopeResult = await resolveOperationsOrganizationScope();
+    if ('error' in scopeResult) return { error: scopeResult.error };
+
     if (!inquiryId) return { error: 'Inquiry id is required' };
 
     const supabase = await createAdminClient();
+
+    const access = await assertInquiryInOrganization(
+      supabase,
+      inquiryId,
+      scopeResult.organizationId
+    );
+    if ('error' in access) return { error: access.error };
+
     const { data, error } = await supabase
       .from('lead_inquiries')
       .select(OPERATIONS_DETAIL_INQUIRY_SELECT)
@@ -1583,26 +1844,47 @@ export async function getOperationsInquiriesBootstrap(input?: {
 }) {
   try {
     const session = await getSession();
-    if (!session || (session.role !== 'admin' && session.role !== 'operations')) {
+    if (!session || !sessionHasOperationsAccess(session)) {
       return { error: 'Unauthorized' };
+    }
+
+    const { requireAdminOrganizationScope, sessionUsesOrganizationScope } = await import(
+      '@/lib/admin-organization-context'
+    );
+    const scope = sessionUsesOrganizationScope(session.role)
+      ? await requireAdminOrganizationScope()
+      : null;
+    if (scope && 'error' in scope) {
+      if (scope.status === 403) {
+        return {
+          inquiries: [],
+          hasMore: false,
+          nextOffset: 0,
+          calculatorValues: {},
+        };
+      }
+      return { error: scope.error };
     }
 
     const supabase = await createAdminClient();
     const pageLimit = Math.min(Math.max(Number(input?.limit || 20), 1), 100);
     const offset = Math.max(Number(input?.offset || 0), 0);
     const search = String(input?.search || "").trim();
+    const organizationId =
+      scope && !('error' in scope) ? scope.organizationId : null;
     const cacheKey = buildOperationsInquiriesCacheKey({
       role: session.role,
       limit: pageLimit,
       offset,
       search,
+      organizationId: organizationId || undefined,
     });
     const cached = readOperationsInquiriesCache(cacheKey);
 
     const [inquiriesResult, calculatorResult] = await Promise.all([
       cached
         ? Promise.resolve(cached)
-        : queryOperationsInquiriesPage(supabase, { pageLimit, offset, search }),
+        : queryOperationsInquiriesPage(supabase, { pageLimit, offset, search, organizationId }),
       supabase
         .from('inquiry_calculator_config')
         .select('values')
@@ -1650,7 +1932,7 @@ export async function updateInquiryForAccounting(
 ) {
   try {
     const session = await getSession();
-    if (!session || (session.role !== 'admin' && session.role !== 'operations' && session.role !== 'sales_agent')) {
+    if (!session || (!sessionHasSalesAccess(session) && !sessionHasOperationsAccess(session))) {
       return { error: 'Unauthorized' };
     }
 
@@ -1665,6 +1947,22 @@ export async function updateInquiryForAccounting(
 
     if (fetchError || !current) {
       return { error: 'Inquiry not found' };
+    }
+
+    const {
+      requireAdminOrganizationScope,
+      sessionUsesOrganizationScope,
+    } = await import('@/lib/admin-organization-context');
+    const scope = sessionUsesOrganizationScope(session.role)
+      ? await requireAdminOrganizationScope()
+      : null;
+    if (scope && !('error' in scope) && scope.organizationId) {
+      const access = await assertInquiryInOrganization(
+        supabase,
+        inquiryId,
+        scope.organizationId
+      );
+      if ('error' in access) return { error: access.error };
     }
 
     const updateData: Record<string, unknown> = {
@@ -1780,7 +2078,7 @@ export async function updateInquiryForAccounting(
 export async function deleteInquiry(inquiryId: string) {
   try {
     const session = await getSession();
-    if (!session || (session.role !== 'admin' && session.role !== 'operations')) {
+    if (!session || !sessionHasOperationsAccess(session)) {
       return { error: 'Unauthorized' };
     }
 
@@ -1819,7 +2117,7 @@ export async function deleteInquiry(inquiryId: string) {
 export async function deleteInquiryForSalesAgent(inquiryId: string) {
   try {
     const session = await getSession();
-    if (!session || session.role !== 'sales_agent') {
+    if (!session || !isSalesPortalActor(session)) {
       return { error: 'Unauthorized' };
     }
     const supabase = await createAdminClient();
@@ -1967,7 +2265,7 @@ export async function getLeadActivityTimeline(leadId: string) {
 
     const supabase = await createAdminClient();
 
-    if (session.role === 'sales_agent') {
+    if (isSalesPortalActor(session)) {
       const { data: salesAgent } = await supabase
         .from('sales_agents')
         .select('id')
@@ -1982,7 +2280,7 @@ export async function getLeadActivityTimeline(leadId: string) {
         .eq('sales_agent_id', salesAgent.id)
         .maybeSingle();
       if (!lead) return { error: 'Unauthorized' };
-    } else if (session.role !== 'admin' && session.role !== 'operations') {
+    } else if (!sessionHasOperationsAccess(session)) {
       return { error: 'Unauthorized' };
     }
 
@@ -2010,7 +2308,7 @@ export async function getInquiryLogsForLead(leadId: string, inquiryId?: string) 
 
     const supabase = await createAdminClient();
 
-    if (session.role === 'sales_agent') {
+    if (isSalesPortalActor(session)) {
       const { data: salesAgent } = await supabase
         .from('sales_agents')
         .select('id')
@@ -2024,7 +2322,7 @@ export async function getInquiryLogsForLead(leadId: string, inquiryId?: string) 
         .eq('sales_agent_id', salesAgent.id)
         .maybeSingle();
       if (!lead) return { error: 'Unauthorized' };
-    } else if (session.role !== 'admin' && session.role !== 'operations') {
+    } else if (!sessionHasOperationsAccess(session)) {
       return { error: 'Unauthorized' };
     }
 
@@ -2057,16 +2355,20 @@ export async function getInquiryLogsForLead(leadId: string, inquiryId?: string) 
 
 export async function addInquiryLogNote(inquiryId: string, note: string) {
   try {
-    const session = await getSession();
-    if (!session || (session.role !== 'admin' && session.role !== 'operations')) {
-      return { error: 'Unauthorized' };
-    }
+    const scopeResult = await resolveOperationsOrganizationScope();
+    if ('error' in scopeResult) return { error: scopeResult.error };
 
     if (!inquiryId || !note.trim()) {
       return { error: 'Inquiry id and note are required' };
     }
 
     const supabase = await createAdminClient();
+    const access = await assertInquiryInOrganization(
+      supabase,
+      inquiryId,
+      scopeResult.organizationId
+    );
+    if ('error' in access) return { error: access.error };
 
     const { error } = await supabase
       .from('inquiry_logs')
@@ -2075,7 +2377,7 @@ export async function addInquiryLogNote(inquiryId: string, note: string) {
         action: 'log_note',
         previous_values: null,
         new_values: { note: note.trim() },
-        performed_by: session.username || 'operations',
+        performed_by: scopeResult.session.username || 'operations',
       }]);
 
     if (error) return { error: error.message };
@@ -2094,16 +2396,20 @@ export async function addInquiryActivity(
   dueDate: string | null
 ) {
   try {
-    const session = await getSession();
-    if (!session || (session.role !== 'admin' && session.role !== 'operations')) {
-      return { error: 'Unauthorized' };
-    }
+    const scopeResult = await resolveOperationsOrganizationScope();
+    if ('error' in scopeResult) return { error: scopeResult.error };
 
     if (!inquiryId || !summary.trim()) {
       return { error: 'Inquiry id and activity summary are required' };
     }
 
     const supabase = await createAdminClient();
+    const access = await assertInquiryInOrganization(
+      supabase,
+      inquiryId,
+      scopeResult.organizationId
+    );
+    if ('error' in access) return { error: access.error };
 
     const { error } = await supabase
       .from('inquiry_logs')
@@ -2115,7 +2421,7 @@ export async function addInquiryActivity(
           summary: summary.trim(),
           due_date: dueDate || null,
         },
-        performed_by: session.username || 'operations',
+        performed_by: scopeResult.session.username || 'operations',
       }]);
 
     if (error) return { error: error.message };
@@ -2135,10 +2441,8 @@ export async function addInquiryCalculatorFieldLog(
   newValue: string
 ) {
   try {
-    const session = await getSession();
-    if (!session || (session.role !== 'admin' && session.role !== 'operations')) {
-      return { error: 'Unauthorized' };
-    }
+    const scopeResult = await resolveOperationsOrganizationScope();
+    if ('error' in scopeResult) return { error: scopeResult.error };
 
     if (!inquiryId || !field.trim()) {
       return { error: 'Inquiry id and field are required' };
@@ -2149,6 +2453,13 @@ export async function addInquiryCalculatorFieldLog(
     if (prev === next) return { success: true };
 
     const supabase = await createAdminClient();
+    const access = await assertInquiryInOrganization(
+      supabase,
+      inquiryId,
+      scopeResult.organizationId
+    );
+    if ('error' in access) return { error: access.error };
+
     const { error } = await supabase
       .from('inquiry_logs')
       .insert([{
@@ -2156,7 +2467,7 @@ export async function addInquiryCalculatorFieldLog(
         action: 'calculator_updated',
         previous_values: { [field]: prev },
         new_values: { [field]: next },
-        performed_by: session.username || 'operations',
+        performed_by: scopeResult.session.username || 'operations',
       }]);
 
     if (error) return { error: error.message };
@@ -2176,7 +2487,7 @@ export async function saveInquiryCalculatorField(
 ) {
   try {
     const session = await getSession();
-    if (!session || (session.role !== 'admin' && session.role !== 'operations')) {
+    if (!session || !sessionHasOperationsAccess(session)) {
       return { error: 'Unauthorized' };
     }
 
@@ -2274,7 +2585,7 @@ export async function saveInquiryCalculatorPayload(
 ) {
   try {
     const session = await getSession();
-    if (!session || (session.role !== 'admin' && session.role !== 'operations')) {
+    if (!session || !sessionHasOperationsAccess(session)) {
       return { error: 'Unauthorized' };
     }
 
@@ -2304,7 +2615,7 @@ export async function saveInquiryCalculatorPayload(
 export async function getSharedInquiryCalculatorValues() {
   try {
     const session = await getSession();
-    if (!session || (session.role !== 'admin' && session.role !== 'operations')) {
+    if (!session || !sessionHasOperationsAccess(session)) {
       return { error: 'Unauthorized' };
     }
 
@@ -2512,11 +2823,11 @@ export async function getMyLeadChatNotifications(limit = 20) {
     if (!session) return { error: 'Unauthorized' };
 
     const recipientRole =
-      session.role === 'sales_agent'
+      isSalesPortalActor(session)
         ? 'sales_agent'
-        : session.role === 'operations'
+        : isOperationsPortalActor(session)
           ? 'operations'
-          : session.role === 'admin'
+          : isSuperAdminSession(session)
             ? 'admin'
             : null;
 
@@ -2586,11 +2897,11 @@ export async function markLeadChatNotificationRead(notificationId: string) {
     if (!notificationId) return { error: 'Notification id is required' };
 
     const recipientRole =
-      session.role === 'sales_agent'
+      isSalesPortalActor(session)
         ? 'sales_agent'
-        : session.role === 'operations'
+        : isOperationsPortalActor(session)
           ? 'operations'
-          : session.role === 'admin'
+          : isSuperAdminSession(session)
             ? 'admin'
             : null;
     if (!recipientRole) return { error: 'Unauthorized' };
@@ -2705,7 +3016,7 @@ export async function getQuotationsForInquiry(inquiryId: string) {
     if (inqErr) return { error: inqErr.message };
     if (!inquiryRow) return { error: 'Inquiry not found' };
 
-    if (session.role === 'sales_agent') {
+    if (isSalesPortalActor(session)) {
       const { data: salesAgent } = await supabase
         .from('sales_agents')
         .select('id')
@@ -2720,7 +3031,7 @@ export async function getQuotationsForInquiry(inquiryId: string) {
       if (!lead || lead.sales_agent_id !== salesAgent.id) {
         return { error: 'Unauthorized' };
       }
-    } else if (session.role !== 'admin' && session.role !== 'operations') {
+    } else if (!sessionHasOperationsAccess(session)) {
       return { error: 'Unauthorized' };
     }
 

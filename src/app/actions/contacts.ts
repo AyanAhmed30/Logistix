@@ -76,7 +76,13 @@ export type Contact = {
 
   notes: string | null;
 
+  /** Lead channel when migrated from legacy Sales Agent leads (Meta / LinkedIn / …). */
+  source?: string | null;
+  /** Original `leads.id` when this contact was created/linked by the legacy migration. */
+  legacy_lead_id?: string | null;
+
   is_active: boolean;
+  organization_id?: string | null;
   created_by: string | null;
   created_at: string;
   updated_at: string;
@@ -184,6 +190,43 @@ function revalidateContactsPaths() {
   revalidatePath('/admin/dashboard');
 }
 
+/**
+ * Active organization for Contacts (Odoo multi-company).
+ * Returns empty when Super Admin is in global Admin context — select a company first.
+ */
+async function resolveContactsOrganizationId(
+  session: { role: string } | null
+): Promise<
+  | { organizationId: string }
+  | { empty: true }
+  | { error: string }
+  | { unscoped: true }
+> {
+  const {
+    requireAdminOrganizationScope,
+    sessionUsesOrganizationScope,
+  } = await import('@/lib/admin-organization-context');
+  const { isSuperAdminInAdminContext } = await import('@/lib/auth/super-admin');
+  type SessionRole = import('@/lib/auth/session').SessionRole;
+
+  if (!session || !sessionUsesOrganizationScope(session.role as SessionRole)) {
+    return { unscoped: true };
+  }
+
+  const scope = await requireAdminOrganizationScope();
+  if ('error' in scope) {
+    if (scope.status === 403) return { empty: true };
+    return { error: scope.error };
+  }
+
+  if (!scope.organizationId) {
+    if (isSuperAdminInAdminContext(scope.session)) return { empty: true };
+    return { empty: true };
+  }
+
+  return { organizationId: scope.organizationId };
+}
+
 // =============================================================
 // Queries
 // =============================================================
@@ -193,13 +236,50 @@ export async function getContacts(search?: string) {
     const session = await getSession();
     ensureAuth(session);
 
+    const org = await resolveContactsOrganizationId(session);
+    if ('error' in org) return { error: org.error };
+    if ('empty' in org) return { contacts: [] };
+
+    const {
+      applyOrganizationFilter,
+      isMissingOrganizationColumnError,
+    } = await import('@/lib/admin-organization-context');
+
     const supabase = await createAdminClient();
 
     let query = supabase
       .from('contacts')
       .select('*')
-      .is('parent_id', null)
-      .order('created_at', { ascending: false });
+      .or('parent_id.is.null,and(company_type.eq.person,contact_kind.eq.contact)');
+
+    if (!('unscoped' in org)) {
+      query = applyOrganizationFilter(query, org.organizationId);
+    }
+
+    // Odoo Own Documents: only assigned / created contacts
+    try {
+      const { resolveSalesAccessRole, salesRoleSeesAllOrgRecords } = await import(
+        '@/lib/sales-roles'
+      );
+      const role = resolveSalesAccessRole(session as never);
+      if (role && !salesRoleSeesAllOrgRecords(role)) {
+        const { resolveCurrentSalespersonId } = await import(
+          '@/app/actions/sales/automation'
+        );
+        const agentId = await resolveCurrentSalespersonId();
+        if (agentId) {
+          query = query.or(
+            `salesperson_id.eq.${agentId},created_by.eq.${session.username}`
+          );
+        } else {
+          query = query.eq('created_by', session.username);
+        }
+      }
+    } catch {
+      // ownership filter is best-effort
+    }
+
+    query = query.order('created_at', { ascending: false });
 
     const needle = String(search || '').trim();
     if (needle) {
@@ -209,7 +289,15 @@ export async function getContacts(search?: string) {
       );
     }
 
-    const { data: contacts, error } = await query;
+    let { data: contacts, error } = await query;
+
+    if (error && isMissingOrganizationColumnError(error)) {
+      return {
+        error:
+          'Contacts organization column is missing. Run add_organization_id_to_core_tables.sql.',
+      };
+    }
+
     if (error) return { error: error.message };
 
     const contactIds = (contacts || []).map((c) => c.id);
@@ -267,21 +355,32 @@ export async function getContactById(id: string) {
     const contactId = String(id || '').trim();
     if (!contactId) return { error: 'Contact id is required.' };
 
+    const org = await resolveContactsOrganizationId(session);
+    if ('error' in org) return { error: org.error };
+    if ('empty' in org) {
+      return { error: 'Select an organization from the header switcher to view contacts.' };
+    }
+
     const supabase = await createAdminClient();
 
-    const { data: contact, error } = await supabase
-      .from('contacts')
-      .select('*')
-      .eq('id', contactId)
-      .single();
+    let detailQuery = supabase.from('contacts').select('*').eq('id', contactId);
+    if (!('unscoped' in org)) {
+      detailQuery = detailQuery.eq('organization_id', org.organizationId);
+    }
+
+    const { data: contact, error } = await detailQuery.maybeSingle();
 
     if (error || !contact) return { error: error?.message || 'Contact not found.' };
 
-    const { data: children } = await supabase
+    let childrenQuery = supabase
       .from('contacts')
       .select('*')
       .eq('parent_id', contactId)
       .order('created_at', { ascending: true });
+    if (!('unscoped' in org)) {
+      childrenQuery = childrenQuery.eq('organization_id', org.organizationId);
+    }
+    const { data: children } = await childrenQuery;
 
     const { data: tagLinks } = await supabase
       .from('contact_tag_links')
@@ -318,7 +417,22 @@ export async function getContactActivity(contactId: string) {
     const id = String(contactId || '').trim();
     if (!id) return { error: 'Contact id is required.' };
 
+    const org = await resolveContactsOrganizationId(session);
+    if ('error' in org) return { error: org.error };
+    if ('empty' in org) return { activity: [] as ContactActivityLog[] };
+
     const supabase = await createAdminClient();
+
+    if (!('unscoped' in org)) {
+      const { data: contact } = await supabase
+        .from('contacts')
+        .select('id')
+        .eq('id', id)
+        .eq('organization_id', org.organizationId)
+        .maybeSingle();
+      if (!contact) return { error: 'Contact not found.' };
+    }
+
     const { data, error } = await supabase
       .from('contact_activity_logs')
       .select('*')
@@ -401,10 +515,11 @@ async function replaceTagLinks(
 // =============================================================
 
 function buildContactPayload(input: ContactUpsertInput) {
+  const companyType = normalizeCompanyType(input.company_type);
   return {
-    parent_id: input.parent_id ?? null,
+    parent_id: companyType === 'company' ? null : input.parent_id ?? null,
     contact_kind: normalizeKind(input.contact_kind),
-    company_type: normalizeCompanyType(input.company_type),
+    company_type: companyType,
 
     name: String(input.name || '').trim(),
     company_name: normalizeText(input.company_name),
@@ -490,7 +605,139 @@ const TRACKED_FIELD_LABELS: Record<string, string> = {
   tax_settings: 'Tax Settings',
   fiscal_position: 'Fiscal Position',
   notes: 'Notes',
+  parent_id: 'Company (Employer)',
 };
+
+async function resolveContactParentCompany(
+  supabase: Awaited<ReturnType<typeof createAdminClient>>,
+  input: ContactUpsertInput,
+  contactId?: string,
+  organizationId?: string | null
+): Promise<
+  | { parent_id: string | null; company_name: string | null }
+  | { error: string }
+> {
+  const companyType = normalizeCompanyType(input.company_type);
+
+  if (companyType === 'company') {
+    return { parent_id: null, company_name: normalizeText(input.company_name) };
+  }
+
+  const parentId = input.parent_id ? String(input.parent_id).trim() : '';
+  if (!parentId) {
+    return {
+      parent_id: null,
+      company_name: normalizeText(input.company_name),
+    };
+  }
+
+  if (contactId && parentId === contactId) {
+    return { error: 'A contact cannot be its own company employer.' };
+  }
+
+  let parentQuery = supabase
+    .from('contacts')
+    .select('id, name, company_type')
+    .eq('id', parentId);
+  if (organizationId) {
+    parentQuery = parentQuery.eq('organization_id', organizationId);
+  }
+  const { data: parent, error } = await parentQuery.maybeSingle();
+
+  if (error) return { error: error.message };
+  if (!parent) return { error: 'Selected company not found in this organization.' };
+  if (parent.company_type !== 'company') {
+    return { error: 'Company (Employer) must be a Company-type contact.' };
+  }
+
+  return {
+    parent_id: parent.id as string,
+    company_name: String(parent.name || '').trim() || null,
+  };
+}
+
+export type CompanyContactOption = {
+  id: string;
+  name: string;
+};
+
+/** Company-type contacts for the Individual "Company (Employer)" dropdown (Odoo-style). */
+export async function getCompanyContactOptions(options?: {
+  excludeContactId?: string;
+  includeContactId?: string | null;
+}): Promise<{ companies: CompanyContactOption[] } | { error: string }> {
+  try {
+    const session = await getSession();
+    ensureAuth(session);
+
+    const org = await resolveContactsOrganizationId(session);
+    if ('error' in org) return { error: org.error };
+    if ('empty' in org) return { companies: [] };
+
+    const {
+      applyOrganizationFilter,
+      isMissingOrganizationColumnError,
+    } = await import('@/lib/admin-organization-context');
+
+    const supabase = await createAdminClient();
+    const excludeId = String(options?.excludeContactId || '').trim();
+    const includeId = String(options?.includeContactId || '').trim();
+
+    let query = supabase
+      .from('contacts')
+      .select('id, name')
+      .eq('company_type', 'company')
+      .is('parent_id', null)
+      .eq('is_active', true)
+      .order('name', { ascending: true });
+
+    if (!('unscoped' in org)) {
+      query = applyOrganizationFilter(query, org.organizationId);
+    }
+
+    let { data, error } = await query;
+
+    if (error && isMissingOrganizationColumnError(error)) {
+      return {
+        error:
+          'Contacts organization column is missing. Run add_organization_id_to_core_tables.sql.',
+      };
+    }
+
+    if (error) return { error: error.message };
+
+    let companies = (data || [])
+      .map((row) => ({ id: String(row.id), name: String(row.name || '').trim() }))
+      .filter((row) => row.name.length > 0 && row.id !== excludeId);
+
+    if (includeId && !companies.some((c) => c.id === includeId)) {
+      let includedQuery = supabase
+        .from('contacts')
+        .select('id, name, company_type, organization_id')
+        .eq('id', includeId);
+      if (!('unscoped' in org)) {
+        includedQuery = includedQuery.eq('organization_id', org.organizationId);
+      }
+      const { data: included } = await includedQuery.maybeSingle();
+      if (
+        included &&
+        included.company_type === 'company' &&
+        String(included.name || '').trim()
+      ) {
+        companies = [
+          { id: String(included.id), name: String(included.name).trim() },
+          ...companies,
+        ];
+      }
+    }
+
+    return { companies };
+  } catch (err) {
+    return {
+      error: err instanceof Error ? err.message : 'Failed to load company contacts',
+    };
+  }
+}
 
 function formatValue(value: unknown): string {
   if (value === null || value === undefined) return 'None';
@@ -548,14 +795,41 @@ export async function createContact(input: ContactUpsertInput) {
     const session = await getSession();
     const s = ensureAuth(session);
 
+    const org = await resolveContactsOrganizationId(session);
+    if ('error' in org) return { error: org.error };
+    if ('empty' in org) {
+      return {
+        error: 'Select an organization from the header switcher before creating a contact.',
+      };
+    }
+
     const payload = buildContactPayload(input);
     if (!payload.name) return { error: 'Name is required.' };
 
     const supabase = await createAdminClient();
 
+    const parentResolved = await resolveContactParentCompany(
+      supabase,
+      input,
+      undefined,
+      'unscoped' in org ? null : org.organizationId
+    );
+    if ('error' in parentResolved) return { error: parentResolved.error };
+    payload.parent_id = parentResolved.parent_id;
+    payload.company_name = parentResolved.company_name;
+
+    const insertRow: Record<string, unknown> = {
+      ...payload,
+      created_by: s.username,
+      updated_at: new Date().toISOString(),
+    };
+    if (!('unscoped' in org)) {
+      insertRow.organization_id = org.organizationId;
+    }
+
     const { data, error } = await supabase
       .from('contacts')
-      .insert([{ ...payload, created_by: s.username, updated_at: new Date().toISOString() }])
+      .insert([insertRow])
       .select('*')
       .single();
 
@@ -594,28 +868,48 @@ export async function updateContact(input: ContactUpsertInput) {
     const id = String(input.id || '').trim();
     if (!id) return { error: 'Contact id is required.' };
 
+    const org = await resolveContactsOrganizationId(session);
+    if ('error' in org) return { error: org.error };
+    if ('empty' in org) {
+      return {
+        error: 'Select an organization from the header switcher before editing a contact.',
+      };
+    }
+
     const payload = buildContactPayload(input);
     if (!payload.name) return { error: 'Name is required.' };
 
     const supabase = await createAdminClient();
 
     // Fetch existing row first so we can build a field-level diff
-    const { data: existing, error: existingErr } = await supabase
-      .from('contacts')
-      .select('*')
-      .eq('id', id)
-      .single();
+    let existingQuery = supabase.from('contacts').select('*').eq('id', id);
+    if (!('unscoped' in org)) {
+      existingQuery = existingQuery.eq('organization_id', org.organizationId);
+    }
+    const { data: existing, error: existingErr } = await existingQuery.maybeSingle();
 
     if (existingErr || !existing) {
       return { error: existingErr?.message || 'Contact not found.' };
     }
 
-    const { data, error } = await supabase
+    const parentResolved = await resolveContactParentCompany(
+      supabase,
+      input,
+      id,
+      'unscoped' in org ? null : org.organizationId
+    );
+    if ('error' in parentResolved) return { error: parentResolved.error };
+    payload.parent_id = parentResolved.parent_id;
+    payload.company_name = parentResolved.company_name;
+
+    let updateQuery = supabase
       .from('contacts')
       .update({ ...payload, updated_at: new Date().toISOString() })
-      .eq('id', id)
-      .select('*')
-      .single();
+      .eq('id', id);
+    if (!('unscoped' in org)) {
+      updateQuery = updateQuery.eq('organization_id', org.organizationId);
+    }
+    const { data, error } = await updateQuery.select('*').single();
 
     if (error || !data) return { error: error?.message || 'Failed to update contact.' };
 
@@ -656,8 +950,20 @@ export async function deleteContact(id: string) {
     const contactId = String(id || '').trim();
     if (!contactId) return { error: 'Contact id is required.' };
 
+    const org = await resolveContactsOrganizationId(session);
+    if ('error' in org) return { error: org.error };
+    if ('empty' in org) {
+      return {
+        error: 'Select an organization from the header switcher before deleting a contact.',
+      };
+    }
+
     const supabase = await createAdminClient();
-    const { error } = await supabase.from('contacts').delete().eq('id', contactId);
+    let deleteQuery = supabase.from('contacts').delete().eq('id', contactId);
+    if (!('unscoped' in org)) {
+      deleteQuery = deleteQuery.eq('organization_id', org.organizationId);
+    }
+    const { error } = await deleteQuery;
     if (error) return { error: error.message };
 
     revalidateContactsPaths();
@@ -686,12 +992,37 @@ export async function createChildContact(input: ChildContactInput) {
     const session = await getSession();
     const s = ensureAuth(session);
 
+    const org = await resolveContactsOrganizationId(session);
+    if ('error' in org) return { error: org.error };
+    if ('empty' in org) {
+      return {
+        error: 'Select an organization from the header switcher before creating a contact.',
+      };
+    }
+
     const parentId = String(input.parent_id || '').trim();
     const name = String(input.name || '').trim();
     if (!parentId) return { error: 'Parent contact id is required.' };
     if (!name) return { error: 'Name is required.' };
 
     const supabase = await createAdminClient();
+
+    let parentQuery = supabase
+      .from('contacts')
+      .select('id, organization_id')
+      .eq('id', parentId);
+    if (!('unscoped' in org)) {
+      parentQuery = parentQuery.eq('organization_id', org.organizationId);
+    }
+    const { data: parent, error: parentErr } = await parentQuery.maybeSingle();
+    if (parentErr || !parent) {
+      return { error: parentErr?.message || 'Parent contact not found in this organization.' };
+    }
+
+    const organizationId =
+      (!('unscoped' in org) ? org.organizationId : null) ||
+      (parent.organization_id as string | null) ||
+      null;
 
     const { data, error } = await supabase
       .from('contacts')
@@ -705,6 +1036,7 @@ export async function createChildContact(input: ChildContactInput) {
           phone: normalizeText(input.phone),
           job_position: normalizeText(input.job_position),
           notes: normalizeText(input.notes),
+          organization_id: organizationId,
           created_by: s.username,
           updated_at: new Date().toISOString(),
         },
@@ -738,8 +1070,20 @@ export async function deleteChildContact(id: string) {
     const contactId = String(id || '').trim();
     if (!contactId) return { error: 'Contact id is required.' };
 
+    const org = await resolveContactsOrganizationId(session);
+    if ('error' in org) return { error: org.error };
+    if ('empty' in org) {
+      return {
+        error: 'Select an organization from the header switcher before deleting a contact.',
+      };
+    }
+
     const supabase = await createAdminClient();
-    const { error } = await supabase.from('contacts').delete().eq('id', contactId);
+    let deleteQuery = supabase.from('contacts').delete().eq('id', contactId);
+    if (!('unscoped' in org)) {
+      deleteQuery = deleteQuery.eq('organization_id', org.organizationId);
+    }
+    const { error } = await deleteQuery;
     if (error) return { error: error.message };
 
     revalidateContactsPaths();
@@ -767,7 +1111,26 @@ export async function logContactActivity(
     if (!id) return { error: 'Contact id is required.' };
     if (!text) return { error: 'Message cannot be empty.' };
 
+    const org = await resolveContactsOrganizationId(session);
+    if ('error' in org) return { error: org.error };
+    if ('empty' in org) {
+      return {
+        error: 'Select an organization from the header switcher.',
+      };
+    }
+
     const supabase = await createAdminClient();
+
+    if (!('unscoped' in org)) {
+      const { data: contact } = await supabase
+        .from('contacts')
+        .select('id')
+        .eq('id', id)
+        .eq('organization_id', org.organizationId)
+        .maybeSingle();
+      if (!contact) return { error: 'Contact not found.' };
+    }
+
     const { data, error } = await supabase
       .from('contact_activity_logs')
       .insert([
@@ -845,6 +1208,12 @@ export async function searchCustomerContacts(query: string): Promise<
     const session = await getSession();
     ensureAuth(session);
 
+    const org = await resolveContactsOrganizationId(session);
+    if ('error' in org) return { error: org.error };
+    if ('empty' in org) return { contacts: [] };
+
+    const { applyOrganizationFilter } = await import('@/lib/admin-organization-context');
+
     const supabase = await createAdminClient();
     let q = supabase
       .from('contacts')
@@ -854,6 +1223,10 @@ export async function searchCustomerContacts(query: string): Promise<
       .is('parent_id', null)
       .order('updated_at', { ascending: false })
       .limit(20);
+
+    if (!('unscoped' in org)) {
+      q = applyOrganizationFilter(q, org.organizationId);
+    }
 
     const needle = String(query || '').trim();
     if (needle) {
@@ -910,14 +1283,23 @@ export async function getContactAutofillData(
     ensureAuth(session);
     if (!contactId) return { error: 'Contact id is required' };
 
+    const org = await resolveContactsOrganizationId(session);
+    if ('error' in org) return { error: org.error };
+    if ('empty' in org) {
+      return { error: 'Select an organization from the header switcher.' };
+    }
+
     const supabase = await createAdminClient();
-    const { data, error } = await supabase
+    let contactQuery = supabase
       .from('contacts')
       .select(
         'id, name, company_name, email, phone, mobile, street, street2, city, state, zip, country, payment_terms, pricelist, salesperson_id, customer_rank, vendor_rank'
       )
-      .eq('id', contactId)
-      .single();
+      .eq('id', contactId);
+    if (!('unscoped' in org)) {
+      contactQuery = contactQuery.eq('organization_id', org.organizationId);
+    }
+    const { data, error } = await contactQuery.maybeSingle();
 
     if (error || !data) return { error: error?.message || 'Contact not found' };
 

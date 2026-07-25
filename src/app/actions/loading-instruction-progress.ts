@@ -1,7 +1,7 @@
 "use server";
 
 import { createAdminClient } from "@/utils/supabase/server";
-import { getSession } from "@/lib/auth/session";
+import { requireWarehousePortalUser } from "@/lib/auth/require-access";
 import { getReadyForLoadingConsoles, getConsoleWithOrders } from "@/app/actions/consoles";
 import type { ConsoleLoadingStats } from "@/app/actions/loading-workflow";
 import {
@@ -106,10 +106,11 @@ function computeConsoleStatsFromBatch(
 
 export async function getLoadingInstructionDashboardForUser() {
   try {
-    const session = await getSession();
-    if (!session || session.role !== "user") {
-      return { error: "Unauthorized" };
+    const auth = await requireWarehousePortalUser("warehouse-loading-instruction");
+    if ("error" in auth) {
+      return { error: auth.status === 403 ? "Access Denied" : "Unauthorized" };
     }
+    const session = auth;
 
     const supabase = await createAdminClient();
 
@@ -261,18 +262,10 @@ export async function getLoadingInstructionDashboardForUser() {
 
 export async function getLoadingInstructionDashboardForAdmin() {
   try {
-    const session = await getSession();
-    if (!session) return { error: "Unauthorized" };
-
-    if (session.role === "admin") {
-      // ok
-    } else if (session.role === "sales_agent") {
-      const { hasPermission } = await import("@/lib/auth/permissions");
-      const hasConsole = await hasPermission("console");
-      const hasLoadingInstruction = await hasPermission("loading-instruction");
-      if (!hasConsole && !hasLoadingInstruction) return { error: "Unauthorized" };
-    } else {
-      return { error: "Unauthorized" };
+    const { requireAnyChildModule } = await import("@/lib/auth/require-access");
+    const auth = await requireAnyChildModule(["console", "loading-instruction"]);
+    if ("error" in auth) {
+      return { error: auth.error };
     }
 
     const consolesResult = await getReadyForLoadingConsoles();

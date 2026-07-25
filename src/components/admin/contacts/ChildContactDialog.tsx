@@ -102,7 +102,7 @@ export function ChildContactDialog({ open, parentId, onOpenChange, onCreated }: 
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-lg">
+      <DialogContent className="sm:max-w-lg w-[calc(100%-2rem)]">
         <DialogHeader>
           <DialogTitle>Create Related Contacts</DialogTitle>
         </DialogHeader>

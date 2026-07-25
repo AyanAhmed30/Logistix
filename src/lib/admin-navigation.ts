@@ -17,6 +17,9 @@ import {
   BarChart3,
   Cog,
   TrendingUp,
+  UserCog,
+  Warehouse,
+  Target,
 } from "lucide-react";
 
 export type AdminTab =
@@ -38,7 +41,14 @@ export type AdminTab =
   | "contacts"
   | "organization";
 
-export type AdminModule = "sales" | "operations" | "analytics" | "settings";
+export type AdminModule =
+  | "contacts"
+  | "crm"
+  | "sales"
+  | "operations"
+  | "warehouse"
+  | "analytics"
+  | "settings";
 
 export type AdminSidebarItem = {
   tab: AdminTab;
@@ -60,9 +70,27 @@ export type AdminModuleDefinition = {
 
 export const ADMIN_MODULES: AdminModuleDefinition[] = [
   {
+    id: "contacts",
+    label: "Contacts",
+    description: "Customers, vendors, and business relationships",
+    icon: BookUser,
+    accentClass: "text-[#714b67]",
+    borderClass: "border-[#714b67]/20 hover:border-[#714b67]/40",
+    iconBgClass: "bg-[#714b67]/10 text-[#714b67]",
+  },
+  {
+    id: "crm",
+    label: "CRM",
+    description: "Pipeline, customers, and sales activities",
+    icon: Target,
+    accentClass: "text-[#017e84]",
+    borderClass: "border-[#017e84]/20 hover:border-[#017e84]/40",
+    iconBgClass: "bg-[#017e84]/10 text-[#017e84]",
+  },
+  {
     id: "sales",
     label: "Sales",
-    description: "Leads, customers, and sales pipeline tools",
+    description: "Quotations, orders, and customers",
     icon: ShoppingCart,
     accentClass: "text-[#0f4c5c]",
     borderClass: "border-[#0f4c5c]/20 hover:border-[#0f4c5c]/40",
@@ -76,6 +104,15 @@ export const ADMIN_MODULES: AdminModuleDefinition[] = [
     accentClass: "text-[#218C94]",
     borderClass: "border-[#218C94]/20 hover:border-[#218C94]/40",
     iconBgClass: "bg-[#218C94]/10 text-[#218C94]",
+  },
+  {
+    id: "warehouse",
+    label: "Warehouse",
+    description: "Book orders, scan progress, and loading instructions",
+    icon: Warehouse,
+    accentClass: "text-[#7c3aed]",
+    borderClass: "border-[#7c3aed]/20 hover:border-[#7c3aed]/40",
+    iconBgClass: "bg-[#7c3aed]/10 text-[#7c3aed]",
   },
   {
     id: "analytics",
@@ -100,8 +137,8 @@ export const ADMIN_MODULES: AdminModuleDefinition[] = [
 /** Sidebar items grouped by module. `module: null` = global (dashboard home). */
 export const ADMIN_SIDEBAR_ITEMS: AdminSidebarItem[] = [
   { tab: "dashboard", label: "Dashboard", title: "Dashboard", icon: TrendingUp, module: null },
+  { tab: "contacts", label: "Contacts", title: "Contacts", icon: BookUser, module: "contacts" },
   { tab: "sales", label: "Sales", title: "Sales", icon: ShoppingCart, module: "sales" },
-  { tab: "contacts", label: "Contacts", title: "Contacts", icon: BookUser, module: "sales" },
   {
     tab: "management",
     label: "Order Management",
@@ -150,23 +187,16 @@ export const ADMIN_SIDEBAR_ITEMS: AdminSidebarItem[] = [
   { tab: "accounting", label: "Accounting", title: "Accounting", icon: Calculator, module: "operations" },
   {
     tab: "create",
-    label: "Create New User",
-    title: "Create New User or Sales Agent",
-    icon: PlusCircle,
+    label: "Users",
+    title: "Users",
+    icon: UsersRound,
     module: "settings",
   },
   {
     tab: "organization",
-    label: "Organization / Company",
-    title: "Organization / Company",
+    label: "Organizations",
+    title: "Organizations / Companies",
     icon: Building2,
-    module: "settings",
-  },
-  {
-    tab: "profiles",
-    label: "User Profiles",
-    title: "User Profiles",
-    icon: UsersRound,
     module: "settings",
   },
 ];

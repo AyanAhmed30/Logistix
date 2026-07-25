@@ -2,34 +2,53 @@
 
 import { getSession } from '@/lib/auth/session';
 import { getSalesAgentByUsername } from '@/app/actions/sales_agents';
+import { hasModulePermission } from '@/lib/module-permissions';
+import { isSuperAdminSession } from '@/lib/auth/super-admin';
 
 /**
- * Check if the current user (admin or sales agent) has access to a specific permission
- * Admins always have access, sales agents need the specific permission
+ * Assigned module = full access.
+ * Admins always pass. Portal users / sales agents / operations users pass when
+ * the required module key is in their session (or legacy empty = full access).
  */
 export async function hasPermission(requiredPermission: string): Promise<boolean> {
   try {
     const session = await getSession();
-    
+
     if (!session) {
       return false;
     }
 
-    // Admins always have access
-    if (session.role === 'admin') {
+    if (isSuperAdminSession(session)) {
       return true;
     }
 
-    // For sales agents, check if they have the required permission
+    // Single source of truth: module keys on the session (from user creation).
+    if (hasModulePermission(session.permissions, requiredPermission)) {
+      return true;
+    }
+
+    // Legacy sales_agent: empty permissions = full access; also check DB row.
     if (session.role === 'sales_agent') {
+      if (!session.permissions || session.permissions.length === 0) {
+        return true;
+      }
+
       const result = await getSalesAgentByUsername(session.username);
-      
       if (result && 'salesAgent' in result && result.salesAgent) {
         const permissions = result.salesAgent.permissions;
-        
-        if (Array.isArray(permissions)) {
-          return permissions.includes(requiredPermission);
+        if (Array.isArray(permissions) && permissions.length === 0) {
+          return true;
         }
+        if (Array.isArray(permissions) && permissions.length > 0) {
+          return hasModulePermission(permissions, requiredPermission);
+        }
+      }
+    }
+
+    // Legacy operations role: empty permissions = full access.
+    if (session.role === 'operations') {
+      if (!session.permissions || session.permissions.length === 0) {
+        return true;
       }
     }
 
@@ -40,30 +59,22 @@ export async function hasPermission(requiredPermission: string): Promise<boolean
 }
 
 /**
- * Check if the current user is an admin or has a specific permission
- * This is a convenience function that combines role check and permission check
+ * Check if the current user is an admin or has a specific permission.
  */
 export async function isAuthorized(requiredPermission?: string): Promise<boolean> {
   const session = await getSession();
-  
+
   if (!session) {
     return false;
   }
 
-  // Admins always have access
-  if (session.role === 'admin') {
+  if (isSuperAdminSession(session)) {
     return true;
   }
 
-  // If no specific permission required, only admins are authorized
   if (!requiredPermission) {
     return false;
   }
 
-  // For sales agents, check permission
-  if (session.role === 'sales_agent') {
-    return await hasPermission(requiredPermission);
-  }
-
-  return false;
+  return hasPermission(requiredPermission);
 }

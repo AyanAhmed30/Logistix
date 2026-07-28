@@ -1,14 +1,19 @@
 "use client";
 
-import { useSearchParams } from "next/navigation";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { toast } from "sonner";
 import {
   LeadInquiryWorkspace,
   type LeadInquiryWorkspaceTab,
 } from "@/components/sales-agent/LeadInquiryWorkspace";
-import type { CrmOpportunityInquiryBootstrap } from "@/app/actions/crm/inquiries";
+import {
+  getCrmOpportunityInquiryBootstrap,
+  type CrmOpportunityInquiryBootstrap,
+} from "@/app/actions/crm/inquiries";
 import { setCachedLeadInquiries } from "@/lib/sales-agent-lead-inquiries-cache";
 import { ClientErrorBoundary } from "@/components/error/ClientErrorBoundary";
+import { ModuleLoadingOverlay } from "@/components/ui/ModuleLoadingOverlay";
 
 function tabFromSearchParams(searchParams: URLSearchParams): LeadInquiryWorkspaceTab | undefined {
   const raw = searchParams.get("tab");
@@ -17,23 +22,69 @@ function tabFromSearchParams(searchParams: URLSearchParams): LeadInquiryWorkspac
 }
 
 export function CrmOpportunityInquiryClient({
-  bootstrap,
+  opportunityId,
+  initialBootstrap,
 }: {
-  bootstrap: CrmOpportunityInquiryBootstrap;
+  opportunityId: string;
+  /** Optional preloaded bootstrap (rare); normally loaded client-side for fast navigation. */
+  initialBootstrap?: CrmOpportunityInquiryBootstrap | null;
 }) {
+  const router = useRouter();
   const searchParams = useSearchParams();
   const initialTab = tabFromSearchParams(searchParams);
   const initialInquiryId = searchParams.get("inquiryId") || undefined;
-  const { opportunity, lead, inquiries, approvedInquiryId, allowInquiry } = bootstrap;
 
-  const remountKey = `${opportunity.id}-${initialTab ?? "create"}-${initialInquiryId ?? "none"}-${allowInquiry ? "1" : "0"}`;
+  const [bootstrap, setBootstrap] = useState<CrmOpportunityInquiryBootstrap | null>(
+    initialBootstrap || null
+  );
+  const [loading, setLoading] = useState(!initialBootstrap);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    setCachedLeadInquiries(lead.id, {
-      inquiries,
-      approvedInquiryId,
+    if (initialBootstrap) return;
+
+    let cancelled = false;
+    setLoading(true);
+    setError(null);
+
+    void getCrmOpportunityInquiryBootstrap(opportunityId).then((res) => {
+      if (cancelled) return;
+      if ("error" in res && res.error) {
+        setError(res.error);
+        setLoading(false);
+        toast.error(res.error);
+        router.replace(`/crm/opportunities/${opportunityId}`);
+        return;
+      }
+      if ("bootstrap" in res && res.bootstrap) {
+        setBootstrap(res.bootstrap);
+      }
+      setLoading(false);
     });
-  }, [lead.id, inquiries, approvedInquiryId]);
+
+    return () => {
+      cancelled = true;
+    };
+  }, [opportunityId, initialBootstrap, router]);
+
+  useEffect(() => {
+    if (!bootstrap) return;
+    setCachedLeadInquiries(bootstrap.lead.id, {
+      inquiries: bootstrap.inquiries,
+      approvedInquiryId: bootstrap.approvedInquiryId,
+    });
+  }, [bootstrap]);
+
+  if (loading || !bootstrap) {
+    return <ModuleLoadingOverlay label="Inquiry" />;
+  }
+
+  if (error) {
+    return null;
+  }
+
+  const { opportunity, lead, inquiries, approvedInquiryId, allowInquiry } = bootstrap;
+  const remountKey = `${opportunity.id}-${initialTab ?? "create"}-${initialInquiryId ?? "none"}-${allowInquiry ? "1" : "0"}`;
 
   return (
     <ClientErrorBoundary

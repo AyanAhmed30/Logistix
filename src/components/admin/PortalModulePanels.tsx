@@ -266,8 +266,10 @@ export function PortalWarehouseModuleContent({
 
 export function PortalContactsModuleContent({
   initialPayload,
+  onListLoaded,
 }: {
   initialPayload?: ContactsPanelInitialPayload;
+  onListLoaded?: () => void;
 }) {
-  return <ContactsPanel initialPayload={initialPayload} />;
+  return <ContactsPanel initialPayload={initialPayload} onListLoaded={onListLoaded} />;
 }

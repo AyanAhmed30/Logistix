@@ -19,11 +19,16 @@ import type {
   CrmOpportunityPriority,
   CrmPipelineStage,
 } from "@/app/actions/crm/types";
-import { getContactById, type SalespersonOption } from "@/app/actions/contacts";
+import {
+  getContactAutofillData,
+  searchCustomerContacts,
+  type SalespersonOption,
+} from "@/app/actions/contacts";
 import {
   CustomerPicker,
   type PickedCustomer,
 } from "@/components/admin/quotations/CustomerPicker";
+import { prefetchContactPickerResults } from "@/lib/contact-picker-cache";
 
 type Props = {
   stage: CrmPipelineStage;
@@ -69,6 +74,15 @@ export function CrmPipelineQuickCreate({
     if (preferred) setSalespersonId(preferred);
   }, [salespersons, salespersonId, defaultSalespersonId]);
 
+  // Preload contacts so the picker opens instantly.
+  useEffect(() => {
+    void prefetchContactPickerResults("all", async () => {
+      const res = await searchCustomerContacts("", { scope: "all" });
+      if ("error" in res && res.error) return [];
+      return "contacts" in res ? res.contacts : [];
+    });
+  }, []);
+
   // Close form when clicking anywhere outside it
   useEffect(() => {
     function onPointerDown(e: MouseEvent | TouchEvent) {
@@ -93,51 +107,27 @@ export function CrmPipelineQuickCreate({
     };
   }, []);
 
-  async function handleCustomerSelect(picked: PickedCustomer) {
+  function handleCustomerSelect(picked: PickedCustomer) {
     setContactId(picked.contact_id);
     setCustomerName(picked.name);
-    if (!name.trim()) setName(picked.name);
+    // Customer ID is owned by the Contact — populate immediately from picker.
+    setCustomerLeadId(picked.lead_id_formatted || null);
+    setEmail(picked.email || "");
+    setPhone(picked.phone || "");
+    if (picked.salesperson_id) setSalespersonId(picked.salesperson_id);
 
-    const res = await getContactById(picked.contact_id);
-    if ("contact" in res && res.contact) {
-      setCustomerLeadId(res.contact.lead_id_formatted || null);
-      setEmail(res.contact.email || "");
-      setPhone(res.contact.phone || res.contact.mobile || "");
-    } else {
-      setCustomerLeadId(null);
-    }
+    // Background resolve only fills gaps; never replaces a known Contact Customer ID.
+    void getContactAutofillData(picked.contact_id).then((res) => {
+      if (!("data" in res) || !res.data) return;
+      const data = res.data;
+      setCustomerLeadId((prev) => data.lead_id_formatted || prev || null);
+      setEmail((prev) => prev || data.email || "");
+      setPhone((prev) => prev || data.phone || data.mobile || "");
+      setSalespersonId((prev) => prev || data.salesperson_id || "");
+    });
   }
 
-  function buildPayload() {
-    if (!name.trim()) {
-      toast.error("Opportunity name is required.");
-      return null;
-    }
-    if (!contactId) {
-      toast.error("Contact is required.");
-      return null;
-    }
-    const revenue = Number(expectedRevenue) || 0;
-    if (!Number.isFinite(revenue) || revenue < 0) {
-      toast.error("Expected revenue cannot be negative.");
-      return null;
-    }
-    return {
-      name: name.trim(),
-      contact_id: contactId,
-      stage_id: stage.id,
-      stage_name: stage.name,
-      expected_revenue: revenue,
-      email: email.trim() || null,
-      phone: phone.trim() || null,
-      salesperson_id: salespersonId || null,
-      probability: stage.default_probability ?? 10,
-      priority,
-    };
-  }
-
-  function handleAdd(e?: React.FormEvent) {
-    e?.preventDefault();
+  function submitCreate() {
     const payload = buildPayload();
     if (!payload) return;
 
@@ -156,6 +146,11 @@ export function CrmPipelineQuickCreate({
         });
       }
     });
+  }
+
+  function handleAdd(e?: React.FormEvent) {
+    e?.preventDefault();
+    submitCreate();
   }
 
   function handleEdit() {
@@ -180,6 +175,39 @@ export function CrmPipelineQuickCreate({
     });
   }
 
+  function buildPayload() {
+    if (!name.trim()) {
+      toast.error("Opportunity name is required.");
+      return null;
+    }
+    if (!contactId) {
+      toast.error("Contact is required.");
+      return null;
+    }
+    const revenue = Number(expectedRevenue) || 0;
+    if (!Number.isFinite(revenue) || revenue < 0) {
+      toast.error("Expected revenue cannot be negative.");
+      return null;
+    }
+    const salespersonName =
+      salespersons.find((s) => s.id === salespersonId)?.name || null;
+    return {
+      name: name.trim(),
+      contact_id: contactId,
+      customer_name: customerName.trim() || null,
+      customer_lead_id: customerLeadId || null,
+      salesperson_name: salespersonName,
+      stage_id: stage.id,
+      stage_name: stage.name,
+      expected_revenue: revenue,
+      email: email.trim() || null,
+      phone: phone.trim() || null,
+      salesperson_id: salespersonId || null,
+      probability: stage.default_probability ?? 10,
+      priority,
+    };
+  }
+
   const fieldInput =
     "w-full bg-transparent border-0 border-b border-slate-200 rounded-none px-0 py-1.5 text-sm text-primary-dark placeholder:text-slate-400 focus:outline-none focus:border-[#017e84] focus:ring-0";
 
@@ -190,7 +218,20 @@ export function CrmPipelineQuickCreate({
       className="rounded-lg border border-slate-200 bg-white shadow-sm p-3 space-y-0.5"
       onClick={(e) => e.stopPropagation()}
     >
-      {/* Contact — reuse shared Odoo-style searchable picker */}
+      {/* Opportunity's Name — first, Odoo-style */}
+      <div className="flex items-center gap-2">
+        <Briefcase className="h-4 w-4 text-secondary-muted shrink-0" />
+        <input
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          placeholder="Opportunity's Name"
+          className={fieldInput}
+          disabled={isPending}
+          autoFocus
+        />
+      </div>
+
+      {/* Contact */}
       <div className="flex items-center gap-2 border-b border-[#017e84]">
         <User className="h-4 w-4 text-secondary-muted shrink-0" />
         <div className="flex-1 min-w-0 [&_input]:border-0 [&_input]:border-b-0 [&_input]:rounded-none [&_input]:px-0 [&_input]:shadow-none [&_input]:focus-visible:ring-0 [&_input]:pl-7 [&_input]:text-sm">
@@ -212,18 +253,6 @@ export function CrmPipelineQuickCreate({
           <span className="font-mono font-semibold text-primary-dark">{customerLeadId}</span>
         </div>
       ) : null}
-
-      {/* Opportunity's Name */}
-      <div className="flex items-center gap-2">
-        <Briefcase className="h-4 w-4 text-secondary-muted shrink-0" />
-        <input
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          placeholder="Opportunity's Name"
-          className={fieldInput}
-          disabled={isPending}
-        />
-      </div>
 
       {/* Contact Email */}
       <div className="flex items-center gap-2">

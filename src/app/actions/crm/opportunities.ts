@@ -1,5 +1,6 @@
 'use server';
 
+import { after } from 'next/server';
 import { createAdminClient } from '@/utils/supabase/server';
 import { requireAnyChildModule, isAccessDenied } from '@/lib/auth/require-access';
 import {
@@ -64,11 +65,58 @@ function mapRow(row: Record<string, unknown>): CrmOpportunityCard {
     created_at: String(row.created_at || ''),
     updated_at: String(row.updated_at || ''),
     customer_name: null,
+    customer_lead_id: null,
     contact_person_name: null,
     salesperson_name: null,
     organization_name: null,
     stage_name: null,
   };
+}
+
+function mapCreatedOpportunityCard(
+  row: Record<string, unknown>,
+  hints: {
+    stageName?: string | null;
+    customerName?: string | null;
+    customerLeadId?: string | null;
+    salespersonName?: string | null;
+  } = {}
+): CrmOpportunityCard {
+  const base = mapRow(row);
+  return {
+    ...base,
+    stage_name: hints.stageName || null,
+    customer_name: hints.customerName || null,
+    customer_lead_id: hints.customerLeadId || null,
+    salesperson_name: hints.salespersonName || null,
+  };
+}
+
+function scheduleOpportunityCreatedSideEffects(input: {
+  opportunityId: string;
+  organizationId: string;
+  username: string;
+  opportunityName: string;
+  contactId: string;
+}) {
+  after(async () => {
+    const { ensureContactIsCustomer } = await import('@/app/actions/crm/contact-summary');
+    await ensureContactIsCustomer(input.contactId);
+    await logOpportunityCreatedAudit(
+      input.opportunityId,
+      input.organizationId,
+      input.username,
+      input.opportunityName
+    );
+    const { writeCrmAuditLog } = await import('@/lib/crm-visibility');
+    await writeCrmAuditLog({
+      organizationId: input.organizationId,
+      entityId: input.opportunityId,
+      action: 'opportunity_created',
+      performedBy: input.username,
+      details: { name: input.opportunityName },
+    });
+  });
 }
 
 async function enrichOpportunities(
@@ -90,10 +138,36 @@ async function enrichOpportunities(
     if (row.stage_id) stageIds.add(String(row.stage_id));
   }
 
-  const [contactsRes, salesRes, orgsRes, stagesRes] = await Promise.all([
-    contactIds.size
-      ? supabase.from('contacts').select('id, name, company_name').in('id', [...contactIds])
-      : Promise.resolve({ data: [] }),
+  const contactIdList = [...contactIds];
+
+  let contactsData: Array<{
+    id: string;
+    name?: string | null;
+    company_name?: string | null;
+    phone?: string | null;
+    mobile?: string | null;
+    legacy_lead_id?: string | null;
+    lead_id_formatted?: string | null;
+  }> = [];
+
+  if (contactIdList.length) {
+    const withLeadCol = await supabase
+      .from('contacts')
+      .select('id, name, company_name, phone, mobile, legacy_lead_id, lead_id_formatted')
+      .in('id', contactIdList);
+
+    if (!withLeadCol.error && withLeadCol.data) {
+      contactsData = withLeadCol.data as typeof contactsData;
+    } else {
+      const fallback = await supabase
+        .from('contacts')
+        .select('id, name, company_name, phone, mobile, legacy_lead_id')
+        .in('id', contactIdList);
+      contactsData = (fallback.data || []) as typeof contactsData;
+    }
+  }
+
+  const [salesRes, orgsRes, stagesRes] = await Promise.all([
     salespersonIds.size
       ? supabase.from('sales_agents').select('id, name').in('id', [...salespersonIds])
       : Promise.resolve({ data: [] }),
@@ -105,14 +179,12 @@ async function enrichOpportunities(
       : Promise.resolve({ data: [] }),
   ]);
 
+  // Customer name = contact.name (e.g. "id check"), not company_name ("testing company").
   const contactMap = new Map(
-    (contactsRes.data || []).map((c) => [
-      String(c.id),
-      String(c.company_name || c.name || ''),
-    ])
+    contactsData.map((c) => [String(c.id), String(c.name || c.company_name || '').trim()])
   );
   const contactPersonMap = new Map(
-    (contactsRes.data || []).map((c) => [String(c.id), String(c.name || '')])
+    contactsData.map((c) => [String(c.id), String(c.name || '')])
   );
   const salesMap = new Map(
     (salesRes.data || []).map((s) => [String(s.id), String(s.name || '')])
@@ -124,12 +196,46 @@ async function enrichOpportunities(
     (stagesRes.data || []).map((s) => [String(s.id), String(s.name || '')])
   );
 
+  const customerLeadIdMap = new Map<string, string>();
+  for (const c of contactsData) {
+    const leadId = String(c.lead_id_formatted || '').trim();
+    if (/^\d{6}$/.test(leadId)) {
+      customerLeadIdMap.set(String(c.id), leadId);
+    }
+  }
+
+  const missingLeadIds = contactIdList.filter((id) => !customerLeadIdMap.has(id));
+  if (missingLeadIds.length) {
+    const { fetchContactLeadIds } = await import('@/lib/contact-lead-id');
+    const metaById = new Map(
+      contactsData.map((c) => [
+        String(c.id),
+        {
+          id: String(c.id),
+          legacy_lead_id: c.legacy_lead_id ? String(c.legacy_lead_id) : null,
+          phone: c.phone ? String(c.phone) : null,
+          mobile: c.mobile ? String(c.mobile) : null,
+        },
+      ])
+    );
+    const resolved = await fetchContactLeadIds(
+      supabase,
+      missingLeadIds.map(
+        (id) => metaById.get(id) || { id, legacy_lead_id: null, phone: null, mobile: null }
+      )
+    );
+    for (const [id, leadId] of resolved) {
+      customerLeadIdMap.set(id, leadId);
+    }
+  }
+
   return rows.map((row) => {
     const base = mapRow(row);
     const customerId = base.contact_id;
     return {
       ...base,
       customer_name: customerId ? contactMap.get(customerId) || null : null,
+      customer_lead_id: customerId ? customerLeadIdMap.get(customerId) || null : null,
       contact_person_name: base.contact_person_id
         ? contactPersonMap.get(base.contact_person_id) || null
         : null,
@@ -217,7 +323,7 @@ export async function getCrmPipelineBoard(filters: CrmPipelineBoardFilters = {})
     if (needle) {
       opportunities = opportunities.filter((opp) => {
         const hay =
-          `${opp.name} ${opp.customer_name || ''} ${opp.email || ''} ${opp.organization_name || ''}`.toLowerCase();
+          `${opp.name} ${opp.customer_name || ''} ${opp.customer_lead_id || ''} ${opp.email || ''} ${opp.organization_name || ''}`.toLowerCase();
         return hay.includes(needle);
       });
     }
@@ -267,7 +373,7 @@ export async function getCrmPipelineBoard(filters: CrmPipelineBoardFilters = {})
   const needle = String(filters.search || '').trim().toLowerCase();
   if (needle) {
     opportunities = opportunities.filter((opp) => {
-      const hay = `${opp.name} ${opp.customer_name || ''} ${opp.email || ''}`.toLowerCase();
+      const hay = `${opp.name} ${opp.customer_name || ''} ${opp.customer_lead_id || ''} ${opp.email || ''}`.toLowerCase();
       return hay.includes(needle);
     });
   }
@@ -321,9 +427,7 @@ export async function getCrmOpportunityById(opportunityId: string) {
   return { opportunity };
 }
 
-export async function createCrmOpportunity(
-  input: CrmOpportunityUpsertInput & { ignoreDuplicates?: boolean }
-) {
+export async function createCrmOpportunity(input: CrmOpportunityUpsertInput) {
   const auth = await requireAnyChildModule(['crm-pipeline']);
   if (isAccessDenied(auth)) return { error: auth.error };
 
@@ -357,18 +461,6 @@ export async function createCrmOpportunity(
   }
   stageId = resolvedStage.id;
   const stageMeta = resolvedStage;
-
-  if (!input.ignoreDuplicates) {
-    const { checkCrmOpportunityDuplicates } = await import('@/app/actions/crm/automation');
-    const dup = await checkCrmOpportunityDuplicates({
-      name: String(input.name).trim(),
-      contactId: input.contact_id,
-      email: input.email,
-    });
-    if ('duplicates' in dup && dup.duplicates.length > 0) {
-      return { duplicates: dup.duplicates, error: 'Possible duplicate opportunities found.' };
-    }
-  }
 
   const { probabilityForStageName, computeLeadScore } = await import('@/lib/crm-automation');
   const autoProb = probabilityForStageName(
@@ -461,43 +553,35 @@ export async function createCrmOpportunity(
       if (retry.error || !retry.data) {
         return { error: retry.error?.message || error.message };
       }
-      const [opportunity] = await enrichOpportunities([retry.data as Record<string, unknown>]);
-      const { ensureContactIsCustomer } = await import('@/app/actions/crm/contact-summary');
-      await ensureContactIsCustomer(String(input.contact_id));
-      await logOpportunityCreatedAudit(
-        opportunity.id,
-        scope.organizationId,
-        scope.session.username,
-        opportunity.name
-      );
-      const { writeCrmAuditLog } = await import('@/lib/crm-visibility');
-      await writeCrmAuditLog({
+      const opportunity = mapCreatedOpportunityCard(retry.data as Record<string, unknown>, {
+        stageName: String(stageMeta?.name || input.stage_name || ''),
+        customerName: input.customer_name || null,
+        customerLeadId: input.customer_lead_id || null,
+        salespersonName: input.salesperson_name || null,
+      });
+      scheduleOpportunityCreatedSideEffects({
+        opportunityId: opportunity.id,
         organizationId: scope.organizationId,
-        entityId: opportunity.id,
-        action: 'opportunity_created',
-        performedBy: scope.session.username,
-        details: { name: opportunity.name },
+        username: scope.session.username,
+        opportunityName: opportunity.name,
+        contactId: String(input.contact_id),
       });
       return { opportunity };
     }
     return { error: error?.message || 'Failed to create opportunity.' };
   }
-  const [opportunity] = await enrichOpportunities([data as Record<string, unknown>]);
-  const { ensureContactIsCustomer } = await import('@/app/actions/crm/contact-summary');
-  await ensureContactIsCustomer(String(input.contact_id));
-  await logOpportunityCreatedAudit(
-    opportunity.id,
-    scope.organizationId,
-    scope.session.username,
-    opportunity.name
-  );
-  const { writeCrmAuditLog } = await import('@/lib/crm-visibility');
-  await writeCrmAuditLog({
+  const opportunity = mapCreatedOpportunityCard(data as Record<string, unknown>, {
+    stageName: String(stageMeta?.name || input.stage_name || ''),
+    customerName: input.customer_name || null,
+    customerLeadId: input.customer_lead_id || null,
+    salespersonName: input.salesperson_name || null,
+  });
+  scheduleOpportunityCreatedSideEffects({
+    opportunityId: opportunity.id,
     organizationId: scope.organizationId,
-    entityId: opportunity.id,
-    action: 'opportunity_created',
-    performedBy: scope.session.username,
-    details: { name: opportunity.name },
+    username: scope.session.username,
+    opportunityName: opportunity.name,
+    contactId: String(input.contact_id),
   });
   // No revalidatePath — pipeline updates optimistically (same as stage drag).
   return { opportunity };

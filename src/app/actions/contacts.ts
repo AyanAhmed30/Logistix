@@ -270,23 +270,48 @@ export async function getContacts(search?: string) {
       applyOrganizationFilter,
       isMissingOrganizationColumnError,
     } = await import('@/lib/admin-organization-context');
-    const { CONTACTS_ROW_SELECT } = await import('@/lib/contact-lead-id');
+    const {
+      CONTACTS_LIST_SELECT,
+      isMissingLeadIdColumnError,
+      isValidContactLeadId,
+      mergeContactLeadIdsForList,
+      assignMissingContactLeadIds,
+    } = await import('@/lib/contact-lead-id');
 
     const supabase = await createAdminClient();
 
-    // Odoo: companies at top level + all individuals (employer-linked persons included).
+    // Lean list select + Customer ID in one round-trip when PostgREST exposes the column.
+    const selectWithLeadId = `${CONTACTS_LIST_SELECT}, lead_id_formatted`;
     let query = supabase
       .from('contacts')
-      .select(CONTACTS_ROW_SELECT)
+      .select(selectWithLeadId)
       .or(CONTACTS_LIST_OR_FILTER);
 
     if (!('unscoped' in org)) {
       query = applyOrganizationFilter(query, org.organizationId);
     }
 
-    query = query.order('created_at', { ascending: false });
+    query = query.order('created_at', { ascending: false }).limit(500);
 
-    const { data: rows, error } = await query;
+    const primary = await query;
+    let rows: Contact[] | null = null;
+    let error = primary.error;
+
+    if (!error && primary.data) {
+      rows = primary.data as unknown as Contact[];
+    } else if (error && isMissingLeadIdColumnError(error)) {
+      let fallbackQuery = supabase
+        .from('contacts')
+        .select(CONTACTS_LIST_SELECT)
+        .or(CONTACTS_LIST_OR_FILTER);
+      if (!('unscoped' in org)) {
+        fallbackQuery = applyOrganizationFilter(fallbackQuery, org.organizationId);
+      }
+      fallbackQuery = fallbackQuery.order('created_at', { ascending: false }).limit(500);
+      const retry = await fallbackQuery;
+      rows = (retry.data || null) as unknown as Contact[] | null;
+      error = retry.error;
+    }
 
     if (error && isMissingOrganizationColumnError(error)) {
       return {
@@ -307,11 +332,14 @@ export async function getContacts(search?: string) {
 
     let contacts = (rows || []) as Contact[];
 
-    const { mergeContactLeadIdsFromRpc, assignMissingContactLeadIds } = await import(
-      '@/lib/contact-lead-id'
-    );
-    contacts = (await mergeContactLeadIdsFromRpc(supabase, contacts)) as Contact[];
-    contacts = (await assignMissingContactLeadIds(supabase, contacts)) as Contact[];
+    // 1) Read existing Customer IDs (REST/RPC)
+    contacts = (await mergeContactLeadIdsForList(supabase, contacts)) as Contact[];
+
+    // 2) Assign permanent IDs only for contacts still missing one (bounded, no lead-table scan)
+    const missing = contacts.filter((c) => !isValidContactLeadId(c.lead_id_formatted));
+    if (missing.length) {
+      contacts = (await assignMissingContactLeadIds(supabase, contacts)) as Contact[];
+    }
 
     // Odoo Own Documents — filter in memory (avoids PostgREST .or() Bad Request)
     try {
@@ -359,39 +387,53 @@ export async function getContacts(search?: string) {
     const tagLinks: { contact_id: string; tag_id: string }[] = [];
     const tags: ContactTag[] = [];
     if (contactIds.length > 0) {
-      // Chunk .in() filters — thousands of UUIDs in one request → PostgREST 400 Bad Request
       const IN_CHUNK = 120;
+      const linkChunks: string[][] = [];
       for (let i = 0; i < contactIds.length; i += IN_CHUNK) {
-        const chunk = contactIds.slice(i, i + IN_CHUNK);
-        const { data: linkRows, error: linkErr } = await supabase
-          .from('contact_tag_links')
-          .select('contact_id, tag_id')
-          .in('contact_id', chunk);
-        if (linkErr) {
+        linkChunks.push(contactIds.slice(i, i + IN_CHUNK));
+      }
+
+      const linkResults = await Promise.all(
+        linkChunks.map((chunk) =>
+          supabase
+            .from('contact_tag_links')
+            .select('contact_id, tag_id')
+            .in('contact_id', chunk)
+        )
+      );
+
+      for (const linkRes of linkResults) {
+        if (linkRes.error) {
           return {
-            error: `Contact tags query failed: ${linkErr.message}${
-              linkErr.details ? ` (${linkErr.details})` : ''
+            error: `Contact tags query failed: ${linkRes.error.message}${
+              linkRes.error.details ? ` (${linkRes.error.details})` : ''
             }`,
           };
         }
-        if (linkRows?.length) tagLinks.push(...linkRows);
+        if (linkRes.data?.length) tagLinks.push(...linkRes.data);
       }
 
       const tagIds = Array.from(new Set(tagLinks.map((l) => l.tag_id)));
-      for (let i = 0; i < tagIds.length; i += IN_CHUNK) {
-        const chunk = tagIds.slice(i, i + IN_CHUNK);
-        const { data: tagRows, error: tagErr } = await supabase
-          .from('contact_tags')
-          .select('*')
-          .in('id', chunk);
-        if (tagErr) {
-          return {
-            error: `Tags query failed: ${tagErr.message}${
-              tagErr.details ? ` (${tagErr.details})` : ''
-            }`,
-          };
+      if (tagIds.length > 0) {
+        const tagChunks: string[][] = [];
+        for (let i = 0; i < tagIds.length; i += IN_CHUNK) {
+          tagChunks.push(tagIds.slice(i, i + IN_CHUNK));
         }
-        if (tagRows?.length) tags.push(...(tagRows as ContactTag[]));
+        const tagResults = await Promise.all(
+          tagChunks.map((chunk) =>
+            supabase.from('contact_tags').select('*').in('id', chunk)
+          )
+        );
+        for (const tagRes of tagResults) {
+          if (tagRes.error) {
+            return {
+              error: `Tags query failed: ${tagRes.error.message}${
+                tagRes.error.details ? ` (${tagRes.error.details})` : ''
+              }`,
+            };
+          }
+          if (tagRes.data?.length) tags.push(...(tagRes.data as ContactTag[]));
+        }
       }
     }
 
@@ -434,7 +476,7 @@ export async function getContactById(id: string) {
     }
 
     const supabase = await createAdminClient();
-    const { ensureContactLeadIdsForContacts, mergeContactLeadIdsFromRpc, CONTACTS_ROW_SELECT } =
+    const { mergeContactLeadIdsFromRpc, CONTACTS_ROW_SELECT } =
       await import('@/lib/contact-lead-id');
 
     let detailQuery = supabase
@@ -450,8 +492,9 @@ export async function getContactById(id: string) {
     if (error || !contact) return { error: error?.message || 'Contact not found.' };
 
     const [enrichedContact] = await mergeContactLeadIdsFromRpc(supabase, [contact]);
-    const [withLeadId] = await ensureContactLeadIdsForContacts(supabase, enrichedContact ? [enrichedContact] : [contact]);
-    const contactRow = withLeadId || enrichedContact || contact;
+    // Read-only resolve for display. Do not allocate a new Customer ID here —
+    // IDs are assigned once at Contact creation and must stay permanent.
+    const contactRow = enrichedContact || contact;
 
     let childrenQuery = supabase
       .from('contacts')
@@ -465,10 +508,7 @@ export async function getContactById(id: string) {
 
     const childRows = (children || []) as Contact[];
     const enrichedChildren = childRows.length
-      ? await ensureContactLeadIdsForContacts(
-          supabase,
-          await mergeContactLeadIdsFromRpc(supabase, childRows)
-        )
+      ? await mergeContactLeadIdsFromRpc(supabase, childRows)
       : childRows;
 
     const { data: tagLinks } = await supabase
@@ -1369,11 +1409,12 @@ export type CustomerSearchResult = {
   customer_rank: number;
   vendor_rank: number;
   lead_id_formatted?: string | null;
+  salesperson_id?: string | null;
 };
 
 /**
  * Search contacts for customer/contact pickers (quotations, CRM opportunities).
- * Uses the same visibility rules as the Contacts list (org + Odoo list filter).
+ * Server-filtered with a small limit — avoids loading the full contacts table.
  */
 export async function searchCustomerContacts(
   query: string,
@@ -1387,19 +1428,38 @@ export async function searchCustomerContacts(
     if ('empty' in org) return { contacts: [] };
 
     const { applyOrganizationFilter } = await import('@/lib/admin-organization-context');
-    const { mergeContactLeadIdsFromRpc, assignMissingContactLeadIds, CONTACTS_PICKER_SELECT } =
-      await import('@/lib/contact-lead-id');
+    const { mergeContactLeadIdsForPicker, CONTACTS_PICKER_SELECT } = await import(
+      '@/lib/contact-lead-id'
+    );
 
     const supabase = await createAdminClient();
+    const needle = String(query || '').trim();
+    const limit = needle ? 40 : 50;
+
     let q = supabase
       .from('contacts')
       .select(CONTACTS_PICKER_SELECT)
       .or(CONTACTS_LIST_OR_FILTER)
       .order('created_at', { ascending: false })
-      .limit(1000);
+      .limit(limit);
 
     if (!('unscoped' in org)) {
       q = applyOrganizationFilter(q, org.organizationId);
+    }
+
+    if (needle) {
+      const escaped = needle.replace(/[%_,.()]/g, ' ').trim();
+      const phoneDigits = needle.replace(/\D/g, '');
+      const orParts = [
+        `name.ilike.%${escaped}%`,
+        `company_name.ilike.%${escaped}%`,
+        `email.ilike.%${escaped}%`,
+        `phone.ilike.%${escaped}%`,
+      ];
+      if (phoneDigits.length >= 3) {
+        orParts.push(`phone.ilike.%${phoneDigits}%`);
+      }
+      q = q.or(orParts.join(','));
     }
 
     const { data, error } = await q;
@@ -1410,6 +1470,7 @@ export async function searchCustomerContacts(
         created_at?: string;
         salesperson_id?: string | null;
         created_by?: string | null;
+        lead_id_formatted?: string | null;
       }
     >;
 
@@ -1435,8 +1496,14 @@ export async function searchCustomerContacts(
       // ownership filter is best-effort
     }
 
-    rows = await mergeContactLeadIdsFromRpc(supabase, rows);
-    rows = await assignMissingContactLeadIds(supabase, rows);
+    rows = await mergeContactLeadIdsForPicker(supabase, rows);
+
+    // Customer ID search when column is not exposed via REST
+    if (/^\d{6}$/.test(needle) && !rows.some((r) => r.lead_id_formatted === needle)) {
+      const { mergeContactLeadIdsFromRpc } = await import('@/lib/contact-lead-id');
+      rows = await mergeContactLeadIdsFromRpc(supabase, rows);
+      rows = rows.filter((c) => String(c.lead_id_formatted || '').includes(needle));
+    }
 
     if (options?.scope !== 'all') {
       rows = rows.filter(
@@ -1444,8 +1511,8 @@ export async function searchCustomerContacts(
       );
     }
 
-    const needle = String(query || '').trim().toLowerCase();
-    if (needle) {
+    const needleLower = needle.toLowerCase();
+    if (needleLower) {
       rows = rows.filter((c) => {
         const hay = [
           c.name,
@@ -1458,7 +1525,7 @@ export async function searchCustomerContacts(
         ]
           .map((v) => String(v || '').toLowerCase())
           .join(' ');
-        return hay.includes(needle);
+        return hay.includes(needleLower);
       });
     }
 
@@ -1474,6 +1541,8 @@ export async function searchCustomerContacts(
         company_type: row.company_type,
         customer_rank: row.customer_rank,
         vendor_rank: row.vendor_rank,
+        lead_id_formatted: row.lead_id_formatted ?? null,
+        salesperson_id: row.salesperson_id ?? null,
       })),
     };
   } catch (err) {
@@ -1488,6 +1557,7 @@ export type ContactAutofillData = {
   email: string | null;
   phone: string | null;
   mobile: string | null;
+  lead_id_formatted: string | null;
   street: string | null;
   street2: string | null;
   city: string | null;
@@ -1558,6 +1628,9 @@ export async function getContactAutofillData(
     const vendor_only =
       Number(data.vendor_rank) > 0 && Number(data.customer_rank) === 0;
 
+    const { resolveContactCustomerId } = await import('@/lib/contact-lead-id');
+    const leadIdFormatted = await resolveContactCustomerId(supabase, contactId);
+
     return {
       data: {
         id: data.id as string,
@@ -1566,6 +1639,7 @@ export async function getContactAutofillData(
         email: (data.email as string | null) ?? null,
         phone: (data.phone as string | null) ?? null,
         mobile: (data.mobile as string | null) ?? null,
+        lead_id_formatted: leadIdFormatted,
         street: (data.street as string | null) ?? null,
         street2: (data.street2 as string | null) ?? null,
         city: (data.city as string | null) ?? null,

@@ -38,6 +38,10 @@ export function isMissingLeadIdColumnError(
 export const CONTACTS_ROW_SELECT =
   'id, parent_id, contact_kind, company_type, name, company_name, job_position, title, image_url, email, phone, mobile, website, street, street2, city, state, zip, country, tax_id, company_ref, industry, salesperson_id, payment_terms, pricelist, delivery_method, customer_rank, vendor_rank, sales_payment_method, incoterm, incoterm_location, group_rfq, buyer, purchase_payment_terms, purchase_payment_method, receipt_reminder, receivable_account, payable_account, tax_settings, fiscal_position, notes, source, legacy_lead_id, is_active, organization_id, created_by, created_at, updated_at';
 
+/** Lean columns for Contacts list / table — keeps list loads fast. */
+export const CONTACTS_LIST_SELECT =
+  'id, name, company_name, email, phone, country, company_type, customer_rank, vendor_rank, salesperson_id, created_by, organization_id, legacy_lead_id, created_at, updated_at';
+
 export const CONTACTS_PICKER_SELECT =
   'id, name, company_name, email, phone, city, country, company_type, customer_rank, vendor_rank, created_at, salesperson_id, created_by, legacy_lead_id';
 
@@ -271,6 +275,64 @@ export async function mergeContactLeadIdsFromRpc<T extends ContactLeadRow>(
   });
 }
 
+/**
+ * Fast list-path Customer ID merge: use IDs already on the row, then REST/RPC only.
+ * Does not scan leads tables or allocate new IDs (keeps Contacts list snappy).
+ */
+export async function mergeContactLeadIdsForList<T extends ContactLeadRow>(
+  supabase: SupabaseAdmin,
+  contacts: T[]
+): Promise<T[]> {
+  if (!contacts.length) return contacts;
+
+  const missing = contacts.filter((c) => !isValidLeadId(c.lead_id_formatted));
+  if (!missing.length) return contacts;
+
+  const contactIds = missing.map((c) => c.id);
+  const map = new Map<string, string>();
+
+  for (const [id, leadId] of await fetchContactLeadIdsViaRest(supabase, contactIds)) {
+    map.set(id, leadId);
+  }
+
+  const stillMissing = contactIds.filter((id) => !map.has(id));
+  if (stillMissing.length) {
+    for (const [id, leadId] of await fetchContactLeadIdsViaRpc(supabase, stillMissing)) {
+      map.set(id, leadId);
+    }
+  }
+
+  if (!map.size) return contacts;
+
+  return contacts.map((contact) => {
+    if (isValidLeadId(contact.lead_id_formatted)) return contact;
+    const resolved = map.get(contact.id);
+    return resolved ? { ...contact, lead_id_formatted: resolved } : contact;
+  });
+}
+
+/** Fast path for pickers — prefer REST + RPC (no lead-table scans / no allocation). */
+export async function mergeContactLeadIdsForPicker<T extends ContactLeadRow>(
+  supabase: SupabaseAdmin,
+  contacts: T[]
+): Promise<T[]> {
+  return mergeContactLeadIdsForList(supabase, contacts);
+}
+
+async function readStoredContactLeadId(
+  supabase: SupabaseAdmin,
+  contactId: string
+): Promise<string | null> {
+  const id = String(contactId || '').trim();
+  if (!id) return null;
+
+  const viaRest = await fetchContactLeadIdsViaRest(supabase, [id]);
+  if (viaRest.has(id)) return viaRest.get(id)!;
+
+  const viaRpc = await fetchContactLeadIdsViaRpc(supabase, [id]);
+  return viaRpc.get(id) || null;
+}
+
 async function persistContactLeadIdViaRpc(
   supabase: SupabaseAdmin,
   contactId: string,
@@ -281,24 +343,43 @@ async function persistContactLeadIdViaRpc(
     p_lead_id: leadId,
   });
   if (error) return null;
-  return isValidLeadId(data) ? String(data).trim() : null;
+  // RPC returns the row's actual value (existing ID wins if already set).
+  if (isValidLeadId(data)) return String(data).trim();
+  return readStoredContactLeadId(supabase, contactId);
 }
 
 async function persistContactLeadId(
   supabase: SupabaseAdmin,
   contactId: string,
   leadId: string
-): Promise<{ ok: true } | { ok: false; columnMissing: boolean }> {
+): Promise<
+  | { ok: true; leadId: string }
+  | { ok: false; columnMissing: boolean }
+> {
+  // Never invent a display ID when the contact already has one.
+  const existing = await readStoredContactLeadId(supabase, contactId);
+  if (existing) return { ok: true, leadId: existing };
+
   const { error } = await supabase
     .from('contacts')
     .update({ lead_id_formatted: leadId })
     .eq('id', contactId)
     .or('lead_id_formatted.is.null,lead_id_formatted.eq.');
 
-  if (!error) return { ok: true };
+  if (!error) {
+    const stored = await readStoredContactLeadId(supabase, contactId);
+    if (stored) return { ok: true, leadId: stored };
+    // Update matched 0 rows or REST can't see the column — try RPC.
+    const viaRpc = await persistContactLeadIdViaRpc(supabase, contactId, leadId);
+    if (viaRpc) return { ok: true, leadId: viaRpc };
+    return { ok: false, columnMissing: true };
+  }
+
   if (isMissingLeadIdColumnError(error)) {
     const storedId = await persistContactLeadIdViaRpc(supabase, contactId, leadId);
-    return storedId ? { ok: true } : { ok: false, columnMissing: true };
+    return storedId
+      ? { ok: true, leadId: storedId }
+      : { ok: false, columnMissing: true };
   }
   return { ok: false, columnMissing: false };
 }
@@ -307,29 +388,25 @@ async function allocateAndPersistContactLeadId(
   supabase: SupabaseAdmin,
   contactId: string
 ): Promise<{ leadId: string; columnMissing: boolean } | null> {
+  // Permanent Customer ID belongs to the Contact — never allocate if one exists.
+  const existing = await readStoredContactLeadId(supabase, contactId);
+  if (existing) return { leadId: existing, columnMissing: false };
+
   for (let attempt = 0; attempt < MAX_INSERT_RETRIES; attempt++) {
     const leadId = await allocateContactLeadIdFormatted(supabase);
     const result = await persistContactLeadId(supabase, contactId, leadId);
-    if (result.ok) return { leadId, columnMissing: false };
+    if (result.ok) return { leadId: result.leadId, columnMissing: false };
 
     if (result.columnMissing) {
       const storedId = await persistContactLeadIdViaRpc(supabase, contactId, leadId);
       if (storedId) return { leadId: storedId, columnMissing: false };
-      return { leadId, columnMissing: true };
+      // Do not return a fabricated ID that was never stored on the contact.
+      return null;
     }
 
-    const { error } = await supabase
-      .from('contacts')
-      .update({ lead_id_formatted: leadId })
-      .eq('id', contactId);
-
-    if (!error) return { leadId, columnMissing: false };
-    if (isMissingLeadIdColumnError(error)) {
-      const storedId = await persistContactLeadIdViaRpc(supabase, contactId, leadId);
-      if (storedId) return { leadId: storedId, columnMissing: false };
-      return { leadId, columnMissing: true };
-    }
-    if (!isDuplicateContactLeadIdError(error)) return null;
+    // Another writer may have set the ID, or the candidate collided — re-read.
+    const raced = await readStoredContactLeadId(supabase, contactId);
+    if (raced) return { leadId: raced, columnMissing: false };
   }
   return null;
 }
@@ -405,28 +482,26 @@ export async function ensureContactLeadIdsForContacts(
     if (candidate) {
       const result = await persistContactLeadId(supabase, contact.id, candidate);
       if (result.ok) {
-        updates[contact.id] = candidate;
+        updates[contact.id] = result.leadId;
         continue;
       }
       if (result.columnMissing) {
-        updates[contact.id] = candidate;
-        continue;
+        const viaRpc = await persistContactLeadIdViaRpc(
+          supabase,
+          contact.id,
+          candidate
+        );
+        if (viaRpc) {
+          updates[contact.id] = viaRpc;
+          continue;
+        }
       }
 
-      const { error } = await supabase
-        .from('contacts')
-        .update({ lead_id_formatted: candidate })
-        .eq('id', contact.id);
-
-      if (!error) {
-        updates[contact.id] = candidate;
+      const raced = await readStoredContactLeadId(supabase, contact.id);
+      if (raced) {
+        updates[contact.id] = raced;
         continue;
       }
-      if (isMissingLeadIdColumnError(error)) {
-        updates[contact.id] = candidate;
-        continue;
-      }
-      if (!isDuplicateContactLeadIdError(error)) continue;
     }
 
     if (!columnAvailable) {
@@ -455,9 +530,20 @@ export async function assignMissingContactLeadIds<T extends ContactLeadRow>(
   if (!needs.length) return contacts;
 
   const updates: Record<string, string> = {};
-  for (const contact of needs) {
-    const allocated = await allocateAndPersistContactLeadId(supabase, contact.id);
-    if (allocated?.leadId) updates[contact.id] = allocated.leadId;
+  const CONCURRENCY = 8;
+  for (let i = 0; i < needs.length; i += CONCURRENCY) {
+    const chunk = needs.slice(i, i + CONCURRENCY);
+    const results = await Promise.all(
+      chunk.map(async (contact) => {
+        const allocated = await allocateAndPersistContactLeadId(supabase, contact.id);
+        return allocated?.leadId
+          ? ({ id: contact.id, leadId: allocated.leadId } as const)
+          : null;
+      })
+    );
+    for (const result of results) {
+      if (result) updates[result.id] = result.leadId;
+    }
   }
 
   if (!Object.keys(updates).length) return contacts;
@@ -591,13 +677,16 @@ export async function enrichLeadRowsWithContactCustomerIds(
   }
 }
 
-/** Resolve a contact's permanent Customer ID (REST/RPC/leads fallbacks). */
+/** Resolve a contact's permanent Customer ID (REST/RPC/leads fallbacks). Never allocates. */
 export async function resolveContactCustomerId(
   supabase: SupabaseAdmin,
   contactId: string
 ): Promise<string | null> {
   const id = String(contactId || '').trim();
   if (!id) return null;
+
+  const stored = await readStoredContactLeadId(supabase, id);
+  if (stored) return stored;
 
   const { data: contact } = await supabase
     .from('contacts')

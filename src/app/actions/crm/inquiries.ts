@@ -9,7 +9,7 @@ import { canAccessLeadForInquiry } from '@/lib/inquiry-crm-access';
 import { isCrmQualifiedStage } from '@/lib/crm-inquiry-utils';
 import { resolveSalesAgentForSession } from '@/lib/legacy-user-bridge';
 import { formatLeadPhoneForStorage, normalizePakistaniPhone } from '@/lib/pakistan-phone';
-import { randomContactLeadIdFormatted, resolveContactCustomerId } from '@/lib/contact-lead-id';
+import { resolveContactCustomerId } from '@/lib/contact-lead-id';
 import type { Lead } from '@/app/actions/leads';
 import type { LeadInquiry } from '@/app/actions/inquiries';
 import { listInquiriesForLead } from '@/app/actions/inquiries';
@@ -103,36 +103,49 @@ async function loadOpportunityContext(
 
   let customerName: string | null = null;
   let contactPersonName: string | null = null;
-  if (data.contact_id) {
-    const { data: contact } = await supabase
-      .from('contacts')
-      .select('name, company_name')
-      .eq('id', data.contact_id)
-      .maybeSingle();
-    if (contact) {
-      customerName = String(contact.company_name || contact.name || '').trim() || null;
-    }
-  }
-  if (data.contact_person_id) {
-    const { data: person } = await supabase
-      .from('contacts')
-      .select('name')
-      .eq('id', data.contact_person_id)
-      .maybeSingle();
-    contactPersonName = person?.name ? String(person.name) : null;
-  }
-
   let salespersonName: string | null = null;
-  if (data.salesperson_id) {
-    const { data: agent } = await supabase
-      .from('sales_agents')
-      .select('name, username')
-      .eq('id', data.salesperson_id)
-      .maybeSingle();
-    salespersonName = agent?.name
-      ? String(agent.name)
-      : agent?.username
-        ? String(agent.username)
+
+  const contactPromise = data.contact_id
+    ? supabase
+        .from('contacts')
+        .select('name, company_name')
+        .eq('id', data.contact_id)
+        .maybeSingle()
+    : Promise.resolve({ data: null });
+  const personPromise = data.contact_person_id
+    ? supabase
+        .from('contacts')
+        .select('name')
+        .eq('id', data.contact_person_id)
+        .maybeSingle()
+    : Promise.resolve({ data: null });
+  const agentPromise = data.salesperson_id
+    ? supabase
+        .from('sales_agents')
+        .select('name, username')
+        .eq('id', data.salesperson_id)
+        .maybeSingle()
+    : Promise.resolve({ data: null });
+
+  const [contactRes, personRes, agentRes] = await Promise.all([
+    contactPromise,
+    personPromise,
+    agentPromise,
+  ]);
+
+  if (contactRes.data) {
+    // Customer name = contact person/company display name (prefer name).
+    customerName =
+      String(contactRes.data.name || contactRes.data.company_name || '').trim() || null;
+  }
+  if (personRes.data?.name) {
+    contactPersonName = String(personRes.data.name);
+  }
+  if (agentRes.data) {
+    salespersonName = agentRes.data.name
+      ? String(agentRes.data.name)
+      : agentRes.data.username
+        ? String(agentRes.data.username)
         : null;
   }
 
@@ -186,7 +199,11 @@ async function syncLeadCustomerIdFromContact(
   leadRow: Record<string, unknown>,
   contactId: string | null
 ): Promise<Lead> {
-  if (leadRow.lead_id_formatted && /^\d{6}$/.test(String(leadRow.lead_id_formatted).trim())) {
+  const current = leadRow.lead_id_formatted
+    ? String(leadRow.lead_id_formatted).trim()
+    : '';
+  // Fast path: bridge lead already has a valid Customer ID.
+  if (/^\d{6}$/.test(current)) {
     return mapLeadRow(leadRow);
   }
 
@@ -197,36 +214,39 @@ async function syncLeadCustomerIdFromContact(
   const customerId = await resolveContactCustomerId(supabase, resolvedContactId);
   if (!customerId) return mapLeadRow(leadRow);
 
-  await supabase
-    .from('leads')
-    .update({ lead_id_formatted: customerId })
-    .eq('id', String(leadRow.id))
-    .or('lead_id_formatted.is.null,lead_id_formatted.eq.');
+  if (current !== customerId) {
+    await supabase
+      .from('leads')
+      .update({ lead_id_formatted: customerId })
+      .eq('id', String(leadRow.id));
+  }
 
   return mapLeadRow({ ...leadRow, lead_id_formatted: customerId });
 }
 
-/** Find or create a legacy lead bridge row for CRM inquiry workflow. */
-export async function resolveLeadForCrmOpportunity(opportunityId: string): Promise<
-  | { lead: Lead }
-  | { error: string }
-> {
-  const auth = await requireAnyChildModule(['crm-pipeline']);
-  if (isAccessDenied(auth)) return { error: auth.error };
-
-  const ctx = await loadOpportunityContext(opportunityId);
-  if ('error' in ctx) return { error: ctx.error };
-
+async function resolveLeadForCrmOpportunityWithContext(
+  ctx: Exclude<OpportunityInquiryContext, { error: string }>,
+  opportunityId: string
+): Promise<{ lead: Lead } | { error: string }> {
   const { supabase, opportunity, scope } = ctx;
 
   const trySelectLead = async (leadId: string) => {
-    const { data } = await supabase.from('leads').select('*').eq('id', leadId).maybeSingle();
+    const { data } = await supabase
+      .from('leads')
+      .select(
+        'id, lead_id_formatted, name, number, source, status, sales_agent_id, created_by_sales_agent_id, transferred_from_sales_agent_id, transferred_at, converted, created_at, updated_at, contact_id, crm_opportunity_id'
+      )
+      .eq('id', leadId)
+      .maybeSingle();
     return data as Record<string, unknown> | null;
   };
 
+  const leadSelect =
+    'id, lead_id_formatted, name, number, source, status, sales_agent_id, created_by_sales_agent_id, transferred_from_sales_agent_id, transferred_at, converted, created_at, updated_at, contact_id, crm_opportunity_id';
+
   const { data: byOpp } = await supabase
     .from('leads')
-    .select('*')
+    .select(leadSelect)
     .eq('crm_opportunity_id', opportunityId)
     .order('created_at', { ascending: true })
     .limit(1)
@@ -245,14 +265,14 @@ export async function resolveLeadForCrmOpportunity(opportunityId: string): Promi
   if (opportunity.contact_id) {
     const { data: byContact } = await supabase
       .from('leads')
-      .select('*')
+      .select(leadSelect)
       .eq('contact_id', opportunity.contact_id)
       .order('created_at', { ascending: true })
       .limit(1)
       .maybeSingle();
 
     if (byContact) {
-      await supabase
+      void supabase
         .from('leads')
         .update({ crm_opportunity_id: opportunityId })
         .eq('id', byContact.id)
@@ -275,7 +295,7 @@ export async function resolveLeadForCrmOpportunity(opportunityId: string): Promi
     if (contact?.legacy_lead_id) {
       const legacy = await trySelectLead(String(contact.legacy_lead_id));
       if (legacy) {
-        await supabase
+        void supabase
           .from('leads')
           .update({
             crm_opportunity_id: opportunityId,
@@ -317,6 +337,13 @@ export async function resolveLeadForCrmOpportunity(opportunityId: string): Promi
     customerId = await resolveContactCustomerId(supabase, opportunity.contact_id);
   }
 
+  if (!customerId) {
+    return {
+      error:
+        'This contact has no Customer ID. Open the contact and save it so a permanent Customer ID can be assigned, then try again.',
+    };
+  }
+
   const insertRow: Record<string, unknown> = {
     name: leadName,
     number,
@@ -329,13 +356,13 @@ export async function resolveLeadForCrmOpportunity(opportunityId: string): Promi
     contact_id: opportunity.contact_id,
     crm_opportunity_id: opportunityId,
     converted: false,
-    lead_id_formatted: customerId || randomContactLeadIdFormatted(),
+    lead_id_formatted: customerId,
   };
 
   const { data: created, error } = await supabase
     .from('leads')
     .insert(insertRow)
-    .select('*')
+    .select(leadSelect)
     .single();
 
   if (error || !created) {
@@ -343,6 +370,20 @@ export async function resolveLeadForCrmOpportunity(opportunityId: string): Promi
   }
 
   return { lead: mapLeadRow(created as Record<string, unknown>) };
+}
+
+/** Find or create a legacy lead bridge row for CRM inquiry workflow. */
+export async function resolveLeadForCrmOpportunity(opportunityId: string): Promise<
+  | { lead: Lead }
+  | { error: string }
+> {
+  const auth = await requireAnyChildModule(['crm-pipeline']);
+  if (isAccessDenied(auth)) return { error: auth.error };
+
+  const ctx = await loadOpportunityContext(opportunityId);
+  if ('error' in ctx) return { error: ctx.error };
+
+  return resolveLeadForCrmOpportunityWithContext(ctx, opportunityId);
 }
 
 export async function getCrmOpportunityInquiryBootstrap(
@@ -354,22 +395,18 @@ export async function getCrmOpportunityInquiryBootstrap(
   const ctx = await loadOpportunityContext(opportunityId);
   if ('error' in ctx) return { error: ctx.error };
 
-  const leadResult = await resolveLeadForCrmOpportunity(opportunityId);
+  // Single opportunity load — resolve lead reuses the same context.
+  const leadResult = await resolveLeadForCrmOpportunityWithContext(ctx, opportunityId);
   if ('error' in leadResult) return { error: leadResult.error };
 
-  const access = await canAccessLeadForInquiry(
-    ctx.scope.session,
-    ctx.supabase,
-    leadResult.lead.id,
-    { crmOpportunityId: opportunityId }
-  );
-  if (!access.allowed) return { error: access.error || 'Unauthorized' };
+  const [access, listed] = await Promise.all([
+    canAccessLeadForInquiry(ctx.scope.session, ctx.supabase, leadResult.lead.id, {
+      crmOpportunityId: opportunityId,
+    }),
+    listInquiriesForLead(ctx.supabase, leadResult.lead.id, ctx.scope.session.role),
+  ]);
 
-  const listed = await listInquiriesForLead(
-    ctx.supabase,
-    leadResult.lead.id,
-    ctx.scope.session.role
-  );
+  if (!access.allowed) return { error: access.error || 'Unauthorized' };
   if ('error' in listed) return { error: listed.error };
 
   const inquiries = listed.inquiries || [];

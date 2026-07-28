@@ -56,6 +56,8 @@ export type CrmOpportunity = {
 
 export type CrmOpportunityCard = CrmOpportunity & {
   customer_name: string | null;
+  /** Permanent Customer ID from the linked Contact (contacts.lead_id_formatted). */
+  customer_lead_id: string | null;
   contact_person_name: string | null;
   salesperson_name: string | null;
   organization_name: string | null;
@@ -147,6 +149,10 @@ export type CrmOpportunityUpsertInput = {
   website?: string | null;
   expected_closing_date?: string | null;
   internal_notes?: string | null;
+  /** Display hints for fast create responses (not persisted). */
+  customer_name?: string | null;
+  customer_lead_id?: string | null;
+  salesperson_name?: string | null;
 };
 
 export type CrmPipelineBoardFilters = {

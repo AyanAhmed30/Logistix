@@ -18,9 +18,12 @@ import { CrmUserMenu } from "@/components/crm/CrmUserMenu";
 import { useAdminOrganization } from "@/contexts/AdminOrganizationContext";
 import { useCrmKeyboardShortcuts } from "@/hooks/useCrmKeyboardShortcuts";
 import { invalidateCrmClientCache } from "@/lib/crm-client-cache";
+import { invalidateContactsClientCache } from "@/lib/contacts-client-cache";
+import { invalidateContactPickerCache } from "@/lib/contact-picker-cache";
 import { getCrmPageMeta } from "@/lib/crm-navigation";
 import type { DashboardAccessState } from "@/lib/dashboard-access";
 import { toast } from "sonner";
+import { ModuleLoadingOverlay } from "@/components/ui/ModuleLoadingOverlay";
 
 type CrmShellContextValue = {
   searchQuery: string;
@@ -50,6 +53,7 @@ export function CrmShell({ access, children }: Props) {
   const [searchQuery, setSearchQuery] = useState("");
   const [activeFilterId, setActiveFilterId] = useState("all");
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  const [navigating, setNavigating] = useState(false);
   const searchInputRef = useRef<HTMLInputElement | null>(null);
 
   const pageMeta = useMemo(
@@ -62,7 +66,15 @@ export function CrmShell({ access, children }: Props) {
 
   useEffect(() => {
     invalidateCrmClientCache();
+    invalidateContactsClientCache();
+    invalidateContactPickerCache();
   }, [switchVersion]);
+
+  useEffect(() => {
+    setNavigating(true);
+    const id = window.setTimeout(() => setNavigating(false), 400);
+    return () => window.clearTimeout(id);
+  }, [pathname]);
 
   useEffect(() => {
     setMobileNavOpen(false);
@@ -146,6 +158,7 @@ export function CrmShell({ access, children }: Props) {
   return (
     <CrmShellContext.Provider value={shellContext}>
       <div className="min-h-screen bg-[#f8f9fa] flex flex-col">
+        {navigating ? <ModuleLoadingOverlay label={pageMeta.title || "CRM"} /> : null}
         <header className="sticky top-0 z-50 bg-[#017e84] relative">
           <div className="h-12 px-2 sm:px-3 md:px-4 flex items-center justify-between gap-2">
             <CrmTopNav

@@ -182,7 +182,6 @@ export async function getCrmEmailTemplates() {
 export async function checkCrmOpportunityDuplicates(input: {
   name: string;
   contactId: string;
-  email?: string | null;
   excludeId?: string | null;
 }): Promise<{ duplicates: CrmDuplicateMatch[] } | { error: string }> {
   const auth = await requireAnyChildModule(['crm-pipeline']);
@@ -193,16 +192,15 @@ export async function checkCrmOpportunityDuplicates(input: {
 
   const name = String(input.name || '').trim();
   const contactId = String(input.contactId || '').trim();
-  const email = String(input.email || '')
-    .trim()
-    .toLowerCase();
-  if (!name && !contactId && !email) return { duplicates: [] };
+  if (!name || !contactId) return { duplicates: [] };
 
   const supabase = await createAdminClient();
   let query = supabase
     .from('crm_opportunities')
-    .select('id, name, email, contact_id')
-    .limit(50);
+    .select('id, name, email, contact_id, stage_id')
+    .eq('contact_id', contactId)
+    .ilike('name', name)
+    .limit(20);
 
   if (!scope.isGlobalAdminView) {
     query = query.eq('organization_id', scope.organizationId);
@@ -211,17 +209,24 @@ export async function checkCrmOpportunityDuplicates(input: {
     query = query.neq('id', input.excludeId);
   }
 
-  // Fetch candidates matching any of the three signals
-  const orParts: string[] = [];
-  if (name) orParts.push(`name.ilike.${name}`);
-  if (contactId) orParts.push(`contact_id.eq.${contactId}`);
-  if (email) orParts.push(`email.ilike.${email}`);
-  if (orParts.length) {
-    query = query.or(orParts.join(','));
-  }
-
   const { data, error } = await query;
   if (error) return { error: error.message };
+
+  const stageIds = [
+    ...new Set((data || []).map((row) => row.stage_id).filter(Boolean)),
+  ] as string[];
+  const activeStageIds = new Set<string>();
+  if (stageIds.length) {
+    const { data: stages } = await supabase
+      .from('crm_pipeline_stages')
+      .select('id, is_won, is_lost')
+      .in('id', stageIds);
+    for (const stage of stages || []) {
+      if (!stage.is_won && !stage.is_lost) {
+        activeStageIds.add(String(stage.id));
+      }
+    }
+  }
 
   const contactIds = [
     ...new Set((data || []).map((r) => r.contact_id).filter(Boolean)),
@@ -242,37 +247,19 @@ export async function checkCrmOpportunityDuplicates(input: {
 
   const duplicates: CrmDuplicateMatch[] = [];
   for (const row of data || []) {
-    const match_on: Array<'name' | 'customer' | 'email'> = [];
-    if (name && String(row.name || '').trim().toLowerCase() === name.toLowerCase()) {
-      match_on.push('name');
-    }
-    if (contactId && String(row.contact_id) === contactId) {
-      match_on.push('customer');
-    }
-    if (
-      email &&
-      String(row.email || '')
-        .trim()
-        .toLowerCase() === email
-    ) {
-      match_on.push('email');
-    }
+    if (!activeStageIds.has(String(row.stage_id))) continue;
 
-    const isDup =
-      (match_on.includes('name') && match_on.includes('customer')) ||
-      (match_on.includes('email') && match_on.includes('customer')) ||
-      (match_on.includes('name') && match_on.includes('email'));
-
-    if (!isDup) continue;
+    const rowName = String(row.name || '').trim();
+    if (rowName.toLowerCase() !== name.toLowerCase()) continue;
 
     duplicates.push({
       id: String(row.id),
-      name: String(row.name || ''),
+      name: rowName,
       email: row.email ? String(row.email) : null,
       customer_name: row.contact_id
         ? contactMap.get(String(row.contact_id)) || null
         : null,
-      match_on,
+      match_on: ['name', 'customer'],
     });
   }
 

@@ -30,14 +30,21 @@ import {
 import { toast } from "sonner";
 import {
   createQuickContact,
+  getContactAutofillData,
   searchCustomerContacts,
   type CustomerSearchResult,
 } from "@/app/actions/contacts";
+import { getCachedContactPickerResults, peekContactPickerCache } from "@/lib/contact-picker-cache";
 
 export type PickedCustomer = {
   contact_id: string;
   name: string;
   vendor_only: boolean;
+  email?: string | null;
+  phone?: string | null;
+  company_name?: string | null;
+  lead_id_formatted?: string | null;
+  salesperson_id?: string | null;
 };
 
 type Props = {
@@ -64,7 +71,13 @@ type Props = {
 };
 
 function contactPickerSubtitle(contact: CustomerSearchResult): string {
-  const parts = [contact.company_name, contact.phone, contact.email, contact.city]
+  const parts = [
+    contact.lead_id_formatted ? `#${contact.lead_id_formatted}` : null,
+    contact.company_name,
+    contact.phone,
+    contact.email,
+    contact.city,
+  ]
     .map((v) => String(v || '').trim())
     .filter(Boolean);
   return parts.join(' • ') || 'No contact info';
@@ -80,9 +93,11 @@ export function CustomerPicker({
   className,
   inputClassName,
 }: Props) {
+  const scopeKey = contactScope === "all" ? "all" : "customer";
+  const cachedInitial = peekContactPickerCache(scopeKey, "");
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
-  const [results, setResults] = useState<CustomerSearchResult[]>([]);
+  const [results, setResults] = useState<CustomerSearchResult[]>(cachedInitial || []);
   const [loading, setLoading] = useState(false);
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const [activeIndex, setActiveIndex] = useState(-1);
@@ -110,30 +125,45 @@ export function CustomerPicker({
   }, []);
 
   const runSearch = useCallback(async (needle: string) => {
+    const scopeKey = contactScope === "all" ? "all" : "customer";
+    const cached = peekContactPickerCache(scopeKey, needle);
+    if (cached) {
+      setResults(cached);
+      setActiveIndex(cached.length > 0 ? 0 : -1);
+      return;
+    }
+
     setLoading(true);
     try {
-      const res = await searchCustomerContacts(needle, {
-        scope: contactScope === 'all' ? 'all' : 'customer',
+      const contacts = await getCachedContactPickerResults(scopeKey, needle, async () => {
+        const res = await searchCustomerContacts(needle, {
+          scope: contactScope === "all" ? "all" : "customer",
+        });
+        if ("error" in res && res.error) {
+          toast.error(res.error);
+          return [];
+        }
+        return "contacts" in res ? res.contacts : [];
       });
-      if ("error" in res && res.error) {
-        toast.error(res.error);
-        setResults([]);
-      } else if ("contacts" in res) {
-        setResults(res.contacts);
-        setActiveIndex(res.contacts.length > 0 ? 0 : -1);
-      }
+      setResults(contacts);
+      setActiveIndex(contacts.length > 0 ? 0 : -1);
     } finally {
       setLoading(false);
     }
   }, [contactScope]);
 
-  // Debounced query
+  // Preload recent contacts for instant dropdown open
+  useEffect(() => {
+    void runSearch("");
+  }, [runSearch]);
+
+  // Debounced query while typing
   useEffect(() => {
     if (!open) return;
     if (debounceRef.current) clearTimeout(debounceRef.current);
     debounceRef.current = setTimeout(() => {
       runSearch(query);
-    }, 200);
+    }, 150);
     return () => {
       if (debounceRef.current) clearTimeout(debounceRef.current);
     };
@@ -156,6 +186,11 @@ export function CustomerPicker({
       contact_id: contact.id,
       name: contact.name,
       vendor_only,
+      email: contact.email,
+      phone: contact.phone,
+      company_name: contact.company_name,
+      lead_id_formatted: contact.lead_id_formatted ?? null,
+      salesperson_id: contact.salesperson_id ?? null,
     });
     setOpen(false);
     setActiveIndex(-1);
@@ -213,7 +248,7 @@ export function CustomerPicker({
           onFocus={() => {
             if (!disabled) {
               setOpen(true);
-              if (results.length === 0) runSearch(query);
+              if (results.length === 0) void runSearch(query);
             }
           }}
           onKeyDown={handleInputKeyDown}
@@ -239,7 +274,7 @@ export function CustomerPicker({
       {open && !disabled && (
         <div className="absolute z-40 mt-1 w-full rounded-md border border-slate-200 bg-white shadow-lg overflow-hidden">
           <div ref={listRef} className="max-h-72 overflow-y-auto">
-            {loading && (
+            {loading && results.length === 0 && (
               <div className="flex items-center gap-2 px-3 py-2 text-xs text-slate-500">
                 <Loader2 className="h-3.5 w-3.5 animate-spin" /> Searching…
               </div>
@@ -251,7 +286,7 @@ export function CustomerPicker({
               </div>
             )}
 
-            {!loading &&
+            {results.length > 0 &&
               results.map((c, index) => {
                 const isVendor =
                   Number(c.vendor_rank) > 0 && Number(c.customer_rank) === 0;

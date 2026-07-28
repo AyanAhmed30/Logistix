@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { ContactsListView } from "@/components/admin/contacts/ContactsListView";
 import { ContactFormView } from "@/components/admin/contacts/ContactFormView";
 import { useAdminOrganization } from "@/contexts/AdminOrganizationContext";
+import { invalidateContactsClientCache } from "@/lib/contacts-client-cache";
 
 type View = { mode: "list" } | { mode: "form"; contactId: string | null };
 
@@ -15,8 +16,10 @@ export type ContactsPanelInitialPayload = {
 
 export function ContactsPanel({
   initialPayload,
+  onListLoaded,
 }: {
   initialPayload?: ContactsPanelInitialPayload;
+  onListLoaded?: () => void;
 } = {}) {
   const { switchVersion, isAdminContext } = useAdminOrganization();
   const [view, setView] = useState<View>({ mode: "list" });
@@ -40,6 +43,7 @@ export function ContactsPanel({
       return;
     }
     setView({ mode: "list" });
+    invalidateContactsClientCache();
     setRefreshToken((n) => n + 1);
   }, [switchVersion]);
 
@@ -59,6 +63,7 @@ export function ContactsPanel({
         <ContactsListView
           key={switchVersion}
           refreshToken={refreshToken}
+          onListLoaded={onListLoaded}
           onNewContact={() => setView({ mode: "form", contactId: null })}
           onOpenContact={(contactId) => setView({ mode: "form", contactId })}
         />
@@ -72,6 +77,7 @@ export function ContactsPanel({
             setView({ mode: "list" });
           }}
           onSaved={() => {
+            invalidateContactsClientCache();
             setRefreshToken((n) => n + 1);
           }}
         />

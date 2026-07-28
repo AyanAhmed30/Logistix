@@ -32,44 +32,76 @@ import {
   getContacts,
   type ContactWithRelations,
 } from "@/app/actions/contacts";
+import {
+  getCachedContactsList,
+  peekContactsClientCache,
+} from "@/lib/contacts-client-cache";
+import { useAdminOrganization } from "@/contexts/AdminOrganizationContext";
+import { ModuleLoadingOverlay } from "@/components/ui/ModuleLoadingOverlay";
 
 type Props = {
   onNewContact: () => void;
   onOpenContact: (contactId: string) => void;
   refreshToken: number;
+  onListLoaded?: () => void;
 };
 
 const PAGE_SIZE = 40;
 
 type TypeFilter = "all" | "person" | "company";
 
-export function ContactsListView({ onNewContact, onOpenContact, refreshToken }: Props) {
-  const [contacts, setContacts] = useState<ContactWithRelations[]>([]);
+export function ContactsListView({
+  onNewContact,
+  onOpenContact,
+  refreshToken,
+  onListLoaded,
+}: Props) {
+  const { switchVersion } = useAdminOrganization();
+  const cacheKey = `${switchVersion}:${refreshToken}`;
+  const cached = peekContactsClientCache(cacheKey);
+  const initialContacts =
+    cached && "contacts" in cached && cached.contacts ? cached.contacts : [];
+
+  const [contacts, setContacts] = useState<ContactWithRelations[]>(initialContacts);
   const [search, setSearch] = useState("");
   const [typeFilter, setTypeFilter] = useState<TypeFilter>("all");
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(initialContacts.length === 0);
   const [page, setPage] = useState(1);
 
   useEffect(() => {
     let cancelled = false;
-    Promise.resolve().then(() => {
-      if (cancelled) return;
-      setLoading(true);
-    });
-    getContacts().then((res) => {
-      if (cancelled) return;
-      if ("error" in res && res.error) {
-        toast.error(res.error);
-        setContacts([]);
-      } else if ("contacts" in res && res.contacts) {
-        setContacts(res.contacts);
-      }
+    const key = `${switchVersion}:${refreshToken}`;
+    const existing = peekContactsClientCache(key);
+    const hasCache =
+      existing && "contacts" in existing && Array.isArray(existing.contacts);
+
+    if (hasCache) {
+      setContacts(existing.contacts);
       setLoading(false);
-    });
+      onListLoaded?.();
+    } else {
+      setLoading(true);
+    }
+
+    // Always refetch when cache had no Customer IDs (peek already dropped those).
+    getCachedContactsList(key, () => getContacts(), { force: !hasCache }).then(
+      (res) => {
+        if (cancelled) return;
+        if ("error" in res && res.error) {
+          toast.error(res.error);
+          if (!hasCache) setContacts([]);
+        } else if ("contacts" in res && res.contacts) {
+          setContacts(res.contacts);
+        }
+        setLoading(false);
+        onListLoaded?.();
+      }
+    );
+
     return () => {
       cancelled = true;
     };
-  }, [refreshToken]);
+  }, [refreshToken, switchVersion, onListLoaded]);
 
   const filtered = useMemo(() => {
     const needle = search.trim().toLowerCase();
@@ -96,6 +128,9 @@ export function ContactsListView({ onNewContact, onOpenContact, refreshToken }: 
 
   return (
     <div className="space-y-4">
+      {loading && contacts.length === 0 ? (
+        <ModuleLoadingOverlay label="Contacts" />
+      ) : null}
       {/* Toolbar */}
       <div className="flex flex-wrap items-center gap-3">
         <Button

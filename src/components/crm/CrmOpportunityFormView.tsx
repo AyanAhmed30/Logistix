@@ -35,7 +35,6 @@ import { OpportunityChatter } from "@/components/crm/OpportunityChatter";
 import { CrmActivityDialog } from "@/components/crm/CrmActivityDialog";
 import { CrmLostReasonDialog } from "@/components/crm/CrmLostReasonDialog";
 import { CrmFormSkeleton } from "@/components/crm/CrmSkeleton";
-import type { CrmDuplicateMatch } from "@/app/actions/crm/automation";
 import { salesQuotationNewUrlFromOpportunity } from "@/lib/sales-crm-bridge";
 import {
   CRM_AUTO_ASSIGN_MODES,
@@ -195,7 +194,6 @@ export function CrmOpportunityFormView({ opportunityId, initialStageId }: Props)
   const [leadScore, setLeadScore] = useState(0);
   const [lostReasonOpen, setLostReasonOpen] = useState(false);
   const [pendingLostStageId, setPendingLostStageId] = useState<string | null>(null);
-  const [duplicateWarning, setDuplicateWarning] = useState<CrmDuplicateMatch[]>([]);
   const [lostReasonLabel, setLostReasonLabel] = useState<string | null>(null);
 
   function update<K extends keyof FormState>(key: K, value: FormState[K]) {
@@ -316,22 +314,32 @@ export function CrmOpportunityFormView({ opportunityId, initialStageId }: Props)
     update("contact_id", picked.contact_id);
     update("customer_name", picked.name);
     update("contact_person_id", null);
-    if (!form.name.trim()) update("name", `${picked.name}'s opportunity`);
+    if (!form.name.trim()) update("name", `${picked.name} — Opportunity`);
+
+    // Customer ID belongs to the Contact — set from picker immediately.
+    setCustomerLeadId(picked.lead_id_formatted || null);
+    if (picked.email) update("email", picked.email);
+    if (picked.phone) update("phone", picked.phone);
+    if (picked.salesperson_id) update("salesperson_id", picked.salesperson_id);
 
     const res = await getContactById(picked.contact_id);
     if ("contact" in res && res.contact) {
       const c = res.contact;
-      setCustomerLeadId(c.lead_id_formatted || null);
-      update("email", c.email || "");
-      update("phone", c.phone || "");
+      // Prefer contact's permanent ID; never clear a known valid ID with null.
+      const contactCustomerId = c.lead_id_formatted || null;
+      if (contactCustomerId) {
+        setCustomerLeadId(contactCustomerId);
+      }
+      if (!picked.email) update("email", c.email || "");
+      if (!picked.phone) update("phone", c.phone || "");
       update("mobile", c.mobile || "");
       update("website", c.website || "");
+      if (c.salesperson_id) update("salesperson_id", c.salesperson_id);
       const children = (c.children || []).filter(
         (child) => child.contact_kind === "contact" || child.company_type === "person"
       );
       setContactPersons(children);
     } else {
-      setCustomerLeadId(null);
       setContactPersons([]);
     }
   }
@@ -342,14 +350,17 @@ export function CrmOpportunityFormView({ opportunityId, initialStageId }: Props)
       setCustomerLeadId(null);
       return;
     }
-    void getContactById(form.contact_id).then((res) => {
-      if ("contact" in res && res.contact) {
-        setCustomerLeadId(res.contact.lead_id_formatted || null);
-        const children = (res.contact.children || []).filter(
-          (c) => c.contact_kind === "contact" || c.company_type === "person"
-        );
-        setContactPersons(children);
+    const contactId = form.contact_id;
+    void getContactById(contactId).then((res) => {
+      if (!("contact" in res) || !res.contact) return;
+      // Only adopt the Contact's permanent Customer ID — never invent/overwrite with another.
+      if (res.contact.lead_id_formatted) {
+        setCustomerLeadId(res.contact.lead_id_formatted);
       }
+      const children = (res.contact.children || []).filter(
+        (c) => c.contact_kind === "contact" || c.company_type === "person"
+      );
+      setContactPersons(children);
     });
   }, [form.contact_id]);
 
@@ -395,7 +406,7 @@ export function CrmOpportunityFormView({ opportunityId, initialStageId }: Props)
     };
   }
 
-  function handleSubmit(ignoreDuplicates = false) {
+  function handleSubmit() {
     const err = validate();
     if (err) {
       toast.error(err);
@@ -405,31 +416,12 @@ export function CrmOpportunityFormView({ opportunityId, initialStageId }: Props)
     startTransition(async () => {
       const result = isEdit
         ? await updateCrmOpportunity(buildPayload())
-        : await createCrmOpportunity({ ...buildPayload(), ignoreDuplicates });
-
-      const duplicates =
-        !isEdit &&
-        result &&
-        typeof result === "object" &&
-        "duplicates" in result &&
-        Array.isArray((result as { duplicates?: unknown }).duplicates)
-          ? ((result as { duplicates: CrmDuplicateMatch[] }).duplicates)
-          : null;
-
-      if (duplicates && duplicates.length > 0 && !ignoreDuplicates) {
-        setDuplicateWarning(duplicates);
-        toast.warning("Possible duplicates found — review and click Save again to continue.");
-        return;
-      }
+        : await createCrmOpportunity(buildPayload());
 
       if ("error" in result && result.error) {
-        if (duplicates && duplicates.length > 0) {
-          setDuplicateWarning(duplicates);
-        }
         toast.error(result.error);
         return;
       }
-      setDuplicateWarning([]);
       toast.success(isEdit ? "Opportunity updated" : "Opportunity created");
       const id = "opportunity" in result ? result.opportunity?.id : null;
       if ("opportunity" in result && result.opportunity) {
@@ -446,11 +438,11 @@ export function CrmOpportunityFormView({ opportunityId, initialStageId }: Props)
   useEffect(() => {
     function onShortcutSave() {
       if (isPending) return;
-      handleSubmit(duplicateWarning.length > 0);
+      handleSubmit();
     }
     window.addEventListener("crm:shortcut-save", onShortcutSave);
     return () => window.removeEventListener("crm:shortcut-save", onShortcutSave);
-  }, [isPending, duplicateWarning.length, form, isEdit, opportunityId]);
+  }, [isPending, form, isEdit, opportunityId]);
 
   function applyStageLocally(stageId: string, probability?: number) {
     update("stage_id", stageId);
@@ -566,14 +558,16 @@ export function CrmOpportunityFormView({ opportunityId, initialStageId }: Props)
               size="sm"
               variant="outline"
               className="h-8 border-[#017e84] text-[#017e84] hover:bg-[#017e84]/5"
-              disabled={!opportunityId}
+              disabled={!opportunityId || isPending}
               onClick={() => {
                 if (!opportunityId) return;
-                router.push(crmOpportunityInquiryUrl(opportunityId, "create"));
+                startTransition(() => {
+                  router.push(crmOpportunityInquiryUrl(opportunityId, "create"));
+                });
               }}
             >
               <Send className="h-3.5 w-3.5 mr-1.5" />
-              Send Inquiry
+              {isPending ? "Opening…" : "Send Inquiry"}
             </Button>
           ) : null}
           {isEdit && inquirySummary && inquirySummary.total > 0 ? (
@@ -621,9 +615,9 @@ export function CrmOpportunityFormView({ opportunityId, initialStageId }: Props)
             size="sm"
             className="h-8 bg-[#017e84] hover:bg-[#016970] text-white"
             disabled={isPending}
-            onClick={() => handleSubmit(duplicateWarning.length > 0)}
+            onClick={() => handleSubmit()}
           >
-            {isPending ? "Saving…" : duplicateWarning.length > 0 ? "Save Anyway" : "Save"}
+            {isPending ? "Saving…" : "Save"}
           </Button>
         </div>
 
@@ -659,17 +653,6 @@ export function CrmOpportunityFormView({ opportunityId, initialStageId }: Props)
           />
         </div>
       </div>
-
-      {duplicateWarning.length > 0 ? (
-        <div className="mx-4 mt-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
-          <strong>Possible duplicates:</strong>{" "}
-          {duplicateWarning
-            .slice(0, 3)
-            .map((d) => `${d.name} (${d.match_on.join(", ")})`)
-            .join(" · ")}
-          . Click <em>Save Anyway</em> to continue.
-        </div>
-      ) : null}
 
       {lostReasonLabel ? (
         <div className="mx-4 mt-3 text-xs text-secondary-muted">

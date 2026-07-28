@@ -90,6 +90,8 @@ import {
 import { PortalUserProfilePanel } from "@/components/admin/PortalUserProfilePanel";
 import { OrganizationUsersManagementPanel } from "@/components/admin/OrganizationUsersManagementPanel";
 import type { Organization } from "@/app/actions/organizations";
+import { ModuleLoadingOverlay } from "@/components/ui/ModuleLoadingOverlay";
+import { useAdminOrganization } from "@/contexts/AdminOrganizationContext";
 
 function LegacySalesRedirect({ href }: { href: string }) {
   const router = useRouter();
@@ -148,6 +150,8 @@ export function AdminUserManager({
   portalOrganization = null,
 }: Props) {
   const access = useDashboardAccess();
+  const { switchVersion } = useAdminOrganization();
+  const [bootingLabel, setBootingLabel] = useState<string | null>(null);
   const isPortal = isPortalDashboardAccess(access);
   const router = useRouter();
   const [accountingSubTab, setAccountingSubTab] = useState<"quotation" | "customer-invoice" | "vendor-bills" | "payments" | "reconciliation" | "inquiries" | "chart-of-accounts" | "journals" | "journal-entries" | "partners" | null>(
@@ -317,8 +321,27 @@ export function AdminUserManager({
     accountingSubTab,
   ].join(":");
 
+  useEffect(() => {
+    if (!activeModule) {
+      setBootingLabel(null);
+      return;
+    }
+    const def = getModuleDefinition(activeModule);
+    setBootingLabel(def?.label || "Module");
+    // Contacts clears via onListLoaded; other modules clear quickly.
+    // Cap Contacts boot overlay so a slow fetch never blocks the whole UI.
+    const timeoutMs = activeModule === "contacts" ? 1200 : 450;
+    const id = window.setTimeout(() => setBootingLabel(null), timeoutMs);
+    return () => window.clearTimeout(id);
+  }, [activeModule, activeTab, switchVersion]);
+
+  function clearModuleBooting() {
+    setBootingLabel(null);
+  }
+
   return (
     <div className="pt-20">
+      {bootingLabel ? <ModuleLoadingOverlay label={bootingLabel} /> : null}
       <section className="px-6 pb-10 md:px-10 space-y-6">
         {showModuleHeader ? (
           <div className="space-y-4">
@@ -391,7 +414,10 @@ export function AdminUserManager({
         ) : isPortal && activeModule === "warehouse" ? (
           <PortalWarehouseModuleContent access={access} />
         ) : isPortal && activeModule === "contacts" ? (
-          <PortalContactsModuleContent initialPayload={contactPayload ?? undefined} />
+          <PortalContactsModuleContent
+            initialPayload={contactPayload ?? undefined}
+            onListLoaded={clearModuleBooting}
+          />
         ) : isPortal && activeModule === "settings" ? (
           access.isOrganizationAdmin ? (
             <OrganizationUsersManagementPanel />
@@ -417,7 +443,10 @@ export function AdminUserManager({
         ) : activeTab === "sales" ? (
           <LegacySalesRedirect href={defaultSalesRouteForAccess(access)} />
         ) : activeTab === "contacts" || activeModule === "contacts" ? (
-          <ContactsPanel initialPayload={contactPayload ?? undefined} />
+          <ContactsPanel
+            initialPayload={contactPayload ?? undefined}
+            onListLoaded={clearModuleBooting}
+          />
         ) : activeTab === "operations" ? (
           <div className="space-y-6">
             {/* Sub-tabs */}

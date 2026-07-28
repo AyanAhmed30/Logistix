@@ -46,22 +46,20 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Badge } from "@/components/ui/badge";
 import {
-  Building2,
   ChevronDown,
   ChevronUp,
   GripVertical,
+  Loader2,
   Plus,
   Send,
   Settings2,
-  Star,
-  UserRound,
 } from "lucide-react";
 import { isCrmQualifiedStage, crmOpportunityInquiryUrl } from "@/lib/crm-inquiry-utils";
 import { CrmStageManagerDialog } from "@/components/crm/CrmStageManagerDialog";
 import { CrmPipelineQuickCreate } from "@/components/crm/CrmPipelineQuickCreate";
 import { CrmLostReasonDialog } from "@/components/crm/CrmLostReasonDialog";
+import { ModuleLoadingOverlay } from "@/components/ui/ModuleLoadingOverlay";
 
 function formatRevenue(value: number) {
   return new Intl.NumberFormat(undefined, {
@@ -71,25 +69,29 @@ function formatRevenue(value: number) {
   }).format(value || 0);
 }
 
-function PriorityStars({ priority }: { priority: number }) {
-  if (priority <= 0) return null;
-  return (
-    <span className="inline-flex items-center gap-0.5 text-amber-500">
-      {Array.from({ length: priority }).map((_, i) => (
-        <Star key={i} className="h-3 w-3 fill-current" />
-      ))}
-    </span>
-  );
+function formatCardDateTime(value: string | null | undefined) {
+  if (!value) return null;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+  return date.toLocaleString(undefined, {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
 }
 
 function OpportunityCard({
   opportunity,
   onOpen,
   onSendInquiry,
+  sendingInquiry,
 }: {
   opportunity: CrmOpportunityCard;
   onOpen: (id: string) => void;
   onSendInquiry: (id: string) => void;
+  sendingInquiry?: boolean;
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: opportunity.id,
@@ -102,6 +104,7 @@ function OpportunityCard({
   };
 
   const showSendInquiry = isCrmQualifiedStage(opportunity.stage_name);
+  const createdLabel = formatCardDateTime(opportunity.created_at);
 
   return (
     <div ref={setNodeRef} style={style} className="touch-none">
@@ -109,7 +112,7 @@ function OpportunityCard({
         className="rounded-lg border border-slate-200 bg-white shadow-sm hover:shadow-md transition-shadow cursor-pointer"
         onClick={() => onOpen(opportunity.id)}
       >
-        <div className="flex items-start gap-2 p-3 border-b border-slate-100">
+        <div className="flex items-start gap-2 p-3">
           <button
             type="button"
             className="mt-0.5 text-slate-300 hover:text-slate-500 cursor-grab active:cursor-grabbing"
@@ -119,88 +122,49 @@ function OpportunityCard({
           >
             <GripVertical className="h-4 w-4" />
           </button>
-          <div className="min-w-0 flex-1">
-            <div className="flex items-center gap-2">
-              <h3 className="font-semibold text-sm text-primary-dark truncate">
-                {opportunity.name}
-              </h3>
-              <PriorityStars priority={opportunity.priority} />
-            </div>
+          <div className="min-w-0 flex-1 space-y-1">
+            <h3 className="font-semibold text-sm text-primary-dark truncate">
+              {opportunity.name}
+            </h3>
             {opportunity.customer_name ? (
-              <p className="text-xs text-secondary-muted truncate mt-0.5 flex items-center gap-1">
-                <Building2 className="h-3 w-3 shrink-0" />
-                {opportunity.customer_name}
+              <p className="text-xs text-secondary-muted truncate">
+                <span className="text-slate-400">Customer </span>
+                <span className="text-primary-dark font-medium">{opportunity.customer_name}</span>
               </p>
             ) : null}
-          </div>
-        </div>
-        <div className="px-3 py-2 space-y-1.5 text-xs">
-          {opportunity.salesperson_name ? (
-            <div className="flex items-center gap-1.5 text-secondary-muted">
-              <UserRound className="h-3 w-3" />
-              <span className="truncate">{opportunity.salesperson_name}</span>
-            </div>
-          ) : null}
-          <div className="font-semibold text-[#017e84]">
-            {formatRevenue(opportunity.expected_revenue)}
-          </div>
-          {typeof opportunity.lead_score === "number" && opportunity.lead_score > 0 ? (
-            <div className="text-[10px] text-secondary-muted">
-              Score <span className="font-semibold text-primary-dark">{opportunity.lead_score}</span>
-            </div>
-          ) : null}
-          {opportunity.next_activity_summary ? (
-            <div className="text-secondary-muted">
-              <span className="font-medium text-primary-dark not-italic">
-                {opportunity.next_activity_summary}
-              </span>
-              {opportunity.next_activity_due_date ? (
-                <span className="block text-[10px] mt-0.5">
-                  {new Date(opportunity.next_activity_due_date).toLocaleDateString([], {
-                    month: "short",
-                    day: "numeric",
-                    hour: "numeric",
-                    minute: "2-digit",
-                  })}
-                  {opportunity.next_activity_assigned_name
-                    ? ` · ${opportunity.next_activity_assigned_name}`
-                    : ""}
+            {opportunity.customer_lead_id ? (
+              <p className="text-xs text-secondary-muted truncate">
+                <span className="text-slate-400">Customer ID </span>
+                <span className="font-mono font-semibold text-primary-dark">
+                  {opportunity.customer_lead_id}
                 </span>
-              ) : null}
-            </div>
-          ) : (
-            <div className="text-secondary-muted italic">No next activity</div>
-          )}
-          {opportunity.tags.length > 0 ? (
-            <div className="flex flex-wrap gap-1 pt-1">
-              {opportunity.tags.slice(0, 3).map((tag) => (
-                <Badge key={tag} variant="secondary" className="text-[10px] px-1.5 py-0">
-                  {tag}
-                </Badge>
-              ))}
-            </div>
-          ) : null}
-          {opportunity.organization_name ? (
-            <div className="text-[10px] text-slate-400 truncate pt-1">
-              {opportunity.organization_name}
-            </div>
-          ) : null}
-          {showSendInquiry ? (
-            <div className="pt-2 border-t border-slate-100 mt-2">
-              <Button
-                type="button"
-                size="sm"
-                className="h-7 w-full text-xs bg-[#017e84] hover:bg-[#016970] text-white"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onSendInquiry(opportunity.id);
-                }}
-              >
-                <Send className="h-3 w-3 mr-1.5" />
-                Send Inquiry
-              </Button>
-            </div>
-          ) : null}
+              </p>
+            ) : null}
+            {createdLabel ? (
+              <p className="text-[11px] text-slate-400 truncate">{createdLabel}</p>
+            ) : null}
+            {showSendInquiry ? (
+              <div className="pt-2">
+                <Button
+                  type="button"
+                  size="sm"
+                  disabled={sendingInquiry}
+                  className="h-7 w-full text-xs bg-[#017e84] hover:bg-[#016970] text-white disabled:opacity-70"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onSendInquiry(opportunity.id);
+                  }}
+                >
+                  {sendingInquiry ? (
+                    <Loader2 className="h-3 w-3 mr-1.5 animate-spin" />
+                  ) : (
+                    <Send className="h-3 w-3 mr-1.5" />
+                  )}
+                  {sendingInquiry ? "Opening…" : "Send Inquiry"}
+                </Button>
+              </div>
+            ) : null}
+          </div>
         </div>
       </div>
     </div>
@@ -212,6 +176,7 @@ function StageColumn({
   opportunities,
   onOpenOpportunity,
   onSendInquiry,
+  sendingInquiryId,
   onToggleFold,
   isGlobalAdminView,
   quickCreateOpen,
@@ -225,6 +190,7 @@ function StageColumn({
   opportunities: CrmOpportunityCard[];
   onOpenOpportunity: (id: string) => void;
   onSendInquiry: (id: string) => void;
+  sendingInquiryId?: string | null;
   onToggleFold: (stage: CrmPipelineStage) => void;
   isGlobalAdminView: boolean;
   quickCreateOpen: boolean;
@@ -311,6 +277,7 @@ function StageColumn({
                 opportunity={opp}
                 onOpen={onOpenOpportunity}
                 onSendInquiry={onSendInquiry}
+                sendingInquiry={sendingInquiryId === opp.id}
               />
             ))}
           </SortableContext>
@@ -342,6 +309,7 @@ export function CrmPipelineView() {
   const [activeId, setActiveId] = useState<string | null>(null);
   const [stageManagerOpen, setStageManagerOpen] = useState(false);
   const [quickCreateStageId, setQuickCreateStageId] = useState<string | null>(null);
+  const [sendingInquiryId, setSendingInquiryId] = useState<string | null>(null);
   const [lostReasonOpen, setLostReasonOpen] = useState(false);
   const [pendingLostMove, setPendingLostMove] = useState<{
     opportunityId: string;
@@ -594,6 +562,7 @@ export function CrmPipelineView() {
 
   return (
     <div className="space-y-3">
+      {sendingInquiryId ? <ModuleLoadingOverlay label="Inquiry" /> : null}
       {isGlobalAdminView ? (
         <div className="rounded-sm border border-[#017e84]/20 bg-[#017e84]/5 px-4 py-2.5 text-sm text-[#017e84]">
           <strong>Admin view</strong> — showing opportunities from all organizations. Select a
@@ -701,7 +670,12 @@ export function CrmPipelineView() {
                 stage={stage}
                 opportunities={opportunities}
                 onOpenOpportunity={(id) => router.push(`/crm/opportunities/${id}`)}
-                onSendInquiry={(id) => router.push(crmOpportunityInquiryUrl(id, "create"))}
+                onSendInquiry={(id) => {
+                  if (sendingInquiryId) return;
+                  setSendingInquiryId(id);
+                  router.push(crmOpportunityInquiryUrl(id, "create"));
+                }}
+                sendingInquiryId={sendingInquiryId}
                 onToggleFold={handleToggleFold}
                 isGlobalAdminView={isGlobalAdminView}
                 quickCreateOpen={quickCreateStageId === stage.id}

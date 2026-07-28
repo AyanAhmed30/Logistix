@@ -22,7 +22,16 @@ export function isPortalDashboardAccess(access: DashboardAccessState): boolean {
 
 export function visibleModulesForAccess(access: DashboardAccessState): AdminModule[] {
   if (access.isSuperAdmin) {
-    return ['contacts', 'crm', 'sales', 'operations', 'warehouse', 'analytics', 'settings'];
+    return [
+      'contacts',
+      'crm',
+      'sales',
+      'accounting',
+      'operations',
+      'warehouse',
+      'analytics',
+      'settings',
+    ];
   }
 
   const modules: AdminModule[] = [];
@@ -35,6 +44,7 @@ export function visibleModulesForAccess(access: DashboardAccessState): AdminModu
   }
   if (hasDepartmentAccess(access.permissions, 'crm')) modules.push('crm');
   if (hasDepartmentAccess(access.permissions, 'sales')) modules.push('sales');
+  if (hasDepartmentAccess(access.permissions, 'accounting')) modules.push('accounting');
   if (hasDepartmentAccess(access.permissions, 'operations')) modules.push('operations');
   if (hasDepartmentAccess(access.permissions, 'warehouse')) modules.push('warehouse');
   const hasSalesOrOps =
@@ -43,6 +53,12 @@ export function visibleModulesForAccess(access: DashboardAccessState): AdminModu
   if (hasSalesOrOps) modules.push('analytics');
   modules.push('settings');
   return modules;
+}
+
+export function defaultAccountingRouteForAccess(
+  _access: DashboardAccessState
+): string {
+  return '/accounting';
 }
 
 /** Map admin sidebar tab keys to portal module permission keys. */
@@ -80,6 +96,7 @@ export function canAccessAdminTab(
   const permKey = ADMIN_TAB_PERMISSION[tab];
   if (!permKey) {
     if (module === 'sales') return hasDepartmentAccess(access.permissions, 'sales');
+    if (module === 'accounting') return hasDepartmentAccess(access.permissions, 'accounting');
     if (module === 'operations') return hasDepartmentAccess(access.permissions, 'operations');
     if (module === 'warehouse') return hasDepartmentAccess(access.permissions, 'warehouse');
     return false;

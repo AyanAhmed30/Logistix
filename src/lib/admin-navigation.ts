@@ -45,6 +45,7 @@ export type AdminModule =
   | "contacts"
   | "crm"
   | "sales"
+  | "accounting"
   | "operations"
   | "warehouse"
   | "analytics"
@@ -95,6 +96,15 @@ export const ADMIN_MODULES: AdminModuleDefinition[] = [
     accentClass: "text-[#0f4c5c]",
     borderClass: "border-[#0f4c5c]/20 hover:border-[#0f4c5c]/40",
     iconBgClass: "bg-[#0f4c5c]/10 text-[#0f4c5c]",
+  },
+  {
+    id: "accounting",
+    label: "Accounting",
+    description: "Customers and customer invoices",
+    icon: Calculator,
+    accentClass: "text-[#875a7b]",
+    borderClass: "border-[#875a7b]/20 hover:border-[#875a7b]/40",
+    iconBgClass: "bg-[#875a7b]/10 text-[#875a7b]",
   },
   {
     id: "operations",
@@ -184,7 +194,6 @@ export const ADMIN_SIDEBAR_ITEMS: AdminSidebarItem[] = [
     module: "operations",
   },
   { tab: "operations", label: "Operations", title: "Operations", icon: Settings, module: "operations" },
-  { tab: "accounting", label: "Accounting", title: "Accounting", icon: Calculator, module: "operations" },
   {
     tab: "create",
     label: "Users",

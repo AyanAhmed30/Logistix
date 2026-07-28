@@ -28,17 +28,9 @@ import {
   ArrowLeft,
   Settings,
   UserCog,
-  MessageSquare,
   Wrench,
-  FolderTree,
-  BookOpen,
-  BookText,
-  DollarSign,
   ClipboardList,
   FileText,
-  UsersRound,
-  Receipt,
-  ClipboardCheck,
   PlusCircle,
 } from "lucide-react";
 import {
@@ -60,19 +52,9 @@ import { OperationsPanel } from "@/components/admin/OperationsPanel";
 import { OperationsLeadsInquiryPanel } from "@/components/admin/OperationsLeadsInquiryPanel";
 import { ImportPackingListPanel } from "@/components/admin/ImportPackingListPanel";
 import { ImportInvoicePanel } from "@/components/admin/ImportInvoicePanel";
-import { QuotationPanel } from "@/components/admin/QuotationPanel";
-import { InvoicePanel } from "@/components/admin/InvoicePanel";
-import { AccountingInquiriesPanel } from "@/components/admin/AccountingInquiriesPanel";
 import { InquiryConfirmationPanel } from "@/components/admin/InquiryConfirmationPanel";
 import { prefetchInquiryConfirmationsList } from "@/lib/admin-inquiry-confirmations-cache";
 import { AdminCalculatorPanel } from "@/components/admin/AdminCalculatorPanel";
-import { ChartOfAccountsPanel } from "@/components/admin/ChartOfAccountsPanel";
-import { JournalsPanel } from "@/components/admin/JournalsPanel";
-import { JournalEntriesPanel } from "@/components/admin/JournalEntriesPanel";
-import { PartnersPanel } from "@/components/admin/PartnersPanel";
-import { VendorBillsPanel } from "@/components/admin/VendorBillsPanel";
-import { PaymentsPanel } from "@/components/admin/PaymentsPanel";
-import { ReconciliationPanel } from "@/components/admin/ReconciliationPanel";
 import { ContactsPanel } from "@/components/admin/ContactsPanel";
 import { OrganizationPanel } from "@/components/admin/OrganizationPanel";
 import { UsersManagementPanel } from "@/components/admin/UsersManagementPanel";
@@ -154,9 +136,6 @@ export function AdminUserManager({
   const [bootingLabel, setBootingLabel] = useState<string | null>(null);
   const isPortal = isPortalDashboardAccess(access);
   const router = useRouter();
-  const [accountingSubTab, setAccountingSubTab] = useState<"quotation" | "customer-invoice" | "vendor-bills" | "payments" | "reconciliation" | "inquiries" | "chart-of-accounts" | "journals" | "journal-entries" | "partners" | null>(
-    activeTab === "accounting" ? "inquiries" : null
-  );
   const [operationsSubTab, setOperationsSubTab] = useState<"operations" | "leads-inquiry" | null>(
     activeTab === "operations" ? "operations" : null
   );
@@ -165,6 +144,13 @@ export function AdminUserManager({
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [deleteUserTarget, setDeleteUserTarget] = useState<AppUser | null>(null);
   const [isPending, startTransition] = useTransition();
+
+  // Legacy Accounting tab retired — route to the new Accounting module.
+  useEffect(() => {
+    if (activeTab === "accounting") {
+      router.replace("/accounting");
+    }
+  }, [activeTab, router]);
 
   // Track previous activeTab to detect tab changes
   const prevActiveTabRef = useRef(activeTab);
@@ -179,12 +165,6 @@ export function AdminUserManager({
       
       // Defer state updates to avoid synchronous setState in effect
       setTimeout(() => {
-        if (activeTab === "accounting") {
-          setAccountingSubTab("inquiries");
-        } else if (prevActiveTab === "accounting") {
-          setAccountingSubTab(null);
-        }
-
         if (activeTab === "operations") {
           setOperationsSubTab("operations");
         } else if (prevActiveTab === "operations") {
@@ -194,27 +174,11 @@ export function AdminUserManager({
     }
   }, [activeTab]);
 
-  // When a cross-module payload arrives for the quotation module, make sure
-  // the accounting "Quotation" sub-tab is active.
-  useEffect(() => {
-    if (!quotationPayload?.token) return;
-    if (activeTab === "accounting") {
-      Promise.resolve().then(() => {
-        setAccountingSubTab("quotation");
-      });
-    }
-  }, [quotationPayload?.token, activeTab]);
-
-  // When a cross-module payload arrives for the invoice module, make sure
-  // the accounting "Customer Invoice" sub-tab is active.
+  // When a cross-module payload arrives for invoices, open Accounting.
   useEffect(() => {
     if (!invoicePayload?.token) return;
-    if (activeTab === "accounting") {
-      Promise.resolve().then(() => {
-        setAccountingSubTab("customer-invoice");
-      });
-    }
-  }, [invoicePayload?.token, activeTab]);
+    router.push("/accounting/invoices");
+  }, [invoicePayload?.token, router]);
 
   const sortedUsers = useMemo(() => {
     return [...users].sort(
@@ -318,7 +282,6 @@ export function AdminUserManager({
     activeTab,
     activeModule ?? "none",
     operationsSubTab,
-    accountingSubTab,
   ].join(":");
 
   useEffect(() => {
@@ -490,143 +453,8 @@ export function AdminUserManager({
         ) : activeTab === "import-invoice" ? (
           <ImportInvoicePanel />
         ) : activeTab === "accounting" ? (
-          <div className="space-y-6">
-            {/* Sub-tabs */}
-            <div className="flex gap-2 border-b overflow-x-auto">
-              <Button
-                variant={accountingSubTab === "inquiries" ? "default" : "ghost"}
-                onClick={() => setAccountingSubTab("inquiries")}
-                className="rounded-b-none shrink-0 sidebar-button"
-                data-variant={accountingSubTab === "inquiries" ? "default" : "outline"}
-              >
-                <MessageSquare className="h-4 w-4 mr-2 sidebar-icon" />
-                <span className="sidebar-text">Inquiries</span>
-              </Button>
-              <Button
-                variant={accountingSubTab === "quotation" ? "default" : "ghost"}
-                onClick={() => setAccountingSubTab("quotation")}
-                className="rounded-b-none shrink-0 sidebar-button"
-                data-variant={accountingSubTab === "quotation" ? "default" : "outline"}
-              >
-                <FileText className="h-4 w-4 mr-2 sidebar-icon" />
-                <span className="sidebar-text">Quotation</span>
-              </Button>
-              <Button
-                variant={accountingSubTab === "chart-of-accounts" ? "default" : "ghost"}
-                onClick={() => setAccountingSubTab("chart-of-accounts")}
-                className="rounded-b-none shrink-0 sidebar-button"
-                data-variant={accountingSubTab === "chart-of-accounts" ? "default" : "outline"}
-              >
-                <FolderTree className="h-4 w-4 mr-2 sidebar-icon" />
-                <span className="sidebar-text">Chart of Accounts</span>
-              </Button>
-              <Button
-                variant={accountingSubTab === "journals" ? "default" : "ghost"}
-                onClick={() => setAccountingSubTab("journals")}
-                className="rounded-b-none shrink-0 sidebar-button"
-                data-variant={accountingSubTab === "journals" ? "default" : "outline"}
-              >
-                <BookOpen className="h-4 w-4 mr-2 sidebar-icon" />
-                <span className="sidebar-text">Journals</span>
-              </Button>
-              <Button
-                variant={accountingSubTab === "journal-entries" ? "default" : "ghost"}
-                onClick={() => setAccountingSubTab("journal-entries")}
-                className="rounded-b-none shrink-0 sidebar-button"
-                data-variant={accountingSubTab === "journal-entries" ? "default" : "outline"}
-              >
-                <BookText className="h-4 w-4 mr-2 sidebar-icon" />
-                <span className="sidebar-text">Journal Entries</span>
-              </Button>
-              <Button
-                variant={accountingSubTab === "partners" ? "default" : "ghost"}
-                onClick={() => setAccountingSubTab("partners")}
-                className="rounded-b-none shrink-0 sidebar-button"
-                data-variant={accountingSubTab === "partners" ? "default" : "outline"}
-              >
-                <UsersRound className="h-4 w-4 mr-2 sidebar-icon" />
-                <span className="sidebar-text">Partners</span>
-              </Button>
-              <Button
-                variant={accountingSubTab === "customer-invoice" ? "default" : "ghost"}
-                onClick={() => setAccountingSubTab("customer-invoice")}
-                className="rounded-b-none shrink-0 sidebar-button"
-                data-variant={accountingSubTab === "customer-invoice" ? "default" : "outline"}
-              >
-                <Receipt className="h-4 w-4 mr-2 sidebar-icon" />
-                <span className="sidebar-text">Customer Invoice</span>
-              </Button>
-              <Button
-                variant={accountingSubTab === "vendor-bills" ? "default" : "ghost"}
-                onClick={() => setAccountingSubTab("vendor-bills")}
-                className="rounded-b-none shrink-0 sidebar-button"
-                data-variant={accountingSubTab === "vendor-bills" ? "default" : "outline"}
-              >
-                <Receipt className="h-4 w-4 mr-2 sidebar-icon" />
-                <span className="sidebar-text">Vendor Bills</span>
-              </Button>
-              <Button
-                variant={accountingSubTab === "payments" ? "default" : "ghost"}
-                onClick={() => setAccountingSubTab("payments")}
-                className="rounded-b-none shrink-0 sidebar-button"
-                data-variant={accountingSubTab === "payments" ? "default" : "outline"}
-              >
-                <DollarSign className="h-4 w-4 mr-2 sidebar-icon" />
-                <span className="sidebar-text">Payments</span>
-              </Button>
-              <Button
-                variant={accountingSubTab === "reconciliation" ? "default" : "ghost"}
-                onClick={() => setAccountingSubTab("reconciliation")}
-                className="rounded-b-none shrink-0 sidebar-button"
-                data-variant={accountingSubTab === "reconciliation" ? "default" : "outline"}
-              >
-                <ClipboardCheck className="h-4 w-4 mr-2 sidebar-icon" />
-                <span className="sidebar-text">Reconciliation</span>
-              </Button>
-            </div>
-
-            {/* Inquiries Sub-tab Content */}
-            {accountingSubTab === "inquiries" && (
-              <AccountingInquiriesPanel />
-            )}
-
-            {/* Quotation Sub-tab Content */}
-            {accountingSubTab === "quotation" && (
-              <QuotationPanel initialPayload={quotationPayload ?? undefined} />
-            )}
-
-            {accountingSubTab === "chart-of-accounts" && (
-              <ChartOfAccountsPanel />
-            )}
-
-            {accountingSubTab === "journals" && (
-              <JournalsPanel />
-            )}
-
-            {accountingSubTab === "journal-entries" && (
-              <JournalEntriesPanel />
-            )}
-
-            {accountingSubTab === "partners" && (
-              <PartnersPanel />
-            )}
-
-            {/* Customer Invoice Sub-tab Content */}
-            {accountingSubTab === "customer-invoice" && (
-              <InvoicePanel initialPayload={invoicePayload} />
-            )}
-
-            {accountingSubTab === "vendor-bills" && (
-              <VendorBillsPanel />
-            )}
-
-            {accountingSubTab === "payments" && (
-              <PaymentsPanel />
-            )}
-
-            {accountingSubTab === "reconciliation" && (
-              <ReconciliationPanel />
-            )}
+          <div className="rounded-sm border border-slate-200 bg-white p-8 text-center text-sm text-secondary-muted">
+            Redirecting to Accounting…
           </div>
         ) : isSettingsTab ? (
           <AdminSettingsLayout

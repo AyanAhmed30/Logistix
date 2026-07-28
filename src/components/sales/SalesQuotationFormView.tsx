@@ -81,9 +81,9 @@ import {
   type SalesEmailTemplate,
 } from "@/app/actions/sales/automation";
 import {
-  createSalesInvoiceFromOrder,
-  getSalesInvoiceIdForOrder,
-} from "@/app/actions/sales/to-invoice";
+  createAccountingInvoiceFromOrder,
+  getAccountingInvoiceIdForOrder,
+} from "@/app/actions/accounting/invoices";
 import {
   getContactById,
   getContactAutofillData,
@@ -397,7 +397,7 @@ export function SalesQuotationFormView({
       setLinkedInvoiceId(null);
       return;
     }
-    void getSalesInvoiceIdForOrder(quotationId).then((res) => {
+    void getAccountingInvoiceIdForOrder(quotationId).then((res) => {
       if ("invoiceId" in res) setLinkedInvoiceId(res.invoiceId ?? null);
     });
   }, [quotationId, status, switchVersion, chatterKey]);
@@ -674,11 +674,11 @@ export function SalesQuotationFormView({
   async function handleCreateInvoice() {
     if (!quotationId) return;
     if (linkedInvoiceId) {
-      router.push(`/sales/invoices/${linkedInvoiceId}`);
+      router.push(`/accounting/invoices/${linkedInvoiceId}`);
       return;
     }
     startTransition(async () => {
-      const res = await createSalesInvoiceFromOrder(quotationId);
+      const res = await createAccountingInvoiceFromOrder(quotationId);
       if ("error" in res && res.error) {
         toast.error(res.error);
         return;
@@ -686,9 +686,9 @@ export function SalesQuotationFormView({
       if ("invoiceId" in res && res.invoiceId) {
         setLinkedInvoiceId(res.invoiceId);
         toast.success(
-          res.alreadyExists ? "Opening existing invoice" : "Invoice created"
+          res.alreadyExists ? "Opening existing invoice" : "Draft invoice created"
         );
-        router.push(`/sales/invoices/${res.invoiceId}`);
+        router.push(`/accounting/invoices/${res.invoiceId}`);
       }
     });
   }
@@ -1042,19 +1042,24 @@ export function SalesQuotationFormView({
                 disabled={isPending}
                 onClick={() => {
                   if (linkedInvoiceId) {
-                    router.push(`/sales/invoices/${linkedInvoiceId}`);
+                    router.push(`/accounting/invoices/${linkedInvoiceId}`);
                     return;
                   }
                   if (!quotationId) return;
                   startTransition(async () => {
-                    const res = await createSalesInvoiceFromOrder(quotationId);
+                    const res = await createAccountingInvoiceFromOrder(quotationId);
                     if ("error" in res && res.error) {
                       toast.error(res.error);
                       return;
                     }
                     if ("invoiceId" in res && res.invoiceId) {
                       setLinkedInvoiceId(res.invoiceId);
-                      router.push(`/sales/invoices/${res.invoiceId}`);
+                      toast.success(
+                        res.alreadyExists
+                          ? "Opening existing invoice"
+                          : "Draft invoice created"
+                      );
+                      router.push(`/accounting/invoices/${res.invoiceId}`);
                     }
                   });
                 }}

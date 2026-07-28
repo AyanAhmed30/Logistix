@@ -1,11 +1,41 @@
+import {
+  ACCOUNTING_ACCESS_LEVEL_KEYS,
+  applyAccountingAccessLevel,
+  getAccountingAccessLevel,
+  hasAccountingAccess,
+  type AccountingAccessLevel,
+} from '@/lib/accounting-roles';
+
+export type {
+  AccountingAccessLevel,
+} from '@/lib/accounting-roles';
+
+export {
+  ACCOUNTING_ACCESS_LEVEL_OPTIONS,
+  ACCOUNTING_ACCESS_LEVEL_KEYS,
+  applyAccountingAccessLevel,
+  getAccountingAccessLevel,
+  hasAccountingAccess,
+  accountingAccessLevelKey,
+  accountingCanAccessReports,
+  accountingCanManageConfig,
+  accountingCanManageAutomation,
+  accountingCanManageCreditNotes,
+  accountingCanManageRefunds,
+  accountingCanDeleteInvoices,
+  accountingCanRegisterPayments,
+  accountingCanExportReports,
+} from '@/lib/accounting-roles';
+
 /**
  * Central Access Rights registry (Odoo-style).
  *
  * Sales uses a single access level (No / Own / All / Administrator).
+ * Accounting uses Billing / Accountant / Administrator levels.
  * CRM, Operations, Warehouse keep child-module checkboxes.
  */
 
-export type ModuleDepartment = 'sales' | 'operations' | 'warehouse' | 'crm';
+export type ModuleDepartment = 'sales' | 'operations' | 'warehouse' | 'crm' | 'accounting';
 
 export type ModulePermissionDef = {
   key: string;
@@ -53,9 +83,13 @@ export const SALES_MODULE_PERMISSIONS: ModulePermissionDef[] = [];
 export const DEPARTMENT_ACCESS: Array<{ key: ModuleDepartment; label: string }> = [
   { key: 'sales', label: 'Sales' },
   { key: 'crm', label: 'CRM' },
+  { key: 'accounting', label: 'Accounting' },
   { key: 'operations', label: 'Operations' },
   { key: 'warehouse', label: 'Warehouse' },
 ];
+
+/** Accounting has no child checkboxes — access level only. */
+export const ACCOUNTING_MODULE_PERMISSIONS: ModulePermissionDef[] = [];
 
 /** Operations child modules. */
 export const OPERATIONS_MODULE_PERMISSIONS: ModulePermissionDef[] = [
@@ -85,16 +119,18 @@ export const WAREHOUSE_MODULE_PERMISSIONS: ModulePermissionDef[] = [
   { key: 'warehouse-loading-instruction', label: 'Loading Instruction', department: 'warehouse' },
 ];
 
-/** Hierarchical groups for the User form (Sales has no child checkboxes). */
+/** Hierarchical groups for the User form (Sales/Accounting use access levels). */
 export const MODULE_PERMISSION_GROUPS = [
   { department: 'sales' as const, label: 'Sales', modules: SALES_MODULE_PERMISSIONS },
   { department: 'crm' as const, label: 'CRM', modules: CRM_MODULE_PERMISSIONS },
+  { department: 'accounting' as const, label: 'Accounting', modules: ACCOUNTING_MODULE_PERMISSIONS },
   { department: 'operations' as const, label: 'Operations', modules: OPERATIONS_MODULE_PERMISSIONS },
   { department: 'warehouse' as const, label: 'Warehouse', modules: WAREHOUSE_MODULE_PERMISSIONS },
 ];
 
 const LEGACY_SALES_KEYS = new Set<string>(LEGACY_SALES_MODULE_KEYS);
 const SALES_LEVEL_KEYS = new Set<string>(Object.values(SALES_ACCESS_LEVEL_KEYS));
+const ACCOUNTING_LEVEL_KEYS = new Set<string>(Object.values(ACCOUNTING_ACCESS_LEVEL_KEYS));
 const CRM_KEYS = new Set(CRM_MODULE_PERMISSIONS.map((m) => m.key));
 const OPS_KEYS = new Set(OPERATIONS_MODULE_PERMISSIONS.map((m) => m.key));
 const WAREHOUSE_KEYS = new Set(WAREHOUSE_MODULE_PERMISSIONS.map((m) => m.key));
@@ -219,10 +255,11 @@ export function expandDepartmentPermissions(permissions: string[]): string[] {
   return resolveGrantedChildKeys(permissions);
 }
 
-/** Normalize for the User form (includes sales level key + CRM/ops/warehouse). */
+/** Normalize for the User form (includes sales + accounting levels + CRM/ops/warehouse). */
 export function toFormPermissionKeys(permissions: string[]): string[] {
   const raw = parsePermissionKeys(permissions);
   const level = getSalesAccessLevel(raw);
+  const accountingLevel = getAccountingAccessLevel(raw);
   const hadStandaloneContacts =
     level === 'no' && raw.includes(CONTACTS_PERMISSION_KEY);
 
@@ -231,10 +268,13 @@ export function toFormPermissionKeys(permissions: string[]): string[] {
       k !== 'sales' &&
       !SALES_LEVEL_KEYS.has(k) &&
       !LEGACY_SALES_KEYS.has(k) &&
+      k !== 'accounting' &&
+      !ACCOUNTING_LEVEL_KEYS.has(k) &&
       k !== CONTACTS_PERMISSION_KEY
   );
 
   let out = applySalesAccessLevel(preserved, level);
+  out = applyAccountingAccessLevel(out, accountingLevel);
   if (hadStandaloneContacts) {
     out = [...new Set([...out, CONTACTS_PERMISSION_KEY])];
   }
@@ -304,8 +344,9 @@ export function normalizeStoredPermissions(raw: string[]): string[] {
     out.push('warehouse');
   }
 
-  // Apply Sales level last so CRM/Contacts deps are enforced
+  // Apply Sales + Accounting levels last so deps are enforced
   out = applySalesAccessLevel(out, level);
+  out = applyAccountingAccessLevel(out, getAccountingAccessLevel(selected));
 
   return [...new Set(out)];
 }
@@ -323,6 +364,9 @@ export function toDepartmentAccess(permissions: string[]): ModuleDepartment[] {
     getSalesAccessLevel(permissions) !== 'no'
   ) {
     result.push('crm');
+  }
+  if (hasAccountingAccess(permissions)) {
+    result.push('accounting');
   }
   if (permissions.includes('operations') || children.some((k) => OPS_KEYS.has(k))) {
     result.push('operations');
@@ -378,6 +422,7 @@ export function hasDepartmentAccess(
 ): boolean {
   if (department === 'sales') return hasSalesAccess(permissions);
   if (department === 'crm') return hasCrmAccess(permissions);
+  if (department === 'accounting') return hasAccountingAccess(permissions);
   if (department === 'operations') return hasOperationsAccess(permissions);
   return hasWarehouseAccess(permissions);
 }
@@ -389,12 +434,17 @@ export function hasModulePermission(
   if (!permissions || permissions.length === 0) return false;
   if (key === 'sales') return hasSalesAccess(permissions);
   if (key === 'crm') return hasCrmAccess(permissions);
+  if (key === 'accounting') return hasAccountingAccess(permissions);
   if (key === 'operations') return hasOperationsAccess(permissions);
   if (key === 'warehouse') return hasWarehouseAccess(permissions);
 
   // Legacy Sales submodule keys → any Sales access level grants them
   if (LEGACY_SALES_KEYS.has(key) || SALES_LEVEL_KEYS.has(key)) {
     return hasSalesAccess(permissions);
+  }
+
+  if (ACCOUNTING_LEVEL_KEYS.has(key)) {
+    return hasAccountingAccess(permissions);
   }
 
   return resolveGrantedChildKeys(permissions).includes(key);

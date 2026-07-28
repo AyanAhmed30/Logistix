@@ -17,11 +17,15 @@ import { getAllOrganizations, type Organization } from "@/app/actions/organizati
 import {
   MODULE_PERMISSION_GROUPS,
   SALES_ACCESS_LEVEL_OPTIONS,
+  ACCOUNTING_ACCESS_LEVEL_OPTIONS,
   applySalesAccessLevel,
+  applyAccountingAccessLevel,
   getSalesAccessLevel,
+  getAccountingAccessLevel,
   toFormPermissionKeys,
   type ModuleDepartment,
   type SalesAccessLevel,
+  type AccountingAccessLevel,
 } from "@/lib/module-permissions";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -136,6 +140,7 @@ export function UsersManagementPanel({
   const [expandedDepartments, setExpandedDepartments] = useState<Record<ModuleDepartment, boolean>>({
     sales: true,
     crm: true,
+    accounting: true,
     operations: true,
     warehouse: true,
   });
@@ -466,7 +471,7 @@ export function UsersManagementPanel({
       else next.delete(key);
 
       for (const group of MODULE_PERMISSION_GROUPS) {
-        if (group.department === "sales") continue;
+        if (group.department === "sales" || group.department === "accounting") continue;
         const childKeys = group.modules.map((m) => m.key);
         if (childKeys.length === 0) continue;
         const allSelected = childKeys.every((k) => next.has(k));
@@ -481,6 +486,10 @@ export function UsersManagementPanel({
   function toggleDepartment(department: ModuleDepartment, checked: boolean) {
     if (department === "sales") {
       setSalesAccessLevel(checked ? "all" : "no");
+      return;
+    }
+    if (department === "accounting") {
+      setAccountingAccessLevel(checked ? "accountant" : "no");
       return;
     }
 
@@ -507,9 +516,17 @@ export function UsersManagementPanel({
     setExpandedDepartments((prev) => ({ ...prev, sales: true }));
   }
 
+  function setAccountingAccessLevel(level: AccountingAccessLevel) {
+    setSelectedPermissions((prev) => applyAccountingAccessLevel(prev, level));
+    setExpandedDepartments((prev) => ({ ...prev, accounting: true }));
+  }
+
   function departmentCheckboxState(department: ModuleDepartment): boolean | "indeterminate" {
     if (department === "sales") {
       return getSalesAccessLevel(selectedPermissions) !== "no";
+    }
+    if (department === "accounting") {
+      return getAccountingAccessLevel(selectedPermissions) !== "no";
     }
     const group = MODULE_PERMISSION_GROUPS.find((g) => g.department === department);
     if (!group) return false;
@@ -854,8 +871,9 @@ export function UsersManagementPanel({
                 Module Access
               </h2>
               <p className="text-sm text-slate-500">
-                Sales uses an Odoo-style access level. Assigning Sales also grants Contacts and CRM.
-                Other modules still use parent/child checkboxes.
+                Sales and Accounting use Odoo-style access levels. Assigning Sales
+                also grants Contacts and CRM. Other modules still use parent/child
+                checkboxes.
               </p>
             </div>
 
@@ -894,6 +912,49 @@ export function UsersManagementPanel({
                       {level !== "no" ? (
                         <p className="px-3 py-2 text-xs text-slate-500">
                           Contacts and CRM are included automatically with Sales access.
+                        </p>
+                      ) : null}
+                    </div>
+                  );
+                }
+
+                if (group.department === "accounting") {
+                  const level = getAccountingAccessLevel(selectedPermissions);
+                  return (
+                    <div
+                      key={group.department}
+                      className="rounded-md border border-slate-200 overflow-hidden"
+                    >
+                      <div className="flex flex-wrap items-center gap-3 border-b border-slate-200 bg-slate-50 px-3 py-2.5">
+                        <span className="text-sm font-semibold text-slate-800 min-w-[4.5rem]">
+                          {group.label}
+                        </span>
+                        <Select
+                          value={level}
+                          disabled={isReadOnly}
+                          onValueChange={(v) =>
+                            setAccountingAccessLevel(v as AccountingAccessLevel)
+                          }
+                        >
+                          <SelectTrigger className="h-9 w-full max-w-xs bg-white">
+                            <SelectValue placeholder="No Access" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {ACCOUNTING_ACCESS_LEVEL_OPTIONS.map((opt) => (
+                              <SelectItem key={opt.value} value={opt.value}>
+                                {opt.label}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      {level !== "no" ? (
+                        <p className="px-3 py-2 text-xs text-slate-500">
+                          {level === "billing"
+                            ? "Can view customers, create invoices, and register payments."
+                            : level === "accountant"
+                              ? "Full invoices, payments, reports, credit notes, and refunds."
+                              : "Full Accounting access including automation settings."}
                         </p>
                       ) : null}
                     </div>

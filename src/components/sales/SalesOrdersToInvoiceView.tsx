@@ -31,10 +31,10 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import {
-  createSalesInvoiceFromOrder,
   getSalesOrdersToInvoice,
   type SalesToInvoiceListItem,
 } from "@/app/actions/sales/to-invoice";
+import { createAccountingInvoiceFromOrder } from "@/app/actions/accounting/invoices";
 import { useAdminOrganization } from "@/contexts/AdminOrganizationContext";
 import { useSalesShell } from "@/components/sales/SalesShell";
 import {
@@ -217,21 +217,17 @@ export function SalesOrdersToInvoiceView() {
       toast.info("Select a specific organization to create invoices.");
       return;
     }
-    if (row.sales_invoice_id) {
-      router.push(`/sales/invoices/${row.sales_invoice_id}`);
-      return;
-    }
     startTransition(async () => {
-      const res = await createSalesInvoiceFromOrder(row.id);
+      const res = await createAccountingInvoiceFromOrder(row.id);
       if ("error" in res && res.error) {
         toast.error(res.error);
         return;
       }
       if ("invoiceId" in res && res.invoiceId) {
         toast.success(
-          res.alreadyExists ? "Opening existing invoice" : "Invoice created"
+          res.alreadyExists ? "Opening existing invoice" : "Draft invoice created"
         );
-        router.push(`/sales/invoices/${res.invoiceId}`);
+        router.push(`/accounting/invoices/${res.invoiceId}`);
       }
     });
   }

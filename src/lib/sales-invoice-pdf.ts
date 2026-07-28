@@ -43,6 +43,8 @@ function formatDate(value: string | null | undefined) {
 export type GenerateSalesInvoicePdfOptions = {
   download?: boolean;
   openPrintDialog?: boolean;
+  /** When false, only return dataUrl (no new tab). Default true when not downloading/printing. */
+  openInNewTab?: boolean;
 };
 
 export async function generateSalesInvoicePdf(
@@ -193,7 +195,7 @@ export async function generateSalesInvoicePdf(
     w?.addEventListener('load', () => {
       w.print();
     });
-  } else if (!options.download) {
+  } else if (!options.download && options.openInNewTab !== false) {
     const blob = doc.output('blob');
     const url = URL.createObjectURL(blob);
     window.open(url, '_blank');

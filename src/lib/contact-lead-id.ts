@@ -344,7 +344,7 @@ export async function ensureContactLeadIdsForContacts(
 ): Promise<ContactLeadRow[]> {
   if (!contacts.length) return contacts;
 
-  let merged = await mergeContactLeadIdsFromRpc(supabase, contacts);
+  const merged = await mergeContactLeadIdsFromRpc(supabase, contacts);
   const needs = merged.filter((c) => !isValidLeadId(c.lead_id_formatted));
   if (!needs.length) return merged;
 

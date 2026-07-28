@@ -3,6 +3,11 @@
 import { createAdminClient } from '@/utils/supabase/server';
 import { getSession } from '@/lib/auth/session';
 import { resolveCrmOrganizationScope } from '@/app/actions/crm/shared';
+import {
+  CRM_CONTACT_MEETING_ACTIVITY_TYPES,
+  CRM_CONTACT_TASK_ACTIVITY_TYPES,
+  resolveOpportunityIdsForContact,
+} from '@/lib/crm-contact-opportunities';
 
 export type ContactCrmOpportunitySummary = {
   id: string;
@@ -34,6 +39,23 @@ export type ContactCrmSummary = {
   expected_revenue_open: number;
   opportunities: ContactCrmOpportunitySummary[];
   recent_activities: ContactCrmActivitySummary[];
+  smart_counts: {
+    opportunities: number;
+    sales: number;
+    meetings: number;
+    tasks: number;
+    documents: number;
+  };
+};
+
+export type ContactDocumentItem = {
+  id: string;
+  name: string;
+  url: string | null;
+  source: 'opportunity_chatter' | 'quotation';
+  source_label: string;
+  performed_by: string;
+  created_at: string;
 };
 
 function emptySummary(): ContactCrmSummary {
@@ -45,6 +67,13 @@ function emptySummary(): ContactCrmSummary {
     expected_revenue_open: 0,
     opportunities: [],
     recent_activities: [],
+    smart_counts: {
+      opportunities: 0,
+      sales: 0,
+      meetings: 0,
+      tasks: 0,
+      documents: 0,
+    },
   };
 }
 
@@ -62,26 +91,37 @@ export async function getContactCrmSummary(contactId: string): Promise<
 
   const scope = await resolveCrmOrganizationScope();
   const supabase = await createAdminClient();
+  const orgOpts =
+    'error' in scope
+      ? { organizationId: null as string | null, isGlobalAdminView: false }
+      : {
+          organizationId: scope.organizationId,
+          isGlobalAdminView: scope.isGlobalAdminView,
+        };
 
-  let oppQuery = supabase
-    .from('crm_opportunities')
-    .select('id, name, expected_revenue, probability, stage_id, organization_id, updated_at')
-    .eq('contact_id', id)
-    .order('updated_at', { ascending: false });
+  const linkedOppIds = await resolveOpportunityIdsForContact(supabase, id, orgOpts);
 
-  if (!('error' in scope) && !scope.isGlobalAdminView) {
-    oppQuery = oppQuery.eq('organization_id', scope.organizationId);
-  }
+  let opportunitiesRaw: Record<string, unknown>[] = [];
+  if (linkedOppIds.length) {
+    let oppQuery = supabase
+      .from('crm_opportunities')
+      .select('id, name, expected_revenue, probability, stage_id, organization_id, updated_at')
+      .in('id', linkedOppIds)
+      .order('updated_at', { ascending: false });
 
-  const { data: oppRows, error: oppError } = await oppQuery;
-  if (oppError) {
-    if (/does not exist|relation/i.test(oppError.message)) {
-      return { summary: emptySummary() };
+    if (orgOpts.organizationId && !orgOpts.isGlobalAdminView) {
+      oppQuery = oppQuery.eq('organization_id', orgOpts.organizationId);
     }
-    return { error: oppError.message };
-  }
 
-  const opportunitiesRaw = oppRows || [];
+    const { data: oppRows, error: oppError } = await oppQuery;
+    if (oppError) {
+      if (/does not exist|relation/i.test(oppError.message)) {
+        return { summary: emptySummary() };
+      }
+      return { error: oppError.message };
+    }
+    opportunitiesRaw = oppRows || [];
+  }
   const stageIds = [...new Set(opportunitiesRaw.map((o) => o.stage_id).filter(Boolean))];
   let stageMap = new Map<string, { name: string; is_won: boolean; is_lost: boolean }>();
 
@@ -125,6 +165,9 @@ export async function getContactCrmSummary(contactId: string): Promise<
 
   const oppIds = opportunities.map((o) => o.id);
   let recent_activities: ContactCrmActivitySummary[] = [];
+  let meetings_count = 0;
+  let tasks_count = 0;
+  let documents_count = 0;
 
   if (oppIds.length) {
     let actQuery = supabase
@@ -149,6 +192,61 @@ export async function getContactCrmSummary(contactId: string): Promise<
       opportunity_id: String(a.opportunity_id),
       opportunity_name: oppNameById.get(String(a.opportunity_id)) || null,
     }));
+
+    let countActQuery = supabase
+      .from('crm_activities')
+      .select('id, activity_type')
+      .in('opportunity_id', oppIds);
+    if (!('error' in scope) && !scope.isGlobalAdminView) {
+      countActQuery = countActQuery.eq('organization_id', scope.organizationId);
+    }
+    const { data: allActs } = await countActQuery;
+    for (const row of allActs || []) {
+      const t = String(row.activity_type || '');
+      if ((CRM_CONTACT_MEETING_ACTIVITY_TYPES as readonly string[]).includes(t)) {
+        meetings_count += 1;
+      } else if ((CRM_CONTACT_TASK_ACTIVITY_TYPES as readonly string[]).includes(t)) {
+        tasks_count += 1;
+      }
+    }
+
+    let docQuery = supabase
+      .from('crm_opportunity_chatter')
+      .select('id', { count: 'exact', head: true })
+      .in('opportunity_id', oppIds)
+      .eq('entry_type', 'attachment');
+    if (!('error' in scope) && !scope.isGlobalAdminView) {
+      docQuery = docQuery.eq('organization_id', scope.organizationId);
+    }
+    const { count: docCount } = await docQuery;
+    documents_count = docCount || 0;
+  }
+
+  const { data: contactRow } = await supabase
+    .from('contacts')
+    .select('name')
+    .eq('id', id)
+    .maybeSingle();
+  let salesQuery = supabase
+    .from('quotations')
+    .select('id', { count: 'exact', head: true })
+    .eq('contact_id', id);
+  if (!('error' in scope) && !scope.isGlobalAdminView) {
+    salesQuery = salesQuery.eq('organization_id', scope.organizationId);
+  }
+  let { count: salesCount } = await salesQuery;
+  const nameFilter = contactRow?.name ? String(contactRow.name).trim() : '';
+  if (!salesCount && nameFilter) {
+    let legacyQuery = supabase
+      .from('quotations')
+      .select('id', { count: 'exact', head: true })
+      .is('contact_id', null)
+      .ilike('customer_name', nameFilter);
+    if (!('error' in scope) && !scope.isGlobalAdminView) {
+      legacyQuery = legacyQuery.eq('organization_id', scope.organizationId);
+    }
+    const legacy = await legacyQuery;
+    salesCount = legacy.count || 0;
   }
 
   return {
@@ -160,8 +258,75 @@ export async function getContactCrmSummary(contactId: string): Promise<
       expected_revenue_open: open.reduce((sum, o) => sum + o.expected_revenue, 0),
       opportunities: opportunities.slice(0, 20),
       recent_activities,
+      smart_counts: {
+        opportunities: opportunities.length,
+        sales: salesCount || 0,
+        meetings: meetings_count,
+        tasks: tasks_count,
+        documents: documents_count,
+      },
     },
   };
+}
+
+/** Documents linked to a contact via opportunity chatter attachments. */
+export async function getContactDocuments(contactId: string): Promise<
+  { documents: ContactDocumentItem[] } | { error: string }
+> {
+  const session = await getSession();
+  if (!session) return { error: 'Unauthorized' };
+
+  const id = String(contactId || '').trim();
+  if (!id) return { error: 'Contact id is required.' };
+
+  const scope = await resolveCrmOrganizationScope();
+  const supabase = await createAdminClient();
+  const orgOpts =
+    'error' in scope
+      ? { organizationId: null as string | null, isGlobalAdminView: false }
+      : {
+          organizationId: scope.organizationId,
+          isGlobalAdminView: scope.isGlobalAdminView,
+        };
+
+  const oppIds = await resolveOpportunityIdsForContact(supabase, id, orgOpts);
+  if (!oppIds.length) return { documents: [] };
+
+  const { data: opps } = await supabase
+    .from('crm_opportunities')
+    .select('id, name')
+    .in('id', oppIds);
+  const oppNameById = new Map((opps || []).map((o) => [String(o.id), String(o.name || '')]));
+
+  let docQuery = supabase
+    .from('crm_opportunity_chatter')
+    .select('id, body, performed_by, created_at, metadata, opportunity_id')
+    .in('opportunity_id', oppIds)
+    .eq('entry_type', 'attachment')
+    .order('created_at', { ascending: false });
+  if (!('error' in scope) && !scope.isGlobalAdminView) {
+    docQuery = docQuery.eq('organization_id', scope.organizationId);
+  }
+  const { data: rows, error } = await docQuery;
+  if (error) return { error: error.message };
+
+  const documents: ContactDocumentItem[] = (rows || []).map((row) => {
+    const metadata = (row.metadata || {}) as Record<string, unknown>;
+    const url = typeof metadata.url === 'string' ? metadata.url : null;
+    const fileName = typeof metadata.filename === 'string' ? metadata.filename : null;
+    const oppName = oppNameById.get(String(row.opportunity_id)) || 'Opportunity';
+    return {
+      id: String(row.id),
+      name: fileName || String(row.body || 'Attachment'),
+      url,
+      source: 'opportunity_chatter' as const,
+      source_label: oppName,
+      performed_by: String(row.performed_by || ''),
+      created_at: String(row.created_at || ''),
+    };
+  });
+
+  return { documents };
 }
 
 /** Ensure a contact is marked as customer when used in CRM opportunities. */

@@ -18,6 +18,10 @@ import type {
   CrmScheduledActivity,
   CrmActivitiesSummary,
 } from '@/app/actions/crm/types';
+import {
+  CRM_CONTACT_MEETING_ACTIVITY_TYPES,
+  resolveOpportunityIdsForContact,
+} from '@/lib/crm-contact-opportunities';
 
 const ACTIVITY_TYPES: CrmActivityType[] = ['call', 'meeting', 'email', 'follow-up', 'todo'];
 
@@ -156,7 +160,22 @@ export async function getCrmActivities(filters: CrmActivityListFilters = {}) {
   }
 
   if (filters.activityType && filters.activityType !== 'all') {
-    query = query.eq('activity_type', filters.activityType);
+    if (filters.activityType === 'tasks') {
+      query = query.in('activity_type', ['todo', 'follow-up']);
+    } else if (filters.activityType === 'meetings') {
+      query = query.in('activity_type', [...CRM_CONTACT_MEETING_ACTIVITY_TYPES]);
+    } else {
+      query = query.eq('activity_type', filters.activityType);
+    }
+  }
+
+  if (filters.contactId) {
+    const contactOppIds = await resolveOpportunityIdsForContact(supabase, filters.contactId, {
+      organizationId: scope.isGlobalAdminView ? null : scope.organizationId,
+      isGlobalAdminView: scope.isGlobalAdminView,
+    });
+    if (!contactOppIds.length) return { activities: [] as CrmScheduledActivity[] };
+    query = query.in('opportunity_id', contactOppIds);
   }
 
   if (filters.status === 'completed' || filters.status === 'done') {

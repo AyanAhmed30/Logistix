@@ -39,6 +39,7 @@ export type SalesQuotationListFilters = {
   sortDir?: 'asc' | 'desc';
   page?: number;
   pageSize?: number;
+  contactId?: string | null;
 };
 
 export type SalesQuotationListResult = {
@@ -126,6 +127,10 @@ export async function getSalesQuotationsList(
 
     if (scope.organizationId && !scope.isGlobalAdminView) {
       query = query.eq('organization_id', scope.organizationId);
+    }
+
+    if (filters.contactId) {
+      query = query.eq('contact_id', filters.contactId);
     }
 
     // Record rules: Sales Users only see own / assigned records

@@ -80,6 +80,8 @@ export type Contact = {
   source?: string | null;
   /** Original `leads.id` when this contact was created/linked by the legacy migration. */
   legacy_lead_id?: string | null;
+  /** Permanent 6-digit Lead Number / Customer ID (auto-assigned; never changed). */
+  lead_id_formatted?: string | null;
 
   is_active: boolean;
   organization_id?: string | null;
@@ -186,6 +188,31 @@ function normalizeCompanyType(value: CompanyType | undefined): CompanyType {
   return value === 'company' ? 'company' : 'person';
 }
 
+/** Odoo list: top-level companies + all individuals (including employer-linked). */
+const CONTACTS_LIST_OR_FILTER = 'parent_id.is.null,company_type.eq.person';
+
+function resolveContactDisplayName(
+  input: ContactUpsertInput,
+  payload: { name: string; phone: string | null; mobile: string | null },
+  parentResolved: { parent_id: string | null; company_name: string | null }
+): string | null {
+  const trimmed = String(payload.name || '').trim();
+  if (trimmed) return trimmed;
+
+  const companyType = normalizeCompanyType(input.company_type);
+  if (companyType === 'company') return null;
+
+  const phone = payload.phone || payload.mobile;
+  const hasEmployer =
+    Boolean(parentResolved.parent_id) || Boolean(normalizeText(input.company_name));
+
+  if (hasEmployer && phone) return phone;
+  if (hasEmployer && parentResolved.company_name) return parentResolved.company_name;
+  if (phone) return phone;
+
+  return null;
+}
+
 function revalidateContactsPaths() {
   revalidatePath('/admin/dashboard');
 }
@@ -243,11 +270,15 @@ export async function getContacts(search?: string) {
       applyOrganizationFilter,
       isMissingOrganizationColumnError,
     } = await import('@/lib/admin-organization-context');
+    const { CONTACTS_ROW_SELECT } = await import('@/lib/contact-lead-id');
 
     const supabase = await createAdminClient();
 
-    // Top-level contacts only — keep the PostgREST query simple (no .or()).
-    let query = supabase.from('contacts').select('*').is('parent_id', null);
+    // Odoo: companies at top level + all individuals (employer-linked persons included).
+    let query = supabase
+      .from('contacts')
+      .select(CONTACTS_ROW_SELECT)
+      .or(CONTACTS_LIST_OR_FILTER);
 
     if (!('unscoped' in org)) {
       query = applyOrganizationFilter(query, org.organizationId);
@@ -274,7 +305,13 @@ export async function getContacts(search?: string) {
       };
     }
 
-    let contacts = rows || [];
+    let contacts = (rows || []) as Contact[];
+
+    const { mergeContactLeadIdsFromRpc, assignMissingContactLeadIds } = await import(
+      '@/lib/contact-lead-id'
+    );
+    contacts = (await mergeContactLeadIdsFromRpc(supabase, contacts)) as Contact[];
+    contacts = (await assignMissingContactLeadIds(supabase, contacts)) as Contact[];
 
     // Odoo Own Documents — filter in memory (avoids PostgREST .or() Bad Request)
     try {
@@ -303,7 +340,14 @@ export async function getContacts(search?: string) {
     const needle = String(search || '').trim().toLowerCase();
     if (needle) {
       contacts = contacts.filter((c) => {
-        const hay = [c.name, c.email, c.phone, c.company_name, c.country]
+        const hay = [
+          c.name,
+          c.email,
+          c.phone,
+          c.company_name,
+          c.country,
+          c.lead_id_formatted,
+        ]
           .map((v) => String(v || '').toLowerCase())
           .join(' ');
         return hay.includes(needle);
@@ -390,8 +434,13 @@ export async function getContactById(id: string) {
     }
 
     const supabase = await createAdminClient();
+    const { ensureContactLeadIdsForContacts, mergeContactLeadIdsFromRpc, CONTACTS_ROW_SELECT } =
+      await import('@/lib/contact-lead-id');
 
-    let detailQuery = supabase.from('contacts').select('*').eq('id', contactId);
+    let detailQuery = supabase
+      .from('contacts')
+      .select(CONTACTS_ROW_SELECT)
+      .eq('id', contactId);
     if (!('unscoped' in org)) {
       detailQuery = detailQuery.eq('organization_id', org.organizationId);
     }
@@ -400,15 +449,27 @@ export async function getContactById(id: string) {
 
     if (error || !contact) return { error: error?.message || 'Contact not found.' };
 
+    const [enrichedContact] = await mergeContactLeadIdsFromRpc(supabase, [contact]);
+    const [withLeadId] = await ensureContactLeadIdsForContacts(supabase, enrichedContact ? [enrichedContact] : [contact]);
+    const contactRow = withLeadId || enrichedContact || contact;
+
     let childrenQuery = supabase
       .from('contacts')
-      .select('*')
+      .select(CONTACTS_ROW_SELECT)
       .eq('parent_id', contactId)
       .order('created_at', { ascending: true });
     if (!('unscoped' in org)) {
       childrenQuery = childrenQuery.eq('organization_id', org.organizationId);
     }
     const { data: children } = await childrenQuery;
+
+    const childRows = (children || []) as Contact[];
+    const enrichedChildren = childRows.length
+      ? await ensureContactLeadIdsForContacts(
+          supabase,
+          await mergeContactLeadIdsFromRpc(supabase, childRows)
+        )
+      : childRows;
 
     const { data: tagLinks } = await supabase
       .from('contact_tag_links')
@@ -426,9 +487,9 @@ export async function getContactById(id: string) {
     }
 
     const enriched: ContactWithRelations = {
-      ...(contact as Contact),
+      ...(contactRow as Contact),
       tags,
-      children: (children || []) as Contact[],
+      children: enrichedChildren as Contact[],
     };
 
     return { contact: enriched };
@@ -820,6 +881,17 @@ function buildDiffLines(
 
 export async function createContact(input: ContactUpsertInput) {
   try {
+    const {
+      allocateContactLeadIdFormatted,
+      assignMissingContactLeadIds,
+      ensureContactLeadIdsForContacts,
+      isContactLeadIdColumnAvailable,
+      isDuplicateContactLeadIdError,
+      isMissingLeadIdColumnError,
+      isValidContactLeadId,
+      MAX_INSERT_RETRIES,
+    } = await import('@/lib/contact-lead-id');
+
     const session = await getSession();
     const s = ensureAuth(session);
 
@@ -832,7 +904,6 @@ export async function createContact(input: ContactUpsertInput) {
     }
 
     const payload = buildContactPayload(input);
-    if (!payload.name) return { error: 'Name is required.' };
 
     const supabase = await createAdminClient();
 
@@ -846,6 +917,15 @@ export async function createContact(input: ContactUpsertInput) {
     payload.parent_id = parentResolved.parent_id;
     payload.company_name = parentResolved.company_name;
 
+    const displayName = resolveContactDisplayName(input, payload, parentResolved);
+    if (!displayName) {
+      return {
+        error:
+          'Name is required. For individuals linked to a company, enter a phone number.',
+      };
+    }
+    payload.name = displayName;
+
     const insertRow: Record<string, unknown> = {
       ...payload,
       created_by: s.username,
@@ -855,13 +935,68 @@ export async function createContact(input: ContactUpsertInput) {
       insertRow.organization_id = org.organizationId;
     }
 
-    const { data, error } = await supabase
-      .from('contacts')
-      .insert([insertRow])
-      .select('*')
-      .single();
+    let leadIdColumnAvailable = await isContactLeadIdColumnAvailable(supabase);
+    let pendingLeadId = await allocateContactLeadIdFormatted(supabase);
+    if (leadIdColumnAvailable) {
+      insertRow.lead_id_formatted = pendingLeadId;
+    }
 
-    if (error || !data) return { error: error?.message || 'Failed to create contact.' };
+    let data: Contact | null = null;
+    let lastError: { message?: string } | null = null;
+
+    for (let attempt = 0; attempt < MAX_INSERT_RETRIES; attempt++) {
+      const { data: row, error } = await supabase
+        .from('contacts')
+        .insert([insertRow])
+        .select('*')
+        .single();
+
+      if (!error && row) {
+        data = row as Contact;
+        break;
+      }
+
+      lastError = error;
+      if (isMissingLeadIdColumnError(error)) {
+        delete insertRow.lead_id_formatted;
+        leadIdColumnAvailable = false;
+        if (!pendingLeadId) {
+          pendingLeadId = await allocateContactLeadIdFormatted(supabase);
+        }
+        continue;
+      }
+      if (isDuplicateContactLeadIdError(error) && leadIdColumnAvailable) {
+        pendingLeadId = await allocateContactLeadIdFormatted(supabase);
+        insertRow.lead_id_formatted = pendingLeadId;
+        continue;
+      }
+      return { error: error?.message || 'Failed to create contact.' };
+    }
+
+    if (!data) {
+      return {
+        error:
+          lastError?.message ||
+          'Failed to assign a unique Customer ID. Please try again.',
+      };
+    }
+
+    if (!leadIdColumnAvailable) {
+      await supabase.rpc('set_contact_lead_id', {
+        p_contact_id: data.id,
+        p_lead_id: pendingLeadId,
+      });
+    }
+
+    const [enrichedContact] = await ensureContactLeadIdsForContacts(supabase, [data]);
+    if (enrichedContact) data = enrichedContact as Contact;
+
+    const [withAssignedId] = await assignMissingContactLeadIds(supabase, [data]);
+    if (withAssignedId) data = withAssignedId as Contact;
+
+    if (!isValidContactLeadId(data.lead_id_formatted) && pendingLeadId) {
+      data = { ...data, lead_id_formatted: pendingLeadId };
+    }
 
     const tagIds = (input.tag_ids || []).filter(Boolean);
     if (tagIds.length > 0) await replaceTagLinks(supabase, data.id, tagIds);
@@ -881,7 +1016,6 @@ export async function createContact(input: ContactUpsertInput) {
       },
     ]);
 
-    revalidateContactsPaths();
     return { contact: data as Contact };
   } catch (err) {
     return { error: err instanceof Error ? err.message : 'Failed to create contact' };
@@ -905,7 +1039,6 @@ export async function updateContact(input: ContactUpsertInput) {
     }
 
     const payload = buildContactPayload(input);
-    if (!payload.name) return { error: 'Name is required.' };
 
     const supabase = await createAdminClient();
 
@@ -929,6 +1062,15 @@ export async function updateContact(input: ContactUpsertInput) {
     if ('error' in parentResolved) return { error: parentResolved.error };
     payload.parent_id = parentResolved.parent_id;
     payload.company_name = parentResolved.company_name;
+
+    const displayName = resolveContactDisplayName(input, payload, parentResolved);
+    if (!displayName) {
+      return {
+        error:
+          'Name is required. For individuals linked to a company, enter a phone number.',
+      };
+    }
+    payload.name = displayName;
 
     let updateQuery = supabase
       .from('contacts')
@@ -963,7 +1105,6 @@ export async function updateContact(input: ContactUpsertInput) {
       ]);
     }
 
-    revalidateContactsPaths();
     return { contact: data as Contact };
   } catch (err) {
     return { error: err instanceof Error ? err.message : 'Failed to update contact' };
@@ -1196,13 +1337,17 @@ export async function getSalespersonOptions() {
     ensureAuth(session);
 
     const supabase = await createAdminClient();
-    const { data, error } = await supabase
-      .from('sales_agents')
-      .select('id, name, email')
-      .order('name', { ascending: true });
+    const [{ data, error }, agent] = await Promise.all([
+      supabase.from('sales_agents').select('id, name, email').order('name', { ascending: true }),
+      import('@/lib/legacy-user-bridge').then(({ resolveSalesAgentForSession }) =>
+        resolveSalesAgentForSession(supabase, session!)
+      ),
+    ]);
 
     if (error) return { error: error.message };
-    return { salespersons: (data || []) as SalespersonOption[] };
+    const salespersons = (data || []) as SalespersonOption[];
+    const currentSalespersonId = agent?.id ? String(agent.id) : null;
+    return { salespersons, currentSalespersonId };
   } catch (err) {
     return { error: err instanceof Error ? err.message : 'Failed to load salespersons' };
   }
@@ -1223,56 +1368,114 @@ export type CustomerSearchResult = {
   company_type: CompanyType;
   customer_rank: number;
   vendor_rank: number;
+  lead_id_formatted?: string | null;
 };
 
 /**
- * Search top-level contacts that can be used as a customer on a quotation.
- * Excludes contacts flagged as vendor-only (vendor_rank > 0 AND customer_rank = 0).
+ * Search contacts for customer/contact pickers (quotations, CRM opportunities).
+ * Uses the same visibility rules as the Contacts list (org + Odoo list filter).
  */
-export async function searchCustomerContacts(query: string): Promise<
-  { contacts: CustomerSearchResult[] } | { error: string }
-> {
+export async function searchCustomerContacts(
+  query: string,
+  options?: { scope?: 'customer' | 'all' }
+): Promise<{ contacts: CustomerSearchResult[] } | { error: string }> {
   try {
-    const session = await getSession();
-    ensureAuth(session);
+    const session = ensureAuth(await getSession());
 
     const org = await resolveContactsOrganizationId(session);
     if ('error' in org) return { error: org.error };
     if ('empty' in org) return { contacts: [] };
 
     const { applyOrganizationFilter } = await import('@/lib/admin-organization-context');
+    const { mergeContactLeadIdsFromRpc, assignMissingContactLeadIds, CONTACTS_PICKER_SELECT } =
+      await import('@/lib/contact-lead-id');
 
     const supabase = await createAdminClient();
     let q = supabase
       .from('contacts')
-      .select(
-        'id, name, company_name, email, phone, city, country, company_type, customer_rank, vendor_rank'
-      )
-      .is('parent_id', null)
-      .order('updated_at', { ascending: false })
-      .limit(20);
+      .select(CONTACTS_PICKER_SELECT)
+      .or(CONTACTS_LIST_OR_FILTER)
+      .order('created_at', { ascending: false })
+      .limit(1000);
 
     if (!('unscoped' in org)) {
       q = applyOrganizationFilter(q, org.organizationId);
     }
 
-    const needle = String(query || '').trim();
-    if (needle) {
-      const like = `%${needle}%`;
-      q = q.or(
-        `name.ilike.${like},email.ilike.${like},phone.ilike.${like},company_name.ilike.${like},city.ilike.${like}`
-      );
-    }
-
     const { data, error } = await q;
     if (error) return { error: error.message };
 
-    // Filter vendor-only contacts out of the default result set.
-    const filtered = (data || []).filter(
-      (row) => !(Number(row.vendor_rank) > 0 && Number(row.customer_rank) === 0)
-    );
+    let rows = (data || []) as Array<
+      CustomerSearchResult & {
+        created_at?: string;
+        salesperson_id?: string | null;
+        created_by?: string | null;
+      }
+    >;
 
-    return { contacts: filtered as CustomerSearchResult[] };
+    try {
+      const {
+        resolveSalesAccessRole,
+        salesRoleSeesAllOrgRecords,
+      } = await import('@/lib/sales-roles');
+      const role = resolveSalesAccessRole(session as never);
+      if (role && !salesRoleSeesAllOrgRecords(role)) {
+        const { resolveCurrentSalespersonId } = await import(
+          '@/app/actions/sales/automation'
+        );
+        const agentId = await resolveCurrentSalespersonId();
+        const username = String(session.username || '').trim();
+        rows = rows.filter((c) => {
+          if (agentId && c.salesperson_id === agentId) return true;
+          if (username && c.created_by === username) return true;
+          return false;
+        });
+      }
+    } catch {
+      // ownership filter is best-effort
+    }
+
+    rows = await mergeContactLeadIdsFromRpc(supabase, rows);
+    rows = await assignMissingContactLeadIds(supabase, rows);
+
+    if (options?.scope !== 'all') {
+      rows = rows.filter(
+        (row) => !(Number(row.vendor_rank) > 0 && Number(row.customer_rank) === 0)
+      );
+    }
+
+    const needle = String(query || '').trim().toLowerCase();
+    if (needle) {
+      rows = rows.filter((c) => {
+        const hay = [
+          c.name,
+          c.company_name,
+          c.phone,
+          c.email,
+          c.city,
+          c.country,
+          c.lead_id_formatted,
+        ]
+          .map((v) => String(v || '').toLowerCase())
+          .join(' ');
+        return hay.includes(needle);
+      });
+    }
+
+    return {
+      contacts: rows.map((row) => ({
+        id: row.id,
+        name: row.name,
+        company_name: row.company_name,
+        email: row.email,
+        phone: row.phone,
+        city: row.city,
+        country: row.country,
+        company_type: row.company_type,
+        customer_rank: row.customer_rank,
+        vendor_rank: row.vendor_rank,
+      })),
+    };
   } catch (err) {
     return { error: err instanceof Error ? err.message : 'Failed to search contacts' };
   }

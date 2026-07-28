@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useMemo, useEffect, useSyncExternalStore } from "react";
-import { logout } from "@/app/actions/auth";
+import { SignOutForm } from "@/components/auth/SignOutForm";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import {
@@ -281,7 +281,7 @@ export function SalesAgentDashboardShell({
         </nav>
 
         <div className="px-4 pb-5">
-          <form action={logout}>
+          <SignOutForm>
             <Button
               type="submit"
               variant="ghost"
@@ -290,7 +290,7 @@ export function SalesAgentDashboardShell({
               <LogOut className="h-4 w-4 text-white" />
               <span className="text-white">Sign Out</span>
             </Button>
-          </form>
+          </SignOutForm>
         </div>
       </aside>
 
@@ -433,14 +433,14 @@ export function SalesAgentDashboardShell({
                     <div className="text-sm font-semibold text-slate-800">{username}</div>
                   </DropdownMenuLabel>
                   <DropdownMenuSeparator />
-                  <form action={logout}>
+                  <SignOutForm>
                     <button
                       type="submit"
                       className="w-full text-left px-2 py-1.5 text-sm hover:bg-slate-100 rounded flex items-center gap-2"
                     >
                       <LogOut className="h-4 w-4" /> Sign Out
                     </button>
-                  </form>
+                  </SignOutForm>
                 </DropdownMenuContent>
                 </DropdownMenu>
               ) : (

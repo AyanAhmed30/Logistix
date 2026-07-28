@@ -21,6 +21,7 @@ let stagesPromise: Promise<StagesResult> | null = null;
 let salesPromise: Promise<SalesResult> | null = null;
 let stagesCache: CrmPipelineStage[] | null = null;
 let salesCache: SalespersonOption[] | null = null;
+let currentSalespersonIdCache: string | null = null;
 
 export function invalidateCrmClientCache(part?: 'stages' | 'salespersons' | 'all') {
   if (!part || part === 'all' || part === 'stages') {
@@ -30,6 +31,7 @@ export function invalidateCrmClientCache(part?: 'stages' | 'salespersons' | 'all
   if (!part || part === 'all' || part === 'salespersons') {
     salesPromise = null;
     salesCache = null;
+    currentSalespersonIdCache = null;
   }
 }
 
@@ -46,11 +48,17 @@ export async function getCachedCrmPipelineStages(): Promise<StagesResult> {
 }
 
 export async function getCachedSalespersonOptions(): Promise<SalesResult> {
-  if (salesCache) return { salespersons: salesCache };
+  if (salesCache) {
+    return { salespersons: salesCache, currentSalespersonId: currentSalespersonIdCache };
+  }
   if (!salesPromise) {
     salesPromise = getSalespersonOptions().then((res) => {
-      if ('salespersons' in res && res.salespersons) salesCache = res.salespersons;
-      else salesPromise = null;
+      if ('salespersons' in res && res.salespersons) {
+        salesCache = res.salespersons;
+        currentSalespersonIdCache = res.currentSalespersonId ?? null;
+      } else {
+        salesPromise = null;
+      }
       return res;
     });
   }

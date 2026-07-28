@@ -46,6 +46,7 @@ import {
   formatInquiryStatusLabel,
   isCrmQualifiedStage,
 } from "@/lib/crm-inquiry-utils";
+import { useAdminOrganization } from "@/contexts/AdminOrganizationContext";
 import {
   getCrmOpportunityInquirySummary,
   type CrmOpportunityInquirySummary,
@@ -177,11 +178,14 @@ function SalespersonAvatar({ name }: { name: string }) {
 
 export function CrmOpportunityFormView({ opportunityId, initialStageId }: Props) {
   const router = useRouter();
+  const { switchVersion } = useAdminOrganization();
   const isEdit = Boolean(opportunityId);
   const [form, setForm] = useState<FormState>(EMPTY_FORM);
   const [stages, setStages] = useState<CrmPipelineStage[]>([]);
   const [salespersons, setSalespersons] = useState<SalespersonOption[]>([]);
+  const [currentSalespersonId, setCurrentSalespersonId] = useState<string | null>(null);
   const [contactPersons, setContactPersons] = useState<Contact[]>([]);
+  const [customerLeadId, setCustomerLeadId] = useState<string | null>(null);
   const [loading, setLoading] = useState(Boolean(isEdit));
   const [isPending, startTransition] = useTransition();
   const [tab, setTab] = useState<DetailTab>("notes");
@@ -205,13 +209,31 @@ export function CrmOpportunityFormView({ opportunityId, initialStageId }: Props)
         if ("salespersons" in salesRes && salesRes.salespersons) {
           setSalespersons(salesRes.salespersons);
         }
+        if ("currentSalespersonId" in salesRes && salesRes.currentSalespersonId) {
+          setCurrentSalespersonId(salesRes.currentSalespersonId);
+        }
       }
     );
-  }, []);
+  }, [switchVersion]);
+
+  useEffect(() => {
+    if (isEdit && opportunityId) return;
+    if (stages.length === 0) return;
+
+    const preferred =
+      (form.stage_id && stages.some((s) => s.id === form.stage_id) ? form.stage_id : null) ||
+      (initialStageId && stages.some((s) => s.id === initialStageId) ? initialStageId : null) ||
+      stages.find((s) => s.name === "New")?.id ||
+      stages[0]?.id ||
+      "";
+
+    if (preferred && preferred !== form.stage_id) {
+      update("stage_id", preferred);
+    }
+  }, [stages, isEdit, opportunityId, initialStageId, form.stage_id]);
 
   useEffect(() => {
     if (!isEdit || !opportunityId) {
-      if (initialStageId) update("stage_id", initialStageId);
       return;
     }
 
@@ -254,7 +276,7 @@ export function CrmOpportunityFormView({ opportunityId, initialStageId }: Props)
         setLoading(false);
       })
       .catch(() => setLoading(false));
-  }, [isEdit, opportunityId, initialStageId, router]);
+  }, [isEdit, opportunityId, router]);
 
   useEffect(() => {
     if (!isEdit || !opportunityId) {
@@ -267,19 +289,13 @@ export function CrmOpportunityFormView({ opportunityId, initialStageId }: Props)
   }, [isEdit, opportunityId, chatterKey]);
 
   useEffect(() => {
-    if (form.stage_id || stages.length === 0) return;
-    const initial =
-      initialStageId && stages.some((s) => s.id === initialStageId)
-        ? initialStageId
-        : stages[0]?.id;
-    if (initial) update("stage_id", initial);
-  }, [stages, form.stage_id, initialStageId]);
-
-  useEffect(() => {
-    if (!form.salesperson_id && salespersons.length > 0) {
-      update("salesperson_id", salespersons[0].id);
-    }
-  }, [salespersons, form.salesperson_id]);
+    if (form.salesperson_id || salespersons.length === 0) return;
+    const preferred =
+      (currentSalespersonId && salespersons.some((s) => s.id === currentSalespersonId)
+        ? currentSalespersonId
+        : null) || salespersons[0]?.id;
+    if (preferred) update("salesperson_id", preferred);
+  }, [salespersons, form.salesperson_id, currentSalespersonId]);
 
   const salespersonName = useMemo(
     () => salespersons.find((s) => s.id === form.salesperson_id)?.name || "",
@@ -305,6 +321,7 @@ export function CrmOpportunityFormView({ opportunityId, initialStageId }: Props)
     const res = await getContactById(picked.contact_id);
     if ("contact" in res && res.contact) {
       const c = res.contact;
+      setCustomerLeadId(c.lead_id_formatted || null);
       update("email", c.email || "");
       update("phone", c.phone || "");
       update("mobile", c.mobile || "");
@@ -314,6 +331,7 @@ export function CrmOpportunityFormView({ opportunityId, initialStageId }: Props)
       );
       setContactPersons(children);
     } else {
+      setCustomerLeadId(null);
       setContactPersons([]);
     }
   }
@@ -321,10 +339,12 @@ export function CrmOpportunityFormView({ opportunityId, initialStageId }: Props)
   useEffect(() => {
     if (!form.contact_id) {
       setContactPersons([]);
+      setCustomerLeadId(null);
       return;
     }
     void getContactById(form.contact_id).then((res) => {
       if ("contact" in res && res.contact) {
+        setCustomerLeadId(res.contact.lead_id_formatted || null);
         const children = (res.contact.children || []).filter(
           (c) => c.contact_kind === "contact" || c.company_type === "person"
         );
@@ -345,12 +365,15 @@ export function CrmOpportunityFormView({ opportunityId, initialStageId }: Props)
   }
 
   function buildPayload(stageOverride?: string) {
+    const stageId = stageOverride || form.stage_id || undefined;
+    const stageName = stages.find((s) => s.id === stageId)?.name || currentStage?.name;
     return {
       id: opportunityId || undefined,
       name: form.name.trim(),
       contact_id: form.contact_id!,
       contact_person_id: form.contact_person_id,
-      stage_id: stageOverride || form.stage_id || undefined,
+      stage_id: stageId,
+      stage_name: stageName,
       expected_revenue: Number(form.expected_revenue) || 0,
       probability: Number(form.probability) || 0,
       priority: form.priority,
@@ -727,11 +750,23 @@ export function CrmOpportunityFormView({ opportunityId, initialStageId }: Props)
                     contactId={form.contact_id}
                     customerName={form.customer_name}
                     onSelect={handleCustomerSelect}
+                    contactScope="all"
                     placeholder="Select contact…"
                     disabled={isPending}
                   />
                 </div>
               </div>
+
+              {customerLeadId ? (
+                <div className="flex items-center gap-3 md:col-span-2">
+                  <FieldLabel tip="Permanent Customer ID from the linked contact">
+                    Customer ID
+                  </FieldLabel>
+                  <span className="font-mono text-sm font-semibold text-primary-dark">
+                    {customerLeadId}
+                  </span>
+                </div>
+              ) : null}
 
               <div className="flex items-center gap-3">
                 <FieldLabel tip="Person at the company">Contact Person</FieldLabel>

@@ -12,6 +12,7 @@ import {
 } from "lucide-react";
 import {
   CONTACT_SMART_BUTTONS,
+  contactSmartButtonHref,
   type ContactSmartButtonCounts,
   type ContactSmartButtonKey,
 } from "@/lib/contacts-integration";
@@ -29,31 +30,45 @@ type Props = {
   contactSaved?: boolean;
   contactId?: string | null;
   counts?: ContactSmartButtonCounts;
+  /** Base path for documents panel, e.g. /sales/customers/{id} */
+  documentsBasePath?: string;
+  /** Inline panel for documents when no route is available (admin embed). */
+  onOpenDocuments?: () => void;
 };
 
 export function ContactSmartButtons({
   contactSaved = true,
   contactId = null,
   counts = {},
+  documentsBasePath,
+  onOpenDocuments,
 }: Props) {
   const router = useRouter();
 
-  function handleClick(key: ContactSmartButtonKey, label: string, comingSoon?: boolean) {
+  function handleClick(key: ContactSmartButtonKey, label: string) {
     if (!contactSaved) return;
-
-    if (comingSoon || key !== "opportunities") {
-      toast.info(`${label} — Coming Soon`, {
-        description: "This integration will be available in a future release.",
-      });
-      return;
-    }
 
     if (!contactId) {
       toast.info("Save the contact first");
       return;
     }
 
-    router.push(`/crm/pipeline?contactId=${encodeURIComponent(contactId)}`);
+    if (key === "documents" && onOpenDocuments && !documentsBasePath) {
+      onOpenDocuments();
+      return;
+    }
+
+    const href = contactSmartButtonHref(key, contactId, { documentsBasePath });
+    if (!href) {
+      if (key === "documents" && onOpenDocuments) {
+        onOpenDocuments();
+        return;
+      }
+      toast.info(`${label} — not available yet`);
+      return;
+    }
+
+    router.push(href);
   }
 
   return (
@@ -62,7 +77,7 @@ export function ContactSmartButtons({
       role="group"
       aria-label="Related records"
     >
-      {CONTACT_SMART_BUTTONS.map(({ key, label, placeholderCount, comingSoon }) => {
+      {CONTACT_SMART_BUTTONS.map(({ key, label, placeholderCount }) => {
         const Icon = ICONS[key];
         const count = counts[key] ?? placeholderCount;
         return (
@@ -70,7 +85,7 @@ export function ContactSmartButtons({
             key={key}
             type="button"
             disabled={!contactSaved}
-            onClick={() => handleClick(key, label, comingSoon)}
+            onClick={() => handleClick(key, label)}
             title={contactSaved ? label : "Save the contact first"}
             className="inline-flex items-stretch min-w-[7.5rem] h-11 rounded-md border border-slate-200 bg-white shadow-sm hover:bg-slate-50 hover:border-[#017e84]/40 transition-colors text-left overflow-hidden disabled:opacity-55 disabled:cursor-not-allowed disabled:hover:bg-white disabled:hover:border-slate-200"
           >

@@ -116,6 +116,7 @@ export function CrmCustomersView() {
             <Table>
               <TableHeader>
                 <TableRow className="bg-slate-50/80">
+                  <TableHead className="w-[100px]">Customer ID</TableHead>
                   <TableHead>Name</TableHead>
                   <TableHead>Company</TableHead>
                   <TableHead>Email</TableHead>
@@ -130,6 +131,9 @@ export function CrmCustomersView() {
                     className="cursor-pointer hover:bg-[#017e84]/5"
                     onClick={() => router.push(`/crm/customers/${customer.id}`)}
                   >
+                    <TableCell className="font-mono text-sm text-secondary-muted">
+                      {customer.lead_id_formatted || "—"}
+                    </TableCell>
                     <TableCell>
                       <div className="flex items-center gap-2 font-medium text-primary-dark">
                         {customer.company_type === "company" ? (

@@ -27,6 +27,7 @@ import {
   Globe,
   Tag as TagIcon,
   ImageIcon,
+  Loader2,
 } from "lucide-react";
 import {
   createContact,
@@ -50,7 +51,7 @@ import { ChildContactDialog } from "@/components/admin/contacts/ChildContactDial
 import { ContactSmartButtons } from "@/components/admin/contacts/ContactSmartButtons";
 import { CompanyEmployerPicker } from "@/components/admin/contacts/CompanyEmployerPicker";
 import type { ContactSmartButtonCounts } from "@/lib/contacts-integration";
-import { getContactCrmSummary } from "@/app/actions/crm/contact-summary";
+import { getContactCrmSummary, getContactDocuments, type ContactDocumentItem } from "@/app/actions/crm/contact-summary";
 
 type Props = {
   contactId: string | null;
@@ -58,6 +59,10 @@ type Props = {
   onSaved: (id: string) => void;
   readOnly?: boolean;
   backLabel?: string;
+  /** When set, opens the documents panel on load (e.g. ?related=documents). */
+  initialRelatedPanel?: "documents" | null;
+  /** Base path for sales customer documents navigation. */
+  documentsBasePath?: string;
 };
 
 type FormState = {
@@ -185,12 +190,87 @@ const FISCAL_POSITION_OPTIONS = [
   "Free Zone",
 ];
 
+function contactPassesFormValidation(form: FormState): boolean {
+  if (form.company_type === "company") {
+    if (!form.name.trim()) {
+      toast.error("Name is required");
+      return false;
+    }
+    return true;
+  }
+
+  if (form.name.trim()) return true;
+
+  const hasEmployer = Boolean(form.parent_id) || form.company_name.trim().length > 0;
+  const hasPhone = form.phone.trim().length > 0;
+  if (hasEmployer && hasPhone) return true;
+
+  toast.error(
+    "Enter a name, or link a company and enter a phone number for this individual."
+  );
+  return false;
+}
+
+function contactFromSaveResponse(
+  row: Contact,
+  tags: ContactTag[],
+  children: ContactWithRelations["children"]
+): ContactWithRelations {
+  return {
+    ...(row as ContactWithRelations),
+    tags,
+    children,
+  };
+}
+
+function applyContactToForm(c: ContactWithRelations): FormState {
+  return {
+    company_type: c.company_type,
+    parent_id: c.parent_id,
+    name: c.name,
+    company_name: c.company_name || "",
+    email: c.email || "",
+    phone: c.phone || "",
+    street: c.street || "",
+    street2: c.street2 || "",
+    city: c.city || "",
+    state: c.state || "",
+    country: c.country || "",
+    zip: c.zip || "",
+    job_position: c.job_position || "",
+    website: c.website || "",
+    tax_id: c.tax_id || "",
+    salesperson_id: c.salesperson_id,
+    pricelist: c.pricelist || "",
+    payment_terms: c.payment_terms || "",
+    sales_payment_method: c.sales_payment_method || "",
+    incoterm: c.incoterm || "",
+    incoterm_location: c.incoterm_location || "",
+    group_rfq: c.group_rfq || "On Order",
+    buyer: c.buyer || "",
+    purchase_payment_terms: c.purchase_payment_terms || "",
+    purchase_payment_method: c.purchase_payment_method || "",
+    receipt_reminder: Boolean(c.receipt_reminder),
+    fiscal_position: c.fiscal_position || "",
+    company_ref: c.company_ref || "",
+    industry: c.industry || "",
+    receivable_account: c.receivable_account || "",
+    payable_account: c.payable_account || "",
+    tax_settings: c.tax_settings || "",
+    notes: c.notes || "",
+    customer_rank: Number(c.customer_rank) || 0,
+    vendor_rank: Number(c.vendor_rank) || 0,
+  };
+}
+
 export function ContactFormView({
   contactId,
   onBack,
   onSaved,
   readOnly = false,
   backLabel = "Contacts",
+  initialRelatedPanel = null,
+  documentsBasePath,
 }: Props) {
   const [form, setForm] = useState<FormState>(EMPTY_FORM);
   const [loadedContact, setLoadedContact] = useState<ContactWithRelations | null>(null);
@@ -206,6 +286,9 @@ export function ContactFormView({
   const [savedId, setSavedId] = useState<string | null>(contactId);
   const [isPending, startTransition] = useTransition();
   const [crmSmartCounts, setCrmSmartCounts] = useState<ContactSmartButtonCounts>({});
+  const [documentsPanelOpen, setDocumentsPanelOpen] = useState(initialRelatedPanel === "documents");
+  const [contactDocuments, setContactDocuments] = useState<ContactDocumentItem[]>([]);
+  const [documentsLoading, setDocumentsLoading] = useState(false);
 
   // Load tags + salespersons
   useEffect(() => {
@@ -227,19 +310,31 @@ export function ContactFormView({
     void getContactCrmSummary(savedId).then((res) => {
       if (cancelled) return;
       if ("summary" in res && res.summary) {
-        setCrmSmartCounts({
-          opportunities: res.summary.total_opportunities,
-          meetings: 0,
-          documents: 0,
-          sales: 0,
-          tasks: 0,
-        });
+        setCrmSmartCounts(res.summary.smart_counts);
       }
     });
     return () => {
       cancelled = true;
     };
   }, [savedId]);
+
+  useEffect(() => {
+    if (!documentsPanelOpen || !savedId) {
+      setContactDocuments([]);
+      return;
+    }
+    let cancelled = false;
+    setDocumentsLoading(true);
+    void getContactDocuments(savedId).then((res) => {
+      if (cancelled) return;
+      if ("documents" in res && res.documents) setContactDocuments(res.documents);
+      else setContactDocuments([]);
+      setDocumentsLoading(false);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [documentsPanelOpen, savedId]);
 
   // Load contact when opening existing
   useEffect(() => {
@@ -364,8 +459,7 @@ export function ContactFormView({
   }
 
   async function saveNow(options?: { silent?: boolean }): Promise<string | null> {
-    if (!form.name.trim()) {
-      toast.error("Name is required");
+    if (!contactPassesFormValidation(form)) {
       return null;
     }
 
@@ -382,26 +476,31 @@ export function ContactFormView({
       return null;
     }
     if ("contact" in res && res.contact) {
+      const savedContact = res.contact;
+      const tagObjects = allTags.filter((t) => selectedTagIds.includes(t.id));
+      const withRelations = contactFromSaveResponse(
+        savedContact,
+        tagObjects,
+        loadedContact?.children ?? []
+      );
+
       if (!options?.silent) {
         toast.success(savedId ? "Contact updated" : "Contact created");
       }
-      setSavedId(res.contact.id);
-      const refreshed = await getContactById(res.contact.id);
-      if ("contact" in refreshed && refreshed.contact) {
-        const c = refreshed.contact;
-        setLoadedContact(c);
-        setForm((prev) => ({
-          ...prev,
-          parent_id: c.parent_id,
-          company_name: c.company_name || "",
-        }));
-      }
-      const activityRes = await getContactActivity(res.contact.id);
-      if ("activity" in activityRes && activityRes.activity) {
-        setActivity(activityRes.activity);
-      }
-      onSaved(res.contact.id);
-      return res.contact.id;
+
+      setSavedId(savedContact.id);
+      setLoadedContact(withRelations);
+      setForm(applyContactToForm(withRelations));
+
+      onSaved(savedContact.id);
+
+      void getContactActivity(savedContact.id).then((activityRes) => {
+        if ("activity" in activityRes && activityRes.activity) {
+          setActivity(activityRes.activity);
+        }
+      });
+
+      return savedContact.id;
     }
     return null;
   }
@@ -417,8 +516,8 @@ export function ContactFormView({
       setChildDialogOpen(true);
       return;
     }
-    if (!form.name.trim()) {
-      toast.error("Enter a name first to add related contacts");
+    if (!form.name.trim() && !form.phone.trim()) {
+      toast.error("Enter a name or phone number first to add related contacts");
       return;
     }
     // Auto-save the main contact, then open the dialog.
@@ -430,45 +529,8 @@ export function ContactFormView({
 
   function handleDiscard() {
     if (savedId && loadedContact) {
-      // Reset to loaded contact
       const c = loadedContact;
-      setForm({
-        company_type: c.company_type,
-        parent_id: c.parent_id,
-        name: c.name,
-        company_name: c.company_name || "",
-        email: c.email || "",
-        phone: c.phone || "",
-        street: c.street || "",
-        street2: c.street2 || "",
-        city: c.city || "",
-        state: c.state || "",
-        country: c.country || "",
-        zip: c.zip || "",
-        job_position: c.job_position || "",
-        website: c.website || "",
-        tax_id: c.tax_id || "",
-        salesperson_id: c.salesperson_id,
-        pricelist: c.pricelist || "",
-        payment_terms: c.payment_terms || "",
-        sales_payment_method: c.sales_payment_method || "",
-        incoterm: c.incoterm || "",
-        incoterm_location: c.incoterm_location || "",
-        group_rfq: c.group_rfq || "On Order",
-        buyer: c.buyer || "",
-        purchase_payment_terms: c.purchase_payment_terms || "",
-        purchase_payment_method: c.purchase_payment_method || "",
-        receipt_reminder: Boolean(c.receipt_reminder),
-        fiscal_position: c.fiscal_position || "",
-        company_ref: c.company_ref || "",
-        industry: c.industry || "",
-        receivable_account: c.receivable_account || "",
-        payable_account: c.payable_account || "",
-        tax_settings: c.tax_settings || "",
-        notes: c.notes || "",
-        customer_rank: Number(c.customer_rank) || 0,
-        vendor_rank: Number(c.vendor_rank) || 0,
-      });
+      setForm(applyContactToForm(c));
       setSelectedTagIds(c.tags.map((t) => t.id));
     } else {
       onBack();
@@ -535,9 +597,13 @@ export function ContactFormView({
             onClick={handleSave}
             disabled={isPending}
             title="Save"
-            className="h-7 w-7 rounded-md border border-slate-200 flex items-center justify-center text-secondary-muted hover:text-violet-600 hover:bg-slate-50"
+            className="h-7 w-7 rounded-md border border-slate-200 flex items-center justify-center text-secondary-muted hover:text-violet-600 hover:bg-slate-50 disabled:opacity-60"
           >
-            <Cloud className="h-4 w-4" />
+            {isPending ? (
+              <Loader2 className="h-4 w-4 animate-spin text-violet-600" />
+            ) : (
+              <Cloud className="h-4 w-4" />
+            )}
           </button>
           <button
             type="button"
@@ -571,7 +637,60 @@ export function ContactFormView({
             contactSaved={Boolean(savedId)}
             contactId={savedId}
             counts={crmSmartCounts}
+            documentsBasePath={
+              documentsBasePath || (savedId ? `/sales/customers/${savedId}` : undefined)
+            }
+            onOpenDocuments={() => setDocumentsPanelOpen(true)}
           />
+
+          {documentsPanelOpen && savedId ? (
+            <div className="rounded-lg border border-slate-200 bg-white shadow-sm overflow-hidden">
+              <div className="flex items-center justify-between px-4 py-2.5 border-b border-slate-100 bg-slate-50">
+                <h3 className="text-sm font-semibold text-slate-800">Documents</h3>
+                <button
+                  type="button"
+                  className="text-xs text-[#017e84] hover:underline"
+                  onClick={() => setDocumentsPanelOpen(false)}
+                >
+                  Close
+                </button>
+              </div>
+              <div className="p-4">
+                {documentsLoading ? (
+                  <p className="text-sm text-secondary-muted">Loading documents…</p>
+                ) : contactDocuments.length === 0 ? (
+                  <p className="text-sm text-secondary-muted">No documents linked to this contact yet.</p>
+                ) : (
+                  <ul className="space-y-2">
+                    {contactDocuments.map((doc) => (
+                      <li
+                        key={doc.id}
+                        className="flex items-center justify-between gap-3 rounded-md border border-slate-100 px-3 py-2 text-sm"
+                      >
+                        <div className="min-w-0">
+                          <p className="font-medium text-slate-800 truncate">{doc.name}</p>
+                          <p className="text-xs text-secondary-muted truncate">
+                            {doc.source_label} · {doc.performed_by} ·{" "}
+                            {new Date(doc.created_at).toLocaleString()}
+                          </p>
+                        </div>
+                        {doc.url ? (
+                          <a
+                            href={doc.url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-xs font-medium text-[#017e84] hover:underline shrink-0"
+                          >
+                            Open
+                          </a>
+                        ) : null}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            </div>
+          ) : null}
 
           <fieldset disabled={readOnly} className="space-y-3 border-0 p-0 m-0 min-w-0">
           <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_380px] gap-4">
@@ -638,6 +757,15 @@ export function ContactFormView({
                     placeholder="Name (company or person)"
                     className="text-2xl font-semibold h-12 border-0 border-b border-slate-200 rounded-none px-0 shadow-none focus-visible:ring-0 focus-visible:border-violet-500 placeholder:text-slate-300"
                   />
+
+                  {loadedContact?.lead_id_formatted ? (
+                    <p className="text-sm text-secondary-muted pt-1">
+                      Customer ID{" "}
+                      <span className="font-mono font-semibold text-primary-dark">
+                        {loadedContact.lead_id_formatted}
+                      </span>
+                    </p>
+                  ) : null}
 
                   {/* Icon rows */}
                   {/* Company (Employer) — individuals only (Odoo-style parent company link) */}

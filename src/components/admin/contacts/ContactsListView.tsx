@@ -78,7 +78,7 @@ export function ContactsListView({ onNewContact, onOpenContact, refreshToken }: 
       if (!needle) return true;
       const tagNames = (c.tags || []).map((t) => t.name).join(" ");
       const hay =
-        `${c.name} ${c.company_name || ""} ${c.email || ""} ${c.phone || ""} ${c.country || ""} ${tagNames}`.toLowerCase();
+        `${c.lead_id_formatted || ""} ${c.name} ${c.company_name || ""} ${c.email || ""} ${c.phone || ""} ${c.country || ""} ${tagNames}`.toLowerCase();
       return hay.includes(needle);
     });
   }, [contacts, search, typeFilter]);
@@ -176,6 +176,9 @@ export function ContactsListView({ onNewContact, onOpenContact, refreshToken }: 
           <TableHeader>
             <TableRow className="bg-slate-50 hover:bg-slate-50">
               <TableHead className="w-10"></TableHead>
+              <TableHead className="font-semibold text-primary-dark w-[100px]">
+                Customer ID
+              </TableHead>
               <TableHead className="font-semibold text-primary-dark">Name</TableHead>
               <TableHead className="font-semibold text-primary-dark">Email</TableHead>
               <TableHead className="font-semibold text-primary-dark">Phone</TableHead>
@@ -186,13 +189,13 @@ export function ContactsListView({ onNewContact, onOpenContact, refreshToken }: 
           <TableBody>
             {loading ? (
               <TableRow>
-                <TableCell colSpan={6} className="py-10 text-center text-secondary-muted">
+                <TableCell colSpan={7} className="py-10 text-center text-secondary-muted">
                   Loading contacts…
                 </TableCell>
               </TableRow>
             ) : paged.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={6} className="py-16 text-center">
+                <TableCell colSpan={7} className="py-16 text-center">
                   <div className="flex flex-col items-center gap-2 text-secondary-muted">
                     <UserRound className="h-10 w-10 text-slate-300" />
                     <p className="text-sm font-medium">No contacts yet</p>
@@ -213,6 +216,9 @@ export function ContactsListView({ onNewContact, onOpenContact, refreshToken }: 
                 >
                   <TableCell className="w-10">
                     <ContactAvatar contact={contact} />
+                  </TableCell>
+                  <TableCell className="font-mono text-sm text-secondary-muted">
+                    {contact.lead_id_formatted || "—"}
                   </TableCell>
                   <TableCell className="font-medium text-primary-dark">
                     {contact.name}

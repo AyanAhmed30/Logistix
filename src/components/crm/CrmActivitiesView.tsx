@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState, useTransition } from "react";
 import Link from "next/link";
+import { useSearchParams, useRouter } from "next/navigation";
 import { toast } from "sonner";
 import {
   CalendarCheck,
@@ -57,6 +58,10 @@ const SECTIONS: { key: SectionKey; label: string }[] = [
 ];
 
 export function CrmActivitiesView() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const contactIdFilter = searchParams.get("contactId");
+  const urlActivityType = searchParams.get("activityType");
   const [activities, setActivities] = useState<CrmScheduledActivity[]>([]);
   const [salespersons, setSalespersons] = useState<SalespersonOption[]>([]);
   const [loading, setLoading] = useState(true);
@@ -65,7 +70,15 @@ export function CrmActivitiesView() {
     const s = prefs.activitiesSection as SectionKey | undefined;
     return s && SECTIONS.some((x) => x.key === s) ? s : "today";
   });
-  const [activityType, setActivityType] = useState<CrmActivityType | "all">("all");
+  const [activityType, setActivityType] = useState<CrmActivityType | "all" | "tasks" | "meetings">(() => {
+    if (urlActivityType === "meetings") return "meetings";
+    if (urlActivityType === "meeting") return "meetings";
+    if (urlActivityType === "tasks") return "tasks";
+    if (urlActivityType && urlActivityType !== "all") {
+      return urlActivityType as CrmActivityType;
+    }
+    return "all";
+  });
   const [assignedTo, setAssignedTo] = useState<string>("all");
   const [isPending, startTransition] = useTransition();
 
@@ -74,6 +87,7 @@ export function CrmActivitiesView() {
     const filters: CrmActivityListFilters = {
       activityType,
       assignedTo: assignedTo === "all" ? "all" : assignedTo,
+      contactId: contactIdFilter,
     };
     const res = await getCrmActivities(filters);
     setLoading(false);
@@ -82,7 +96,7 @@ export function CrmActivitiesView() {
       return;
     }
     setActivities(res.activities || []);
-  }, [activityType, assignedTo]);
+  }, [activityType, assignedTo, contactIdFilter]);
 
   useEffect(() => {
     void load();
@@ -160,17 +174,33 @@ export function CrmActivitiesView() {
 
   return (
     <div className="space-y-3">
+      {contactIdFilter ? (
+        <div className="rounded-sm border border-slate-200 bg-white px-4 py-2 text-sm text-secondary-muted flex items-center justify-between gap-3">
+          <span>Showing activities for the selected contact.</span>
+          <button
+            type="button"
+            className="text-[#017e84] hover:underline font-medium shrink-0"
+            onClick={() => router.push("/crm/activities")}
+          >
+            Clear filter
+          </button>
+        </div>
+      ) : null}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
         <div className="flex flex-wrap gap-2 items-center">
         <Select
           value={activityType}
-          onValueChange={(v) => setActivityType(v as CrmActivityType | "all")}
+          onValueChange={(v) =>
+            setActivityType(v as CrmActivityType | "all" | "tasks" | "meetings")
+          }
         >
           <SelectTrigger className="w-[140px] h-8 rounded-sm text-sm">
             <SelectValue placeholder="Type" />
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="all">All types</SelectItem>
+            <SelectItem value="meetings">Meetings &amp; calls</SelectItem>
+            <SelectItem value="tasks">Tasks</SelectItem>
             {CRM_ACTIVITY_TYPES.map((t) => (
               <SelectItem key={t.value} value={t.value}>
                 {t.label}

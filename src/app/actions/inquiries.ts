@@ -13,6 +13,8 @@ import { isSuperAdminSession } from '@/lib/auth/super-admin';
 import { revalidatePath } from 'next/cache';
 import {
   validateInquiryProductInfoForSend,
+  normalizeDecimalInput,
+  isDecimalString,
   type InquiryProductFields,
 } from '@/lib/inquiry-form-validation';
 import {
@@ -246,6 +248,7 @@ export type LeadInquiry = {
   approved_at?: string | null;
   calculator_values: Record<string, string> | Record<string, unknown> | null;
   organization_id?: string | null;
+  crm_opportunity_id?: string | null;
   created_by?: string | null;
   created_at: string;
   updated_at: string;
@@ -261,6 +264,7 @@ export type LeadInquiryWithLead = LeadInquiry & {
   leads: {
     id: string;
     lead_id_formatted: string | null;
+    contact_id?: string | null;
     name: string;
     number: string;
     source: string;
@@ -438,6 +442,7 @@ async function logCrmInquiryActivityFromInquiryAction(input: {
   event: 'created' | 'sent' | 'updated';
   inquiryId: string;
   detail?: string;
+  skipRevalidate?: boolean;
 }) {
   if (!input.crmOpportunityId || !input.organizationId) return;
   try {
@@ -449,6 +454,7 @@ async function logCrmInquiryActivityFromInquiryAction(input: {
       event: input.event,
       inquiryId: input.inquiryId,
       detail: input.detail,
+      skipRevalidate: input.skipRevalidate,
     });
   } catch {
     // Never block inquiry workflow
@@ -463,8 +469,14 @@ function toComparableValue(value: unknown) {
 
 function isValidDecimal(value: string) {
   if (!value.trim()) return true;
-  return /^(?:\d+|\d+\.\d+|\d*\.\d+)$/.test(value.trim());
+  return isDecimalString(normalizeDecimalInput(value));
 }
+
+type SendInquiryToAccountingOptions = {
+  skipFieldValidation?: boolean;
+  preloadedInquiry?: LeadInquiry;
+  skipPathRevalidation?: boolean;
+};
 
 type InquirySaveTargetRow = {
   id: string;
@@ -585,8 +597,8 @@ export async function saveInquiry(
 
     const inquiryData = {
       product_name: data.product_name.trim(),
-      total_weight: data.total_weight.trim(),
-      cbm: data.cbm.trim(),
+      total_weight: normalizeDecimalInput(data.total_weight.trim()),
+      cbm: normalizeDecimalInput(data.cbm.trim()),
       quantity: data.quantity.trim(),
       description: data.description.trim(),
       image_url: data.image_url || null,
@@ -594,6 +606,9 @@ export async function saveInquiry(
       updated_at: new Date().toISOString(),
     };
 
+    if (inquiryData.total_weight && !isValidDecimal(inquiryData.total_weight)) {
+      return { error: 'Total Weight must be a valid decimal number (e.g. 12.5).' };
+    }
     if (!isValidDecimal(inquiryData.cbm)) {
       return { error: 'CBM must be a valid decimal number (e.g. 1.5).' };
     }
@@ -689,6 +704,7 @@ export async function saveInquiry(
             event: 'updated',
             inquiryId: targetRow.id,
             detail: inquiryData.product_name || undefined,
+            skipRevalidate: Boolean(crmOpportunityId),
           });
         }
       }
@@ -771,6 +787,7 @@ export async function saveInquiry(
           event: 'created',
           inquiryId: String(result.id),
           detail: inquiryData.product_name || undefined,
+          skipRevalidate: Boolean(crmOpportunityId),
         });
       }
 
@@ -781,21 +798,28 @@ export async function saveInquiry(
   }
 }
 
-export async function sendInquiryToAccounting(inquiryId: string) {
+export async function sendInquiryToAccounting(
+  inquiryId: string,
+  options?: SendInquiryToAccountingOptions
+) {
   try {
     const session = await getSession();
     if (!session) return { error: 'Unauthorized' };
 
     const supabase = await createAdminClient();
 
-    const { data: inquiry, error: inquiryError } = await supabase
-      .from('lead_inquiries')
-      .select('*')
-      .eq('id', inquiryId)
-      .maybeSingle();
+    let inquiry = options?.preloadedInquiry ?? null;
+    if (!inquiry || inquiry.id !== inquiryId) {
+      const { data: fetched, error: inquiryError } = await supabase
+        .from('lead_inquiries')
+        .select('*')
+        .eq('id', inquiryId)
+        .maybeSingle();
 
-    if (inquiryError || !inquiry) {
-      return { error: 'Inquiry not found. Please add inquiry details first.' };
+      if (inquiryError || !fetched) {
+        return { error: 'Inquiry not found. Please add inquiry details first.' };
+      }
+      inquiry = fetched as LeadInquiry;
     }
 
     if (!isSuperAdminSession(session) && !isOperationsPortalActor(session)) {
@@ -813,15 +837,17 @@ export async function sendInquiryToAccounting(inquiryId: string) {
       return { error: 'Please add a product name before sending.' };
     }
 
-    const sendFieldCheck = validateInquiryProductInfoForSend({
-      product_name: inquiry.product_name || '',
-      total_weight: inquiry.total_weight || '',
-      cbm: inquiry.cbm || '',
-      quantity: inquiry.quantity || '',
-    });
-    if (!sendFieldCheck.valid) {
-      const firstError = Object.values(sendFieldCheck.errors)[0];
-      return { error: firstError || 'Please complete all required product information before sending.' };
+    if (!options?.skipFieldValidation) {
+      const sendFieldCheck = validateInquiryProductInfoForSend({
+        product_name: inquiry.product_name || '',
+        total_weight: inquiry.total_weight || '',
+        cbm: inquiry.cbm || '',
+        quantity: inquiry.quantity || '',
+      });
+      if (!sendFieldCheck.valid) {
+        const firstError = Object.values(sendFieldCheck.errors)[0];
+        return { error: firstError || 'Please complete all required product information before sending.' };
+      }
     }
 
     // Update inquiry status - send to accounting (operations reads from same flag)
@@ -887,7 +913,7 @@ export async function sendInquiryToAccounting(inquiryId: string) {
       .filter((u): u is string => !!u);
 
     if (recipients.length > 0) {
-      await supabase.from('inquiry_lifecycle_notifications').insert(
+      void supabase.from('inquiry_lifecycle_notifications').insert(
         recipients.map((username) => ({
           lead_id: inquiry.lead_id,
           inquiry_id: inquiry.id,
@@ -902,25 +928,26 @@ export async function sendInquiryToAccounting(inquiryId: string) {
       );
     }
 
-    revalidatePath('/sales-agent/dashboard');
-    revalidatePath('/admin/dashboard');
-    revalidatePath('/operations/dashboard');
-    invalidateOperationsInquiriesCache();
+    if (!options?.skipPathRevalidation) {
+      revalidatePath('/sales-agent/dashboard');
+      revalidatePath('/admin/dashboard');
+      revalidatePath('/operations/dashboard');
+      invalidateOperationsInquiriesCache();
+    }
 
     const crmOpportunityId = inquiry.crm_opportunity_id
       ? String(inquiry.crm_opportunity_id)
       : null;
     if (crmOpportunityId) {
-      await logCrmInquiryActivityFromInquiryAction({
+      void logCrmInquiryActivityFromInquiryAction({
         crmOpportunityId,
         organizationId: orgFields.organization_id || inquiry.organization_id || null,
         performedBy: session.username || 'sales-agent',
         event: 'sent',
         inquiryId: String(inquiry.id),
         detail: inquiry.product_name || undefined,
+        skipRevalidate: true,
       });
-      revalidatePath(`/crm/opportunities/${crmOpportunityId}`);
-      revalidatePath(`/crm/opportunities/${crmOpportunityId}/inquiry`);
     }
 
     return { success: true, inquiry: data as LeadInquiry };
@@ -977,7 +1004,11 @@ export async function saveAndSendInquiry(
     return { error: 'Unable to determine inquiry to send' };
   }
 
-  return sendInquiryToAccounting(inquiryToSendId);
+  return sendInquiryToAccounting(inquiryToSendId, {
+    skipFieldValidation: true,
+    preloadedInquiry: saveResult.inquiry,
+    skipPathRevalidation: Boolean(options?.crmOpportunityId),
+  });
 }
 
 export async function createInquiryDraft(
@@ -1559,7 +1590,9 @@ const OPERATIONS_LIST_INQUIRY_SELECT = `
   leads (
     id,
     lead_id_formatted,
+    contact_id,
     name,
+    number,
     sales_agents!leads_sales_agent_id_fkey (
       id,
       name
@@ -1595,6 +1628,7 @@ const OPERATIONS_DETAIL_INQUIRY_SELECT = `
   leads (
     id,
     lead_id_formatted,
+    contact_id,
     name,
     number,
     source,
@@ -1625,6 +1659,7 @@ function normalizeOperationsInquiryRow(row: Record<string, unknown>): LeadInquir
       ? {
           id: String(rawLead.id || ''),
           lead_id_formatted: rawLead.lead_id_formatted ? String(rawLead.lead_id_formatted) : null,
+          contact_id: rawLead.contact_id ? String(rawLead.contact_id) : null,
           name: String(rawLead.name || ''),
           number: String(rawLead.number || ''),
           source: String(rawLead.source || ''),
@@ -1739,7 +1774,35 @@ async function queryOperationsInquiriesPage(
   const { data, error } = pageResult;
   if (error) return { error: error.message };
 
-  const rows = ((data || []) as Array<Record<string, unknown>>).map(normalizeOperationsInquiryRow);
+  const normalized = ((data || []) as Array<Record<string, unknown>>).map(
+    normalizeOperationsInquiryRow
+  );
+
+  const leadRows = normalized
+    .map((row) => row.leads)
+    .filter(Boolean)
+    .map((lead) => ({
+      id: String(lead!.id),
+      lead_id_formatted: lead!.lead_id_formatted,
+      contact_id: (lead as { contact_id?: string | null }).contact_id ?? null,
+      number: lead!.number ?? null,
+    }));
+  if (leadRows.length) {
+    const { enrichLeadRowsWithContactCustomerIds, isValidContactLeadId } = await import(
+      '@/lib/contact-lead-id'
+    );
+    await enrichLeadRowsWithContactCustomerIds(supabase, leadRows);
+    const leadIdByUuid = new Map(leadRows.map((lead) => [lead.id, lead.lead_id_formatted]));
+    for (const inquiry of normalized) {
+      if (!inquiry.leads) continue;
+      const synced = leadIdByUuid.get(String(inquiry.leads.id));
+      if (synced && isValidContactLeadId(synced)) {
+        inquiry.leads.lead_id_formatted = synced;
+      }
+    }
+  }
+
+  const rows = normalized;
   const hasMore = rows.length > pageLimit;
   const inquiries = hasMore ? rows.slice(0, pageLimit) : rows;
   const nextOffset = offset + inquiries.length;
@@ -1831,7 +1894,24 @@ export async function getInquiryForOperations(inquiryId: string) {
     if (error) return { error: error.message };
     if (!data) return { error: 'Inquiry not found' };
 
-    return { inquiry: normalizeOperationsInquiryRow(data as Record<string, unknown>) };
+    const inquiry = normalizeOperationsInquiryRow(data as Record<string, unknown>);
+    if (inquiry.leads) {
+      const { enrichLeadRowsWithContactCustomerIds, isValidContactLeadId } = await import(
+        '@/lib/contact-lead-id'
+      );
+      const leadRow = {
+        id: String(inquiry.leads.id),
+        lead_id_formatted: inquiry.leads.lead_id_formatted,
+        contact_id: inquiry.leads.contact_id ?? null,
+        number: inquiry.leads.number ?? null,
+      };
+      await enrichLeadRowsWithContactCustomerIds(supabase, [leadRow]);
+      if (isValidContactLeadId(leadRow.lead_id_formatted)) {
+        inquiry.leads.lead_id_formatted = leadRow.lead_id_formatted;
+      }
+    }
+
+    return { inquiry };
   } catch (err) {
     return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };
   }

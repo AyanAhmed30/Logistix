@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState, useTransition } from "react";
+import { useEffect, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import {
@@ -11,9 +11,7 @@ import {
   Banknote,
   Star,
   Trash2,
-  ChevronDown,
   Loader2,
-  Building2,
 } from "lucide-react";
 import { createCrmOpportunity } from "@/app/actions/crm/opportunities";
 import type {
@@ -21,12 +19,11 @@ import type {
   CrmOpportunityPriority,
   CrmPipelineStage,
 } from "@/app/actions/crm/types";
+import { getContactById, type SalespersonOption } from "@/app/actions/contacts";
 import {
-  getContactById,
-  searchCustomerContacts,
-  type CustomerSearchResult,
-  type SalespersonOption,
-} from "@/app/actions/contacts";
+  CustomerPicker,
+  type PickedCustomer,
+} from "@/components/admin/quotations/CustomerPicker";
 
 type Props = {
   stage: CrmPipelineStage;
@@ -46,27 +43,31 @@ export function CrmPipelineQuickCreate({
   const router = useRouter();
   const [name, setName] = useState("");
   const [contactId, setContactId] = useState<string | null>(null);
-  const [contactQuery, setContactQuery] = useState("");
-  const [contactOpen, setContactOpen] = useState(false);
-  const [contactResults, setContactResults] = useState<CustomerSearchResult[]>([]);
-  const [contactLoading, setContactLoading] = useState(false);
+  const [customerName, setCustomerName] = useState("");
   const [expectedRevenue, setExpectedRevenue] = useState("0.00");
   const [email, setEmail] = useState("");
   const [phone, setPhone] = useState("");
   const [priority, setPriority] = useState<CrmOpportunityPriority>(0);
   const [salespersonId, setSalespersonId] = useState(defaultSalespersonId || "");
+  const [customerLeadId, setCustomerLeadId] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
   const formRef = useRef<HTMLFormElement | null>(null);
-  const contactWrapRef = useRef<HTMLDivElement | null>(null);
-  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const onCancelRef = useRef(onCancel);
-  onCancelRef.current = onCancel;
 
   useEffect(() => {
-    if (!salespersonId && salespersons.length > 0) {
-      setSalespersonId(salespersons[0].id);
+    onCancelRef.current = onCancel;
+  }, [onCancel]);
+
+  useEffect(() => {
+    if (defaultSalespersonId) {
+      setSalespersonId(defaultSalespersonId);
+      return;
     }
-  }, [salespersons, salespersonId]);
+    if (salespersonId || salespersons.length === 0) return;
+    const preferred =
+      salespersons.find((s) => s.id === defaultSalespersonId)?.id || salespersons[0]?.id;
+    if (preferred) setSalespersonId(preferred);
+  }, [salespersons, salespersonId, defaultSalespersonId]);
 
   // Close form when clicking anywhere outside it
   useEffect(() => {
@@ -79,7 +80,6 @@ export function CrmPipelineQuickCreate({
     function onKeyDown(e: KeyboardEvent) {
       if (e.key === "Escape") onCancelRef.current();
     }
-    // Delay so the same click that opened "+" doesn't immediately close
     const timer = window.setTimeout(() => {
       document.addEventListener("mousedown", onPointerDown);
       document.addEventListener("touchstart", onPointerDown);
@@ -93,50 +93,18 @@ export function CrmPipelineQuickCreate({
     };
   }, []);
 
-  useEffect(() => {
-    function onDocClick(e: MouseEvent) {
-      if (!contactWrapRef.current?.contains(e.target as Node)) {
-        setContactOpen(false);
-      }
-    }
-    document.addEventListener("mousedown", onDocClick);
-    return () => document.removeEventListener("mousedown", onDocClick);
-  }, []);
+  async function handleCustomerSelect(picked: PickedCustomer) {
+    setContactId(picked.contact_id);
+    setCustomerName(picked.name);
+    if (!name.trim()) setName(picked.name);
 
-  const runContactSearch = useCallback(async (q: string) => {
-    setContactLoading(true);
-    try {
-      const res = await searchCustomerContacts(q);
-      if ("contacts" in res && res.contacts) {
-        setContactResults(res.contacts);
-      } else {
-        setContactResults([]);
-      }
-    } finally {
-      setContactLoading(false);
-    }
-  }, []);
-
-  function onContactQueryChange(value: string) {
-    setContactQuery(value);
-    setContactId(null);
-    setContactOpen(true);
-    if (debounceRef.current) clearTimeout(debounceRef.current);
-    debounceRef.current = setTimeout(() => {
-      void runContactSearch(value);
-    }, 200);
-  }
-
-  async function handleContactSelect(contact: CustomerSearchResult) {
-    setContactId(contact.id);
-    setContactQuery(contact.name);
-    setContactOpen(false);
-    if (!name.trim()) setName(contact.name);
-
-    const res = await getContactById(contact.id);
+    const res = await getContactById(picked.contact_id);
     if ("contact" in res && res.contact) {
+      setCustomerLeadId(res.contact.lead_id_formatted || null);
       setEmail(res.contact.email || "");
       setPhone(res.contact.phone || res.contact.mobile || "");
+    } else {
+      setCustomerLeadId(null);
     }
   }
 
@@ -158,6 +126,7 @@ export function CrmPipelineQuickCreate({
       name: name.trim(),
       contact_id: contactId,
       stage_id: stage.id,
+      stage_name: stage.name,
       expected_revenue: revenue,
       email: email.trim() || null,
       phone: phone.trim() || null,
@@ -180,7 +149,11 @@ export function CrmPipelineQuickCreate({
       }
       if ("opportunity" in result && result.opportunity) {
         toast.success("Opportunity created");
-        onCreated(result.opportunity);
+        onCreated({
+          ...result.opportunity,
+          stage_id: result.opportunity.stage_id || stage.id,
+          stage_name: result.opportunity.stage_name || stage.name,
+        });
       }
     });
   }
@@ -197,7 +170,11 @@ export function CrmPipelineQuickCreate({
       }
       if ("opportunity" in result && result.opportunity) {
         toast.success("Opportunity created");
-        onCreated(result.opportunity);
+        onCreated({
+          ...result.opportunity,
+          stage_id: result.opportunity.stage_id || stage.id,
+          stage_name: result.opportunity.stage_name || stage.name,
+        });
         router.push(`/crm/opportunities/${result.opportunity.id}`);
       }
     });
@@ -213,53 +190,28 @@ export function CrmPipelineQuickCreate({
       className="rounded-lg border border-slate-200 bg-white shadow-sm p-3 space-y-0.5"
       onClick={(e) => e.stopPropagation()}
     >
-      {/* Contact */}
-      <div className="relative" ref={contactWrapRef}>
-        <div className="flex items-center gap-2 border-b border-[#017e84]">
-          <User className="h-4 w-4 text-secondary-muted shrink-0" />
-          <input
-            value={contactQuery}
-            onChange={(e) => onContactQueryChange(e.target.value)}
-            onFocus={() => {
-              setContactOpen(true);
-              if (contactResults.length === 0) void runContactSearch(contactQuery);
-            }}
-            placeholder="Contact"
-            className="w-full bg-transparent border-0 rounded-none px-0 py-1.5 text-sm text-primary-dark placeholder:text-slate-400 focus:outline-none focus:ring-0"
+      {/* Contact — reuse shared Odoo-style searchable picker */}
+      <div className="flex items-center gap-2 border-b border-[#017e84]">
+        <User className="h-4 w-4 text-secondary-muted shrink-0" />
+        <div className="flex-1 min-w-0 [&_input]:border-0 [&_input]:border-b-0 [&_input]:rounded-none [&_input]:px-0 [&_input]:shadow-none [&_input]:focus-visible:ring-0 [&_input]:pl-7 [&_input]:text-sm">
+          <CustomerPicker
+            contactId={contactId}
+            customerName={customerName}
+            onSelect={handleCustomerSelect}
+            contactScope="all"
+            placeholder="Search contact…"
             disabled={isPending}
-            autoComplete="off"
+            inputClassName="h-9 bg-transparent"
           />
-          <ChevronDown className="h-3.5 w-3.5 text-[#017e84] shrink-0" />
         </div>
-        {contactOpen ? (
-          <div className="absolute z-50 left-0 right-0 mt-1 max-h-48 overflow-y-auto rounded-md border border-slate-200 bg-white shadow-lg">
-            {contactLoading ? (
-              <div className="flex items-center gap-2 px-3 py-2 text-xs text-secondary-muted">
-                <Loader2 className="h-3.5 w-3.5 animate-spin" /> Searching…
-              </div>
-            ) : contactResults.length === 0 ? (
-              <div className="px-3 py-3 text-center text-xs text-secondary-muted">
-                No matching contact
-              </div>
-            ) : (
-              contactResults.map((c) => {
-                const Icon = c.company_type === "company" ? Building2 : User;
-                return (
-                  <button
-                    key={c.id}
-                    type="button"
-                    onClick={() => void handleContactSelect(c)}
-                    className="w-full flex items-center gap-2 px-3 py-2 text-left text-sm text-primary-dark hover:bg-[#017e84]/10"
-                  >
-                    <Icon className="h-3.5 w-3.5 text-secondary-muted shrink-0" />
-                    <span className="truncate">{c.name}</span>
-                  </button>
-                );
-              })
-            )}
-          </div>
-        ) : null}
       </div>
+
+      {customerLeadId ? (
+        <div className="flex items-center gap-2 px-1 py-0.5 text-xs text-secondary-muted">
+          <span>Customer ID</span>
+          <span className="font-mono font-semibold text-primary-dark">{customerLeadId}</span>
+        </div>
+      ) : null}
 
       {/* Opportunity's Name */}
       <div className="flex items-center gap-2">
@@ -269,7 +221,6 @@ export function CrmPipelineQuickCreate({
           onChange={(e) => setName(e.target.value)}
           placeholder="Opportunity's Name"
           className={fieldInput}
-          autoFocus
           disabled={isPending}
         />
       </div>
@@ -343,9 +294,16 @@ export function CrmPipelineQuickCreate({
         <button
           type="submit"
           disabled={isPending}
-          className="h-8 px-4 rounded text-sm font-medium text-white bg-[#017e84] hover:bg-[#016970] disabled:opacity-60"
+          className="h-8 px-4 rounded text-sm font-medium text-white bg-[#017e84] hover:bg-[#016970] disabled:opacity-60 inline-flex items-center justify-center gap-1.5 min-w-[72px]"
         >
-          {isPending ? "…" : "Add"}
+          {isPending ? (
+            <>
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              Adding…
+            </>
+          ) : (
+            "Add"
+          )}
         </button>
         <button
           type="button"

@@ -75,7 +75,7 @@ function invoiceBadgeClass(status: SalesOrderInvoiceStatus) {
 function formatMoney(value: number) {
   return new Intl.NumberFormat(undefined, {
     style: "currency",
-    currency: "USD",
+    currency: "PKR",
     maximumFractionDigits: 2,
   }).format(value || 0);
 }

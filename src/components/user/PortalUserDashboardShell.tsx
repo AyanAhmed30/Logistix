@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { logout } from "@/app/actions/auth";
+import { SignOutForm } from "@/components/auth/SignOutForm";
 import { Button } from "@/components/ui/button";
 import {
   LogOut,
@@ -417,7 +417,7 @@ export function PortalUserDashboardShell({
             </nav>
 
             <div className="border-t border-white/5 p-3">
-              <form action={logout}>
+              <SignOutForm>
                 <Button
                   type="submit"
                   variant="ghost"
@@ -426,7 +426,7 @@ export function PortalUserDashboardShell({
                   <LogOut className="h-4 w-4" />
                   Sign out
                 </Button>
-              </form>
+              </SignOutForm>
             </div>
           </div>
         </aside>

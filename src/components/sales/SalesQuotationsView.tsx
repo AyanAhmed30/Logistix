@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { toast } from "sonner";
 import {
   ArrowDown,
@@ -80,7 +80,7 @@ function statusBadgeClass(status: SalesQuotationUiStatus) {
 function formatMoney(value: number) {
   return new Intl.NumberFormat(undefined, {
     style: "currency",
-    currency: "USD",
+    currency: "PKR",
     maximumFractionDigits: 2,
   }).format(value || 0);
 }
@@ -94,6 +94,8 @@ function formatDate(value: string | null) {
 
 export function SalesQuotationsView() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const contactIdFilter = searchParams.get("contactId");
   const { switchVersion, isAdminContext } = useAdminOrganization();
   const { searchQuery, activeFilterId, groupBy, setGroupBy } = useSalesShell();
 
@@ -120,6 +122,7 @@ export function SalesQuotationsView() {
       sortDir,
       page,
       pageSize: PAGE_SIZE,
+      contactId: contactIdFilter,
     });
     if ("error" in res && res.error) {
       toast.error(res.error);
@@ -130,7 +133,7 @@ export function SalesQuotationsView() {
       setTotal(res.total);
     }
     setLoading(false);
-  }, [searchQuery, statusFilter, sortBy, sortDir, page]);
+  }, [searchQuery, statusFilter, sortBy, sortDir, page, contactIdFilter]);
 
   useEffect(() => {
     setPage(1);
@@ -332,6 +335,18 @@ export function SalesQuotationsView() {
 
   return (
     <div className="space-y-3">
+      {contactIdFilter ? (
+        <div className="rounded-sm border border-slate-200 bg-white px-4 py-2 text-sm text-secondary-muted flex items-center justify-between gap-3">
+          <span>Showing quotations for the selected contact.</span>
+          <button
+            type="button"
+            className="text-[#017e84] hover:underline font-medium shrink-0"
+            onClick={() => router.push("/sales/quotations")}
+          >
+            Clear filter
+          </button>
+        </div>
+      ) : null}
       <div className="flex flex-wrap items-center gap-2 justify-between">
         <div className="flex flex-wrap items-center gap-1.5">
           <div className="inline-flex rounded-sm border border-slate-200 bg-white p-0.5">

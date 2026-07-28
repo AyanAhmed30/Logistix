@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { logout } from "@/app/actions/auth";
+import { SignOutForm } from "@/components/auth/SignOutForm";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { LogOut, Menu, X, UsersRound, FileText } from "lucide-react";
@@ -53,7 +53,7 @@ export function OrganizationDashboardShell({ organization, username }: Props) {
               Organization Portal
             </span>
           </div>
-          <form action={logout}>
+          <SignOutForm>
             <Button
               variant="outline"
               className="gap-2 border-slate-200 bg-white hover:bg-slate-50 text-primary-dark hover:text-primary-dark"
@@ -61,7 +61,7 @@ export function OrganizationDashboardShell({ organization, username }: Props) {
             >
               <LogOut className="h-4 w-4" /> Sign Out
             </Button>
-          </form>
+          </SignOutForm>
         </div>
       </header>
 

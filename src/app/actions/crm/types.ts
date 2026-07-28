@@ -100,11 +100,12 @@ export type CrmActivityUpsertInput = {
 };
 
 export type CrmActivityListFilters = {
-  activityType?: CrmActivityType | 'all';
+  activityType?: CrmActivityType | 'all' | 'tasks' | 'meetings';
   status?: CrmActivityStatus | 'all' | 'overdue' | 'today' | 'upcoming' | 'completed';
   assignedTo?: string | 'all' | 'me';
   dueFrom?: string;
   dueTo?: string;
+  contactId?: string | null;
 };
 
 export type CrmChatterEntryType = 'message' | 'note' | 'attachment' | 'audit' | 'reply';
@@ -129,6 +130,8 @@ export type CrmOpportunityUpsertInput = {
   contact_id: string;
   contact_person_id?: string | null;
   stage_id?: string;
+  /** Fallback when stage_id is stale (cached / cross-org). */
+  stage_name?: string | null;
   expected_revenue?: number;
   probability?: number;
   priority?: CrmOpportunityPriority;

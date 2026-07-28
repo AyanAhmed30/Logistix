@@ -79,10 +79,92 @@ import {
 export type LeadInquiryWorkspaceTab = "create" | "view" | "status";
 type MainTab = LeadInquiryWorkspaceTab;
 
-const HIDDEN_INQUIRY_LOG_KEYS = new Set(["version_number", "inquiry_version"]);
+const HIDDEN_INQUIRY_LOG_KEYS = new Set(["version_number", "inquiry_version", "sent_to_accounting"]);
 
 function visibleLogKeys(keys: string[]) {
   return keys.filter((k) => !HIDDEN_INQUIRY_LOG_KEYS.has(k));
+}
+
+function inquiryLogInitials(name: string) {
+  return (name || "?")
+    .split(/\s+/)
+    .map((p) => p[0])
+    .slice(0, 2)
+    .join("")
+    .toUpperCase();
+}
+
+function formatInquiryLogAction(action: string) {
+  switch (action) {
+    case "created":
+    case "inquiry_created_draft":
+      return "Inquiry Created";
+    case "updated":
+    case "inquiry_edited":
+      return "Inquiry Updated";
+    case "inquiry_sent":
+      return "Inquiry Submitted";
+    case "inquiry_resent":
+      return "Inquiry Re-Submitted";
+    case "status_changed":
+      return "Status Changed";
+    case "send_for_confirmation":
+      return "Sent for Confirmation";
+    case "image_uploaded":
+      return "Image Uploaded";
+    case "internal_note":
+      return "Internal Note";
+    case "calculator_updated":
+      return "Calculator Updated";
+    case "lead_management_form_updated":
+      return "Lead Management Updated";
+    default:
+      return action.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+  }
+}
+
+function getInquiryLogActionStyle(action: string) {
+  switch (action) {
+    case "inquiry_created_draft":
+    case "created":
+      return {
+        badge: "bg-emerald-50 text-emerald-700 border-emerald-200",
+        avatar: "bg-emerald-600 text-white",
+        isSystem: false,
+      };
+    case "inquiry_sent":
+    case "inquiry_resent":
+      return {
+        badge: "bg-blue-50 text-blue-700 border-blue-200",
+        avatar: "bg-[#017e84] text-white",
+        isSystem: true,
+      };
+    case "inquiry_edited":
+    case "updated":
+      return {
+        badge: "bg-violet-50 text-violet-700 border-violet-200",
+        avatar: "bg-violet-600 text-white",
+        isSystem: false,
+      };
+    case "status_changed":
+      return {
+        badge: "bg-purple-50 text-purple-700 border-purple-200",
+        avatar: "bg-purple-600 text-white",
+        isSystem: true,
+      };
+    case "internal_note":
+      return {
+        badge: "bg-amber-50 text-amber-800 border-amber-200",
+        avatar: "bg-amber-500 text-white",
+        isSystem: false,
+      };
+    default:
+      return {
+        badge: "bg-slate-50 text-slate-700 border-slate-200",
+        avatar: "bg-slate-500 text-white",
+        isSystem: false,
+      };
+  }
 }
 
 function salesInquiryIsApproved(inq: LeadInquiry, approvedFallbackId: string | null) {
@@ -398,6 +480,8 @@ export function LeadInquiryWorkspace({
   const [showSendValidation, setShowSendValidation] = useState(false);
   const selectedInquiryIdRef = useRef(selectedInquiryId);
   const isSendingRef = useRef(false);
+  const [isSendingInquiry, setIsSendingInquiry] = useState(false);
+  const [isSavingDraft, setIsSavingDraft] = useState(false);
   const prevMainTabRef = useRef<MainTab | null>(null);
   const createFormLeadIdRef = useRef<string | null>(null);
   const [isUploadingAttachments, setIsUploadingAttachments] = useState(false);
@@ -600,7 +684,7 @@ export function LeadInquiryWorkspace({
   }, [mainTab, leadInquiries, approvedInquiryId, fetchPricingForInquiries]);
 
   useEffect(() => {
-    if (!active || !lead || layout !== "page") return;
+    if (!active || !lead || (layout !== "page" && layout !== "crm")) return;
 
     const enteredCreateTab = mainTab === "create" && prevMainTabRef.current !== "create";
     const switchedLeadOnCreate =
@@ -623,6 +707,7 @@ export function LeadInquiryWorkspace({
       setInquiryLogs,
       setBaselineDraftState,
     });
+    if (fileInputRef.current) fileInputRef.current.value = "";
     setIsViewEditing(false);
     setFieldErrors({});
     setShowSendValidation(false);
@@ -866,27 +951,6 @@ export function LeadInquiryWorkspace({
     return next;
   }
 
-  function formatLogAction(action: string) {
-    switch (action) {
-      case "created":
-        return "Created";
-      case "updated":
-        return "Updated";
-      case "status_changed":
-        return "Status Changed";
-      case "send_for_confirmation":
-        return "Sent for Confirmation";
-      case "image_uploaded":
-        return "Image Uploaded";
-      case "calculator_updated":
-        return "Calculator Updated";
-      case "lead_management_form_updated":
-        return "Lead Management Updated";
-      default:
-        return action.replace(/_/g, " ");
-    }
-  }
-
   function fieldLabel(key: string) {
     const labels: Record<string, string> = {
       product_name: "Product",
@@ -1050,7 +1114,7 @@ export function LeadInquiryWorkspace({
   }, [layout, mode, mainTab, leadInquiries, selectedInquiryId, handleSelectInquiry]);
 
   function handleSaveInquiry() {
-    if (!lead || isUploadingAttachments) {
+    if (!lead || isUploadingAttachments || isSavingDraft || isSendingInquiry) {
       if (isUploadingAttachments) {
         toast.error("Please wait for file uploads to finish.");
       }
@@ -1062,52 +1126,57 @@ export function LeadInquiryWorkspace({
       toast.error(Object.values(draftValidation.errors)[0] || "Please fix the highlighted fields.");
       return;
     }
-    startTransition(async () => {
-      const saveOptions = resolveSaveInquiryOptions(inquiry, mode, layout, mainTab);
-      const result = await saveInquiry(lead.id, {
-        product_name: productName,
-        total_weight: totalWeight,
-        cbm,
-        quantity,
-        image_url: imageDataList[0] || null,
-        additional_image_urls: imageDataList.slice(1),
-        description: otherDetails,
-      }, saveOptions.inquiryId, {
-        forceNewInquiry: saveOptions.forceNewInquiry,
-        ...saveInquiryOptions,
-      });
-      if ("error" in result) {
-        toast.error(result.error);
-      } else {
-        toast.success("Inquiry saved successfully");
-        invalidateCachedLeadInquiries(lead.id);
-        if (result.inquiry) {
-          setInquiry(result.inquiry);
-          setSelectedInquiryId(result.inquiry.id);
-          setLeadInquiries((prev) => {
-            const filtered = prev.filter((x) => x.id !== result.inquiry!.id);
-            return [result.inquiry!, ...filtered];
-          });
-          const primaryImage = result.inquiry.image_url || "";
-          const additionalImages = Array.isArray(result.inquiry.additional_image_urls)
-            ? result.inquiry.additional_image_urls.filter((url) => typeof url === "string" && url.trim().length > 0)
-            : [];
-          setBaselineDraftState({
-            product_name: result.inquiry.product_name || "",
-            total_weight: result.inquiry.total_weight || "",
-            cbm: result.inquiry.cbm || "",
-            quantity: result.inquiry.quantity || "",
-            description: result.inquiry.description || "",
-            image_count: (primaryImage ? 1 : 0) + additionalImages.length,
-          });
-          await fetchLogsForInquiry(result.inquiry.id);
+    setIsSavingDraft(true);
+    void (async () => {
+      try {
+        const saveOptions = resolveSaveInquiryOptions(inquiry, mode, layout, mainTab);
+        const result = await saveInquiry(lead.id, {
+          product_name: productName,
+          total_weight: totalWeight,
+          cbm,
+          quantity,
+          image_url: imageDataList[0] || null,
+          additional_image_urls: imageDataList.slice(1),
+          description: otherDetails,
+        }, saveOptions.inquiryId, {
+          forceNewInquiry: saveOptions.forceNewInquiry,
+          ...saveInquiryOptions,
+        });
+        if ("error" in result) {
+          toast.error(result.error);
+        } else {
+          toast.success("Inquiry saved successfully");
+          invalidateCachedLeadInquiries(lead.id);
+          if (result.inquiry) {
+            setInquiry(result.inquiry);
+            setSelectedInquiryId(result.inquiry.id);
+            setLeadInquiries((prev) => {
+              const filtered = prev.filter((x) => x.id !== result.inquiry!.id);
+              return [result.inquiry!, ...filtered];
+            });
+            const primaryImage = result.inquiry.image_url || "";
+            const additionalImages = Array.isArray(result.inquiry.additional_image_urls)
+              ? result.inquiry.additional_image_urls.filter((url) => typeof url === "string" && url.trim().length > 0)
+              : [];
+            setBaselineDraftState({
+              product_name: result.inquiry.product_name || "",
+              total_weight: result.inquiry.total_weight || "",
+              cbm: result.inquiry.cbm || "",
+              quantity: result.inquiry.quantity || "",
+              description: result.inquiry.description || "",
+              image_count: (primaryImage ? 1 : 0) + additionalImages.length,
+            });
+            await fetchLogsForInquiry(result.inquiry.id);
+          }
         }
+      } finally {
+        setIsSavingDraft(false);
       }
-    });
+    })();
   }
 
   function handleSendInquiry() {
-    if (!lead || isSendingRef.current) return;
+    if (!lead || isSendingRef.current || isSendingInquiry || isSavingDraft) return;
     if (isUploadingAttachments) {
       toast.error("Please wait for file uploads to finish.");
       return;
@@ -1126,7 +1195,8 @@ export function LeadInquiryWorkspace({
     }
 
     isSendingRef.current = true;
-    startTransition(async () => {
+    setIsSendingInquiry(true);
+    void (async () => {
       try {
         const saveOptions = resolveSaveInquiryOptions(inquiry, mode, layout, mainTab);
         const result = await saveAndSendInquiry(
@@ -1182,8 +1252,9 @@ export function LeadInquiryWorkspace({
         onRequestClose?.();
       } finally {
         isSendingRef.current = false;
+        setIsSendingInquiry(false);
       }
-    });
+    })();
   }
 
   function handleStartViewEdit() {
@@ -1301,96 +1372,121 @@ export function LeadInquiryWorkspace({
 
   const renderInquiryLogsPanel = (compact?: boolean) => (
     <div
-      className={`rounded-sm border border-slate-200 bg-white space-y-3 ${
-        compact ? "p-3" : "p-4"
+      className={`rounded-sm border border-slate-200 bg-white flex flex-col ${
+        compact ? "min-h-0" : "min-h-[320px]"
       }`}
     >
-      <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-500 flex items-center gap-2">
-        <History className="h-3.5 w-3.5" />
-        Inquiry activity log
-      </h3>
-      <div className={`overflow-y-auto pr-1 space-y-2 ${compact ? "max-h-48" : "max-h-[70vh]"}`}>
+      <div className="px-3 py-2.5 border-b border-slate-200 bg-slate-50/80 shrink-0">
+        <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-600 flex items-center gap-2">
+          <History className="h-3.5 w-3.5" />
+          Activity
+        </h3>
+      </div>
+      <div className={`flex-1 overflow-y-auto p-3 ${compact ? "max-h-48" : "max-h-[70vh]"}`}>
         {liveUnsavedEntries.length > 0 && (
-          <Card className="p-2.5 rounded-sm border-amber-200 bg-amber-50/50">
+          <div className="mb-3 rounded-md border border-amber-200 bg-amber-50/60 p-2.5">
+            <p className="text-[10px] font-semibold uppercase tracking-wide text-amber-700 mb-1.5">
+              Unsaved changes
+            </p>
             <div className="space-y-1.5">
               {liveUnsavedEntries.map((entry) => (
-                <div key={entry.key} className="text-[11px] rounded border border-amber-100 bg-white p-2">
-                  <div className="font-medium text-slate-700">{entry.label}</div>
-                  <div className="text-teal-700">
-                    <span className="font-medium">{entry.newValue}</span>
-                  </div>
+                <div key={entry.key} className="text-[11px] rounded border border-amber-100 bg-white px-2 py-1.5">
+                  <span className="font-medium text-slate-700">{entry.label}: </span>
+                  <span className="text-[#017e84] font-medium">{entry.newValue}</span>
                 </div>
               ))}
             </div>
-          </Card>
+          </div>
         )}
         {isLoadingLogs ? (
-          <p className="text-xs text-secondary-muted">Loading logs...</p>
+          <div className="flex items-center justify-center py-10 text-secondary-muted">
+            <Loader2 className="h-5 w-5 animate-spin" />
+          </div>
         ) : inquiryLogs.length === 0 ? (
-          <p className="text-xs text-secondary-muted">
-            {isCreateFlow ? "No logs yet. Logs will appear after save/send." : "No logs available for this inquiry."}
+          <p className="text-xs text-secondary-muted text-center py-8">
+            {isCreateFlow
+              ? "No activity yet. Events will appear here after you save or send an inquiry."
+              : "No activity recorded for this inquiry yet."}
           </p>
         ) : (
-          inquiryLogs.map((log) => {
-            const previous = (log.previous_values || {}) as Record<string, unknown>;
-            const current = (log.new_values || {}) as Record<string, unknown>;
-            const changedKeys = visibleLogKeys(
-              Array.from(new Set([...Object.keys(previous), ...Object.keys(current)]))
-            );
+          <div className="space-y-0">
+            {inquiryLogs.map((log, index) => {
+              const previous = (log.previous_values || {}) as Record<string, unknown>;
+              const current = (log.new_values || {}) as Record<string, unknown>;
+              const changedKeys = visibleLogKeys(
+                Array.from(new Set([...Object.keys(previous), ...Object.keys(current)]))
+              );
+              const style = getInquiryLogActionStyle(log.action);
+              const isLast = index === inquiryLogs.length - 1;
 
-            return (
-              <Card key={log.id} className="p-2.5 rounded-sm border-slate-200 bg-slate-50/50">
-                <div className="flex items-center justify-between gap-2">
-                  <span className="text-xs font-semibold text-primary-dark">{log.performed_by}</span>
-                  <span className="text-[10px] text-secondary-muted">
-                    {new Date(log.performed_at).toLocaleString([], {
-                      month: "short",
-                      day: "numeric",
-                      hour: "2-digit",
-                      minute: "2-digit",
-                    })}
-                  </span>
-                </div>
-                <div className="mt-1">
-                  <Badge variant="outline" className="text-[10px] h-5 bg-white border-slate-200 text-slate-700">
-                    {formatLogAction(log.action)}
-                  </Badge>
-                </div>
-                {isCreateFlow && Object.keys(current).length > 0 ? (
-                  <div className="mt-2 space-y-1.5">
-                    {Object.entries(current)
-                      .filter(([key]) => !HIDDEN_INQUIRY_LOG_KEYS.has(key))
-                      .map(([key, value]) => (
-                      <div key={`${log.id}-${key}`} className="text-[11px] rounded border border-slate-100 bg-white p-2">
-                        <div className="font-medium text-slate-700">{fieldLabel(key)}</div>
-                        <div className="text-teal-700">
-                          <span className="font-medium">{valueText(value)}</span>
-                        </div>
-                      </div>
-                    ))}
+              return (
+                <div key={log.id} className={`relative flex gap-2.5 ${isLast ? "" : "pb-4"}`}>
+                  {!isLast ? (
+                    <div
+                      className="absolute left-[13px] top-7 bottom-0 w-px bg-slate-200"
+                      aria-hidden="true"
+                    />
+                  ) : null}
+                  <div
+                    className={`h-7 w-7 rounded-md text-[11px] font-semibold flex items-center justify-center shrink-0 ${style.avatar}`}
+                  >
+                    {inquiryLogInitials(log.performed_by)}
                   </div>
-                ) : changedKeys.length > 0 ? (
-                  <div className="mt-2 space-y-1.5">
-                    {changedKeys.map((key) => (
-                      <div key={`${log.id}-${key}`} className="text-[11px] rounded border border-slate-100 bg-slate-50 p-2">
-                        <div className="font-medium text-slate-700">{fieldLabel(key)}</div>
-                        {previous[key] !== undefined && (
-                          <div className="text-slate-500">
-                            Old: <span className="line-through">{valueText(previous[key])}</span>
+                  <div className="flex-1 min-w-0 pb-1">
+                    <div className="flex items-center gap-2 flex-wrap text-xs">
+                      <span className="font-semibold text-primary-dark">{log.performed_by}</span>
+                      <Badge variant="outline" className={`text-[10px] h-5 py-0 ${style.badge}`}>
+                        {formatInquiryLogAction(log.action)}
+                      </Badge>
+                      {style.isSystem ? (
+                        <Badge variant="outline" className="text-[10px] h-5 py-0 text-slate-500 border-slate-200">
+                          System
+                        </Badge>
+                      ) : null}
+                      <span className="text-secondary-muted">
+                        {new Date(log.performed_at).toLocaleString([], {
+                          month: "short",
+                          day: "numeric",
+                          hour: "2-digit",
+                          minute: "2-digit",
+                        })}
+                      </span>
+                    </div>
+
+                    {isCreateFlow && Object.keys(current).length > 0 ? (
+                      <div className="mt-2 rounded-md border border-slate-100 bg-slate-50/80 px-3 py-2 space-y-1.5">
+                        {Object.entries(current)
+                          .filter(([key]) => !HIDDEN_INQUIRY_LOG_KEYS.has(key))
+                          .map(([key, value]) => (
+                            <div key={`${log.id}-${key}`} className="text-[11px] leading-relaxed">
+                              <span className="text-slate-500">{fieldLabel(key)}: </span>
+                              <span className="font-medium text-[#017e84]">{valueText(value)}</span>
+                            </div>
+                          ))}
+                      </div>
+                    ) : changedKeys.length > 0 ? (
+                      <div className="mt-2 rounded-md border border-slate-100 bg-slate-50/80 px-3 py-2 space-y-1.5">
+                        {changedKeys.map((key) => (
+                          <div key={`${log.id}-${key}`} className="text-[11px] leading-relaxed">
+                            <span className="text-slate-500 font-medium">{fieldLabel(key)}: </span>
+                            {previous[key] !== undefined ? (
+                              <>
+                                <span className="text-red-400 line-through">{valueText(previous[key])}</span>
+                                <span className="mx-1.5 text-slate-300">→</span>
+                              </>
+                            ) : null}
+                            <span className="font-medium text-[#017e84]">{valueText(current[key])}</span>
                           </div>
-                        )}
-                        <div className="text-teal-700">
-                          New: <span className="font-medium">{valueText(current[key])}</span>
-                        </div>
+                        ))}
                       </div>
-                    ))}
+                    ) : (
+                      <p className="mt-1.5 text-[11px] text-slate-500">Activity recorded.</p>
+                    )}
                   </div>
-                ) : (
-                  <p className="mt-2 text-[11px] text-slate-500">Activity recorded.</p>
-                )}
-              </Card>
-            );
-          })
+                </div>
+              );
+            })}
+          </div>
         )}
       </div>
     </div>
@@ -1468,9 +1564,6 @@ export function LeadInquiryWorkspace({
 
       {mode === "view" && inquiry?.sent_to_accounting && (
         <div className="flex items-center gap-2 flex-wrap">
-          <Badge className="bg-emerald-100 text-emerald-800 border-0 rounded-full px-3 py-1 text-xs font-semibold">
-            Sent to Accounting
-          </Badge>
           <Badge className="bg-blue-100 text-blue-800 border-0 rounded-full px-3 py-1 text-xs font-semibold">
             Sent to Operations
           </Badge>
@@ -1520,12 +1613,12 @@ export function LeadInquiryWorkspace({
               </label>
               <div className="relative">
                 <Input
-                  placeholder="500"
+                  placeholder="12.5"
                   value={totalWeight}
-                  inputMode={canEditForm ? "numeric" : "text"}
-                  pattern={canEditForm ? "[0-9]*" : undefined}
+                  inputMode={canEditForm ? "decimal" : "text"}
+                  pattern={canEditForm ? "^[0-9]*\\.?[0-9]*$" : undefined}
                   onChange={(e) => {
-                    setTotalWeight(canEditForm ? toDigitsOnly(e.target.value) : e.target.value);
+                    setTotalWeight(canEditForm ? toDecimalInput(e.target.value) : e.target.value);
                     if (showSendValidation || fieldErrors.total_weight) {
                       setFieldErrors((prev) => ({ ...prev, total_weight: undefined }));
                     }
@@ -1878,20 +1971,38 @@ export function LeadInquiryWorkspace({
               <Button 
                 type="button"
                 onClick={handleSaveInquiry} 
-                disabled={isPending || isUploadingAttachments} 
+                disabled={isSavingDraft || isSendingInquiry || isUploadingAttachments} 
                 variant="outline" 
                 className="flex-1 h-12 rounded-lg border-2 font-semibold"
               >
-                {isPending ? "Saving..." : isUploadingAttachments ? "Uploading..." : "Save as Draft"}
+                {isSavingDraft ? (
+                  <>
+                    <Loader2 className="h-5 w-5 mr-2 animate-spin" />
+                    Saving...
+                  </>
+                ) : isUploadingAttachments ? (
+                  "Uploading..."
+                ) : (
+                  "Save as Draft"
+                )}
               </Button>
               <Button
                 type="button"
                 onClick={handleSendInquiry}
-                disabled={isPending || isUploadingAttachments || !isSendFormValid}
+                disabled={isSendingInquiry || isSavingDraft || isUploadingAttachments || !isSendFormValid}
                 className="flex-1 h-12 rounded-lg bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white font-semibold shadow-lg disabled:opacity-60"
               >
-                <Send className="h-5 w-5 mr-2" />
-                {isPending ? "Sending..." : isUploadingAttachments ? "Uploading..." : "Send Inquiry"}
+                {isSendingInquiry ? (
+                  <>
+                    <Loader2 className="h-5 w-5 mr-2 animate-spin" />
+                    Sending Inquiry...
+                  </>
+                ) : (
+                  <>
+                    <Send className="h-5 w-5 mr-2" />
+                    {isUploadingAttachments ? "Uploading..." : "Send Inquiry"}
+                  </>
+                )}
               </Button>
             </div>
             {showSendValidation && !isSendFormValid && (

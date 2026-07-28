@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { logout } from "@/app/actions/auth";
+import { SignOutForm } from "@/components/auth/SignOutForm";
 import { Button } from "@/components/ui/button";
 import {
   LogOut,
@@ -250,7 +250,7 @@ export function OperationsDashboardShell({
             <span className="hidden md:block text-sm text-secondary-muted">
               Logged in as <span className="font-semibold text-primary-dark">{username}</span>
             </span>
-            <form action={logout}>
+            <SignOutForm>
               <Button
                 variant="outline"
                 className="gap-2 border-slate-200 bg-white hover:bg-slate-50 text-primary-dark hover:text-primary-dark"
@@ -258,7 +258,7 @@ export function OperationsDashboardShell({
               >
                 <LogOut className="h-4 w-4" /> Sign Out
               </Button>
-            </form>
+            </SignOutForm>
           </div>
         </div>
       </header>

@@ -1,6 +1,6 @@
 "use client";
 
-import { logout } from "@/app/actions/auth";
+import { SignOutForm } from "@/components/auth/SignOutForm";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -59,14 +59,14 @@ export function SalesUserMenu({ access }: Props) {
           </Link>
         </DropdownMenuItem>
         <DropdownMenuSeparator />
-        <form action={logout}>
+        <SignOutForm>
           <DropdownMenuItem asChild>
             <button type="submit" className="w-full cursor-pointer gap-2">
               <LogOut className="h-4 w-4" />
               Sign Out
             </button>
           </DropdownMenuItem>
-        </form>
+        </SignOutForm>
       </DropdownMenuContent>
     </DropdownMenu>
   );

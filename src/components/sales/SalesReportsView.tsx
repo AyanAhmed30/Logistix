@@ -43,7 +43,7 @@ type ReportView =
 function formatMoney(n: number) {
   return new Intl.NumberFormat(undefined, {
     style: "currency",
-    currency: "USD",
+    currency: "PKR",
     maximumFractionDigits: 0,
   }).format(n || 0);
 }

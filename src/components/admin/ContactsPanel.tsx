@@ -52,29 +52,30 @@ export function ContactsPanel({
     );
   }
 
-  if (view.mode === "list") {
-    return (
-      <ContactsListView
-        key={switchVersion}
-        refreshToken={refreshToken}
-        onNewContact={() => setView({ mode: "form", contactId: null })}
-        onOpenContact={(contactId) => setView({ mode: "form", contactId })}
-      />
-    );
-  }
-
   return (
-    <ContactFormView
-      key={`${switchVersion}-${view.contactId || "new"}`}
-      contactId={view.contactId}
-      onBack={() => {
-        setRefreshToken((n) => n + 1);
-        setView({ mode: "list" });
-      }}
-      onSaved={(id) => {
-        setRefreshToken((n) => n + 1);
-        setView({ mode: "form", contactId: id });
-      }}
-    />
+    <>
+      {/* Keep list mounted (hidden on form) so saves refresh data without a full panel reload. */}
+      <div className={view.mode === "list" ? "" : "hidden"} aria-hidden={view.mode !== "list"}>
+        <ContactsListView
+          key={switchVersion}
+          refreshToken={refreshToken}
+          onNewContact={() => setView({ mode: "form", contactId: null })}
+          onOpenContact={(contactId) => setView({ mode: "form", contactId })}
+        />
+      </div>
+
+      {view.mode === "form" ? (
+        <ContactFormView
+          key={`${switchVersion}-${view.contactId || "new"}`}
+          contactId={view.contactId}
+          onBack={() => {
+            setView({ mode: "list" });
+          }}
+          onSaved={() => {
+            setRefreshToken((n) => n + 1);
+          }}
+        />
+      ) : null}
+    </>
   );
 }

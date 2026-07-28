@@ -41,8 +41,9 @@ export function validateInquiryProductInfoForDraft(fields: InquiryProductFields)
   if (!fields.product_name.trim()) {
     errors.product_name = "Product name is required.";
   }
-  if (fields.total_weight.trim() && !isIntegerString(fields.total_weight)) {
-    errors.total_weight = "Total Weight must be a whole number (kg).";
+  const weightValue = normalizeDecimalInput(fields.total_weight);
+  if (weightValue && !isDecimalString(weightValue)) {
+    errors.total_weight = "Total Weight must be a valid number (e.g. 12.5).";
   }
   if (fields.cbm.trim() && !isDecimalString(fields.cbm)) {
     errors.cbm = "CBM must be a valid number (e.g. 12.5).";
@@ -64,10 +65,11 @@ export function validateInquiryProductInfoForSend(fields: InquiryProductFields):
   if (!fields.product_name.trim()) {
     errors.product_name = "Product name is required.";
   }
-  if (!fields.total_weight.trim()) {
+  const weightValue = normalizeDecimalInput(fields.total_weight);
+  if (!weightValue) {
     errors.total_weight = "Total Weight is required.";
-  } else if (!isIntegerString(fields.total_weight)) {
-    errors.total_weight = "Total Weight must be a whole number (kg).";
+  } else if (!isDecimalString(weightValue)) {
+    errors.total_weight = "Total Weight must be a valid number (e.g. 12.5).";
   }
   const cbmValue = normalizeDecimalInput(fields.cbm);
   if (!cbmValue) {

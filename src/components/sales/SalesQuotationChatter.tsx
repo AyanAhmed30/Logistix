@@ -40,7 +40,7 @@ function formatMoney(value: unknown) {
   if (!Number.isFinite(n)) return String(value ?? "");
   return new Intl.NumberFormat(undefined, {
     style: "currency",
-    currency: "USD",
+    currency: "PKR",
     maximumFractionDigits: 2,
   }).format(n);
 }

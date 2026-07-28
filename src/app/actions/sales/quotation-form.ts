@@ -19,6 +19,7 @@ export type SalesQuotationLineInput = {
   unit_price: number;
   discount: number;
   taxes: number;
+  display_type?: 'product' | 'line_section' | 'line_note';
 };
 
 export type SalesQuotationFormPayload = {
@@ -135,6 +136,14 @@ function summarizeLines(lines: SalesQuotationLineInput[]) {
   let tax = 0;
   let total = 0;
   for (const line of lines) {
+    const displayType =
+      line.display_type ||
+      (Number(line.quantity) === 0 && Number(line.unit_price) === 0
+        ? line.product_name === 'Note'
+          ? 'line_note'
+          : 'line_section'
+        : 'product');
+    if (displayType !== 'product') continue;
     const amounts = lineTotal(line);
     untaxed += amounts.untaxed;
     tax += amounts.tax;
@@ -430,10 +439,24 @@ function validatePayload(payload: SalesQuotationFormPayload) {
     return 'Add at least one order line';
   }
   for (const line of payload.lines) {
-    if (!String(line.product_name || '').trim()) {
+    const displayType =
+      line.display_type ||
+      (Number(line.quantity) === 0 && Number(line.unit_price) === 0
+        ? line.product_name === 'Note'
+          ? 'line_note'
+          : 'line_section'
+        : 'product');
+    const label = String(line.product_name || line.description || '').trim();
+    if (displayType === 'product' && !label) {
       return 'Each order line needs a product / description';
     }
-    if ((Number(line.quantity) || 0) <= 0) {
+    if (displayType === 'line_section' && !label) {
+      return 'Section title is required';
+    }
+    if (displayType === 'line_note' && !String(line.description || line.product_name || '').trim()) {
+      return 'Note text is required';
+    }
+    if (displayType === 'product' && (Number(line.quantity) || 0) <= 0) {
       return 'Line quantity must be greater than zero';
     }
   }

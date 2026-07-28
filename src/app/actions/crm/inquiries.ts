@@ -9,6 +9,7 @@ import { canAccessLeadForInquiry } from '@/lib/inquiry-crm-access';
 import { isCrmQualifiedStage } from '@/lib/crm-inquiry-utils';
 import { resolveSalesAgentForSession } from '@/lib/legacy-user-bridge';
 import { formatLeadPhoneForStorage, normalizePakistaniPhone } from '@/lib/pakistan-phone';
+import { randomContactLeadIdFormatted, resolveContactCustomerId } from '@/lib/contact-lead-id';
 import type { Lead } from '@/app/actions/leads';
 import type { LeadInquiry } from '@/app/actions/inquiries';
 import { listInquiriesForLead } from '@/app/actions/inquiries';
@@ -180,6 +181,31 @@ function mapLeadRow(row: Record<string, unknown>): Lead {
   };
 }
 
+async function syncLeadCustomerIdFromContact(
+  supabase: Awaited<ReturnType<typeof createAdminClient>>,
+  leadRow: Record<string, unknown>,
+  contactId: string | null
+): Promise<Lead> {
+  if (leadRow.lead_id_formatted && /^\d{6}$/.test(String(leadRow.lead_id_formatted).trim())) {
+    return mapLeadRow(leadRow);
+  }
+
+  const resolvedContactId =
+    contactId || (leadRow.contact_id ? String(leadRow.contact_id) : null);
+  if (!resolvedContactId) return mapLeadRow(leadRow);
+
+  const customerId = await resolveContactCustomerId(supabase, resolvedContactId);
+  if (!customerId) return mapLeadRow(leadRow);
+
+  await supabase
+    .from('leads')
+    .update({ lead_id_formatted: customerId })
+    .eq('id', String(leadRow.id))
+    .or('lead_id_formatted.is.null,lead_id_formatted.eq.');
+
+  return mapLeadRow({ ...leadRow, lead_id_formatted: customerId });
+}
+
 /** Find or create a legacy lead bridge row for CRM inquiry workflow. */
 export async function resolveLeadForCrmOpportunity(opportunityId: string): Promise<
   | { lead: Lead }
@@ -207,7 +233,13 @@ export async function resolveLeadForCrmOpportunity(opportunityId: string): Promi
     .maybeSingle();
 
   if (byOpp) {
-    return { lead: mapLeadRow(byOpp as Record<string, unknown>) };
+    return {
+      lead: await syncLeadCustomerIdFromContact(
+        supabase,
+        byOpp as Record<string, unknown>,
+        opportunity.contact_id
+      ),
+    };
   }
 
   if (opportunity.contact_id) {
@@ -225,7 +257,13 @@ export async function resolveLeadForCrmOpportunity(opportunityId: string): Promi
         .update({ crm_opportunity_id: opportunityId })
         .eq('id', byContact.id)
         .is('crm_opportunity_id', null);
-      return { lead: mapLeadRow(byContact as Record<string, unknown>) };
+      return {
+        lead: await syncLeadCustomerIdFromContact(
+          supabase,
+          byContact as Record<string, unknown>,
+          opportunity.contact_id
+        ),
+      };
     }
 
     const { data: contact } = await supabase
@@ -244,7 +282,13 @@ export async function resolveLeadForCrmOpportunity(opportunityId: string): Promi
             contact_id: opportunity.contact_id,
           })
           .eq('id', legacy.id as string);
-        return { lead: mapLeadRow(legacy) };
+        return {
+          lead: await syncLeadCustomerIdFromContact(
+            supabase,
+            legacy,
+            opportunity.contact_id
+          ),
+        };
       }
     }
   }
@@ -268,6 +312,11 @@ export async function resolveLeadForCrmOpportunity(opportunityId: string): Promi
   const leadName = opportunity.customer_name || opportunity.name || 'CRM Customer';
   const source = (opportunity.source as Lead['source']) || 'Others';
 
+  let customerId: string | null = null;
+  if (opportunity.contact_id) {
+    customerId = await resolveContactCustomerId(supabase, opportunity.contact_id);
+  }
+
   const insertRow: Record<string, unknown> = {
     name: leadName,
     number,
@@ -280,6 +329,7 @@ export async function resolveLeadForCrmOpportunity(opportunityId: string): Promi
     contact_id: opportunity.contact_id,
     crm_opportunity_id: opportunityId,
     converted: false,
+    lead_id_formatted: customerId || randomContactLeadIdFormatted(),
   };
 
   const { data: created, error } = await supabase
@@ -432,6 +482,8 @@ export async function logCrmInquiryEvent(input: {
   event: 'created' | 'sent' | 'updated' | 'status_changed';
   inquiryId?: string;
   detail?: string;
+  /** Skip Next.js revalidation — inquiry UI updates optimistically. */
+  skipRevalidate?: boolean;
 }) {
   const labels: Record<string, string> = {
     created: 'Inquiry created',
@@ -454,6 +506,8 @@ export async function logCrmInquiryEvent(input: {
     },
   });
 
-  revalidatePath(`/crm/opportunities/${input.opportunityId}`);
-  revalidatePath(`/crm/opportunities/${input.opportunityId}/inquiry`);
+  if (!input.skipRevalidate) {
+    revalidatePath(`/crm/opportunities/${input.opportunityId}`);
+    revalidatePath(`/crm/opportunities/${input.opportunityId}/inquiry`);
+  }
 }

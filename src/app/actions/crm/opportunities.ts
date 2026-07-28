@@ -11,7 +11,7 @@ import {
   buildAdminVirtualStageId,
   parseAdminVirtualStageName,
 } from '@/lib/crm-pipeline-utils';
-import { ensureDefaultCrmStages } from '@/app/actions/crm/stages';
+import { ensureDefaultCrmStages, resolveCrmPipelineStageForOrg } from '@/app/actions/crm/stages';
 import { attachNextActivitiesToOpportunities } from '@/lib/crm-activity-enrichment';
 import {
   logOpportunityCreatedAudit,
@@ -333,7 +333,6 @@ export async function createCrmOpportunity(
   const scope = await requireCrmOrganizationScope();
   if ('error' in scope) return { error: scope.error };
 
-  await ensureDefaultCrmStages(scope.organizationId);
   const supabase = await createAdminClient();
 
   // Resolve salesperson: prefer current user's agent for Own Documents users
@@ -349,31 +348,15 @@ export async function createCrmOpportunity(
   }
 
   let stageId = input.stage_id;
-  let stageMeta: { default_probability?: number; is_won?: boolean; is_lost?: boolean; name?: string } | null =
-    null;
-  if (!stageId) {
-    const { data: firstStage } = await supabase
-      .from('crm_pipeline_stages')
-      .select('id, default_probability, is_won, is_lost, name')
-      .eq('organization_id', scope.organizationId)
-      .order('sequence', { ascending: true })
-      .limit(1)
-      .maybeSingle();
-    stageId = firstStage?.id;
-    stageMeta = firstStage;
-  } else {
-    const { data: stage } = await supabase
-      .from('crm_pipeline_stages')
-      .select('id, default_probability, is_won, is_lost, name')
-      .eq('id', stageId)
-      .eq('organization_id', scope.organizationId)
-      .maybeSingle();
-    stageMeta = stage;
-    if (!stage) {
-      return { error: 'Selected pipeline stage was not found for this organization.' };
-    }
+  const resolvedStage = await resolveCrmPipelineStageForOrg(scope.organizationId, {
+    stageId,
+    stageNameHint: input.stage_name,
+  });
+  if (!resolvedStage) {
+    return { error: 'No pipeline stage available. Refresh CRM to create default boards.' };
   }
-  if (!stageId) return { error: 'No pipeline stage available. Refresh CRM to create default boards.' };
+  stageId = resolvedStage.id;
+  const stageMeta = resolvedStage;
 
   if (!input.ignoreDuplicates) {
     const { checkCrmOpportunityDuplicates } = await import('@/app/actions/crm/automation');
@@ -495,7 +478,6 @@ export async function createCrmOpportunity(
         performedBy: scope.session.username,
         details: { name: opportunity.name },
       });
-      await revalidateCrmPipelinePaths();
       return { opportunity };
     }
     return { error: error?.message || 'Failed to create opportunity.' };
@@ -517,7 +499,7 @@ export async function createCrmOpportunity(
     performedBy: scope.session.username,
     details: { name: opportunity.name },
   });
-  await revalidateCrmPipelinePaths();
+  // No revalidatePath — pipeline updates optimistically (same as stage drag).
   return { opportunity };
 }
 

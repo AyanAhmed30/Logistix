@@ -96,6 +96,7 @@ import {
   computeLineAmounts,
   formatContactAddress,
   formatMoney,
+  inferLineDisplayType,
   newLineDraft,
   SALES_UOM_OPTIONS,
   type QuotationLineDraft,
@@ -297,6 +298,12 @@ export function SalesQuotationFormView({
               unit_price: String(line.unit_price),
               discount: String(line.discount),
               taxes: String(line.taxes),
+              display_type: inferLineDisplayType({
+                product_name: line.product_name,
+                description: line.description,
+                quantity: line.quantity,
+                unit_price: line.unit_price,
+              }),
             })
           )
         : [newLineDraft()]
@@ -440,6 +447,7 @@ export function SalesQuotationFormView({
         unit_price: parseFloat(line.unit_price) || 0,
         discount: parseFloat(line.discount) || 0,
         taxes: parseFloat(line.taxes) || 0,
+        display_type: line.display_type || inferLineDisplayType(line),
       })),
     };
   }
@@ -1312,7 +1320,7 @@ export function SalesQuotationFormView({
 
         {activeTab === "lines" ? (
           <div className="space-y-3">
-            <div className="border border-slate-200 rounded-sm overflow-hidden">
+            <div className="border border-slate-200 rounded-sm overflow-x-auto">
               <Table>
                 <TableHeader>
                   <TableRow className="bg-slate-50/80">
@@ -1342,12 +1350,82 @@ export function SalesQuotationFormView({
                 </TableHeader>
                 <TableBody>
                   {lines.map((line) => {
+                    const lineType = line.display_type || inferLineDisplayType(line);
+                    const colSpan = isSalesOrderDoc ? 7 : 8;
+                    if (lineType === "line_section") {
+                      return (
+                        <TableRow key={line.key} className="bg-slate-50/90">
+                          <TableCell colSpan={colSpan} className="whitespace-normal py-2">
+                            <Input
+                              className="h-9 font-semibold border-slate-200 bg-white"
+                              value={line.product_name}
+                              placeholder="Section title"
+                              disabled={readOnly}
+                              onChange={(e) =>
+                                updateLine(line.key, {
+                                  product_name: e.target.value,
+                                  description: e.target.value,
+                                  display_type: "line_section",
+                                })
+                              }
+                            />
+                          </TableCell>
+                          <TableCell>
+                            {!readOnly ? (
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="sm"
+                                className="h-8 w-8 p-0 text-secondary-muted"
+                                onClick={() => removeLine(line.key)}
+                              >
+                                <Trash2 className="h-4 w-4" />
+                              </Button>
+                            ) : null}
+                          </TableCell>
+                        </TableRow>
+                      );
+                    }
+                    if (lineType === "line_note") {
+                      return (
+                        <TableRow key={line.key} className="bg-amber-50/50">
+                          <TableCell colSpan={colSpan} className="whitespace-normal py-2">
+                            <Input
+                              className="h-9 italic border-amber-200 bg-white"
+                              value={line.description || line.product_name}
+                              placeholder="Internal note for this quotation..."
+                              disabled={readOnly}
+                              onChange={(e) =>
+                                updateLine(line.key, {
+                                  description: e.target.value,
+                                  product_name: "Note",
+                                  display_type: "line_note",
+                                })
+                              }
+                            />
+                          </TableCell>
+                          <TableCell>
+                            {!readOnly ? (
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="sm"
+                                className="h-8 w-8 p-0 text-secondary-muted"
+                                onClick={() => removeLine(line.key)}
+                              >
+                                <Trash2 className="h-4 w-4" />
+                              </Button>
+                            ) : null}
+                          </TableCell>
+                        </TableRow>
+                      );
+                    }
                     const amounts = computeLineAmounts(line);
                     const qtyNum = parseFloat(line.quantity) || 0;
                     const invoicedQty = linkedInvoiceId ? qtyNum : 0;
                     return (
                       <TableRow key={line.key}>
-                        <TableCell>
+                        <TableCell className="whitespace-normal align-top">
                           {isSalesOrderDoc ? (
                             <div>
                               <SalesProductLinePicker
@@ -1559,66 +1637,51 @@ export function SalesQuotationFormView({
             </div>
 
             {!readOnly ? (
-              isSalesOrderDoc ? (
-                <div className="flex flex-wrap items-center gap-3 text-sm">
-                  <button
-                    type="button"
-                    className="text-[#017e84] hover:underline font-medium"
-                    onClick={() =>
-                      setLines((prev) => [...prev, newLineDraft()])
-                    }
-                  >
-                    Add a line
-                  </button>
-                  <button
-                    type="button"
-                    className="text-[#017e84] hover:underline"
-                    onClick={() =>
-                      setLines((prev) => [
-                        ...prev,
-                        newLineDraft({
-                          product_name: "Section",
-                          description: "Section",
-                          quantity: "0",
-                          unit_price: "0",
-                        }),
-                      ])
-                    }
-                  >
-                    Add a section
-                  </button>
-                  <button
-                    type="button"
-                    className="text-[#017e84] hover:underline"
-                    onClick={() =>
-                      setLines((prev) => [
-                        ...prev,
-                        newLineDraft({
-                          product_name: "Note",
-                          description: "Note",
-                          quantity: "0",
-                          unit_price: "0",
-                        }),
-                      ])
-                    }
-                  >
-                    Add a note
-                  </button>
-                </div>
-              ) : (
-                <Button
+              <div className="flex flex-wrap items-center gap-3 text-sm">
+                <button
                   type="button"
-                  variant="outline"
-                  size="sm"
-                  className="h-8 gap-1.5 rounded-sm"
+                  className="text-[#017e84] hover:underline font-medium"
+                  onClick={() => setLines((prev) => [...prev, newLineDraft()])}
+                >
+                  Add a line
+                </button>
+                <button
+                  type="button"
+                  className="text-[#017e84] hover:underline"
                   onClick={() =>
-                    setLines((prev) => [...prev, newLineDraft()])
+                    setLines((prev) => [
+                      ...prev,
+                      newLineDraft({
+                        display_type: "line_section",
+                        product_name: "",
+                        description: "",
+                        quantity: "0",
+                        unit_price: "0",
+                      }),
+                    ])
                   }
                 >
-                  <Plus className="h-4 w-4" />
-                  Add a product
-                </Button>
-              )
+                  Add a section
+                </button>
+                <button
+                  type="button"
+                  className="text-[#017e84] hover:underline"
+                  onClick={() =>
+                    setLines((prev) => [
+                      ...prev,
+                      newLineDraft({
+                        display_type: "line_note",
+                        product_name: "Note",
+                        description: "",
+                        quantity: "0",
+                        unit_price: "0",
+                      }),
+                    ])
+                  }
+                >
+                  Add a note
+                </button>
+              </div>
             ) : null}
 
             <div

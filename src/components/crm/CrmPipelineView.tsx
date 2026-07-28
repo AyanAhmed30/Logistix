@@ -219,6 +219,7 @@ function StageColumn({
   onQuickCreateClose,
   onQuickCreateSuccess,
   salespersons,
+  defaultSalespersonId,
 }: {
   stage: CrmPipelineStage;
   opportunities: CrmOpportunityCard[];
@@ -231,6 +232,7 @@ function StageColumn({
   onQuickCreateClose: () => void;
   onQuickCreateSuccess: (opportunity: CrmOpportunityCard) => void;
   salespersons: SalespersonOption[];
+  defaultSalespersonId?: string | null;
 }) {
   const { setNodeRef, isOver } = useDroppable({ id: stage.id });
   const stageOpps = opportunities.filter((o) =>
@@ -294,6 +296,7 @@ function StageColumn({
             <CrmPipelineQuickCreate
               stage={stage}
               salespersons={salespersons}
+              defaultSalespersonId={defaultSalespersonId || undefined}
               onCreated={(opportunity) => {
                 onQuickCreateSuccess(opportunity);
                 onQuickCreateClose();
@@ -332,6 +335,7 @@ export function CrmPipelineView() {
   const [stages, setStages] = useState<CrmPipelineStage[]>([]);
   const [opportunities, setOpportunities] = useState<CrmOpportunityCard[]>([]);
   const [salespersons, setSalespersons] = useState<SalespersonOption[]>([]);
+  const [currentSalespersonId, setCurrentSalespersonId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [orgError, setOrgError] = useState<string | null>(null);
   const [isGlobalAdminView, setIsGlobalAdminView] = useState(false);
@@ -397,6 +401,7 @@ export function CrmPipelineView() {
   }, [filters]);
 
   useEffect(() => {
+    setQuickCreateStageId(null);
     void loadBoard();
   }, [loadBoard, switchVersion]);
 
@@ -423,6 +428,9 @@ export function CrmPipelineView() {
   useEffect(() => {
     void getCachedSalespersonOptions().then((res) => {
       if ("salespersons" in res && res.salespersons) setSalespersons(res.salespersons);
+      if ("currentSalespersonId" in res && res.currentSalespersonId) {
+        setCurrentSalespersonId(res.currentSalespersonId);
+      }
     });
   }, [switchVersion]);
 
@@ -453,8 +461,6 @@ export function CrmPipelineView() {
       if (prev.some((o) => o.id === opportunity.id)) return prev;
       return [opportunity, ...prev];
     });
-    // Soft refresh so stage enrichment / visibility stay consistent
-    void loadBoard();
   }
 
   function handleDragStart(event: DragStartEvent) {
@@ -703,6 +709,7 @@ export function CrmPipelineView() {
                 onQuickCreateClose={() => setQuickCreateStageId(null)}
                 onQuickCreateSuccess={handleQuickCreateSuccess}
                 salespersons={salespersons}
+                defaultSalespersonId={currentSalespersonId}
               />
             ))}
           </div>

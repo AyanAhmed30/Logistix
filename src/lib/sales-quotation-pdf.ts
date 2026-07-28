@@ -29,7 +29,7 @@ async function loadImageAsDataUrl(url: string): Promise<string | null> {
 function money(n: number) {
   return new Intl.NumberFormat(undefined, {
     style: 'currency',
-    currency: 'USD',
+    currency: 'PKR',
     maximumFractionDigits: 2,
   }).format(n || 0);
 }

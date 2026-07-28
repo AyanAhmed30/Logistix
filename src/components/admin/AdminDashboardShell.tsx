@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { logout } from "@/app/actions/auth";
+import { SignOutForm } from "@/components/auth/SignOutForm";
 import { Button } from "@/components/ui/button";
 import { LogOut, Bell } from "lucide-react";
 import Image from "next/image";
@@ -269,7 +269,7 @@ function AdminDashboardContent({
                 )}
               </button>
             )}
-            <form action={logout}>
+            <SignOutForm>
               <Button
                 variant="outline"
                 className="gap-2 border-slate-200 bg-white hover:bg-slate-50 text-primary-dark hover:text-primary-dark"
@@ -277,7 +277,7 @@ function AdminDashboardContent({
               >
                 <LogOut className="h-4 w-4" /> Sign Out
               </Button>
-            </form>
+            </SignOutForm>
           </div>
         </div>
       </header>

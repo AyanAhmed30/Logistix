@@ -78,6 +78,163 @@ export async function ensureDefaultCrmStages(organizationId: string) {
   console.error('[ensureDefaultCrmStages] insert failed', error.message);
 }
 
+export type CrmResolvedPipelineStage = {
+  id: string;
+  name: string;
+  is_won: boolean;
+  is_lost: boolean;
+  default_probability?: number;
+};
+
+/**
+ * Resolve a pipeline stage within an organization (create / move).
+ * Handles virtual admin ids, cross-org stale ids, and name hints.
+ */
+export async function resolveCrmPipelineStageForOrg(
+  organizationId: string,
+  options?: { stageId?: string | null; stageNameHint?: string | null }
+): Promise<CrmResolvedPipelineStage | null> {
+  const orgId = String(organizationId || '').trim();
+  if (!orgId) return null;
+
+  await ensureDefaultCrmStages(orgId);
+
+  const supabase = await createAdminClient();
+  const stageId = String(options?.stageId || '').trim();
+  const stageNameHint = String(options?.stageNameHint || '').trim();
+  const uuidRe =
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+  const { parseAdminVirtualStageName } = await import('@/lib/crm-pipeline-utils');
+
+  async function fetchStageByName(name: string): Promise<CrmResolvedPipelineStage | null> {
+    const trimmed = String(name || '').trim();
+    if (!trimmed) return null;
+
+    const withProb = await supabase
+      .from('crm_pipeline_stages')
+      .select('id, name, is_won, is_lost, default_probability')
+      .eq('organization_id', orgId)
+      .eq('name', trimmed)
+      .order('sequence', { ascending: true })
+      .limit(1);
+
+    let row = withProb.data?.[0] as Record<string, unknown> | undefined;
+    if (withProb.error && /default_probability|column/i.test(withProb.error.message)) {
+      const withoutProb = await supabase
+        .from('crm_pipeline_stages')
+        .select('id, name, is_won, is_lost')
+        .eq('organization_id', orgId)
+        .eq('name', trimmed)
+        .order('sequence', { ascending: true })
+        .limit(1);
+      row = withoutProb.data?.[0] as Record<string, unknown> | undefined;
+    }
+
+    if (!row) return null;
+    return {
+      id: String(row.id),
+      name: String(row.name),
+      is_won: Boolean(row.is_won),
+      is_lost: Boolean(row.is_lost),
+      default_probability:
+        row.default_probability != null ? Number(row.default_probability) : undefined,
+    };
+  }
+
+  async function fetchStageById(id: string): Promise<CrmResolvedPipelineStage | null> {
+    const withProb = await supabase
+      .from('crm_pipeline_stages')
+      .select('id, name, is_won, is_lost, default_probability')
+      .eq('id', id)
+      .eq('organization_id', orgId)
+      .maybeSingle();
+
+    let row = withProb.data as Record<string, unknown> | null;
+    if (withProb.error && /default_probability|column/i.test(withProb.error.message)) {
+      const withoutProb = await supabase
+        .from('crm_pipeline_stages')
+        .select('id, name, is_won, is_lost')
+        .eq('id', id)
+        .eq('organization_id', orgId)
+        .maybeSingle();
+      row = withoutProb.data as Record<string, unknown> | null;
+    }
+
+    if (!row) {
+      const anyOrg = await supabase
+        .from('crm_pipeline_stages')
+        .select('id, name')
+        .eq('id', id)
+        .maybeSingle();
+      if (anyOrg.data?.name) {
+        return fetchStageByName(String(anyOrg.data.name));
+      }
+      return null;
+    }
+
+    return {
+      id: String(row.id),
+      name: String(row.name),
+      is_won: Boolean(row.is_won),
+      is_lost: Boolean(row.is_lost),
+      default_probability:
+        row.default_probability != null ? Number(row.default_probability) : undefined,
+    };
+  }
+
+  const virtualName = stageId ? parseAdminVirtualStageName(stageId) : null;
+  let resolved: CrmResolvedPipelineStage | null = null;
+
+  if (virtualName) {
+    resolved = await fetchStageByName(virtualName);
+  } else if (stageId && uuidRe.test(stageId)) {
+    resolved = await fetchStageById(stageId);
+  } else if (stageId) {
+    resolved = await fetchStageByName(stageId);
+  }
+
+  if (!resolved && stageNameHint) {
+    resolved = await fetchStageByName(stageNameHint);
+  }
+
+  if (!resolved) {
+    const retryName =
+      virtualName ||
+      stageNameHint ||
+      (stageId && !uuidRe.test(stageId) ? stageId : '');
+    if (retryName) resolved = await fetchStageByName(retryName);
+  }
+
+  if (!resolved) {
+    resolved = await fetchStageByName('New');
+  }
+
+  if (!resolved) {
+    const { data: firstRow } = await supabase
+      .from('crm_pipeline_stages')
+      .select('id, name, is_won, is_lost, default_probability')
+      .eq('organization_id', orgId)
+      .order('sequence', { ascending: true })
+      .limit(1)
+      .maybeSingle();
+    if (firstRow) {
+      resolved = {
+        id: String(firstRow.id),
+        name: String(firstRow.name),
+        is_won: Boolean(firstRow.is_won),
+        is_lost: Boolean(firstRow.is_lost),
+        default_probability:
+          firstRow.default_probability != null
+            ? Number(firstRow.default_probability)
+            : undefined,
+      };
+    }
+  }
+
+  return resolved;
+}
+
 export async function getCrmPipelineStages() {
   const auth = await requireAnyChildModule(['crm-pipeline']);
   if (isAccessDenied(auth)) return { error: auth.error };

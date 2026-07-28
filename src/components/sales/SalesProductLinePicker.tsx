@@ -114,7 +114,7 @@ export function SalesProductLinePicker({
                     {p.name}
                   </div>
                   <div className="text-[11px] text-secondary-muted truncate">
-                    {[p.default_code, p.uom, `$${Number(p.list_price).toFixed(2)}`]
+                    {[p.default_code, p.uom, `Rs. ${Number(p.list_price).toFixed(2)}`]
                       .filter(Boolean)
                       .join(" · ")}
                   </div>

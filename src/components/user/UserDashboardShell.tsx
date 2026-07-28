@@ -2,7 +2,7 @@
 
 import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { logout } from "@/app/actions/auth";
+import { SignOutForm } from "@/components/auth/SignOutForm";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Menu, PackagePlus, History, MapPin, LogOut, Bell, X, ClipboardList } from "lucide-react";
@@ -117,7 +117,7 @@ function UserDashboardShellInner({ username }: Props) {
               <Bell className="h-5 w-5" />
               <span className="absolute -top-1 -right-1 bg-primary-accent h-3 w-3 rounded-full border-2 border-white" />
             </button>
-            <form action={logout}>
+            <SignOutForm>
               <Button
                 variant="outline"
                 className="gap-2 border-slate-200 bg-white hover:bg-slate-50 text-primary-dark hover:text-primary-dark"
@@ -125,7 +125,7 @@ function UserDashboardShellInner({ username }: Props) {
               >
                 <LogOut className="h-4 w-4" /> Sign Out
               </Button>
-            </form>
+            </SignOutForm>
           </div>
         </div>
       </header>

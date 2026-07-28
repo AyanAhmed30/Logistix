@@ -2,6 +2,8 @@
  * Helpers for Sales quotation form calculations & address formatting.
  */
 
+export type QuotationLineDisplayType = 'product' | 'line_section' | 'line_note';
+
 export type QuotationLineDraft = {
   key: string;
   id?: string | null;
@@ -13,7 +15,10 @@ export type QuotationLineDraft = {
   unit_price: string;
   discount: string;
   taxes: string;
+  display_type?: QuotationLineDisplayType;
 };
+
+export const SALES_CURRENCY = 'PKR';
 
 export const SALES_UOM_OPTIONS = [
   { value: 'Units', label: 'Units' },
@@ -38,8 +43,32 @@ export function newLineDraft(partial?: Partial<QuotationLineDraft>): QuotationLi
     unit_price: '0',
     discount: '0',
     taxes: '0',
+    display_type: 'product',
     ...partial,
   };
+}
+
+export function inferLineDisplayType(line: {
+  product_name: string;
+  description?: string | null;
+  quantity: number | string;
+  unit_price: number | string;
+  display_type?: QuotationLineDisplayType;
+}): QuotationLineDisplayType {
+  if (line.display_type) return line.display_type;
+  const qty = Number(line.quantity) || 0;
+  const price = Number(line.unit_price) || 0;
+  if (qty === 0 && price === 0) {
+    const name = String(line.product_name || '').trim();
+    if (name === 'Note') return 'line_note';
+    if (name === 'Section' || name) return 'line_section';
+    return 'line_note';
+  }
+  return 'product';
+}
+
+export function isProductLine(line: QuotationLineDraft) {
+  return inferLineDisplayType(line) === 'product';
 }
 
 export function computeLineAmounts(line: QuotationLineDraft) {
@@ -59,6 +88,7 @@ export function computeLineAmounts(line: QuotationLineDraft) {
 export function computeDocumentTotals(lines: QuotationLineDraft[]) {
   return lines.reduce(
     (acc, line) => {
+      if (!isProductLine(line)) return acc;
       const a = computeLineAmounts(line);
       acc.untaxed += a.untaxed;
       acc.tax += a.tax;
@@ -69,10 +99,10 @@ export function computeDocumentTotals(lines: QuotationLineDraft[]) {
   );
 }
 
-export function formatMoney(value: number) {
+export function formatMoney(value: number, currency = SALES_CURRENCY) {
   return new Intl.NumberFormat(undefined, {
     style: 'currency',
-    currency: 'USD',
+    currency,
     maximumFractionDigits: 2,
   }).format(value || 0);
 }

@@ -425,3 +425,283 @@ export async function getAccountingInvoicePayments(
     };
   }
 }
+
+export type AccountingCustomerPaymentListItem = {
+  id: string;
+  payment_number: string;
+  payment_date: string;
+  amount: number;
+  payment_method: AccountingPaymentMethod;
+  reference: string | null;
+  notes: string | null;
+  status: 'posted';
+  organization_id: string;
+  organization_name: string | null;
+  invoice_id: string;
+  invoice_number: string | null;
+  customer_name: string | null;
+  customer_lead_id: string | null;
+  contact_id: string | null;
+  amount_residual: number | null;
+  created_by: string | null;
+  created_at: string;
+};
+
+/** Org-wide customer payments list (Accounting → Customers → Payments). */
+export async function getAccountingCustomerPayments(filters: {
+  search?: string;
+  page?: number;
+  pageSize?: number;
+  sortBy?: 'payment_date' | 'amount' | 'created_at';
+  sortDir?: 'asc' | 'desc';
+} = {}) {
+  try {
+    const scope = await resolveScope();
+    if ('error' in scope && scope.error) return { error: scope.error };
+    if ('empty' in scope && scope.empty) {
+      return {
+        payments: [] as AccountingCustomerPaymentListItem[],
+        total: 0,
+        page: 1,
+        pageSize: 40,
+      };
+    }
+
+    const supabase = await createAdminClient();
+    const page = Math.max(1, filters.page || 1);
+    const pageSize = Math.min(100, Math.max(10, filters.pageSize || 40));
+    const sortBy = filters.sortBy || 'payment_date';
+    const ascending = filters.sortDir === 'asc';
+
+    const needle = String(filters.search || '').trim();
+    let matchingInvoiceIds: string[] | null = null;
+    if (needle) {
+      const like = `%${needle}%`;
+      let invQ = supabase
+        .from('accounting_customer_invoices')
+        .select('id')
+        .or(
+          `invoice_number.ilike.${like},customer_name.ilike.${like},customer_lead_id.ilike.${like}`
+        );
+      if (scope.organizationId && !scope.isGlobalAdminView) {
+        invQ = invQ.eq('organization_id', scope.organizationId);
+      }
+      const { data: invHits } = await invQ.limit(200);
+      matchingInvoiceIds = (invHits || []).map((i) => String(i.id));
+    }
+
+    let query = supabase
+      .from('accounting_invoice_payments')
+      .select('*', { count: 'exact' });
+
+    if (scope.organizationId && !scope.isGlobalAdminView) {
+      query = query.eq('organization_id', scope.organizationId);
+    }
+
+    if (needle) {
+      const like = `%${needle}%`;
+      if (matchingInvoiceIds && matchingInvoiceIds.length) {
+        query = query.or(
+          `reference.ilike.${like},notes.ilike.${like},paid_by.ilike.${like},invoice_id.in.(${matchingInvoiceIds.join(',')})`
+        );
+      } else {
+        query = query.or(
+          `reference.ilike.${like},notes.ilike.${like},paid_by.ilike.${like},payment_method.ilike.${like}`
+        );
+      }
+    }
+
+    query = query
+      .order(sortBy, { ascending, nullsFirst: false })
+      .range((page - 1) * pageSize, page * pageSize - 1);
+
+    const { data, error, count } = await query;
+    if (error) {
+      if (/accounting_invoice_payments|relation/i.test(error.message)) {
+        return {
+          payments: [] as AccountingCustomerPaymentListItem[],
+          total: 0,
+          page,
+          pageSize,
+        };
+      }
+      return { error: error.message };
+    }
+
+    const rows = data || [];
+    const invoiceIds = [
+      ...new Set(rows.map((r) => String(r.invoice_id || '')).filter(Boolean)),
+    ];
+    const orgIds = [
+      ...new Set(rows.map((r) => String(r.organization_id || '')).filter(Boolean)),
+    ];
+
+    const invMap = new Map<
+      string,
+      {
+        invoice_number: string | null;
+        customer_name: string | null;
+        customer_lead_id: string | null;
+        contact_id: string | null;
+        amount_residual: number | null;
+      }
+    >();
+    if (invoiceIds.length) {
+      const { data: invoices } = await supabase
+        .from('accounting_customer_invoices')
+        .select(
+          'id, invoice_number, customer_name, customer_lead_id, contact_id, amount_residual'
+        )
+        .in('id', invoiceIds);
+      for (const inv of invoices || []) {
+        invMap.set(String(inv.id), {
+          invoice_number: inv.invoice_number ? String(inv.invoice_number) : null,
+          customer_name: inv.customer_name ? String(inv.customer_name) : null,
+          customer_lead_id: inv.customer_lead_id
+            ? String(inv.customer_lead_id)
+            : null,
+          contact_id: inv.contact_id ? String(inv.contact_id) : null,
+          amount_residual:
+            inv.amount_residual != null ? Number(inv.amount_residual) : null,
+        });
+      }
+    }
+
+    const orgMap = new Map<string, string>();
+    if (orgIds.length) {
+      const { data: orgs } = await supabase
+        .from('organizations')
+        .select('id, organization_name')
+        .in('id', orgIds);
+      for (const o of orgs || []) {
+        orgMap.set(String(o.id), String(o.organization_name || ''));
+      }
+    }
+
+    const payments: AccountingCustomerPaymentListItem[] = rows.map((r) => {
+      const inv = invMap.get(String(r.invoice_id)) || {
+        invoice_number: null,
+        customer_name: null,
+        customer_lead_id: null,
+        contact_id: null,
+        amount_residual: null,
+      };
+      const id = String(r.id);
+      return {
+        id,
+        payment_number: `PAY-${id.slice(0, 8).toUpperCase()}`,
+        payment_date: String(r.payment_date || ''),
+        amount: Number(r.amount) || 0,
+        payment_method:
+          (String(r.payment_method) as AccountingPaymentMethod) || 'bank_transfer',
+        reference: r.reference ? String(r.reference) : null,
+        notes: r.notes ? String(r.notes) : null,
+        status: 'posted',
+        organization_id: String(r.organization_id),
+        organization_name: orgMap.get(String(r.organization_id)) || null,
+        invoice_id: String(r.invoice_id),
+        invoice_number: inv.invoice_number,
+        customer_name: inv.customer_name,
+        customer_lead_id: inv.customer_lead_id,
+        contact_id: inv.contact_id,
+        amount_residual: inv.amount_residual,
+        created_by: r.created_by ? String(r.created_by) : null,
+        created_at: String(r.created_at || ''),
+      };
+    });
+
+    return {
+      payments,
+      total: count ?? payments.length,
+      page,
+      pageSize,
+    };
+  } catch (err) {
+    return {
+      error: err instanceof Error ? err.message : 'Failed to load payments',
+    };
+  }
+}
+
+export async function getAccountingCustomerPaymentDetail(paymentId: string) {
+  try {
+    const scope = await resolveScope();
+    if ('error' in scope && scope.error) return { error: scope.error };
+
+    const supabase = await createAdminClient();
+    const { data: row, error } = await supabase
+      .from('accounting_invoice_payments')
+      .select('*')
+      .eq('id', paymentId)
+      .maybeSingle();
+
+    if (error || !row) return { error: error?.message || 'Payment not found' };
+
+    if (
+      scope.organizationId &&
+      !scope.isGlobalAdminView &&
+      row.organization_id &&
+      String(row.organization_id) !== scope.organizationId
+    ) {
+      return { error: 'Payment not found in the selected organization' };
+    }
+
+    const { data: inv } = await supabase
+      .from('accounting_customer_invoices')
+      .select(
+        'id, invoice_number, customer_name, customer_lead_id, contact_id, amount_residual, total_amount, amount_paid, status, payment_state'
+      )
+      .eq('id', row.invoice_id)
+      .maybeSingle();
+
+    let organization_name: string | null = null;
+    if (row.organization_id) {
+      const { data: org } = await supabase
+        .from('organizations')
+        .select('organization_name')
+        .eq('id', row.organization_id)
+        .maybeSingle();
+      organization_name = org?.organization_name
+        ? String(org.organization_name)
+        : null;
+    }
+
+    const id = String(row.id);
+    return {
+      payment: {
+        id,
+        payment_number: `PAY-${id.slice(0, 8).toUpperCase()}`,
+        payment_date: String(row.payment_date || ''),
+        amount: Number(row.amount) || 0,
+        payment_method:
+          (String(row.payment_method) as AccountingPaymentMethod) ||
+          'bank_transfer',
+        reference: row.reference ? String(row.reference) : null,
+        notes: row.notes ? String(row.notes) : null,
+        status: 'posted' as const,
+        organization_id: String(row.organization_id),
+        organization_name,
+        invoice_id: String(row.invoice_id),
+        invoice_number: inv?.invoice_number ? String(inv.invoice_number) : null,
+        customer_name: inv?.customer_name ? String(inv.customer_name) : null,
+        customer_lead_id: inv?.customer_lead_id
+          ? String(inv.customer_lead_id)
+          : null,
+        contact_id: inv?.contact_id ? String(inv.contact_id) : null,
+        amount_residual:
+          inv?.amount_residual != null ? Number(inv.amount_residual) : null,
+        invoice_total: inv?.total_amount != null ? Number(inv.total_amount) : null,
+        invoice_amount_paid:
+          inv?.amount_paid != null ? Number(inv.amount_paid) : null,
+        invoice_status: inv?.status ? String(inv.status) : null,
+        created_by: row.created_by ? String(row.created_by) : null,
+        created_at: String(row.created_at || ''),
+        paid_by: row.paid_by ? String(row.paid_by) : null,
+      },
+    };
+  } catch (err) {
+    return {
+      error: err instanceof Error ? err.message : 'Failed to load payment',
+    };
+  }
+}

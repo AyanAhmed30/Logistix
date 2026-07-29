@@ -61,9 +61,10 @@ type Props = {
   allowClear?: boolean;
   /**
    * `customer` — quotation-style (excludes vendor-only contacts).
+   * `vendor` — vendor bills (vendor_rank > 0).
    * `all` — every org contact (CRM opportunities).
    */
-  contactScope?: 'customer' | 'all';
+  contactScope?: 'customer' | 'vendor' | 'all';
   disabled?: boolean;
   placeholder?: string;
   className?: string;
@@ -93,7 +94,12 @@ export function CustomerPicker({
   className,
   inputClassName,
 }: Props) {
-  const scopeKey = contactScope === "all" ? "all" : "customer";
+  const scopeKey =
+    contactScope === "all"
+      ? "all"
+      : contactScope === "vendor"
+        ? "vendor"
+        : "customer";
   const cachedInitial = peekContactPickerCache(scopeKey, "");
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
@@ -125,8 +131,13 @@ export function CustomerPicker({
   }, []);
 
   const runSearch = useCallback(async (needle: string) => {
-    const scopeKey = contactScope === "all" ? "all" : "customer";
-    const cached = peekContactPickerCache(scopeKey, needle);
+    const key =
+      contactScope === "all"
+        ? "all"
+        : contactScope === "vendor"
+          ? "vendor"
+          : "customer";
+    const cached = peekContactPickerCache(key, needle);
     if (cached) {
       setResults(cached);
       setActiveIndex(cached.length > 0 ? 0 : -1);
@@ -135,9 +146,9 @@ export function CustomerPicker({
 
     setLoading(true);
     try {
-      const contacts = await getCachedContactPickerResults(scopeKey, needle, async () => {
+      const contacts = await getCachedContactPickerResults(key, needle, async () => {
         const res = await searchCustomerContacts(needle, {
-          scope: contactScope === "all" ? "all" : "customer",
+          scope: contactScope,
         });
         if ("error" in res && res.error) {
           toast.error(res.error);

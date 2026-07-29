@@ -26,6 +26,7 @@ export default async function AdminDashboard() {
     isOrganizationAdmin: session.appUserRole === 'administrator',
     appUserId: session.appUserId ?? null,
     appUserRole: session.appUserRole ?? null,
+    sessionRole: session.role ?? null,
     username: session.username,
     fullName: session.fullName?.trim() || session.username,
     permissions: parsePermissionKeys(session.permissions),

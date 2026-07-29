@@ -16,7 +16,7 @@ function normalizeKey(scope: string, query: string) {
 
 /** Synchronous cache read — use for instant dropdown open. */
 export function peekContactPickerCache(
-  scope: 'customer' | 'all',
+  scope: 'customer' | 'all' | 'vendor',
   query: string
 ): CustomerSearchResult[] | null {
   const key = normalizeKey(scope, query);
@@ -31,7 +31,7 @@ export function invalidateContactPickerCache() {
 }
 
 export async function getCachedContactPickerResults(
-  scope: 'customer' | 'all',
+  scope: 'customer' | 'all' | 'vendor',
   query: string,
   fetcher: () => Promise<CustomerSearchResult[] | { error: string }>
 ): Promise<CustomerSearchResult[]> {
@@ -56,7 +56,7 @@ export async function getCachedContactPickerResults(
 
 /** Warm the cache before the user opens the picker (e.g. when quick-create mounts). */
 export async function prefetchContactPickerResults(
-  scope: 'customer' | 'all',
+  scope: 'customer' | 'all' | 'vendor',
   fetcher: () => Promise<CustomerSearchResult[] | { error: string }>
 ): Promise<void> {
   await getCachedContactPickerResults(scope, '', fetcher);

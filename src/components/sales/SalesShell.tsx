@@ -38,6 +38,10 @@ export function useSalesShell() {
   return ctx;
 }
 
+export function useOptionalSalesShell() {
+  return useContext(SalesShellContext);
+}
+
 type Props = {
   access: DashboardAccessState;
   children: ReactNode;

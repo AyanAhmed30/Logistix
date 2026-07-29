@@ -74,9 +74,18 @@ export function AccountingCustomersView() {
   return (
     <div className="space-y-3">
       <div className="flex items-center justify-between gap-3">
-        <p className="text-sm text-secondary-muted">
-          Shared with Contacts — no duplicate customer records.
-        </p>
+        <div className="flex items-center gap-3">
+          <Button
+            size="sm"
+            className="h-8 rounded-sm bg-[#017e84] hover:bg-[#016970] text-white font-medium"
+            onClick={() => router.push("/accounting/customers/new")}
+          >
+            New
+          </Button>
+          <p className="text-sm text-secondary-muted">
+            Shared with Contacts — no duplicate customer records.
+          </p>
+        </div>
         <span className="text-sm text-secondary-muted">
           {total} customer{total === 1 ? "" : "s"}
         </span>
@@ -87,8 +96,15 @@ export function AccountingCustomersView() {
       ) : (
         <div className="bg-white border border-slate-200 rounded-sm shadow-sm overflow-hidden motion-safe:animate-in motion-safe:fade-in motion-safe:duration-200">
           {customers.length === 0 ? (
-            <div className="p-8 text-center text-sm text-secondary-muted">
-              No customers found. Create customers in Contacts first.
+            <div className="p-8 text-center text-sm text-secondary-muted space-y-3">
+              <p>No customers found.</p>
+              <Button
+                size="sm"
+                className="h-8 rounded-sm bg-[#017e84] hover:bg-[#016970] text-white"
+                onClick={() => router.push("/accounting/customers/new")}
+              >
+                New Customer
+              </Button>
             </div>
           ) : (
             <div className="overflow-x-auto">

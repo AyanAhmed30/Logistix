@@ -26,13 +26,17 @@ async function readDefaultOrganizationId(
     .maybeSingle();
 
   if (error) {
+    const msg = String(error.message || '');
+    // Soft-fail network / missing-column cases (common in local dev)
     if (
-      !error.message.includes('default_organization') &&
-      !error.message.includes('column') &&
-      error.code !== '42703'
+      msg.includes('fetch failed') ||
+      msg.includes('default_organization') ||
+      msg.includes('column') ||
+      error.code === '42703'
     ) {
-      console.error('[readDefaultOrganizationId]', error.message);
+      return null;
     }
+    console.error('[readDefaultOrganizationId]', msg);
     return null;
   }
 
@@ -48,6 +52,7 @@ export async function fetchPortalUserOrganizationAssignments(
   options?: {
     preferredOrganizationId?: string | null;
     defaultOrganizationId?: string | null;
+    fallbackOrganizationIds?: string[] | null;
   }
 ): Promise<PortalUserOrganizationAssignment> {
   const { data: links, error: linksError } = await supabase
@@ -56,7 +61,10 @@ export async function fetchPortalUserOrganizationAssignments(
     .eq('user_id', userId);
 
   if (linksError) {
-    console.error('[fetchPortalUserOrganizationAssignments]', linksError.message);
+    const msg = String(linksError.message || '');
+    if (!msg.includes('fetch failed')) {
+      console.error('[fetchPortalUserOrganizationAssignments]', msg);
+    }
   }
 
   let organizationIds = [
@@ -66,6 +74,18 @@ export async function fetchPortalUserOrganizationAssignments(
         .filter(Boolean)
     ),
   ];
+
+  // Prefer session / caller fallbacks when DB is unreachable
+  if (organizationIds.length === 0) {
+    const fallbacks = (options?.fallbackOrganizationIds || [])
+      .map((id) => String(id || '').trim())
+      .filter(Boolean);
+    if (fallbacks.length > 0) {
+      organizationIds = [...new Set(fallbacks)];
+    } else if (options?.preferredOrganizationId?.trim()) {
+      organizationIds = [options.preferredOrganizationId.trim()];
+    }
+  }
 
   if (organizationIds.length === 0) {
     const fallbackDefault = await readDefaultOrganizationId(
@@ -95,12 +115,24 @@ export async function fetchPortalUserOrganizationAssignments(
     .order('organization_name', { ascending: true });
 
   if (orgError) {
-    console.error('[fetchPortalUserOrganizationAssignments] organizations', orgError.message);
+    const msg = String(orgError.message || '');
+    if (!msg.includes('fetch failed')) {
+      console.error('[fetchPortalUserOrganizationAssignments] organizations', msg);
+    }
+    // Soft fallback when org rows cannot be loaded (e.g. network)
+    const preferred = options?.preferredOrganizationId?.trim();
+    const activeOrganizationId =
+      (preferred && organizationIds.includes(preferred) ? preferred : null) ||
+      organizationIds[0] ||
+      null;
     return {
-      organizationIds: [],
-      organizations: [],
-      activeOrganizationId: null,
-      activeOrganizationName: null,
+      organizationIds,
+      organizations: organizationIds.map((id) => ({
+        id,
+        organization_name: 'Organization',
+      })),
+      activeOrganizationId,
+      activeOrganizationName: activeOrganizationId ? 'Organization' : null,
     };
   }
 

@@ -56,7 +56,11 @@ async function resolveSalesOrgScope() {
     '@/lib/admin-organization-context'
   );
   const session = await getSession();
-  if (!session || !sessionHasSalesAccess(session)) {
+  const { sessionHasAccountingAccess } = await import('@/lib/accounting-page-access');
+  if (
+    !session ||
+    (!sessionHasSalesAccess(session) && !sessionHasAccountingAccess(session))
+  ) {
     return { error: 'Unauthorized' as const };
   }
 

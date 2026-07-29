@@ -707,8 +707,23 @@ export async function getAccountingCreditNotes(filters: {
       return { error: error.message };
     }
 
+    const rows = data || [];
+    const orgIds = [
+      ...new Set(rows.map((r) => String(r.organization_id || '')).filter(Boolean)),
+    ];
+    const orgMap = new Map<string, string>();
+    if (orgIds.length) {
+      const { data: orgs } = await supabase
+        .from('organizations')
+        .select('id, organization_name')
+        .in('id', orgIds);
+      for (const o of orgs || []) {
+        orgMap.set(String(o.id), String(o.organization_name || ''));
+      }
+    }
+
     return {
-      creditNotes: (data || []).map((r) => ({
+      creditNotes: rows.map((r) => ({
         id: String(r.id),
         credit_note_number: String(r.credit_note_number || ''),
         customer_name: String(r.customer_name || ''),
@@ -720,6 +735,11 @@ export async function getAccountingCreditNotes(filters: {
         refund_type: String(r.refund_type || 'full'),
         total_amount: Number(r.total_amount) || 0,
         amount_refunded: Number(r.amount_refunded) || 0,
+        salesperson_name: r.salesperson_name ? String(r.salesperson_name) : null,
+        organization_id: r.organization_id ? String(r.organization_id) : null,
+        organization_name: r.organization_id
+          ? orgMap.get(String(r.organization_id)) || null
+          : null,
       })),
       total: count ?? 0,
       page,

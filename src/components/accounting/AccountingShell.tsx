@@ -53,13 +53,63 @@ export function AccountingShell({ access, children }: Props) {
 
   const pageMeta = useMemo(() => getAccountingPageMeta(pathname), [pathname]);
 
-  const isFormLike =
-    (pathname.startsWith("/accounting/invoices/") &&
-      pathname !== "/accounting/invoices") ||
-    (pathname.startsWith("/accounting/credit-notes/") &&
-      pathname !== "/accounting/credit-notes") ||
-    (pathname.startsWith("/accounting/customers/") &&
-      pathname !== "/accounting/customers");
+  const isFormLike = (() => {
+    if (pathname === "/accounting/customers/products") return false;
+    if (pathname === "/accounting/vendors/products") return false;
+    if (pathname.startsWith("/accounting/customers/products/")) return true;
+    if (pathname.startsWith("/accounting/vendors/products/")) return true;
+    if (pathname === "/accounting/customers/new") return true;
+    if (pathname === "/accounting/vendors/new") return true;
+    if (
+      pathname.startsWith("/accounting/invoices/") &&
+      pathname !== "/accounting/invoices"
+    ) {
+      return true;
+    }
+    if (
+      pathname.startsWith("/accounting/bills/") &&
+      pathname !== "/accounting/bills"
+    ) {
+      return true;
+    }
+    if (
+      pathname.startsWith("/accounting/credit-notes/") &&
+      pathname !== "/accounting/credit-notes"
+    ) {
+      return true;
+    }
+    if (
+      pathname.startsWith("/accounting/vendor-refunds/") &&
+      pathname !== "/accounting/vendor-refunds"
+    ) {
+      return true;
+    }
+    if (
+      pathname.startsWith("/accounting/payments/") &&
+      pathname !== "/accounting/payments"
+    ) {
+      return true;
+    }
+    if (
+      pathname.startsWith("/accounting/vendor-payments/") &&
+      pathname !== "/accounting/vendor-payments"
+    ) {
+      return true;
+    }
+    if (
+      pathname.startsWith("/accounting/customers/") &&
+      pathname !== "/accounting/customers"
+    ) {
+      return true;
+    }
+    if (
+      pathname.startsWith("/accounting/vendors/") &&
+      pathname !== "/accounting/vendors"
+    ) {
+      return true;
+    }
+    return false;
+  })();
 
   useEffect(() => {
     setMobileNavOpen(false);
@@ -85,6 +135,11 @@ export function AccountingShell({ access, children }: Props) {
     if (pageMeta.searchMode === "customers") {
       router.push(
         `/accounting/customers?q=${encodeURIComponent(searchQuery.trim())}`
+      );
+    }
+    if (pageMeta.searchMode === "vendors") {
+      router.push(
+        `/accounting/vendors?q=${encodeURIComponent(searchQuery.trim())}`
       );
     }
   }, [searchQuery, pageMeta.searchMode, router]);

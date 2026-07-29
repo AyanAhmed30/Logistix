@@ -84,6 +84,7 @@ async function resolvePortalOrganizationAccess(session: SessionPayload) {
   return fetchPortalUserOrganizationAssignments(supabase, session.appUserId, {
     preferredOrganizationId: session.organizationId,
     defaultOrganizationId: null,
+    fallbackOrganizationIds: session.organizationIds,
   });
 }
 
@@ -139,19 +140,9 @@ export async function getAdminOrganizationState(): Promise<AdminOrganizationStat
     activeOrganizationId = assignment.activeOrganizationId;
     activeOrganizationName = assignment.activeOrganizationName;
 
-    const sessionIds = session.organizationIds ?? [];
-    const idsDiffer =
-      sessionIds.length !== assignment.organizationIds.length ||
-      assignment.organizationIds.some((id) => !sessionIds.includes(id));
-
-    if (idsDiffer || session.organizationId !== activeOrganizationId) {
-      await writeSession({
-        ...session,
-        organizationIds: assignment.organizationIds,
-        organizationId: activeOrganizationId ?? undefined,
-        organizationName: activeOrganizationName ?? undefined,
-      });
-    }
+    // Do NOT write cookies here — getAdminOrganizationState is called from
+    // Server Components (e.g. admin dashboard). Cookie mutation is only allowed
+    // in Server Actions / Route Handlers (switchAdminOrganization, etc.).
   } else if (session.organizationIds && session.organizationIds.length > 0) {
     const supabase = await createAdminClient();
     const { data } = await supabase

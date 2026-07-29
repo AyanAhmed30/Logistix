@@ -164,47 +164,51 @@ export function AccountingInvoiceChatter({ invoiceId, refreshKey = 0 }: Props) {
   }
 
   return (
-    <div className="h-full flex flex-col border border-slate-200 rounded-sm bg-white min-h-[320px]">
-      <div className="px-3 py-2 border-b border-slate-200 flex items-center justify-between gap-2">
-        <p className="text-sm font-semibold text-primary-dark">Activity Log</p>
-        <div className="relative">
+    <div className="h-full flex flex-col min-h-[320px]">
+      <div className="px-3 py-2.5 border-b border-slate-200 flex flex-wrap items-center gap-1.5">
+        <Button
+          size="sm"
+          className={`h-7 text-xs rounded-sm gap-1 ${
+            mode === "message"
+              ? "bg-[#017e84] hover:bg-[#016970] text-white"
+              : "bg-transparent border border-slate-200 text-slate-700 hover:bg-slate-50"
+          }`}
+          variant={mode === "message" ? "default" : "outline"}
+          onClick={() => setMode(mode === "message" ? null : "message")}
+        >
+          <MessageSquare className="h-3.5 w-3.5" />
+          Send message
+        </Button>
+        <Button
+          size="sm"
+          variant="outline"
+          className={`h-7 text-xs rounded-sm gap-1 border-slate-200 ${
+            mode === "note" ? "border-[#017e84] text-[#017e84]" : ""
+          }`}
+          onClick={() => setMode(mode === "note" ? null : "note")}
+        >
+          <StickyNote className="h-3.5 w-3.5" />
+          Log note
+        </Button>
+        <div className="ml-auto relative">
           <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-400" />
           <Input
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder="Search"
-            className="h-7 w-28 pl-7 text-xs rounded-sm"
+            className="h-7 w-28 pl-7 text-xs rounded-sm border-slate-200"
           />
         </div>
       </div>
 
-      <div className="px-3 py-2 border-b border-slate-100 flex gap-1.5">
-        <Button
-          size="sm"
-          variant="outline"
-          className="h-7 text-xs rounded-sm gap-1"
-          onClick={() => setMode(mode === "message" ? null : "message")}
-        >
-          <MessageSquare className="h-3.5 w-3.5" />
-          Message
-        </Button>
-        <Button
-          size="sm"
-          variant="outline"
-          className="h-7 text-xs rounded-sm gap-1"
-          onClick={() => setMode(mode === "note" ? null : "note")}
-        >
-          <StickyNote className="h-3.5 w-3.5" />
-          Note
-        </Button>
-      </div>
-
       {mode ? (
-        <div className="px-3 py-2 border-b border-slate-100 space-y-2">
+        <div className="px-3 py-2 border-b border-slate-100 space-y-2 bg-white">
           <Textarea
             value={body}
             onChange={(e) => setBody(e.target.value)}
-            placeholder={mode === "message" ? "Write a message…" : "Log an internal note…"}
+            placeholder={
+              mode === "message" ? "Write a message…" : "Log an internal note…"
+            }
             className="min-h-[72px] text-sm rounded-sm"
           />
           <div className="flex justify-end gap-1.5">
@@ -225,13 +229,17 @@ export function AccountingInvoiceChatter({ invoiceId, refreshKey = 0 }: Props) {
               disabled={isPending || !body.trim()}
               onClick={submitNote}
             >
-              {isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : "Log"}
+              {isPending ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                "Log"
+              )}
             </Button>
           </div>
         </div>
       ) : null}
 
-      <div className="flex-1 overflow-auto p-3 space-y-4">
+      <div className="flex-1 overflow-auto p-3 space-y-4 bg-white">
         {loading ? (
           <p className="text-xs text-secondary-muted">Loading activity…</p>
         ) : grouped.length === 0 ? (
@@ -242,7 +250,7 @@ export function AccountingInvoiceChatter({ invoiceId, refreshKey = 0 }: Props) {
               <p className="text-[11px] font-semibold uppercase tracking-wide text-secondary-muted mb-2">
                 {day}
               </p>
-              <ul className="space-y-2">
+              <ul className="space-y-3">
                 {dayLogs.map((log) => {
                   const lines = actionLabel(log);
                   const when = new Date(log.performed_at);
@@ -252,38 +260,39 @@ export function AccountingInvoiceChatter({ invoiceId, refreshKey = 0 }: Props) {
                         hour: "2-digit",
                         minute: "2-digit",
                       });
+                  const initial = String(log.performed_by || "S")
+                    .trim()
+                    .charAt(0)
+                    .toUpperCase();
                   return (
-                    <li
-                      key={log.id}
-                      className="rounded-sm border border-slate-100 bg-slate-50/60 px-2.5 py-2"
-                    >
-                      <div className="flex items-start justify-between gap-2">
-                        <div className="min-w-0">
-                          {lines.map((line, i) => (
-                            <p
-                              key={`${log.id}-${i}`}
-                              className={`text-sm ${
-                                i === 0
-                                  ? "font-medium text-primary-dark"
-                                  : "text-secondary-muted text-xs mt-0.5"
-                              }`}
-                            >
-                              {line}
-                            </p>
-                          ))}
-                          {(log.previous_status || log.new_status) &&
-                          log.action !== "updated" ? (
-                            <p className="text-[11px] text-secondary-muted mt-1">
-                              {log.previous_status || "—"} → {log.new_status || "—"}
-                            </p>
-                          ) : null}
-                        </div>
-                        <div className="text-right shrink-0">
-                          <p className="text-[11px] text-secondary-muted">{time}</p>
-                          <p className="text-[11px] font-medium text-slate-600">
+                    <li key={log.id} className="flex gap-2.5">
+                      <div
+                        className="h-8 w-8 rounded-full bg-[#017e84]/15 text-[#017e84] flex items-center justify-center text-xs font-semibold shrink-0"
+                        aria-hidden
+                      >
+                        {initial || "S"}
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-baseline justify-between gap-2">
+                          <p className="text-sm font-medium text-primary-dark truncate">
                             {log.performed_by || "System"}
                           </p>
+                          <p className="text-[11px] text-secondary-muted shrink-0">
+                            {time}
+                          </p>
                         </div>
+                        {lines.map((line, i) => (
+                          <p
+                            key={`${log.id}-${i}`}
+                            className={`text-sm ${
+                              i === 0
+                                ? "text-slate-700"
+                                : "text-secondary-muted text-xs mt-0.5"
+                            }`}
+                          >
+                            {line}
+                          </p>
+                        ))}
                       </div>
                     </li>
                   );

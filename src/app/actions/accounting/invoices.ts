@@ -34,6 +34,7 @@ export type AccountingInvoiceLine = {
   discount: number;
   taxes: number;
   line_total: number;
+  account: string | null;
 };
 
 export type AccountingInvoiceDetail = {
@@ -460,6 +461,135 @@ export async function createAccountingInvoiceFromOrder(quotationId: string) {
   }
 }
 
+/**
+ * Create an empty Draft Customer Invoice from Accounting (no Sales Order).
+ * Odoo-style "New" — opens the same invoice form for manual entry.
+ */
+export async function createManualAccountingInvoice() {
+  try {
+    const scope = await resolveAccountingOrgScope();
+    if ('error' in scope && scope.error) return { error: scope.error };
+    if (scope.isGlobalAdminView || !scope.organizationId) {
+      return { error: 'Select an organization to create invoices' };
+    }
+
+    const supabase = await createAdminClient();
+    const orgId = scope.organizationId;
+    const invoiceNumber = await allocateAccountingInvoiceNumber(supabase, orgId);
+    const today = new Date().toISOString().slice(0, 10);
+    const { computeDueDateFromTerms } = await import('@/lib/accounting-due-dates');
+    const dueDate = computeDueDateFromTerms(today, 'Immediate') || today;
+
+    const insertPayload: Record<string, unknown> = {
+      organization_id: orgId,
+      invoice_number: invoiceNumber,
+      status: 'draft',
+      contact_id: null,
+      customer_name: '',
+      customer_lead_id: null,
+      sales_order_id: null,
+      sales_order_number: null,
+      quotation_number: null,
+      salesperson_id: null,
+      salesperson_name: null,
+      payment_terms: 'Immediate',
+      invoice_date: today,
+      due_date: dueDate,
+      billing_address: null,
+      shipping_address: null,
+      contact_person_name: null,
+      email: null,
+      phone: null,
+      notes: null,
+      customer_notes: null,
+      untaxed_amount: 0,
+      tax_amount: 0,
+      total_amount: 0,
+      created_by: scope.session!.username,
+      updated_by: scope.session!.username,
+    };
+
+    let { data: invoice, error: invError } = await supabase
+      .from('accounting_customer_invoices')
+      .insert([insertPayload])
+      .select('id')
+      .single();
+
+    if (invError && /customer_notes|column/i.test(invError.message)) {
+      delete insertPayload.customer_notes;
+      const retry = await supabase
+        .from('accounting_customer_invoices')
+        .insert([insertPayload])
+        .select('id')
+        .single();
+      invoice = retry.data;
+      invError = retry.error;
+    }
+
+    if (invError || !invoice) {
+      if (invError && /accounting_customer_invoices|relation|schema cache/i.test(invError.message)) {
+        return {
+          error:
+            'Run create_accounting_module_phase1.sql migration to enable Accounting invoices.',
+        };
+      }
+      if (invError && /duplicate|unique|invoice_number/i.test(invError.message)) {
+        return { error: 'Invoice number conflict — please try again.' };
+      }
+      return { error: invError?.message || 'Failed to create invoice' };
+    }
+
+    // One blank product line so the form is ready to edit (Odoo-like)
+    const blankLine = {
+      invoice_id: invoice.id,
+      sequence: 10,
+      product_name: '',
+      description: null,
+      quantity: 1,
+      uom: 'Units',
+      unit_price: 0,
+      discount: 0,
+      taxes: 0,
+      line_total: 0,
+      account: 'Sales',
+      sales_order_line_id: null,
+    };
+    const { error: lineInsErr } = await supabase
+      .from('accounting_customer_invoice_lines')
+      .insert([blankLine]);
+    if (lineInsErr && /account|column/i.test(lineInsErr.message)) {
+      const { account: _a, ...legacy } = blankLine;
+      await supabase.from('accounting_customer_invoice_lines').insert([legacy]);
+    }
+
+    try {
+      await supabase.from('accounting_invoice_logs').insert([
+        {
+          invoice_id: invoice.id,
+          action: 'created',
+          previous_status: null,
+          new_status: 'draft',
+          performed_by: scope.session!.username,
+          details: {
+            invoice_number: invoiceNumber,
+            source: 'manual',
+            organization_id: orgId,
+          },
+        },
+      ]);
+    } catch {
+      // logs optional
+    }
+
+    return { invoiceId: String(invoice.id) };
+  } catch (err) {
+    return {
+      error:
+        err instanceof Error ? err.message : 'Failed to create accounting invoice',
+    };
+  }
+}
+
 export async function getAccountingInvoiceIdForOrder(quotationId: string) {
   try {
     const scope = await resolveAccountingOrgScope({ allowSalesCreate: true });
@@ -745,6 +875,9 @@ export async function getAccountingInvoiceDetail(invoiceId: string) {
         discount: Number(l.discount) || 0,
         taxes: Number(l.taxes) || 0,
         line_total: Number(l.line_total) || 0,
+        account: (l as { account?: string | null }).account
+          ? String((l as { account?: string | null }).account)
+          : 'Sales',
       })),
     };
 

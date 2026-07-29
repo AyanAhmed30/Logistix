@@ -1,9 +1,10 @@
-import type { SessionAppUserRole } from '@/lib/auth/session';
+import type { SessionAppUserRole, SessionRole } from '@/lib/auth/session';
 import type { AdminModule } from '@/lib/admin-navigation';
 import {
   hasDepartmentAccess,
   hasModulePermission,
 } from '@/lib/module-permissions';
+import { hasEffectiveAccountingAccess } from '@/lib/accounting-access-bridge';
 
 export type DashboardAccessState = {
   isSuperAdmin: boolean;
@@ -11,6 +12,8 @@ export type DashboardAccessState = {
   isOrganizationAdmin: boolean;
   appUserId: string | null;
   appUserRole: SessionAppUserRole | null;
+  /** JWT session role (`sales_agent`, `user`, etc.) — used for Sales→Accounting bridge. */
+  sessionRole: SessionRole | null;
   username: string;
   fullName: string | null;
   permissions: string[];
@@ -43,13 +46,21 @@ export function visibleModulesForAccess(access: DashboardAccessState): AdminModu
     modules.push('contacts');
   }
   if (hasDepartmentAccess(access.permissions, 'crm')) modules.push('crm');
-  if (hasDepartmentAccess(access.permissions, 'sales')) modules.push('sales');
-  if (hasDepartmentAccess(access.permissions, 'accounting')) modules.push('accounting');
+  const hasSales =
+    access.sessionRole === 'sales_agent' ||
+    hasDepartmentAccess(access.permissions, 'sales');
+  if (hasSales) modules.push('sales');
+  // Sales users get Accounting (Billing) so SO → Create Invoice opens smoothly
+  if (
+    hasDepartmentAccess(access.permissions, 'accounting') ||
+    hasSales
+  ) {
+    modules.push('accounting');
+  }
   if (hasDepartmentAccess(access.permissions, 'operations')) modules.push('operations');
   if (hasDepartmentAccess(access.permissions, 'warehouse')) modules.push('warehouse');
   const hasSalesOrOps =
-    hasDepartmentAccess(access.permissions, 'sales') ||
-    hasDepartmentAccess(access.permissions, 'operations');
+    hasSales || hasDepartmentAccess(access.permissions, 'operations');
   if (hasSalesOrOps) modules.push('analytics');
   modules.push('settings');
   return modules;
@@ -93,10 +104,22 @@ export function canAccessAdminTab(
     );
   }
 
+  if (module === 'accounting' || tab === 'accounting') {
+    return hasEffectiveAccountingAccess({
+      isSuperAdmin: access.isSuperAdmin,
+      role: access.sessionRole,
+      permissions: access.permissions,
+    });
+  }
+
   const permKey = ADMIN_TAB_PERMISSION[tab];
   if (!permKey) {
-    if (module === 'sales') return hasDepartmentAccess(access.permissions, 'sales');
-    if (module === 'accounting') return hasDepartmentAccess(access.permissions, 'accounting');
+    if (module === 'sales') {
+      return (
+        access.sessionRole === 'sales_agent' ||
+        hasDepartmentAccess(access.permissions, 'sales')
+      );
+    }
     if (module === 'operations') return hasDepartmentAccess(access.permissions, 'operations');
     if (module === 'warehouse') return hasDepartmentAccess(access.permissions, 'warehouse');
     return false;

@@ -30,9 +30,16 @@ import {
 import { useAdminOrganization } from "@/contexts/AdminOrganizationContext";
 import { SalesPageSkeleton } from "@/components/sales/SalesSkeleton";
 
-type Props = { productId: string | null };
+type Props = {
+  productId: string | null;
+  /** Product routes base (Sales or Accounting embed). */
+  basePath?: string;
+};
 
-export function SalesProductFormView({ productId }: Props) {
+export function SalesProductFormView({
+  productId,
+  basePath = "/sales/products",
+}: Props) {
   const router = useRouter();
   const { isAdminContext } = useAdminOrganization();
   const [isPending, startTransition] = useTransition();
@@ -120,7 +127,7 @@ export function SalesProductFormView({ productId }: Props) {
       }
       toast.success(productId ? "Product saved" : "Product created");
       if (!productId && res.product) {
-        router.replace(`/sales/products/${res.product.id}`);
+        router.replace(`${basePath}/${res.product.id}`);
       }
     });
   }
@@ -157,7 +164,7 @@ export function SalesProductFormView({ productId }: Props) {
           variant="ghost"
           size="sm"
           className="h-8 gap-1.5"
-          onClick={() => router.push("/sales/products")}
+          onClick={() => router.push(basePath)}
         >
           <ArrowLeft className="h-4 w-4" />
           Products

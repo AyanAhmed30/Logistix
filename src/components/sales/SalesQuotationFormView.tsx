@@ -97,10 +97,17 @@ import {
   formatContactAddress,
   formatMoney,
   inferLineDisplayType,
+  isProductLine,
   newLineDraft,
   SALES_UOM_OPTIONS,
   type QuotationLineDraft,
 } from "@/lib/sales-quotation-form";
+import {
+  computeOrderDeliveryFulfillment,
+  deliveryFulfillmentBadgeClass,
+  SALES_DELIVERY_FULFILLMENT_LABELS,
+  validateDeliveredQuantity,
+} from "@/lib/sales-delivery-status";
 
 type Props = {
   quotationId: string | null;
@@ -194,6 +201,30 @@ export function SalesQuotationFormView({
     Boolean(quotationId) && (isLocked || status === "cancelled");
 
   const totals = useMemo(() => computeDocumentTotals(lines), [lines]);
+
+  const deliveryFulfillment = useMemo(
+    () =>
+      computeOrderDeliveryFulfillment(
+        lines.map((line) => ({
+          quantity: parseFloat(line.quantity) || 0,
+          qty_delivered: parseFloat(line.qty_delivered) || 0,
+          isProduct: isProductLine(line),
+        }))
+      ),
+    [lines]
+  );
+
+  const deliveredValidationError = useMemo(() => {
+    for (const line of lines) {
+      if (!isProductLine(line)) continue;
+      const err = validateDeliveredQuantity(
+        parseFloat(line.quantity) || 0,
+        parseFloat(line.qty_delivered) || 0
+      );
+      if (err) return err;
+    }
+    return null;
+  }, [lines]);
 
   const personOptions = useMemo(
     () =>
@@ -294,6 +325,7 @@ export function SalesQuotationFormView({
               product_name: line.product_name,
               description: line.description || "",
               quantity: String(line.quantity),
+              qty_delivered: String(line.qty_delivered ?? 0),
               uom: line.uom,
               unit_price: String(line.unit_price),
               discount: String(line.discount),
@@ -443,6 +475,7 @@ export function SalesQuotationFormView({
         product_name: line.product_name,
         description: line.description || line.product_name,
         quantity: parseFloat(line.quantity) || 0,
+        qty_delivered: parseFloat(line.qty_delivered) || 0,
         uom: line.uom,
         unit_price: parseFloat(line.unit_price) || 0,
         discount: parseFloat(line.discount) || 0,
@@ -464,6 +497,11 @@ export function SalesQuotationFormView({
     }
     if (readOnly) {
       toast.error("This quotation is read-only.");
+      return null;
+    }
+
+    if (deliveredValidationError) {
+      toast.error(deliveredValidationError);
       return null;
     }
 
@@ -1219,13 +1257,28 @@ export function SalesQuotationFormView({
                   <Label className="text-xs text-secondary-muted">
                     Promised Delivery
                   </Label>
-                  <Input
-                    type="date"
-                    className="mt-1 h-9 rounded-sm"
-                    value={expirationDate}
-                    disabled={readOnly}
-                    onChange={(e) => setExpirationDate(e.target.value)}
-                  />
+                  <div className="mt-1 flex flex-wrap items-center gap-2">
+                    <Input
+                      type="date"
+                      className="h-9 rounded-sm w-auto min-w-[10.5rem] flex-1"
+                      value={expirationDate}
+                      disabled={readOnly}
+                      onChange={(e) => setExpirationDate(e.target.value)}
+                    />
+                    <span
+                      className={`inline-flex items-center rounded-full border px-2.5 py-1 text-[11px] font-semibold whitespace-nowrap ${deliveryFulfillmentBadgeClass(
+                        deliveryFulfillment
+                      )}`}
+                      title="Based on Delivered vs Quantity on order lines"
+                    >
+                      {SALES_DELIVERY_FULFILLMENT_LABELS[deliveryFulfillment]}
+                    </span>
+                  </div>
+                  {deliveredValidationError ? (
+                    <p className="mt-1 text-xs text-red-600">
+                      {deliveredValidationError}
+                    </p>
+                  ) : null}
                 </div>
               </>
             ) : (
@@ -1533,10 +1586,42 @@ export function SalesQuotationFormView({
                         </TableCell>
                         {isSalesOrderDoc ? (
                           <>
-                            <TableCell className="text-right tabular-nums text-secondary-muted text-sm">
-                              0.00
+                            <TableCell>
+                              <Input
+                                className="h-8 rounded-sm text-right tabular-nums text-[#017e84]"
+                                type="number"
+                                min="0"
+                                step="0.01"
+                                value={line.qty_delivered}
+                                disabled={readOnly}
+                                aria-invalid={
+                                  !!validateDeliveredQuantity(
+                                    qtyNum,
+                                    parseFloat(line.qty_delivered) || 0
+                                  )
+                                }
+                                onChange={(e) => {
+                                  updateLine(line.key, {
+                                    qty_delivered: e.target.value,
+                                  });
+                                }}
+                                onBlur={(e) => {
+                                  const delivered = parseFloat(e.target.value) || 0;
+                                  const err = validateDeliveredQuantity(
+                                    qtyNum,
+                                    delivered
+                                  );
+                                  if (err) toast.error(err);
+                                  // Clamp display if somehow over (keep typed value for correction)
+                                  if (delivered < 0) {
+                                    updateLine(line.key, {
+                                      qty_delivered: "0",
+                                    });
+                                  }
+                                }}
+                              />
                             </TableCell>
-                            <TableCell className="text-right tabular-nums text-sm">
+                            <TableCell className="text-right tabular-nums text-sm text-[#017e84]">
                               {invoicedQty.toFixed(2)}
                             </TableCell>
                           </>

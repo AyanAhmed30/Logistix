@@ -11,6 +11,10 @@ export type QuotationLineDraft = {
   product_name: string;
   description: string;
   quantity: string;
+  /** Delivered qty (Sales Order). Editable until Warehouse automation. */
+  qty_delivered: string;
+  /** Income / GL account label (Accounting invoice lines). */
+  account?: string;
   uom: string;
   unit_price: string;
   discount: string;
@@ -39,6 +43,8 @@ export function newLineDraft(partial?: Partial<QuotationLineDraft>): QuotationLi
     product_name: '',
     description: '',
     quantity: '1',
+    qty_delivered: '0',
+    account: 'Sales',
     uom: 'Units',
     unit_price: '0',
     discount: '0',
@@ -97,6 +103,47 @@ export function computeDocumentTotals(lines: QuotationLineDraft[]) {
     },
     { untaxed: 0, tax: 0, total: 0 }
   );
+}
+
+/** Round money to 2dp (Odoo-style display). */
+export function roundMoney(n: number) {
+  return Math.round((Number(n) || 0) * 100) / 100;
+}
+
+/**
+ * Unit price for the Price column given tax mode.
+ * Internal storage is always tax-excluded.
+ */
+export function unitPriceForDisplay(
+  unitPriceExcl: number,
+  taxPct: number,
+  mode: 'excl' | 'incl'
+) {
+  const excl = Number(unitPriceExcl) || 0;
+  const rate = Math.max(0, Number(taxPct) || 0) / 100;
+  if (mode === 'incl') return roundMoney(excl * (1 + rate));
+  return roundMoney(excl);
+}
+
+/** Convert Price-column input back to tax-excluded storage. */
+export function unitPriceFromDisplay(
+  displayPrice: number,
+  taxPct: number,
+  mode: 'excl' | 'incl'
+) {
+  const displayed = Number(displayPrice) || 0;
+  const rate = Math.max(0, Number(taxPct) || 0) / 100;
+  if (mode === 'incl' && rate > 0) return roundMoney(displayed / (1 + rate));
+  return roundMoney(displayed);
+}
+
+/** Line Amount column: excl → untaxed; incl → total (tax included). */
+export function lineAmountForTaxMode(
+  line: QuotationLineDraft,
+  mode: 'excl' | 'incl'
+) {
+  const a = computeLineAmounts(line);
+  return mode === 'incl' ? a.total : a.untaxed;
 }
 
 export function formatMoney(value: number, currency = SALES_CURRENCY) {

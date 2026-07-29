@@ -116,10 +116,19 @@ export function AccountingInvoicesView() {
 
   return (
     <div className="space-y-3">
-      <div className="flex items-center justify-between gap-3">
-        <p className="text-sm text-secondary-muted">
-          Draft invoices are created from Sales Orders.
-        </p>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex items-center gap-3">
+          <Button
+            size="sm"
+            className="h-8 rounded-sm bg-[#017e84] hover:bg-[#016970] text-white font-medium"
+            onClick={() => router.push("/accounting/invoices/new")}
+          >
+            New
+          </Button>
+          <p className="text-sm text-secondary-muted">
+            Create invoices manually or from Sales Orders.
+          </p>
+        </div>
         <span className="text-sm text-secondary-muted">
           {total} invoice{total === 1 ? "" : "s"}
         </span>
@@ -130,8 +139,15 @@ export function AccountingInvoicesView() {
       ) : (
       <div className="bg-white border border-slate-200 rounded-sm shadow-sm overflow-hidden motion-safe:animate-in motion-safe:fade-in motion-safe:duration-200">
         {invoices.length === 0 ? (
-          <div className="p-8 text-center text-sm text-secondary-muted">
-            No customer invoices yet. Open a Sales Order and click Create Invoice.
+          <div className="p-8 text-center text-sm text-secondary-muted space-y-3">
+            <p>No customer invoices yet.</p>
+            <Button
+              size="sm"
+              className="h-8 rounded-sm bg-[#017e84] hover:bg-[#016970] text-white"
+              onClick={() => router.push("/accounting/invoices/new")}
+            >
+              New Invoice
+            </Button>
           </div>
         ) : (
           <div className="overflow-x-auto">

@@ -4,6 +4,11 @@ import { createAdminClient } from '@/utils/supabase/server';
 import { getSession, type SessionPayload } from '@/lib/auth/session';
 import { sessionHasSalesAccess } from '@/lib/auth/require-access';
 import {
+  computeOrderDeliveryFulfillment,
+  fulfillmentToLegacyDeliveryStatus,
+  validateDeliveredQuantity,
+} from '@/lib/sales-delivery-status';
+import {
   mapQuotationDbStatusToUi,
   type SalesQuotationUiStatus,
 } from '@/lib/sales-navigation';
@@ -15,6 +20,7 @@ export type SalesQuotationLineInput = {
   product_name: string;
   description?: string | null;
   quantity: number;
+  qty_delivered?: number;
   uom: string;
   unit_price: number;
   discount: number;
@@ -50,6 +56,7 @@ export type SalesQuotationLine = {
   product_name: string;
   description: string | null;
   quantity: number;
+  qty_delivered: number;
   uom: string;
   unit_price: number;
   discount: number;
@@ -250,7 +257,8 @@ async function saveVersionSnapshot(
 
 function isEditableStatus(status: string, isLocked: boolean) {
   if (isLocked) return false;
-  if (status === 'cancelled' || status === 'sales_order') return false;
+  if (status === 'cancelled') return false;
+  // Confirmed Sales Orders remain editable until locked (Delivered qty, etc.)
   return true;
 }
 
@@ -343,6 +351,9 @@ async function loadLines(
       product_name: String(l.product_name || ''),
       description: l.description ? String(l.description) : null,
       quantity: Number(l.quantity) || 0,
+      qty_delivered: Number(
+        (l as { qty_delivered?: number }).qty_delivered ?? 0
+      ),
       uom: String(l.uom || 'pcs / u'),
       unit_price: Number(l.unit_price) || 0,
       discount: Number(l.discount) || 0,
@@ -373,6 +384,7 @@ async function loadLines(
           product_name: product,
           description: product,
           quantity: qty,
+          qty_delivered: 0,
           uom: String(fallbackRow.uom || 'pcs / u'),
           unit_price: price,
           discount: 0,
@@ -397,13 +409,17 @@ async function replaceLines(
 
   const rows = lines.map((line, index) => {
     const amounts = lineTotal(line);
+    const qty = Number(line.quantity) || 0;
+    let qtyDelivered = Math.max(0, Number(line.qty_delivered) || 0);
+    if (qtyDelivered > qty) qtyDelivered = qty;
     return {
       quotation_id: quotationId,
       sequence: line.sequence ?? (index + 1) * 10,
       product_id: line.product_id || null,
       product_name: String(line.product_name || '').trim() || 'Product',
       description: line.description ? String(line.description) : null,
-      quantity: Number(line.quantity) || 0,
+      quantity: qty,
+      qty_delivered: qtyDelivered,
       uom: String(line.uom || 'pcs / u'),
       unit_price: Number(line.unit_price) || 0,
       discount: Number(line.discount) || 0,
@@ -414,7 +430,16 @@ async function replaceLines(
   });
 
   const { data, error } = await supabase.from('quotation_lines').insert(rows).select('*');
-  if (error) throw new Error(error.message);
+  if (error) {
+    // Migration not applied yet — retry without qty_delivered
+    if (/qty_delivered|column/i.test(error.message)) {
+      const legacyRows = rows.map(({ qty_delivered: _qd, ...rest }) => rest);
+      const retry = await supabase.from('quotation_lines').insert(legacyRows).select('*');
+      if (retry.error) throw new Error(retry.error.message);
+      return retry.data || [];
+    }
+    throw new Error(error.message);
+  }
   return data || [];
 }
 
@@ -458,6 +483,13 @@ function validatePayload(payload: SalesQuotationFormPayload) {
     }
     if (displayType === 'product' && (Number(line.quantity) || 0) <= 0) {
       return 'Line quantity must be greater than zero';
+    }
+    if (displayType === 'product') {
+      const deliveredErr = validateDeliveredQuantity(
+        Number(line.quantity) || 0,
+        Number(line.qty_delivered) || 0
+      );
+      if (deliveredErr) return deliveredErr;
     }
   }
   return null;
@@ -728,10 +760,30 @@ export async function updateSalesQuotation(
     const header = headerFromPayload(payload, sums);
     const nextRevision = (Number(existing.revision) || 1) + 1;
 
+    const fulfillment = computeOrderDeliveryFulfillment(
+      payload.lines.map((line) => {
+        const displayType =
+          line.display_type ||
+          (Number(line.quantity) === 0 && Number(line.unit_price) === 0
+            ? 'line_section'
+            : 'product');
+        return {
+          quantity: Number(line.quantity) || 0,
+          qty_delivered: Number(line.qty_delivered) || 0,
+          isProduct: displayType === 'product',
+        };
+      })
+    );
+    const syncDelivery =
+      String(existing.status) === 'sales_order'
+        ? { delivery_status: fulfillmentToLegacyDeliveryStatus(fulfillment) }
+        : {};
+
     const { data, error } = await supabase
       .from('quotations')
       .update({
         ...header,
+        ...syncDelivery,
         revision: nextRevision,
         updated_by: session.username,
         updated_at: new Date().toISOString(),
@@ -977,6 +1029,7 @@ export async function duplicateSalesQuotation(id: string) {
         product_name: line.product_name,
         description: line.description,
         quantity: line.quantity,
+        qty_delivered: 0,
         uom: line.uom,
         unit_price: line.unit_price,
         discount: line.discount,

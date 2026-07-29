@@ -1418,7 +1418,7 @@ export type CustomerSearchResult = {
  */
 export async function searchCustomerContacts(
   query: string,
-  options?: { scope?: 'customer' | 'all' }
+  options?: { scope?: 'customer' | 'all' | 'vendor' }
 ): Promise<{ contacts: CustomerSearchResult[] } | { error: string }> {
   try {
     const session = ensureAuth(await getSession());
@@ -1505,7 +1505,9 @@ export async function searchCustomerContacts(
       rows = rows.filter((c) => String(c.lead_id_formatted || '').includes(needle));
     }
 
-    if (options?.scope !== 'all') {
+    if (options?.scope === 'vendor') {
+      rows = rows.filter((row) => Number(row.vendor_rank) > 0);
+    } else if (options?.scope !== 'all') {
       rows = rows.filter(
         (row) => !(Number(row.vendor_rank) > 0 && Number(row.customer_rank) === 0)
       );

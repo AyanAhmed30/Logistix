@@ -4,6 +4,10 @@ import { isSuperAdminSession } from '@/lib/auth/super-admin';
 import { buildDashboardAccessFromSession as buildCrmAccess } from '@/lib/crm-page-access';
 import type { DashboardAccessState } from '@/lib/dashboard-access';
 import {
+  hasEffectiveAccountingAccess,
+  resolveEffectiveAccountingLevel,
+} from '@/lib/accounting-access-bridge';
+import {
   accountingCanAccessReports,
   accountingCanManageAutomation,
   accountingCanManageConfig,
@@ -11,13 +15,12 @@ import {
   accountingCanManageRefunds,
   accountingCanDeleteInvoices,
   accountingCanRegisterPayments,
-  getAccountingAccessLevel,
-  hasAccountingAccess,
   type AccountingAccessLevel,
 } from '@/lib/accounting-roles';
 
 /**
- * Accounting access: Super Admin OR portal users with an Accounting access level.
+ * Accounting access: Super Admin, explicit Accounting role,
+ * or Sales access (implied Billing for SO → Invoice flow).
  */
 export function sessionHasAccountingAccess(session: {
   role: string;
@@ -25,8 +28,11 @@ export function sessionHasAccountingAccess(session: {
   permissions?: string[] | null;
 } | null): boolean {
   if (!session) return false;
-  if (isSuperAdminSession(session as never)) return true;
-  return hasAccountingAccess(session.permissions || []);
+  return hasEffectiveAccountingAccess({
+    isSuperAdmin: isSuperAdminSession(session as never),
+    role: session.role,
+    permissions: session.permissions,
+  });
 }
 
 export function sessionAccountingLevel(session: {
@@ -35,15 +41,23 @@ export function sessionAccountingLevel(session: {
   permissions?: string[] | null;
 } | null): AccountingAccessLevel {
   if (!session) return 'no';
-  if (isSuperAdminSession(session as never)) return 'admin';
-  return getAccountingAccessLevel(session.permissions || []);
+  return resolveEffectiveAccountingLevel({
+    isSuperAdmin: isSuperAdminSession(session as never),
+    role: session.role,
+    permissions: session.permissions,
+  });
 }
 
 export async function requireAccountingPageAccess(): Promise<DashboardAccessState> {
   const access = await buildCrmAccess();
   if (!access) redirect('/login');
   if (access.isSuperAdmin) return access;
-  if (!hasAccountingAccess(access.permissions)) redirect('/access-denied');
+  const allowed = hasEffectiveAccountingAccess({
+    isSuperAdmin: false,
+    role: access.sessionRole,
+    permissions: access.permissions,
+  });
+  if (!allowed) redirect('/access-denied');
   return access;
 }
 

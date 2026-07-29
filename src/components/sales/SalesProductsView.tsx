@@ -25,7 +25,7 @@ import {
   type SalesProduct,
 } from "@/app/actions/sales/products";
 import { useAdminOrganization } from "@/contexts/AdminOrganizationContext";
-import { useSalesShell } from "@/components/sales/SalesShell";
+import { useOptionalSalesShell } from "@/components/sales/SalesShell";
 import {
   SalesEmptyState,
   SalesPageSkeleton,
@@ -34,10 +34,24 @@ import { formatMoney } from "@/lib/sales-quotation-form";
 
 const PAGE_SIZE = 40;
 
-export function SalesProductsView() {
+type Props = {
+  /** Product routes base (Sales or Accounting embed). */
+  basePath?: string;
+  /** When provided (e.g. Accounting shell), skips SalesShell. */
+  searchQuery?: string;
+  activeFilterId?: string;
+};
+
+export function SalesProductsView({
+  basePath = "/sales/products",
+  searchQuery: searchQueryProp,
+  activeFilterId: activeFilterIdProp,
+}: Props = {}) {
   const router = useRouter();
   const { switchVersion, isAdminContext } = useAdminOrganization();
-  const { searchQuery, activeFilterId } = useSalesShell();
+  const salesShell = useOptionalSalesShell();
+  const searchQuery = searchQueryProp ?? salesShell?.searchQuery ?? "";
+  const activeFilterId = activeFilterIdProp ?? salesShell?.activeFilterId ?? "all";
   const [viewMode, setViewMode] = useState<"list" | "kanban">("list");
   const [loading, setLoading] = useState(true);
   const [products, setProducts] = useState<SalesProduct[]>([]);
@@ -86,7 +100,11 @@ export function SalesProductsView() {
       toast.info("Select a specific organization to create products.");
       return;
     }
-    router.push("/sales/products/new");
+    router.push(`${basePath}/new`);
+  }
+
+  function openProduct(id: string) {
+    router.push(`${basePath}/${id}`);
   }
 
   return (
@@ -156,7 +174,7 @@ export function SalesProductsView() {
               <button
                 key={p.id}
                 type="button"
-                onClick={() => router.push(`/sales/products/${p.id}`)}
+                onClick={() => openProduct(p.id)}
                 className="text-left rounded-sm border border-slate-200 bg-white overflow-hidden hover:border-[#017e84]/40 transition-colors"
               >
                 <div className="h-36 bg-slate-100 flex items-center justify-center overflow-hidden">
@@ -205,7 +223,7 @@ export function SalesProductsView() {
                   <TableRow
                     key={p.id}
                     className="cursor-pointer hover:bg-[#017e84]/5"
-                    onClick={() => router.push(`/sales/products/${p.id}`)}
+                    onClick={() => openProduct(p.id)}
                   >
                     <TableCell>
                       <div className="h-9 w-9 rounded-sm bg-slate-100 overflow-hidden flex items-center justify-center">

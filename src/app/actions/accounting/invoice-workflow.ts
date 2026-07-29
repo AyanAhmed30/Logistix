@@ -31,6 +31,7 @@ export type AccountingInvoiceLineInput = {
   discount: number;
   taxes: number;
   line_total: number;
+  account?: string | null;
 };
 
 export type AccountingInvoiceUpdatePayload = {
@@ -295,20 +296,31 @@ export async function updateAccountingInvoice(
         .delete()
         .eq('invoice_id', invoiceId);
       if (lines.length) {
-        await supabase.from('accounting_customer_invoice_lines').insert(
-          lines.map((l, idx) => ({
-            invoice_id: invoiceId,
-            sequence: l.sequence || (idx + 1) * 10,
-            product_name: l.product_name || '',
-            description: l.description || null,
-            quantity: Number(l.quantity) || 0,
-            uom: l.uom || 'Units',
-            unit_price: Number(l.unit_price) || 0,
-            discount: Number(l.discount) || 0,
-            taxes: Number(l.taxes) || 0,
-            line_total: Number(l.line_total) || 0,
-          }))
-        );
+        const rows = lines.map((l, idx) => ({
+          invoice_id: invoiceId,
+          sequence: l.sequence || (idx + 1) * 10,
+          product_name: l.product_name || '',
+          description: l.description || null,
+          quantity: Number(l.quantity) || 0,
+          uom: l.uom || 'Units',
+          unit_price: Number(l.unit_price) || 0,
+          discount: Number(l.discount) || 0,
+          taxes: Number(l.taxes) || 0,
+          line_total: Number(l.line_total) || 0,
+          account: String(l.account || 'Sales').trim() || 'Sales',
+        }));
+        const { error: lineErr } = await supabase
+          .from('accounting_customer_invoice_lines')
+          .insert(rows);
+        if (lineErr && /account|column/i.test(lineErr.message)) {
+          const legacy = rows.map(({ account: _a, ...rest }) => rest);
+          const retry = await supabase
+            .from('accounting_customer_invoice_lines')
+            .insert(legacy);
+          if (retry.error) return { error: retry.error.message };
+        } else if (lineErr) {
+          return { error: lineErr.message };
+        }
       }
     }
 
@@ -398,6 +410,39 @@ async function transitionStatus(
 }
 
 export async function postAccountingInvoice(invoiceId: string) {
+  try {
+    const scope = await resolveScope();
+    if ('error' in scope && scope.error) return { error: scope.error };
+
+    const supabase = await createAdminClient();
+    const loaded = await loadInvoiceRow(supabase, invoiceId);
+    if ('error' in loaded) return { error: loaded.error };
+    const row = loaded.invoice;
+
+    if (String(row.status) !== 'draft') {
+      return { error: `Cannot post from status "${row.status}"` };
+    }
+    if (!String(row.customer_name || '').trim() && !row.contact_id) {
+      return { error: 'Customer is required before posting' };
+    }
+
+    const { data: lines } = await supabase
+      .from('accounting_customer_invoice_lines')
+      .select('product_name, quantity, line_total')
+      .eq('invoice_id', invoiceId);
+
+    const productLines = (lines || []).filter(
+      (l) => String(l.product_name || '').trim() || Number(l.line_total) > 0
+    );
+    if (!productLines.length) {
+      return { error: 'Add at least one invoice line before posting' };
+    }
+  } catch (err) {
+    return {
+      error: err instanceof Error ? err.message : 'Failed to post invoice',
+    };
+  }
+
   return transitionStatus(invoiceId, 'posted', 'posted', {
     allowFrom: ['draft'],
   });

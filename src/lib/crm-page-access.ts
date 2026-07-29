@@ -15,6 +15,7 @@ export async function buildDashboardAccessFromSession(): Promise<DashboardAccess
     isOrganizationAdmin: session.appUserRole === 'administrator',
     appUserId: session.appUserId ?? null,
     appUserRole: session.appUserRole ?? null,
+    sessionRole: session.role ?? null,
     username: session.username,
     fullName: session.fullName?.trim() || session.username,
     permissions: parsePermissionKeys(session.permissions),

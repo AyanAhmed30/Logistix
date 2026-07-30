@@ -66,14 +66,14 @@ function statusBadgeClass(status: SalesQuotationUiStatus) {
     case "review":
       return "bg-indigo-100 text-indigo-800 border-indigo-200";
     case "confirmed":
-      return "bg-emerald-100 text-emerald-800 border-emerald-200";
+      return "bg-emerald-500 text-white border-emerald-500";
     case "cancelled":
       return "bg-slate-100 text-slate-600 border-slate-200";
     case "expired":
       return "bg-amber-100 text-amber-900 border-amber-200";
     case "draft":
     default:
-      return "bg-amber-50 text-amber-900 border-amber-200";
+      return "bg-sky-500/15 text-sky-800 border-sky-300";
   }
 }
 
@@ -90,6 +90,18 @@ function formatDate(value: string | null) {
   const d = new Date(value);
   if (Number.isNaN(d.getTime())) return "—";
   return d.toLocaleDateString();
+}
+
+function formatCreationDate(value: string | null) {
+  if (!value) return "—";
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return "—";
+  return d.toLocaleString(undefined, {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
 }
 
 export function SalesQuotationsView() {
@@ -258,6 +270,13 @@ export function SalesQuotationsView() {
                 <SortIcon column="quotation_number" />
               </TableHead>
               <TableHead
+                className="cursor-pointer select-none whitespace-nowrap"
+                onClick={() => toggleSort("created_at")}
+              >
+                Creation Date
+                <SortIcon column="created_at" />
+              </TableHead>
+              <TableHead
                 className="cursor-pointer select-none"
                 onClick={() => toggleSort("customer_name")}
               >
@@ -265,20 +284,7 @@ export function SalesQuotationsView() {
                 <SortIcon column="customer_name" />
               </TableHead>
               <TableHead>Salesperson</TableHead>
-              <TableHead
-                className="cursor-pointer select-none whitespace-nowrap"
-                onClick={() => toggleSort("created_at")}
-              >
-                Quotation Date
-                <SortIcon column="created_at" />
-              </TableHead>
-              <TableHead
-                className="cursor-pointer select-none whitespace-nowrap"
-                onClick={() => toggleSort("expiration_date")}
-              >
-                Expiration
-                <SortIcon column="expiration_date" />
-              </TableHead>
+              <TableHead className="w-24">Activities</TableHead>
               <TableHead
                 className="cursor-pointer select-none text-right"
                 onClick={() => toggleSort("total_amount")}
@@ -287,7 +293,6 @@ export function SalesQuotationsView() {
                 <SortIcon column="total_amount" />
               </TableHead>
               <TableHead>Status</TableHead>
-              <TableHead>Organization</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -297,37 +302,54 @@ export function SalesQuotationsView() {
                 className="cursor-pointer hover:bg-[#017e84]/5"
                 onClick={() => openRow(row)}
               >
-                <TableCell className="font-medium text-[#017e84] whitespace-nowrap">
+                <TableCell className="font-semibold text-primary-dark whitespace-nowrap">
                   {row.quotation_number}
+                </TableCell>
+                <TableCell className="text-secondary-muted whitespace-nowrap">
+                  {formatCreationDate(row.created_at || row.quotation_date)}
                 </TableCell>
                 <TableCell className="text-primary-dark">
                   {row.customer_name}
                 </TableCell>
                 <TableCell className="text-secondary-muted">
-                  {row.salesperson_name || "—"}
+                  <span className="inline-flex items-center gap-1.5">
+                    {row.salesperson_name ? (
+                      <span className="inline-flex h-6 w-6 items-center justify-center rounded-full bg-slate-200 text-[10px] font-semibold text-slate-700">
+                        {row.salesperson_name.charAt(0).toUpperCase()}
+                      </span>
+                    ) : null}
+                    {row.salesperson_name || "—"}
+                  </span>
                 </TableCell>
-                <TableCell className="text-secondary-muted whitespace-nowrap">
-                  {formatDate(row.quotation_date)}
-                </TableCell>
-                <TableCell className="text-secondary-muted whitespace-nowrap">
-                  {formatDate(row.expiration_date)}
-                </TableCell>
-                <TableCell className="text-right font-medium tabular-nums">
+                <TableCell className="text-secondary-muted text-xs">—</TableCell>
+                <TableCell
+                  className={`text-right font-medium tabular-nums ${
+                    row.total > 0 ? "text-[#017e84]" : "text-primary-dark"
+                  }`}
+                >
                   {formatMoney(row.total)}
                 </TableCell>
                 <TableCell>
                   <span
-                    className={`inline-flex items-center rounded-sm border px-2 py-0.5 text-[11px] font-medium ${statusBadgeClass(row.status)}`}
+                    className={`inline-flex items-center rounded-full border px-2.5 py-0.5 text-[11px] font-medium ${statusBadgeClass(row.status)}`}
                   >
                     {salesQuotationStatusLabel(row.status)}
                   </span>
                 </TableCell>
-                <TableCell className="text-secondary-muted">
-                  {row.organization_name || "—"}
-                </TableCell>
               </TableRow>
             ))}
           </TableBody>
+          {items.length > 0 ? (
+            <tfoot>
+              <tr className="border-t border-slate-200 bg-slate-50/60">
+                <td className="px-3 py-2" colSpan={5} />
+                <td className="px-3 py-2 text-right text-sm font-semibold tabular-nums text-primary-dark">
+                  {formatMoney(items.reduce((a, r) => a + (r.total || 0), 0))}
+                </td>
+                <td className="px-3 py-2" />
+              </tr>
+            </tfoot>
+          ) : null}
         </Table>
       </div>
     );

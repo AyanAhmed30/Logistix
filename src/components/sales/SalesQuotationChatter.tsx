@@ -368,8 +368,8 @@ export function SalesQuotationChatter({ quotationId }: Props) {
 
       <div className="flex-1 overflow-y-auto p-3 space-y-4">
         {!quotationId ? (
-          <div className="text-center text-xs text-secondary-muted py-8">
-            Save the quotation to open the chatter.
+          <div className="text-sm text-secondary-muted py-6 px-1">
+            Creating a new record...
           </div>
         ) : loading ? (
           <div className="flex items-center justify-center py-12 text-secondary-muted">

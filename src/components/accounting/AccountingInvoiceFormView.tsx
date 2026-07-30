@@ -6,10 +6,8 @@ import { toast } from "sonner";
 import {
   Copy,
   Eye,
-  FileMinus2,
   Loader2,
   MoreHorizontal,
-  Printer,
   Send,
   Settings2,
   Trash2,
@@ -65,11 +63,13 @@ import {
 } from "@/app/actions/accounting/invoice-workflow";
 import {
   registerAccountingPayment,
+  getAccountingInvoicePayments,
 } from "@/app/actions/accounting/payments";
 import { generateAccountingInvoicePdf } from "@/lib/accounting-invoice-pdf";
 import {
   paymentStateLabel,
   type AccountingPaymentMethod,
+  type AccountingPaymentJournal,
 } from "@/lib/accounting-payments";
 import {
   computeDocumentTotals,
@@ -174,9 +174,16 @@ export function AccountingInvoiceFormView({ invoiceId }: Props) {
   const [paymentDate, setPaymentDate] = useState("");
   const [paymentMethod, setPaymentMethod] =
     useState<AccountingPaymentMethod>("bank_transfer");
+  const [paymentJournal, setPaymentJournal] =
+    useState<AccountingPaymentJournal>("bank");
+  const [paymentMode, setPaymentMode] = useState<
+    "withhold_and_pay" | "withhold_only" | "payment_only"
+  >("payment_only");
   const [paymentReference, setPaymentReference] = useState("");
   const [paymentNotes, setPaymentNotes] = useState("");
   const [paymentError, setPaymentError] = useState<string | null>(null);
+  const [paymentsCount, setPaymentsCount] = useState(0);
+  const [paymentsSum, setPaymentsSum] = useState(0);
   const [creditNoteOpen, setCreditNoteOpen] = useState(false);
   const [creditNoteMode, setCreditNoteMode] = useState<"full" | "partial">("full");
   const [dueDateManual, setDueDateManual] = useState(false);
@@ -204,17 +211,28 @@ export function AccountingInvoiceFormView({ invoiceId }: Props) {
   const isDraft = status === "draft";
   const isPosted = status === "posted";
   const isPaid = status === "paid" || paymentState === "paid";
+  const isInPayment = paymentState === "in_payment";
   const isCancelled = status === "cancelled";
   const canRegisterPayment =
-    (isPosted || status === "paid") &&
+    (isPosted || status === "paid" || isInPayment) &&
     !isCancelled &&
-    outstanding > 0.004 &&
-    !isAdminContext;
+    !isAdminContext &&
+    (detail ? paymentsSum + 0.004 < (detail.total_amount || 0) : outstanding > 0.004);
   const canCreateCreditNote =
-    (isPosted || isPaid) && !isCancelled && !isAdminContext && Boolean(detail);
+    (isPosted || isPaid || isInPayment) &&
+    !isCancelled &&
+    !isAdminContext &&
+    Boolean(detail);
   const readOnly = !isDraft || isAdminContext;
+  const showPostedActions = !isDraft && !isCancelled;
 
   const totals = useMemo(() => computeDocumentTotals(lines), [lines]);
+
+  /** Draft Amount Due follows Tax Excl/Incl display (like line Amount); posted uses residual. */
+  const amountDueDisplay = useMemo(() => {
+    if (!isDraft) return outstanding;
+    return taxMode === "incl" ? totals.total : totals.untaxed;
+  }, [isDraft, outstanding, taxMode, totals.total, totals.untaxed]);
 
   const hydrate = useCallback((inv: AccountingInvoiceDetail) => {
     setDetail(inv);
@@ -266,6 +284,34 @@ export function AccountingInvoiceFormView({ invoiceId }: Props) {
   useEffect(() => {
     void load();
   }, [load, switchVersion]);
+
+  useEffect(() => {
+    if (!invoiceId || isDraft) {
+      setPaymentsCount(0);
+      setPaymentsSum(0);
+      return;
+    }
+    let cancelled = false;
+    void getAccountingInvoicePayments(invoiceId, { page: 1, pageSize: 50 }).then(
+      (res) => {
+        if (cancelled) return;
+        if ("error" in res && res.error) {
+          setPaymentsCount(0);
+          setPaymentsSum(0);
+          return;
+        }
+        setPaymentsCount(Number(res.total) || 0);
+        const sum = (res.payments || []).reduce(
+          (acc, p) => acc + (Number(p.amount) || 0),
+          0
+        );
+        setPaymentsSum(Math.round(sum * 100) / 100);
+      }
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [invoiceId, isDraft, paymentsKey]);
 
   function updateLine(key: string, patch: Partial<QuotationLineDraft>) {
     setLines((prev) =>
@@ -507,10 +553,16 @@ export function AccountingInvoiceFormView({ invoiceId }: Props) {
 
   function openPaymentDialog() {
     if (!detail) return;
-    setPaymentAmount(String(outstanding || detail.amount_residual || 0));
+    const remaining = Math.max(
+      0,
+      Math.round(((detail.total_amount || 0) - paymentsSum) * 100) / 100
+    );
+    setPaymentAmount(String(remaining || outstanding || detail.amount_residual || 0));
     setPaymentDate(new Date().toISOString().slice(0, 10));
+    setPaymentJournal("bank");
     setPaymentMethod("bank_transfer");
-    setPaymentReference("");
+    setPaymentMode("payment_only");
+    setPaymentReference(detail.invoice_number || "");
     setPaymentNotes("");
     setPaymentError(null);
     setPaymentOpen(true);
@@ -518,14 +570,22 @@ export function AccountingInvoiceFormView({ invoiceId }: Props) {
 
   function handleRegisterPayment() {
     if (paymentSubmitting || isPending) return;
+    if (paymentMode === "withhold_only") {
+      setPaymentError("Withhold Only is not available yet. Choose Payment Only.");
+      return;
+    }
     const amount = parseFloat(paymentAmount);
     if (!Number.isFinite(amount) || amount <= 0) {
       setPaymentError("Payment amount must be greater than zero");
       return;
     }
-    if (amount - outstanding > 0.004) {
+    const maxPayable = Math.max(
+      0,
+      Math.round(((detail?.total_amount || 0) - paymentsSum) * 100) / 100
+    );
+    if (amount - maxPayable > 0.004) {
       setPaymentError(
-        `Amount cannot exceed outstanding balance (${outstanding.toFixed(2)})`
+        `Amount cannot exceed remaining balance (${maxPayable.toFixed(2)})`
       );
       return;
     }
@@ -534,20 +594,24 @@ export function AccountingInvoiceFormView({ invoiceId }: Props) {
       return;
     }
 
+    const method: AccountingPaymentMethod =
+      paymentJournal === "cash" ? "cash" : paymentMethod;
+
     setPaymentError(null);
     setPaymentSubmitting(true);
-    const idempotencyKey = `${invoiceId}-${paymentDate}-${amount}-${paymentMethod}-${Date.now()}`;
+    const idempotencyKey = `${invoiceId}-${paymentDate}-${amount}-${method}-${Date.now()}`;
     startTransition(async () => {
       try {
         const res = await registerAccountingPayment(invoiceId, {
           payment_date: paymentDate,
           amount,
-          payment_method: paymentMethod,
+          payment_method: method,
           reference: paymentReference || null,
           notes: paymentNotes || null,
           idempotency_key: idempotencyKey,
+          journal: paymentJournal,
         });
-        if (applyResult(res, "Payment registered")) {
+        if (applyResult(res, "Payment created")) {
           setPaymentOpen(false);
         }
       } finally {
@@ -607,17 +671,72 @@ export function AccountingInvoiceFormView({ invoiceId }: Props) {
               )}
             </Button>
           ) : null}
-          {canRegisterPayment ? (
-            <Button
-              size="sm"
-              className={btnPrimary}
-              disabled={isPending || paymentSubmitting}
-              onClick={openPaymentDialog}
-            >
-              Register Payment
-            </Button>
+
+          {showPostedActions ? (
+            <>
+              <Button
+                size="sm"
+                className={btnPrimary}
+                disabled={isPending}
+                onClick={handleSend}
+              >
+                Send
+              </Button>
+              <Button
+                size="sm"
+                className={btnPrimary}
+                disabled={pdfBusy}
+                onClick={() => void runPdf("print")}
+              >
+                Print
+              </Button>
+              {canRegisterPayment ? (
+                <Button
+                  size="sm"
+                  className={btnPrimary}
+                  disabled={isPending || paymentSubmitting}
+                  onClick={openPaymentDialog}
+                >
+                  Pay
+                </Button>
+              ) : null}
+              <Button
+                size="sm"
+                variant="outline"
+                className={btnSecondary}
+                disabled={pdfBusy}
+                onClick={() => void runPdf("preview")}
+              >
+                Preview
+              </Button>
+              {canCreateCreditNote ? (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className={btnSecondary}
+                  onClick={() => {
+                    setCreditNoteMode("full");
+                    setCreditNoteOpen(true);
+                  }}
+                >
+                  Credit Note
+                </Button>
+              ) : null}
+              {(isPosted || isCancelled || isInPayment) && !isPaid ? (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className={btnSecondary}
+                  disabled={isPending || isAdminContext}
+                  onClick={handleResetToDraft}
+                >
+                  Reset to Draft
+                </Button>
+              ) : null}
+            </>
           ) : null}
-          {(isDraft || isPosted) && !isPaid ? (
+
+          {isDraft ? (
             <Button
               size="sm"
               variant="outline"
@@ -649,24 +768,21 @@ export function AccountingInvoiceFormView({ invoiceId }: Props) {
                   Save
                 </DropdownMenuItem>
               ) : null}
-              <DropdownMenuItem
-                disabled={pdfBusy}
-                onClick={() => void runPdf("preview")}
-              >
-                <Eye className="h-3.5 w-3.5 mr-2" />
-                Preview
-              </DropdownMenuItem>
-              <DropdownMenuItem
-                disabled={pdfBusy || isDraft}
-                onClick={() => void runPdf("print")}
-              >
-                <Printer className="h-3.5 w-3.5 mr-2" />
-                Print
-              </DropdownMenuItem>
-              <DropdownMenuItem disabled={isPending} onClick={handleSend}>
-                <Send className="h-3.5 w-3.5 mr-2" />
-                Send
-              </DropdownMenuItem>
+              {isDraft ? (
+                <>
+                  <DropdownMenuItem
+                    disabled={pdfBusy}
+                    onClick={() => void runPdf("preview")}
+                  >
+                    <Eye className="h-3.5 w-3.5 mr-2" />
+                    Preview
+                  </DropdownMenuItem>
+                  <DropdownMenuItem disabled={isPending} onClick={handleSend}>
+                    <Send className="h-3.5 w-3.5 mr-2" />
+                    Send
+                  </DropdownMenuItem>
+                </>
+              ) : null}
               <DropdownMenuSeparator />
               <DropdownMenuItem
                 disabled={isPending || isAdminContext}
@@ -676,33 +792,14 @@ export function AccountingInvoiceFormView({ invoiceId }: Props) {
                 Duplicate
               </DropdownMenuItem>
               {canCreateCreditNote ? (
-                <>
-                  <DropdownMenuItem
-                    onClick={() => {
-                      setCreditNoteMode("full");
-                      setCreditNoteOpen(true);
-                    }}
-                  >
-                    <FileMinus2 className="h-3.5 w-3.5 mr-2" />
-                    Credit Note
-                  </DropdownMenuItem>
-                  <DropdownMenuItem
-                    onClick={() => {
-                      setCreditNoteMode("partial");
-                      setCreditNoteOpen(true);
-                    }}
-                  >
-                    <Undo2 className="h-3.5 w-3.5 mr-2" />
-                    Return / Partial
-                  </DropdownMenuItem>
-                </>
-              ) : null}
-              {(isPosted || isCancelled) && !isPaid ? (
                 <DropdownMenuItem
-                  disabled={isPending || isAdminContext}
-                  onClick={handleResetToDraft}
+                  onClick={() => {
+                    setCreditNoteMode("partial");
+                    setCreditNoteOpen(true);
+                  }}
                 >
-                  Reset to Draft
+                  <Undo2 className="h-3.5 w-3.5 mr-2" />
+                  Return / Partial
                 </DropdownMenuItem>
               ) : null}
               {(isPosted || isPaid) && outstanding > 0.004 && !isAdminContext ? (
@@ -748,6 +845,17 @@ export function AccountingInvoiceFormView({ invoiceId }: Props) {
                   </DropdownMenuItem>
                 </>
               ) : null}
+              {(isPosted || isPaid || isInPayment) && !isDraft ? (
+                <>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem
+                    disabled={isPending || isAdminContext}
+                    onClick={handleCancel}
+                  >
+                    Cancel
+                  </DropdownMenuItem>
+                </>
+              ) : null}
             </DropdownMenuContent>
           </DropdownMenu>
         </div>
@@ -755,7 +863,45 @@ export function AccountingInvoiceFormView({ invoiceId }: Props) {
       </div>
 
       <div className="flex-1 grid xl:grid-cols-[minmax(0,1fr)_340px] min-h-0">
-        <div className="p-4 sm:p-5 space-y-5 overflow-auto">
+        <div className="p-4 sm:p-5 space-y-5 overflow-auto relative">
+          {isInPayment ? (
+            <div
+              className="pointer-events-none absolute right-6 top-8 z-10 select-none"
+              aria-hidden
+            >
+              <div className="rotate-12 rounded-sm border-2 border-emerald-500 bg-emerald-500/10 px-4 py-1.5 text-sm font-bold tracking-wide text-emerald-600 shadow-sm">
+                IN PAYMENT
+              </div>
+            </div>
+          ) : null}
+
+          {showPostedActions ? (
+            <div className="flex flex-wrap items-stretch gap-2">
+              <button
+                type="button"
+                className="inline-flex min-w-[88px] flex-col items-center justify-center rounded-sm border border-slate-200 bg-white px-3 py-2 text-center hover:bg-slate-50"
+                onClick={() => {
+                  router.push("/accounting/payments");
+                }}
+              >
+                <span className="text-base font-semibold tabular-nums text-primary-dark">
+                  {paymentsCount}
+                </span>
+                <span className="text-[11px] text-secondary-muted">Payments</span>
+              </button>
+              <button
+                type="button"
+                className="inline-flex min-w-[88px] flex-col items-center justify-center rounded-sm border border-slate-200 bg-white px-3 py-2 text-center hover:bg-slate-50"
+                onClick={() => setActiveTab("other")}
+              >
+                <span className="text-base font-semibold text-primary-dark">—</span>
+                <span className="text-[11px] text-secondary-muted">
+                  Journal Items
+                </span>
+              </button>
+            </div>
+          ) : null}
+
           {/* Odoo sheet header */}
           <div>
             <p className="text-xs font-medium text-secondary-muted tracking-wide">
@@ -797,7 +943,7 @@ export function AccountingInvoiceFormView({ invoiceId }: Props) {
                   onSelect={(picked) => void handleCustomerSelect(picked)}
                   contactScope="customer"
                   placeholder="Search a name or Tax ID..."
-                  inputClassName="h-9 rounded-sm border-0 border-b border-slate-200 shadow-none px-0 focus-visible:ring-0 focus-visible:border-[#017e84]"
+                  inputClassName="h-9 rounded-sm border-0 border-b border-slate-200 shadow-none pr-0 focus-visible:ring-0 focus-visible:border-[#017e84]"
                 />
               ) : (
                 <Input
@@ -1397,7 +1543,7 @@ export function AccountingInvoiceFormView({ invoiceId }: Props) {
                   <div className="flex justify-between text-sm">
                     <span className="text-secondary-muted">Amount Due</span>
                     <span className="tabular-nums font-medium">
-                      {formatMoney(isDraft ? totals.total : outstanding)}
+                      {formatMoney(amountDueDisplay)}
                     </span>
                   </div>
                 </div>
@@ -1634,105 +1780,121 @@ export function AccountingInvoiceFormView({ invoiceId }: Props) {
         </DialogContent>
       </Dialog>
 
-      {/* Payment dialog */}
+      {/* Pay wizard (Odoo-style) */}
       <Dialog open={paymentOpen} onOpenChange={setPaymentOpen}>
-        <DialogContent className="max-w-md">
+        <DialogContent className="max-w-xl">
           <DialogHeader>
-            <DialogTitle>Register Payment</DialogTitle>
+            <DialogTitle>Pay</DialogTitle>
           </DialogHeader>
-          <div className="space-y-3">
-            <div className="rounded-sm border border-slate-200 bg-slate-50 px-3 py-2 text-xs space-y-1">
-              <p>
-                <span className="text-secondary-muted">Customer:</span>{" "}
-                {customerName || "—"}
-              </p>
-              <p>
-                <span className="text-secondary-muted">Customer ID:</span>{" "}
-                <span className="font-mono">{customerLeadId || "—"}</span>
-              </p>
-              <p>
-                <span className="text-secondary-muted">Invoice:</span>{" "}
-                {detail.invoice_number}
-              </p>
-              <p>
-                <span className="text-secondary-muted">Organization:</span>{" "}
-                {detail.organization_name || "—"}
-              </p>
-              <p>
-                <span className="text-secondary-muted">Total:</span>{" "}
-                {formatMoney(detail.total_amount)}
-              </p>
-              <p className="font-semibold text-[#017e84]">
-                Outstanding: {formatMoney(outstanding)}
-              </p>
+
+          <div className="flex flex-wrap gap-4 pb-2 border-b border-slate-100">
+            {(
+              [
+                ["withhold_and_pay", "Withhold and Pay"],
+                ["withhold_only", "Withhold Only"],
+                ["payment_only", "Payment Only"],
+              ] as const
+            ).map(([id, label]) => (
+              <label
+                key={id}
+                className="inline-flex items-center gap-2 text-sm cursor-pointer"
+              >
+                <input
+                  type="radio"
+                  name="payment-mode"
+                  className="accent-[#017e84]"
+                  checked={paymentMode === id}
+                  onChange={() => setPaymentMode(id)}
+                />
+                {label}
+              </label>
+            ))}
+          </div>
+
+          <div className="grid gap-4 sm:grid-cols-2 pt-1">
+            <div className="space-y-3">
+              <div className="space-y-1.5">
+                <Label className="text-xs text-secondary-muted">Journal</Label>
+                <Select
+                  value={paymentJournal}
+                  onValueChange={(v) => {
+                    const j = v as AccountingPaymentJournal;
+                    setPaymentJournal(j);
+                    setPaymentMethod(j === "cash" ? "cash" : "bank_transfer");
+                  }}
+                >
+                  <SelectTrigger className="h-8 rounded-sm">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="bank">Bank</SelectItem>
+                    <SelectItem value="cash">Cash</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs text-secondary-muted">
+                  Payment Method
+                </Label>
+                <p className="h-8 flex items-center text-sm text-primary-dark">
+                  Manual Payment
+                </p>
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs text-secondary-muted">
+                  Recipient Bank Account
+                </Label>
+                <p className="h-8 flex items-center text-sm text-secondary-muted">
+                  —
+                </p>
+              </div>
             </div>
 
-            <div className="space-y-1.5">
-              <Label className="text-xs">Payment Date</Label>
-              <Input
-                type="date"
-                value={paymentDate}
-                onChange={(e) => setPaymentDate(e.target.value)}
-                className="h-8 rounded-sm"
-              />
+            <div className="space-y-3">
+              <div className="space-y-1.5">
+                <Label className="text-xs text-secondary-muted">Amount</Label>
+                <div className="relative">
+                  <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-xs text-secondary-muted">
+                    Rs.
+                  </span>
+                  <Input
+                    value={paymentAmount}
+                    onChange={(e) => {
+                      setPaymentAmount(e.target.value);
+                      setPaymentError(null);
+                    }}
+                    className="h-8 rounded-sm pl-9"
+                  />
+                </div>
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs text-secondary-muted">
+                  Payment Date
+                </Label>
+                <Input
+                  type="date"
+                  value={paymentDate}
+                  onChange={(e) => setPaymentDate(e.target.value)}
+                  className="h-8 rounded-sm"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs text-secondary-muted">Memo</Label>
+                <Input
+                  value={paymentReference}
+                  onChange={(e) => setPaymentReference(e.target.value)}
+                  placeholder="Payment memo"
+                  className="h-8 rounded-sm"
+                />
+              </div>
             </div>
-            <div className="space-y-1.5">
-              <Label className="text-xs">Amount</Label>
-              <Input
-                value={paymentAmount}
-                onChange={(e) => {
-                  setPaymentAmount(e.target.value);
-                  setPaymentError(null);
-                }}
-                className="h-8 rounded-sm"
-              />
-            </div>
-            <div className="space-y-1.5">
-              <Label className="text-xs">Payment Method</Label>
-              <Select
-                value={paymentMethod}
-                onValueChange={(v) =>
-                  setPaymentMethod(v as AccountingPaymentMethod)
-                }
-              >
-                <SelectTrigger className="h-8 rounded-sm">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="cash">Cash</SelectItem>
-                  <SelectItem value="bank_transfer">Bank Transfer</SelectItem>
-                  <SelectItem value="cheque">Cheque</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-1.5">
-              <Label className="text-xs">Reference / Notes</Label>
-              <Input
-                value={paymentReference}
-                onChange={(e) => setPaymentReference(e.target.value)}
-                placeholder="Reference"
-                className="h-8 rounded-sm"
-              />
-              <Textarea
-                value={paymentNotes}
-                onChange={(e) => setPaymentNotes(e.target.value)}
-                placeholder="Optional notes"
-                className="min-h-[64px] rounded-sm text-sm"
-              />
-            </div>
-            {paymentError ? (
-              <p className="text-xs text-red-600">{paymentError}</p>
-            ) : null}
           </div>
-          <DialogFooter className="gap-2">
-            <Button
-              variant="outline"
-              className={btnSecondary}
-              onClick={() => setPaymentOpen(false)}
-              disabled={paymentSubmitting}
-            >
-              Close
-            </Button>
+
+          {paymentError ? (
+            <p className="text-xs text-red-600">{paymentError}</p>
+          ) : null}
+
+          <DialogFooter className="gap-2 sm:justify-start">
             <Button
               className={btnPrimary}
               disabled={isPending || paymentSubmitting}
@@ -1741,8 +1903,16 @@ export function AccountingInvoiceFormView({ invoiceId }: Props) {
               {paymentSubmitting ? (
                 <Loader2 className="h-3.5 w-3.5 animate-spin" />
               ) : (
-                "Confirm Payment"
+                "Create Payment"
               )}
+            </Button>
+            <Button
+              variant="outline"
+              className={btnSecondary}
+              onClick={() => setPaymentOpen(false)}
+              disabled={paymentSubmitting}
+            >
+              Discard
             </Button>
           </DialogFooter>
         </DialogContent>

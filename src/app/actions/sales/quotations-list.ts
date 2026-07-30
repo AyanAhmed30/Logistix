@@ -17,6 +17,7 @@ export type SalesQuotationListItem = {
   salesperson_name: string | null;
   salesperson_id: string | null;
   quotation_date: string;
+  created_at: string | null;
   expiration_date: string | null;
   total: number;
   status: SalesQuotationUiStatus;
@@ -275,6 +276,7 @@ export async function getSalesQuotationsList(
             ? String(r.created_by)
             : null,
         quotation_date: String(r.created_at || ''),
+        created_at: r.created_at ? String(r.created_at) : null,
         expiration_date: r.expiration_date ? String(r.expiration_date) : null,
         total: Number(r.total_amount) || 0,
         status: mapQuotationDbStatusToUi(String(r.status)),

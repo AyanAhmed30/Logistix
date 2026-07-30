@@ -3,14 +3,14 @@
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
-import { createManualAccountingInvoice } from "@/app/actions/accounting/invoices";
+import { createManualAccountingCreditNote } from "@/app/actions/accounting/credit-notes";
 import { AccountingFormSkeleton } from "@/components/accounting/AccountingSkeleton";
 import { useAdminOrganization } from "@/contexts/AdminOrganizationContext";
 
 /**
- * Odoo-style New Invoice: create a Draft, then open the existing form.
+ * Odoo-style New Credit Note: create a Draft, then open the credit note form.
  */
-export default function NewAccountingInvoicePage() {
+export default function NewAccountingCreditNotePage() {
   const router = useRouter();
   const { isAdminContext } = useAdminOrganization();
   const [error, setError] = useState<string | null>(null);
@@ -22,18 +22,18 @@ export default function NewAccountingInvoicePage() {
 
     void (async () => {
       if (isAdminContext) {
-        toast.info("Select a specific organization to create invoices.");
-        router.replace("/accounting/invoices");
+        toast.info("Select a specific organization to create credit notes.");
+        router.replace("/accounting/credit-notes");
         return;
       }
-      const res = await createManualAccountingInvoice();
+      const res = await createManualAccountingCreditNote();
       if ("error" in res && res.error) {
         setError(res.error);
         toast.error(res.error);
         return;
       }
-      if ("invoiceId" in res && res.invoiceId) {
-        router.replace(`/accounting/invoices/${res.invoiceId}`);
+      if ("creditNoteId" in res && res.creditNoteId) {
+        router.replace(`/accounting/credit-notes/${res.creditNoteId}`);
       }
     })();
   }, [isAdminContext, router]);
@@ -45,9 +45,9 @@ export default function NewAccountingInvoicePage() {
         <button
           type="button"
           className="text-sm text-[#017e84] hover:underline"
-          onClick={() => router.push("/accounting/invoices")}
+          onClick={() => router.push("/accounting/credit-notes")}
         >
-          Back to Customer Invoices
+          Back to Credit Notes
         </button>
       </div>
     );

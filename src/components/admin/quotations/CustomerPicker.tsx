@@ -168,13 +168,18 @@ export function CustomerPicker({
     void runSearch("");
   }, [runSearch]);
 
-  // Debounced query while typing
+  // Debounced query while typing — faster for Customer ID lookups
   useEffect(() => {
     if (!open) return;
     if (debounceRef.current) clearTimeout(debounceRef.current);
+    const digits = query.replace(/\D/g, "");
+    const idLike =
+      /^#?\d{4,8}$/.test(query.trim()) ||
+      /^#?[Cc]\d{3,8}$/.test(query.trim()) ||
+      (digits.length >= 4 && digits.length / Math.max(query.trim().length, 1) >= 0.7);
     debounceRef.current = setTimeout(() => {
       runSearch(query);
-    }, 150);
+    }, idLike ? 80 : 150);
     return () => {
       if (debounceRef.current) clearTimeout(debounceRef.current);
     };
@@ -270,7 +275,11 @@ export function CustomerPicker({
           }}
           placeholder={placeholder}
           disabled={disabled}
-          className={inputClassName ? `pl-8 ${inputClassName}` : "pl-8"}
+          className={
+            inputClassName
+              ? `${inputClassName} !pl-9`
+              : "pl-9"
+          }
         />
         {contactId && !open && (
           <span

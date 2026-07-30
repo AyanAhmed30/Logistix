@@ -74,7 +74,8 @@ export function AccountingShell({ access, children }: Props) {
     }
     if (
       pathname.startsWith("/accounting/credit-notes/") &&
-      pathname !== "/accounting/credit-notes"
+      pathname !== "/accounting/credit-notes" &&
+      pathname !== "/accounting/credit-notes/new"
     ) {
       return true;
     }

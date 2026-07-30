@@ -8,6 +8,7 @@ import {
   Download,
   FileText,
   History,
+  Loader2,
   MoreHorizontal,
   Plus,
   Printer,
@@ -92,14 +93,19 @@ import {
 } from "@/app/actions/contacts";
 import { useAdminOrganization } from "@/contexts/AdminOrganizationContext";
 import {
+  searchSalesProductsForQuotation,
+  type SalesProduct,
+} from "@/app/actions/sales/products";
+import {
   computeDocumentTotals,
-  computeLineAmounts,
   formatContactAddress,
   formatMoney,
   inferLineDisplayType,
   isProductLine,
+  lineAmountForTaxMode,
   newLineDraft,
-  SALES_UOM_OPTIONS,
+  unitPriceForDisplay,
+  unitPriceFromDisplay,
   type QuotationLineDraft,
 } from "@/lib/sales-quotation-form";
 import {
@@ -169,9 +175,7 @@ export function SalesQuotationFormView({
   const [opportunityName, setOpportunityName] = useState<string | null>(null);
   const [lines, setLines] = useState<QuotationLineDraft[]>([newLineDraft()]);
   const [childOptions, setChildOptions] = useState<ChildOption[]>([]);
-  const [activeTab, setActiveTab] = useState<"lines" | "other" | "notes">(
-    "lines"
-  );
+  const [activeTab, setActiveTab] = useState<"lines" | "other">("lines");
   const [previewOpen, setPreviewOpen] = useState(false);
   const [previewKind, setPreviewKind] = useState<"email" | "pdf">("pdf");
   const [pdfDataUrl, setPdfDataUrl] = useState<string | null>(null);
@@ -193,12 +197,25 @@ export function SalesQuotationFormView({
   const [followUpSummary, setFollowUpSummary] = useState("");
   const [followUpDue, setFollowUpDue] = useState(plusDaysIso(3));
   const [linkedInvoiceId, setLinkedInvoiceId] = useState<string | null>(null);
+  const [taxMode, setTaxMode] = useState<"excl" | "incl">("excl");
+  const [catalogOpen, setCatalogOpen] = useState(false);
+  const [catalogQuery, setCatalogQuery] = useState("");
+  const [catalogProducts, setCatalogProducts] = useState<SalesProduct[]>([]);
+  const [catalogLoading, setCatalogLoading] = useState(false);
+  /** Soft-persisted id after first save — avoids remounting via router.replace. */
+  const [persistedId, setPersistedId] = useState<string | null>(quotationId);
+
+  useEffect(() => {
+    setPersistedId(quotationId);
+  }, [quotationId]);
+
+  const recordId = quotationId || persistedId;
 
   const status = detail?.status || "quotation";
   const statusUi = detail?.status_ui || "draft";
   const isLocked = Boolean(detail?.is_locked);
   const readOnly =
-    Boolean(quotationId) && (isLocked || status === "cancelled");
+    Boolean(recordId) && (isLocked || status === "cancelled");
 
   const totals = useMemo(() => computeDocumentTotals(lines), [lines]);
 
@@ -425,14 +442,14 @@ export function SalesQuotationFormView({
   }, [switchVersion]);
 
   useEffect(() => {
-    if (!quotationId || status !== "sales_order") {
+    if (!recordId || status !== "sales_order") {
       setLinkedInvoiceId(null);
       return;
     }
-    void getAccountingInvoiceIdForOrder(quotationId).then((res) => {
+    void getAccountingInvoiceIdForOrder(recordId).then((res) => {
       if ("invoiceId" in res) setLinkedInvoiceId(res.invoiceId ?? null);
     });
-  }, [quotationId, status, switchVersion, chatterKey]);
+  }, [recordId, status, switchVersion, chatterKey]);
 
   function handleCustomerPicked(customer: PickedCustomer) {
     setContactId(customer.contact_id);
@@ -506,8 +523,8 @@ export function SalesQuotationFormView({
     }
 
     const payload = buildPayload();
-    const res = quotationId
-      ? await updateSalesQuotation(quotationId, payload)
+    const res = recordId
+      ? await updateSalesQuotation(recordId, payload)
       : await createSalesQuotation(payload);
 
     if ("error" in res && res.error) {
@@ -516,13 +533,11 @@ export function SalesQuotationFormView({
     }
     if ("quotation" in res && res.quotation) {
       hydrateFromDetail(res.quotation);
+      setPersistedId(res.quotation.id);
       setChatterKey((k) => k + 1);
-      if (!quotationId) {
-        router.replace(`/sales/quotations/${res.quotation.id}`);
-      } else {
-        const ver = await getSalesQuotationVersions(res.quotation.id);
-        if ("versions" in ver) setVersions(ver.versions ?? []);
-      }
+      // Stay mounted — do not touch window.history (breaks Next.js App Router hooks).
+      const ver = await getSalesQuotationVersions(res.quotation.id);
+      if ("versions" in ver) setVersions(ver.versions ?? []);
       return res.quotation.id;
     }
     return null;
@@ -558,7 +573,7 @@ export function SalesQuotationFormView({
 
   function runWorkflow(
     action: () => Promise<{ quotation?: SalesQuotationDetail; error?: string }>,
-    options?: { redirectToOrder?: boolean }
+    _options?: { redirectToOrder?: boolean }
   ) {
     startTransition(async () => {
       const res = await action();
@@ -570,12 +585,6 @@ export function SalesQuotationFormView({
         hydrateFromDetail(res.quotation);
         setChatterKey((k) => k + 1);
         toast.success("Updated");
-        if (
-          options?.redirectToOrder &&
-          res.quotation.status === "sales_order"
-        ) {
-          router.replace(`/sales/orders/${res.quotation.id}`);
-        }
       }
     });
   }
@@ -677,6 +686,19 @@ export function SalesQuotationFormView({
     );
   }, [fromToInvoice, detail?.quotation_number]);
 
+  const isSalesOrderDoc =
+    status === "sales_order" || (isOrderView && statusUi === "confirmed");
+
+  useEffect(() => {
+    if (!isSalesOrderDoc || !recordId) return;
+    // Warm invoice route / existing invoice link for instant Create Invoice.
+    if (linkedInvoiceId) {
+      router.prefetch(`/accounting/invoices/${linkedInvoiceId}`);
+    } else {
+      router.prefetch("/accounting/invoices");
+    }
+  }, [isSalesOrderDoc, recordId, linkedInvoiceId, router]);
+
   if (loading) {
     return (
       <div className="p-4">
@@ -687,12 +709,9 @@ export function SalesQuotationFormView({
 
   const title = detail?.quotation_number || (isOrderView ? "Sales Order" : "New");
 
-  const isSalesOrderDoc =
-    status === "sales_order" || (isOrderView && statusUi === "confirmed");
-
   const canSend =
     !isSalesOrderDoc &&
-    (!quotationId ||
+    (!recordId ||
       status === "quotation" ||
       status === "quotation_sent" ||
       status === "customer_review" ||
@@ -700,23 +719,24 @@ export function SalesQuotationFormView({
 
   const canConfirm =
     !isSalesOrderDoc &&
-    (!quotationId ||
+    (!recordId ||
       status === "quotation" ||
       status === "quotation_sent" ||
       status === "customer_review" ||
       status === "expired");
 
   const showCancel =
-    Boolean(quotationId) && status !== "cancelled" && !isLocked;
+    Boolean(recordId) && status !== "cancelled" && !isLocked;
 
   async function handleCreateInvoice() {
-    if (!quotationId) return;
+    if (!recordId) return;
     if (linkedInvoiceId) {
+      router.prefetch(`/accounting/invoices/${linkedInvoiceId}`);
       router.push(`/accounting/invoices/${linkedInvoiceId}`);
       return;
     }
     startTransition(async () => {
-      const res = await createAccountingInvoiceFromOrder(quotationId);
+      const res = await createAccountingInvoiceFromOrder(recordId);
       if ("error" in res && res.error) {
         toast.error(res.error);
         return;
@@ -726,14 +746,17 @@ export function SalesQuotationFormView({
         toast.success(
           res.alreadyExists ? "Opening existing invoice" : "Draft invoice created"
         );
-        router.push(`/accounting/invoices/${res.invoiceId}`);
+        const href = `/accounting/invoices/${res.invoiceId}`;
+        router.prefetch(href);
+        // SPA client navigation only — never full browser reload.
+        router.push(href);
       }
     });
   }
 
   async function handleSend() {
     startTransition(async () => {
-      const id = quotationId || (await ensureSaved());
+      const id = recordId || (await ensureSaved());
       if (!id) return;
       const res = await prepareSalesQuotationEmail(id, emailTemplateKey);
       if ("email" in res && res.email) {
@@ -756,7 +779,7 @@ export function SalesQuotationFormView({
 
   async function handleConfirm() {
     startTransition(async () => {
-      const id = quotationId || (await ensureSaved());
+      const id = recordId || (await ensureSaved());
       if (!id) return;
       const res = await confirmSalesQuotation(id);
       if (res.error) {
@@ -764,19 +787,17 @@ export function SalesQuotationFormView({
         return;
       }
       if (res.quotation) {
+        // In-place status update (Odoo-style) — no route remount / browser reload.
         hydrateFromDetail(res.quotation);
+        setPersistedId(res.quotation.id);
+        setChatterKey((k) => k + 1);
         toast.success("Sales Order confirmed");
-        if (fromToInvoice) {
-          router.replace(`/sales/to-invoice/${res.quotation.id}`);
-        } else {
-          router.replace(`/sales/orders/${res.quotation.id}`);
-        }
       }
     });
   }
 
   async function handleDownload() {
-    const id = quotationId || detail?.id;
+    const id = recordId || detail?.id;
     if (!id) {
       startTransition(async () => {
         const savedId = await ensureSaved();
@@ -788,7 +809,7 @@ export function SalesQuotationFormView({
   }
 
   async function handlePreview() {
-    const id = quotationId || detail?.id;
+    const id = recordId || detail?.id;
     if (!id) {
       startTransition(async () => {
         const savedId = await ensureSaved();
@@ -814,10 +835,16 @@ export function SalesQuotationFormView({
               <Button
                 size="sm"
                 className={btnPrimary}
-                disabled={isPending || isAdminContext || !quotationId}
+                disabled={isPending || isAdminContext || !recordId}
                 onClick={() => void handleCreateInvoice()}
               >
-                {linkedInvoiceId ? "View Invoice" : "Create Invoice"}
+                {isPending ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : linkedInvoiceId ? (
+                  "View Invoice"
+                ) : (
+                  "Create Invoice"
+                )}
               </Button>
               <Button
                 size="sm"
@@ -844,8 +871,8 @@ export function SalesQuotationFormView({
                   className={btnSecondary}
                   disabled={isPending}
                   onClick={() =>
-                    quotationId &&
-                    runWorkflow(() => cancelSalesQuotation(quotationId))
+                    recordId &&
+                    runWorkflow(() => cancelSalesQuotation(recordId))
                   }
                 >
                   Cancel
@@ -854,10 +881,26 @@ export function SalesQuotationFormView({
             </>
           ) : (
             <>
-              {canSend ? (
+              {!readOnly ? (
                 <Button
                   size="sm"
                   className={btnPrimary}
+                  disabled={isPending || isAdminContext}
+                  onClick={() =>
+                    void ensureSaved().then((id) => {
+                      if (id) toast.success("Quotation saved as Draft");
+                    })
+                  }
+                >
+                  Save
+                </Button>
+              ) : null}
+
+              {canSend ? (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className={btnSecondary}
                   disabled={isPending || isAdminContext}
                   onClick={() => void handleSend()}
                 >
@@ -883,7 +926,11 @@ export function SalesQuotationFormView({
                   disabled={isPending || isAdminContext}
                   onClick={() => void handleConfirm()}
                 >
-                  Confirm
+                  {isPending ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    "Confirm"
+                  )}
                 </Button>
               ) : null}
 
@@ -904,8 +951,8 @@ export function SalesQuotationFormView({
                   className={btnSecondary}
                   disabled={isPending}
                   onClick={() =>
-                    quotationId &&
-                    runWorkflow(() => cancelSalesQuotation(quotationId))
+                    recordId &&
+                    runWorkflow(() => cancelSalesQuotation(recordId))
                   }
                 >
                   Cancel
@@ -1078,29 +1125,7 @@ export function SalesQuotationFormView({
               <button
                 type="button"
                 disabled={isPending}
-                onClick={() => {
-                  if (linkedInvoiceId) {
-                    router.push(`/accounting/invoices/${linkedInvoiceId}`);
-                    return;
-                  }
-                  if (!quotationId) return;
-                  startTransition(async () => {
-                    const res = await createAccountingInvoiceFromOrder(quotationId);
-                    if ("error" in res && res.error) {
-                      toast.error(res.error);
-                      return;
-                    }
-                    if ("invoiceId" in res && res.invoiceId) {
-                      setLinkedInvoiceId(res.invoiceId);
-                      toast.success(
-                        res.alreadyExists
-                          ? "Opening existing invoice"
-                          : "Draft invoice created"
-                      );
-                      router.push(`/accounting/invoices/${res.invoiceId}`);
-                    }
-                  });
-                }}
+                onClick={() => void handleCreateInvoice()}
                 className="rounded-sm border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-left hover:border-[#017e84]/40 min-w-[72px]"
               >
                 <div className="text-sm font-semibold text-[#017e84] leading-none">
@@ -1134,96 +1159,27 @@ export function SalesQuotationFormView({
       {/* Form + Chatter */}
       <div className="flex-1 min-h-0 grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_360px]">
         <div className="overflow-auto p-3 sm:p-5 space-y-5 border-b xl:border-b-0 xl:border-r border-slate-200">
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-x-8 gap-y-4">
-          <div className="space-y-3">
-            <div>
-              <Label className="text-xs text-secondary-muted">Customer</Label>
-              <div className="mt-1">
-                <CustomerPicker
-                  contactId={contactId}
-                  customerName={customerName}
-                  onSelect={handleCustomerPicked}
-                  disabled={readOnly}
-                />
-              </div>
-              {isSalesOrderDoc && deliveryAddressId ? (
-                <p className="mt-1 text-xs text-secondary-muted whitespace-pre-line">
-                  {deliveryOptions.find((o) => o.id === deliveryAddressId)
-                    ?.address || null}
-                </p>
-              ) : null}
-            </div>
-
-            {!isSalesOrderDoc ? (
-              <>
-                <div>
-                  <Label className="text-xs text-secondary-muted">
-                    Contact Person
-                  </Label>
-                  <Select
-                    value={contactPersonId || undefined}
-                    onValueChange={(v) => setContactPersonId(v)}
-                    disabled={readOnly || !contactId}
-                  >
-                    <SelectTrigger className="mt-1 h-9 rounded-sm">
-                      <SelectValue placeholder="Select contact person" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {personOptions.map((opt) => (
-                        <SelectItem key={opt.id} value={opt.id}>
-                          {opt.name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-
-                <div>
-                  <Label className="text-xs text-secondary-muted">
-                    Delivery Address
-                  </Label>
-                  <Select
-                    value={deliveryAddressId || undefined}
-                    onValueChange={(v) => setDeliveryAddressId(v)}
-                    disabled={readOnly || !contactId}
-                  >
-                    <SelectTrigger className="mt-1 h-9 rounded-sm">
-                      <SelectValue placeholder="Delivery address" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {deliveryOptions.map((opt) => (
-                        <SelectItem key={opt.id} value={opt.id}>
-                          {opt.name}
-                          {opt.address ? ` — ${opt.address}` : ""}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-
-                <div>
-                  <Label className="text-xs text-secondary-muted">
-                    Invoice Address
-                  </Label>
-                  <Select
-                    value={invoiceAddressId || undefined}
-                    onValueChange={(v) => setInvoiceAddressId(v)}
-                    disabled={readOnly || !contactId}
-                  >
-                    <SelectTrigger className="mt-1 h-9 rounded-sm">
-                      <SelectValue placeholder="Invoice address" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {invoiceOptions.map((opt) => (
-                        <SelectItem key={opt.id} value={opt.id}>
-                          {opt.name}
-                          {opt.address ? ` — ${opt.address}` : ""}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-              </>
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-x-10 gap-y-3">
+          <div className="space-y-1">
+            <Label className="text-xs text-secondary-muted">Customer</Label>
+            <CustomerPicker
+              contactId={contactId}
+              customerName={customerName}
+              onSelect={handleCustomerPicked}
+              disabled={readOnly}
+              inputClassName="h-9 rounded-none border-0 border-b border-[#017e84] bg-transparent px-0 shadow-none focus-visible:ring-0"
+            />
+            {(
+              deliveryOptions.find((o) => o.id === deliveryAddressId)
+                ?.address ||
+              childOptions.find((o) => o.id === contactId)?.address ||
+              null
+            ) ? (
+              <p className="text-xs text-secondary-muted whitespace-pre-line pt-0.5">
+                {deliveryOptions.find((o) => o.id === deliveryAddressId)
+                  ?.address ||
+                  childOptions.find((o) => o.id === contactId)?.address}
+              </p>
             ) : null}
           </div>
 
@@ -1283,23 +1239,10 @@ export function SalesQuotationFormView({
               </>
             ) : (
               <>
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <Label className="text-xs text-secondary-muted">
-                  Quotation Date
-                </Label>
-                <Input
-                  type="date"
-                  className="mt-1 h-9 rounded-sm"
-                  value={quotationDate}
-                  disabled={readOnly}
-                  onChange={(e) => setQuotationDate(e.target.value)}
-                />
-              </div>
-              <div>
-                <Label className="text-xs text-secondary-muted">
-                  Expiration
-                </Label>
+                <div>
+                  <Label className="text-xs text-secondary-muted">
+                    Expiration
+                  </Label>
                   <Input
                     type="date"
                     className="mt-1 h-9 rounded-sm"
@@ -1307,109 +1250,112 @@ export function SalesQuotationFormView({
                     disabled={readOnly}
                     onChange={(e) => setExpirationDate(e.target.value)}
                   />
-              </div>
-            </div>
-
-            <div>
-              <Label className="text-xs text-secondary-muted">Salesperson</Label>
-              <Select
-                value={salespersonId || undefined}
-                onValueChange={(v) => setSalespersonId(v)}
-                disabled={readOnly}
-              >
-                <SelectTrigger className="mt-1 h-9 rounded-sm">
-                  <SelectValue placeholder="Select salesperson" />
-                </SelectTrigger>
-                <SelectContent>
-                  {salespeople.map((sp) => (
-                    <SelectItem key={sp.id} value={sp.id}>
-                      {sp.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-
-            <div>
-              <Label className="text-xs text-secondary-muted">Sales Team</Label>
-              <Input
-                className="mt-1 h-9 rounded-sm"
-                value={salesTeam}
-                disabled={readOnly}
-                onChange={(e) => setSalesTeam(e.target.value)}
-                placeholder="e.g. Direct Sales"
-              />
-            </div>
+                </div>
+                <div>
+                  <Label className="text-xs text-secondary-muted">
+                    Payment Terms
+                  </Label>
+                  <Input
+                    className="mt-1 h-9 rounded-sm"
+                    value={paymentTerms}
+                    disabled={readOnly}
+                    onChange={(e) => setPaymentTerms(e.target.value)}
+                  />
+                </div>
               </>
             )}
           </div>
         </div>
 
-        {/* Tabs */}
-        <div className="border-b border-slate-200 flex gap-4 text-sm">
-          {(
-            (
-              isSalesOrderDoc
-                ? ([
-                    ["lines", "Order Lines"],
-                    ["other", "Other Info"],
-                  ] as const)
-                : ([
-                    ["lines", "Order Lines"],
-                    ["other", "Other Info"],
-                    ["notes", "Notes"],
-                  ] as const)
-            )
-          ).map(([id, label]) => (
-            <button
-              key={id}
-              type="button"
-              className={`pb-2 border-b-2 -mb-px ${
-                activeTab === id
-                  ? "border-[#017e84] text-[#017e84] font-medium"
-                  : "border-transparent text-secondary-muted"
-              }`}
-              onClick={() => setActiveTab(id)}
-            >
-              {label}
-            </button>
-          ))}
+        {/* Tabs + tax mode */}
+        <div className="flex flex-wrap items-end justify-between gap-3 border-b border-slate-200">
+          <div className="flex gap-4 text-sm">
+            {(
+              [
+                ["lines", "Order Lines"],
+                ["other", "Other Info"],
+              ] as const
+            ).map(([id, label]) => (
+              <button
+                key={id}
+                type="button"
+                className={`pb-2 border-b-2 -mb-px ${
+                  activeTab === id
+                    ? "border-[#017e84] text-[#017e84] font-medium"
+                    : "border-transparent text-secondary-muted"
+                }`}
+                onClick={() => setActiveTab(id)}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+          {activeTab === "lines" ? (
+            <div className="flex items-center gap-0.5 mb-1.5 rounded-sm border border-slate-200 p-0.5 text-xs">
+              <button
+                type="button"
+                className={`h-6 px-2.5 rounded-sm transition-colors ${
+                  taxMode === "excl"
+                    ? "bg-[#017e84] text-white"
+                    : "text-secondary-muted hover:bg-slate-50"
+                }`}
+                onClick={() => setTaxMode("excl")}
+              >
+                Tax Excl.
+              </button>
+              <button
+                type="button"
+                className={`h-6 px-2.5 rounded-sm transition-colors ${
+                  taxMode === "incl"
+                    ? "bg-[#017e84] text-white"
+                    : "text-secondary-muted hover:bg-slate-50"
+                }`}
+                onClick={() => setTaxMode("incl")}
+              >
+                Tax Incl.
+              </button>
+            </div>
+          ) : null}
         </div>
 
         {activeTab === "lines" ? (
           <div className="space-y-3">
-            <div className="border border-slate-200 rounded-sm overflow-x-auto">
+            <div className="overflow-x-auto">
               <Table>
                 <TableHeader>
-                  <TableRow className="bg-slate-50/80">
-                    <TableHead className="min-w-[160px]">
-                      {isSalesOrderDoc ? "Description" : "Product"}
+                  <TableRow className="border-b border-slate-200 hover:bg-transparent">
+                    <TableHead className="min-w-[220px] h-9 text-xs font-medium text-secondary-muted">
+                      Description
                     </TableHead>
-                    {!isSalesOrderDoc ? (
-                      <TableHead className="min-w-[160px]">Description</TableHead>
-                    ) : null}
-                    <TableHead className="w-24">Quantity</TableHead>
+                    <TableHead className="w-24 h-9 text-xs font-medium text-secondary-muted">
+                      Quantity
+                    </TableHead>
                     {isSalesOrderDoc ? (
                       <>
-                        <TableHead className="w-24 text-right">Delivered</TableHead>
-                        <TableHead className="w-24 text-right">Invoiced</TableHead>
+                        <TableHead className="w-24 text-right h-9 text-xs font-medium text-secondary-muted">
+                          Delivered
+                        </TableHead>
+                        <TableHead className="w-24 text-right h-9 text-xs font-medium text-secondary-muted">
+                          Invoiced
+                        </TableHead>
                       </>
-                    ) : (
-                      <TableHead className="w-28">UOM</TableHead>
-                    )}
-                    <TableHead className="w-28">Unit Price</TableHead>
-                    {!isSalesOrderDoc ? (
-                      <TableHead className="w-24">Disc %</TableHead>
                     ) : null}
-                    <TableHead className="w-28">Taxes</TableHead>
-                    <TableHead className="w-28 text-right">Amount</TableHead>
+                    <TableHead className="w-28 h-9 text-xs font-medium text-secondary-muted">
+                      Unit Price
+                    </TableHead>
+                    <TableHead className="w-28 h-9 text-xs font-medium text-secondary-muted">
+                      Taxes
+                    </TableHead>
+                    <TableHead className="w-28 text-right h-9 text-xs font-medium text-secondary-muted">
+                      Amount
+                    </TableHead>
                     <TableHead className="w-10" />
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {lines.map((line) => {
                     const lineType = line.display_type || inferLineDisplayType(line);
-                    const colSpan = isSalesOrderDoc ? 7 : 8;
+                    const colSpan = isSalesOrderDoc ? 6 : 4;
                     if (lineType === "line_section") {
                       return (
                         <TableRow key={line.key} className="bg-slate-50/90">
@@ -1451,7 +1397,7 @@ export function SalesQuotationFormView({
                             <Input
                               className="h-9 italic border-amber-200 bg-white"
                               value={line.description || line.product_name}
-                              placeholder="Internal note for this quotation..."
+                              placeholder="Note..."
                               disabled={readOnly}
                               onChange={(e) =>
                                 updateLine(line.key, {
@@ -1478,100 +1424,60 @@ export function SalesQuotationFormView({
                         </TableRow>
                       );
                     }
-                    const amounts = computeLineAmounts(line);
                     const qtyNum = parseFloat(line.quantity) || 0;
                     const invoicedQty = linkedInvoiceId ? qtyNum : 0;
+                    const taxPct = parseFloat(line.taxes) || 0;
+                    const displayPrice = unitPriceForDisplay(
+                      parseFloat(line.unit_price) || 0,
+                      taxPct,
+                      taxMode
+                    );
+                    const amountShown = lineAmountForTaxMode(line, taxMode);
                     return (
                       <TableRow key={line.key}>
                         <TableCell className="whitespace-normal align-top">
-                          {isSalesOrderDoc ? (
-                            <div>
-                              <SalesProductLinePicker
-                                valueName={line.product_name}
-                                disabled={readOnly}
-                                onSelect={(product, freeText) => {
-                                  if (product) {
-                                    updateLine(line.key, {
-                                      product_id: product.id,
-                                      product_name: product.name,
-                                      description:
-                                        product.description_sale ||
-                                        product.description ||
-                                        product.name,
-                                      uom: product.uom || line.uom,
-                                      unit_price: String(
-                                        product.list_price || 0
-                                      ),
-                                    });
-                                  } else if (typeof freeText === "string") {
-                                    updateLine(line.key, {
-                                      product_id: null,
-                                      product_name: freeText,
-                                      description:
-                                        line.description || freeText,
-                                    });
-                                  }
-                                }}
-                              />
-                              <Input
-                                className="h-8 rounded-sm mt-1"
-                                value={line.description}
-                                disabled={readOnly}
-                                placeholder="Description"
-                                onChange={(e) =>
-                                  updateLine(line.key, {
-                                    description: e.target.value,
-                                  })
-                                }
-                              />
-                            </div>
-                          ) : (
-                            <SalesProductLinePicker
-                              valueName={line.product_name}
-                              disabled={readOnly}
-                              onSelect={(product, freeText) => {
-                                if (product) {
-                                  updateLine(line.key, {
-                                    product_id: product.id,
-                                    product_name: product.name,
-                                    description:
-                                      product.description_sale ||
-                                      product.description ||
-                                      product.name,
-                                    uom: product.uom || line.uom,
-                                    unit_price: String(
-                                      product.list_price || 0
-                                    ),
-                                  });
-                                } else if (typeof freeText === "string") {
-                                  updateLine(line.key, {
-                                    product_id: null,
-                                    product_name: freeText,
-                                    description:
-                                      line.description || freeText,
-                                  });
-                                }
-                              }}
-                            />
-                          )}
-                        </TableCell>
-                        {!isSalesOrderDoc ? (
-                          <TableCell>
-                            <Input
-                              className="h-8 rounded-sm"
-                              value={line.description}
-                              disabled={readOnly}
-                              onChange={(e) =>
+                          <SalesProductLinePicker
+                            valueName={line.product_name}
+                            disabled={readOnly}
+                            onSelect={(product, freeText) => {
+                              if (product) {
                                 updateLine(line.key, {
-                                  description: e.target.value,
-                                })
+                                  product_id: product.id,
+                                  product_name: product.name,
+                                  description:
+                                    product.description_sale ||
+                                    product.description ||
+                                    product.name,
+                                  uom: product.uom || line.uom,
+                                  unit_price: String(
+                                    product.list_price || 0
+                                  ),
+                                });
+                              } else if (typeof freeText === "string") {
+                                updateLine(line.key, {
+                                  product_id: null,
+                                  product_name: freeText,
+                                  description:
+                                    line.description || freeText,
+                                });
                               }
-                            />
-                          </TableCell>
-                        ) : null}
+                            }}
+                          />
+                          <Input
+                            className="h-8 rounded-sm mt-1 border-0 border-b border-slate-200 shadow-none focus-visible:ring-0 px-0"
+                            value={line.description}
+                            disabled={readOnly}
+                            placeholder="Description"
+                            onChange={(e) =>
+                              updateLine(line.key, {
+                                description: e.target.value,
+                              })
+                            }
+                          />
+                        </TableCell>
                         <TableCell>
                           <Input
-                            className="h-8 rounded-sm"
+                            className="h-8 rounded-sm text-[#017e84] tabular-nums"
                             type="number"
                             min="0"
                             step="0.01"
@@ -1606,13 +1512,13 @@ export function SalesQuotationFormView({
                                   });
                                 }}
                                 onBlur={(e) => {
-                                  const delivered = parseFloat(e.target.value) || 0;
+                                  const delivered =
+                                    parseFloat(e.target.value) || 0;
                                   const err = validateDeliveredQuantity(
                                     qtyNum,
                                     delivered
                                   );
                                   if (err) toast.error(err);
-                                  // Clamp display if somehow over (keep typed value for correction)
                                   if (delivered < 0) {
                                     updateLine(line.key, {
                                       qty_delivered: "0",
@@ -1625,66 +1531,52 @@ export function SalesQuotationFormView({
                               {invoicedQty.toFixed(2)}
                             </TableCell>
                           </>
-                        ) : (
-                          <TableCell>
-                            <Select
-                              value={line.uom}
-                              onValueChange={(v) =>
-                                updateLine(line.key, { uom: v })
-                              }
-                              disabled={readOnly}
-                            >
-                              <SelectTrigger className="h-8 rounded-sm">
-                                <SelectValue />
-                              </SelectTrigger>
-                              <SelectContent>
-                                {SALES_UOM_OPTIONS.map((u) => (
-                                  <SelectItem key={u.value} value={u.value}>
-                                    {u.label}
-                                  </SelectItem>
-                                ))}
-                              </SelectContent>
-                            </Select>
-                          </TableCell>
-                        )}
+                        ) : null}
                         <TableCell>
                           <Input
-                            className="h-8 rounded-sm"
+                            key={`${line.key}-price-${taxMode}`}
+                            className="h-8 rounded-sm tabular-nums"
                             type="number"
                             min="0"
                             step="0.01"
-                            value={line.unit_price}
+                            defaultValue={displayPrice}
                             disabled={readOnly}
-                            onChange={(e) =>
+                            onBlur={(e) => {
+                              const next = unitPriceFromDisplay(
+                                parseFloat(e.target.value) || 0,
+                                taxPct,
+                                taxMode
+                              );
                               updateLine(line.key, {
-                                unit_price: e.target.value,
-                              })
-                            }
+                                unit_price: String(next),
+                              });
+                            }}
                           />
                         </TableCell>
-                        {!isSalesOrderDoc ? (
-                          <TableCell>
-                            <Input
-                              className="h-8 rounded-sm"
-                              type="number"
-                              min="0"
-                              max="100"
-                              step="0.01"
-                              value={line.discount}
-                              disabled={readOnly}
-                              onChange={(e) =>
-                                updateLine(line.key, {
-                                  discount: e.target.value,
-                                })
-                              }
-                            />
-                          </TableCell>
-                        ) : null}
                         <TableCell>
-                          {isSalesOrderDoc && Number(line.taxes) > 0 ? (
-                            <span className="inline-flex items-center rounded-sm border border-rose-200 bg-rose-50 px-1.5 py-0.5 text-[11px] font-medium text-rose-800">
-                              Tax {line.taxes}%
+                          {readOnly && taxPct > 0 ? (
+                            <span className="inline-flex items-center rounded-sm border border-[#017e84]/30 bg-[#017e84]/10 px-1.5 py-0.5 text-[11px] font-medium text-[#017e84]">
+                              GST {taxPct}%
                             </span>
+                          ) : taxPct > 0 ? (
+                            <div className="space-y-1">
+                              <span className="inline-flex items-center rounded-sm border border-[#017e84]/30 bg-[#017e84]/10 px-1.5 py-0.5 text-[11px] font-medium text-[#017e84]">
+                                GST {taxPct}%
+                              </span>
+                              <Input
+                                className="h-7 rounded-sm text-[11px]"
+                                type="number"
+                                min="0"
+                                step="0.01"
+                                value={line.taxes}
+                                disabled={readOnly}
+                                onChange={(e) =>
+                                  updateLine(line.key, {
+                                    taxes: e.target.value,
+                                  })
+                                }
+                              />
+                            </div>
                           ) : (
                             <Input
                               className="h-8 rounded-sm"
@@ -1693,6 +1585,7 @@ export function SalesQuotationFormView({
                               step="0.01"
                               value={line.taxes}
                               disabled={readOnly}
+                              placeholder="Tax %"
                               onChange={(e) =>
                                 updateLine(line.key, {
                                   taxes: e.target.value,
@@ -1702,9 +1595,7 @@ export function SalesQuotationFormView({
                           )}
                         </TableCell>
                         <TableCell className="text-right font-medium tabular-nums whitespace-nowrap">
-                          {formatMoney(
-                            isSalesOrderDoc ? amounts.untaxed : amounts.total
-                          )}
+                          {formatMoney(amountShown)}
                         </TableCell>
                         <TableCell>
                           {!readOnly ? (
@@ -1727,7 +1618,7 @@ export function SalesQuotationFormView({
             </div>
 
             {!readOnly ? (
-              <div className="flex flex-wrap items-center gap-3 text-sm">
+              <div className="flex flex-wrap items-center gap-4 text-sm">
                 <button
                   type="button"
                   className="text-[#017e84] hover:underline font-medium"
@@ -1737,7 +1628,7 @@ export function SalesQuotationFormView({
                 </button>
                 <button
                   type="button"
-                  className="text-[#017e84] hover:underline"
+                  className="text-[#017e84] hover:underline font-medium"
                   onClick={() =>
                     setLines((prev) => [
                       ...prev,
@@ -1755,7 +1646,7 @@ export function SalesQuotationFormView({
                 </button>
                 <button
                   type="button"
-                  className="text-[#017e84] hover:underline"
+                  className="text-[#017e84] hover:underline font-medium"
                   onClick={() =>
                     setLines((prev) => [
                       ...prev,
@@ -1771,33 +1662,66 @@ export function SalesQuotationFormView({
                 >
                   Add a note
                 </button>
+                <button
+                  type="button"
+                  className="text-[#017e84] hover:underline font-medium"
+                  onClick={() => {
+                    setCatalogOpen(true);
+                    setCatalogQuery("");
+                    setCatalogLoading(true);
+                    void searchSalesProductsForQuotation("", 40).then((res) => {
+                      setCatalogLoading(false);
+                      if ("products" in res) {
+                        setCatalogProducts(res.products || []);
+                      } else {
+                        setCatalogProducts([]);
+                      }
+                    });
+                  }}
+                >
+                  Catalog
+                </button>
               </div>
             ) : null}
 
-            <div
-              className={`flex ${isSalesOrderDoc ? "justify-between items-start gap-4" : "justify-end"}`}
-            >
-              {isSalesOrderDoc ? (
-                <p className="text-sm text-secondary-muted max-w-sm pt-1">
-                  {customerNotes || "Terms and conditions..."}
-                </p>
-              ) : null}
-              <div className="w-full max-w-xs space-y-1.5 text-sm shrink-0">
+            <div className="flex flex-col sm:flex-row gap-6 pt-2 justify-between">
+              <div className="flex-1 max-w-md space-y-1">
+                <Label className="text-xs text-secondary-muted font-normal">
+                  Terms and Conditions
+                </Label>
+                <Textarea
+                  value={customerNotes}
+                  onChange={(e) => setCustomerNotes(e.target.value)}
+                  disabled={readOnly}
+                  placeholder="Terms and conditions..."
+                  className="min-h-[88px] rounded-sm border-slate-200 text-sm"
+                />
+              </div>
+              <div className="w-full sm:w-64 space-y-1.5 text-sm shrink-0">
                 <div className="flex justify-between">
                   <span className="text-secondary-muted">Untaxed Amount</span>
                   <span className="tabular-nums font-medium">
                     {formatMoney(totals.untaxed)}
                   </span>
                 </div>
-                <div className="flex justify-between">
-                  <span className="text-secondary-muted">
-                    {isSalesOrderDoc ? "Taxes" : "Taxes"}
-                  </span>
-                  <span className="tabular-nums font-medium">
-                    {formatMoney(totals.tax)}
-                  </span>
-                </div>
-                <div className="flex justify-between border-t border-slate-200 pt-2 text-base font-semibold text-primary-dark">
+                {totals.tax > 0 ? (
+                  <div className="flex justify-between">
+                    <span className="text-secondary-muted">
+                      General Sales Tax
+                    </span>
+                    <span className="tabular-nums font-medium">
+                      {formatMoney(totals.tax)}
+                    </span>
+                  </div>
+                ) : (
+                  <div className="flex justify-between">
+                    <span className="text-secondary-muted">Taxes</span>
+                    <span className="tabular-nums font-medium">
+                      {formatMoney(totals.tax)}
+                    </span>
+                  </div>
+                )}
+                <div className="flex justify-between border-t border-slate-200 pt-2 text-base font-semibold text-[#017e84]">
                   <span>Total</span>
                   <span className="tabular-nums">
                     {formatMoney(totals.total)}
@@ -1810,146 +1734,141 @@ export function SalesQuotationFormView({
 
         {activeTab === "other" ? (
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 max-w-3xl">
-            {isSalesOrderDoc ? (
-              <>
-                <div>
-                  <Label className="text-xs text-secondary-muted">
-                    Contact Person
-                  </Label>
-                  <Select
-                    value={contactPersonId || undefined}
-                    onValueChange={(v) => setContactPersonId(v)}
-                    disabled={readOnly || !contactId}
-                  >
-                    <SelectTrigger className="mt-1 h-9 rounded-sm">
-                      <SelectValue placeholder="Select contact person" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {personOptions.map((opt) => (
-                        <SelectItem key={opt.id} value={opt.id}>
-                          {opt.name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div>
-                  <Label className="text-xs text-secondary-muted">
-                    Delivery Address
-                  </Label>
-                  <Select
-                    value={deliveryAddressId || undefined}
-                    onValueChange={(v) => setDeliveryAddressId(v)}
-                    disabled={readOnly || !contactId}
-                  >
-                    <SelectTrigger className="mt-1 h-9 rounded-sm">
-                      <SelectValue placeholder="Delivery address" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {deliveryOptions.map((opt) => (
-                        <SelectItem key={opt.id} value={opt.id}>
-                          {opt.name}
-                          {opt.address ? ` — ${opt.address}` : ""}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div>
-                  <Label className="text-xs text-secondary-muted">
-                    Invoice Address
-                  </Label>
-                  <Select
-                    value={invoiceAddressId || undefined}
-                    onValueChange={(v) => setInvoiceAddressId(v)}
-                    disabled={readOnly || !contactId}
-                  >
-                    <SelectTrigger className="mt-1 h-9 rounded-sm">
-                      <SelectValue placeholder="Invoice address" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {invoiceOptions.map((opt) => (
-                        <SelectItem key={opt.id} value={opt.id}>
-                          {opt.name}
-                          {opt.address ? ` — ${opt.address}` : ""}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div>
-                  <Label className="text-xs text-secondary-muted">
-                    Salesperson
-                  </Label>
-                  <Select
-                    value={salespersonId || undefined}
-                    onValueChange={(v) => setSalespersonId(v)}
-                    disabled={readOnly}
-                  >
-                    <SelectTrigger className="mt-1 h-9 rounded-sm">
-                      <SelectValue placeholder="Select salesperson" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {salespeople.map((sp) => (
-                        <SelectItem key={sp.id} value={sp.id}>
-                          {sp.name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div>
-                  <Label className="text-xs text-secondary-muted">
-                    Sales Team
-                  </Label>
-                  <Input
-                    className="mt-1 h-9 rounded-sm"
-                    value={salesTeam}
-                    disabled={readOnly}
-                    onChange={(e) => setSalesTeam(e.target.value)}
-                  />
-                </div>
-                {quotationId ? (
-                  <div>
-                    <Label className="text-xs text-secondary-muted">
-                      Delivery Status
-                    </Label>
-                    <Select
-                      value={detail?.delivery_status || "waiting"}
-                      disabled={readOnly || isPending}
-                      onValueChange={(v) => {
-                        runWorkflow(() =>
-                          setSalesOrderDeliveryStatus(
-                            quotationId,
-                            v as "waiting" | "ready" | "delivered"
-                          )
-                        );
-                      }}
-                    >
-                      <SelectTrigger className="mt-1 h-9 rounded-sm">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="waiting">Waiting</SelectItem>
-                        <SelectItem value="ready">Ready</SelectItem>
-                        <SelectItem value="delivered">Delivered</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                ) : null}
-                <div className="sm:col-span-2">
-                  <Label className="text-xs text-secondary-muted">
-                    Terms and conditions
-                  </Label>
-                  <Textarea
-                    className="mt-1 min-h-[100px] rounded-sm"
-                    value={customerNotes}
-                    disabled={readOnly}
-                    onChange={(e) => setCustomerNotes(e.target.value)}
-                    placeholder="Terms and conditions..."
-                  />
-                </div>
-              </>
+            {!isSalesOrderDoc ? (
+              <div>
+                <Label className="text-xs text-secondary-muted">
+                  Quotation Date
+                </Label>
+                <Input
+                  type="date"
+                  className="mt-1 h-9 rounded-sm"
+                  value={quotationDate}
+                  disabled={readOnly}
+                  onChange={(e) => setQuotationDate(e.target.value)}
+                />
+              </div>
+            ) : null}
+            <div>
+              <Label className="text-xs text-secondary-muted">
+                Contact Person
+              </Label>
+              <Select
+                value={contactPersonId || undefined}
+                onValueChange={(v) => setContactPersonId(v)}
+                disabled={readOnly || !contactId}
+              >
+                <SelectTrigger className="mt-1 h-9 rounded-sm">
+                  <SelectValue placeholder="Select contact person" />
+                </SelectTrigger>
+                <SelectContent>
+                  {personOptions.map((opt) => (
+                    <SelectItem key={opt.id} value={opt.id}>
+                      {opt.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <Label className="text-xs text-secondary-muted">
+                Delivery Address
+              </Label>
+              <Select
+                value={deliveryAddressId || undefined}
+                onValueChange={(v) => setDeliveryAddressId(v)}
+                disabled={readOnly || !contactId}
+              >
+                <SelectTrigger className="mt-1 h-9 rounded-sm">
+                  <SelectValue placeholder="Delivery address" />
+                </SelectTrigger>
+                <SelectContent>
+                  {deliveryOptions.map((opt) => (
+                    <SelectItem key={opt.id} value={opt.id}>
+                      {opt.name}
+                      {opt.address ? ` — ${opt.address}` : ""}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <Label className="text-xs text-secondary-muted">
+                Invoice Address
+              </Label>
+              <Select
+                value={invoiceAddressId || undefined}
+                onValueChange={(v) => setInvoiceAddressId(v)}
+                disabled={readOnly || !contactId}
+              >
+                <SelectTrigger className="mt-1 h-9 rounded-sm">
+                  <SelectValue placeholder="Invoice address" />
+                </SelectTrigger>
+                <SelectContent>
+                  {invoiceOptions.map((opt) => (
+                    <SelectItem key={opt.id} value={opt.id}>
+                      {opt.name}
+                      {opt.address ? ` — ${opt.address}` : ""}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <Label className="text-xs text-secondary-muted">Salesperson</Label>
+              <Select
+                value={salespersonId || undefined}
+                onValueChange={(v) => setSalespersonId(v)}
+                disabled={readOnly}
+              >
+                <SelectTrigger className="mt-1 h-9 rounded-sm">
+                  <SelectValue placeholder="Select salesperson" />
+                </SelectTrigger>
+                <SelectContent>
+                  {salespeople.map((sp) => (
+                    <SelectItem key={sp.id} value={sp.id}>
+                      {sp.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <Label className="text-xs text-secondary-muted">Sales Team</Label>
+              <Input
+                className="mt-1 h-9 rounded-sm"
+                value={salesTeam}
+                disabled={readOnly}
+                onChange={(e) => setSalesTeam(e.target.value)}
+                placeholder="e.g. Direct Sales"
+              />
+            </div>
+            {isSalesOrderDoc && quotationId ? (
+              <div>
+                <Label className="text-xs text-secondary-muted">
+                  Delivery Status
+                </Label>
+                <Select
+                  value={detail?.delivery_status || "waiting"}
+                  disabled={readOnly || isPending}
+                  onValueChange={(v) => {
+                    runWorkflow(() =>
+                      setSalesOrderDeliveryStatus(
+                        quotationId,
+                        v as "waiting" | "ready" | "delivered"
+                      )
+                    );
+                  }}
+                >
+                  <SelectTrigger className="mt-1 h-9 rounded-sm">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="waiting">Waiting</SelectItem>
+                    <SelectItem value="ready">Ready</SelectItem>
+                    <SelectItem value="delivered">Delivered</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
             ) : null}
             <div>
               <Label className="text-xs text-secondary-muted">
@@ -1972,19 +1891,6 @@ export function SalesQuotationFormView({
                 placeholder="Public Pricelist"
               />
             </div>
-            {!isSalesOrderDoc ? (
-              <div>
-                <Label className="text-xs text-secondary-muted">
-                  Payment Terms
-                </Label>
-                <Input
-                  className="mt-1 h-9 rounded-sm"
-                  value={paymentTerms}
-                  disabled={readOnly}
-                  onChange={(e) => setPaymentTerms(e.target.value)}
-                />
-              </div>
-            ) : null}
             <div>
               <Label className="text-xs text-secondary-muted">
                 Fiscal Position
@@ -1996,32 +1902,13 @@ export function SalesQuotationFormView({
                 onChange={(e) => setFiscalPosition(e.target.value)}
                 placeholder="Placeholder"
               />
-              <p className="text-[11px] text-secondary-muted mt-1">
-                Tax engine integration prepared for a later phase.
-              </p>
             </div>
-          </div>
-        ) : null}
-
-        {activeTab === "notes" ? (
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-            <div>
-              <Label className="text-xs text-secondary-muted">
-                Customer Notes (printable later)
-              </Label>
-              <Textarea
-                className="mt-1 min-h-[140px] rounded-sm"
-                value={customerNotes}
-                disabled={readOnly}
-                onChange={(e) => setCustomerNotes(e.target.value)}
-              />
-            </div>
-            <div>
+            <div className="sm:col-span-2">
               <Label className="text-xs text-secondary-muted">
                 Internal Notes
               </Label>
               <Textarea
-                className="mt-1 min-h-[140px] rounded-sm"
+                className="mt-1 min-h-[100px] rounded-sm"
                 value={internalNotes}
                 disabled={readOnly}
                 onChange={(e) => setInternalNotes(e.target.value)}
@@ -2034,7 +1921,7 @@ export function SalesQuotationFormView({
         <div className="min-h-[520px] xl:min-h-0 bg-slate-50/40">
           <SalesQuotationChatter
             key={chatterKey}
-            quotationId={quotationId || detail?.id || null}
+            quotationId={recordId || detail?.id || null}
           />
         </div>
       </div>
@@ -2235,6 +2122,115 @@ export function SalesQuotationFormView({
               ))
             )}
           </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={catalogOpen}
+        onOpenChange={(open) => {
+          setCatalogOpen(open);
+          if (!open) {
+            setCatalogQuery("");
+            setCatalogProducts([]);
+          }
+        }}
+      >
+        <DialogContent className="max-w-lg max-h-[80vh] overflow-hidden flex flex-col">
+          <DialogHeader>
+            <DialogTitle>Product Catalog</DialogTitle>
+          </DialogHeader>
+          <Input
+            value={catalogQuery}
+            placeholder="Search products…"
+            className="h-9 rounded-sm"
+            onChange={(e) => {
+              const q = e.target.value;
+              setCatalogQuery(q);
+              setCatalogLoading(true);
+              window.setTimeout(() => {
+                void searchSalesProductsForQuotation(q, 40).then((res) => {
+                  setCatalogLoading(false);
+                  if ("products" in res) setCatalogProducts(res.products || []);
+                  else setCatalogProducts([]);
+                });
+              }, 200);
+            }}
+          />
+          <div className="flex-1 overflow-y-auto border border-slate-200 rounded-sm min-h-[240px]">
+            {catalogLoading ? (
+              <div className="flex items-center justify-center gap-2 p-6 text-sm text-secondary-muted">
+                <Loader2 className="h-4 w-4 animate-spin" />
+                Loading…
+              </div>
+            ) : catalogProducts.length === 0 ? (
+              <p className="p-6 text-sm text-secondary-muted text-center">
+                No products found.
+              </p>
+            ) : (
+              <ul className="divide-y divide-slate-100">
+                {catalogProducts.map((product) => (
+                  <li key={product.id}>
+                    <button
+                      type="button"
+                      className="w-full text-left px-3 py-2.5 hover:bg-[#017e84]/5 flex items-center justify-between gap-3"
+                      onClick={() => {
+                        setLines((prev) => {
+                          const empty = prev.find(
+                            (l) =>
+                              !(
+                                l.display_type && l.display_type !== "product"
+                              ) && !String(l.product_name || "").trim()
+                          );
+                          const draft = newLineDraft({
+                            product_id: product.id,
+                            product_name: product.name,
+                            description:
+                              product.description_sale ||
+                              product.description ||
+                              product.name,
+                            uom: product.uom || "Units",
+                            unit_price: String(product.list_price || 0),
+                          });
+                          if (empty) {
+                            return prev.map((l) =>
+                              l.key === empty.key
+                                ? { ...draft, key: l.key }
+                                : l
+                            );
+                          }
+                          return [...prev, draft];
+                        });
+                        toast.success(`Added ${product.name}`);
+                      }}
+                    >
+                      <span className="min-w-0">
+                        <span className="block text-sm font-medium text-primary-dark truncate">
+                          {product.name}
+                        </span>
+                        {product.default_code ? (
+                          <span className="block text-[11px] text-secondary-muted font-mono">
+                            {product.default_code}
+                          </span>
+                        ) : null}
+                      </span>
+                      <span className="text-sm tabular-nums text-secondary-muted shrink-0">
+                        {formatMoney(Number(product.list_price) || 0)}
+                      </span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              className="rounded-sm"
+              onClick={() => setCatalogOpen(false)}
+            >
+              Close
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
     </div>

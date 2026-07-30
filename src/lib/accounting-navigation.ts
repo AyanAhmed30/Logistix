@@ -528,6 +528,21 @@ export function getAccountingPageMeta(pathname: string): AccountingPageMeta {
       showFavorites: false,
     };
   }
+  if (pathname === '/accounting/credit-notes/new') {
+    return {
+      title: 'New Credit Note',
+      subtitle: 'Create a draft customer credit note',
+      breadcrumbs: [
+        { label: 'Accounting', href: '/accounting' },
+        { label: 'Customers', href: '/accounting/customers' },
+        { label: 'Credit Notes', href: '/accounting/credit-notes' },
+        { label: 'New' },
+      ],
+      searchMode: 'none',
+      showFilters: false,
+      showFavorites: false,
+    };
+  }
   if (pathname.startsWith('/accounting/credit-notes/') && pathname !== '/accounting/credit-notes') {
     return {
       title: 'Credit Note',

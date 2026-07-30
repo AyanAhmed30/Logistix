@@ -1,6 +1,6 @@
 /**
- * Org-scoped quotation numbering: QT00001, QT00002, …
- * Falls back to scanning quotations if sequences table is missing.
+ * Org-scoped quotation numbering: S00001, S00002, … (Odoo-style).
+ * Always emits S##### — never QT.
  */
 
 /**
@@ -10,21 +10,24 @@
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type SupabaseLike = { from: (table: string) => any };
 
-function padQt(n: number) {
-  return `QT${String(n).padStart(5, '0')}`;
+const QUOTATION_PREFIX = 'S';
+
+function padS(n: number) {
+  return `${QUOTATION_PREFIX}${String(n).padStart(5, '0')}`;
 }
 
 function maxSequenceFromNumbers(numbers: string[]): number {
   let max = 0;
   for (const raw of numbers) {
-    const qt = String(raw || '').match(/QT(\d+)/i);
-    if (qt) {
-      max = Math.max(max, parseInt(qt[1], 10));
+    const s = String(raw || '').match(/^S(\d+)$/i);
+    if (s) {
+      max = Math.max(max, parseInt(s[1], 10));
       continue;
     }
-    const legacy = String(raw || '').match(/^S(\d+)$/i);
-    if (legacy) {
-      max = Math.max(max, parseInt(legacy[1], 10));
+    // Legacy QT##### — keep sequence continuous when migrating
+    const qt = String(raw || '').match(/^QT(\d+)$/i);
+    if (qt) {
+      max = Math.max(max, parseInt(qt[1], 10));
     }
   }
   return max;
@@ -32,7 +35,7 @@ function maxSequenceFromNumbers(numbers: string[]): number {
 
 /**
  * Allocate next unique quotation number for an organization.
- * Prefers `sales_number_sequences`; supports future org-based prefixes.
+ * Always returns S00001-style numbers (never QT).
  */
 export async function allocateSalesQuotationNumber(
   supabase: SupabaseLike,
@@ -47,16 +50,32 @@ export async function allocateSalesQuotationNumber(
         .maybeSingle();
 
       if (seq) {
-        const next = Math.max(1, Number(seq.next_number) || 1);
-        const prefix = String(seq.prefix || 'QT').toUpperCase();
+        let next = Math.max(1, Number(seq.next_number) || 1);
+
+        // Avoid colliding with any existing S/QT number still in the table
+        const { data: existing } = await supabase
+          .from('quotations')
+          .select('quotation_number')
+          .eq('organization_id', organizationId)
+          .not('quotation_number', 'is', null)
+          .limit(1000);
+        const maxExisting = maxSequenceFromNumbers(
+          (existing || []).map(
+            (r: { quotation_number: string }) => r.quotation_number
+          )
+        );
+        next = Math.max(next, maxExisting + 1);
+
         await supabase
           .from('sales_number_sequences')
           .update({
+            prefix: QUOTATION_PREFIX,
             next_number: next + 1,
             updated_at: new Date().toISOString(),
           })
           .eq('organization_id', organizationId);
-        return `${prefix}${String(next).padStart(5, '0')}`;
+
+        return padS(next);
       }
 
       // Bootstrap sequence from existing quotations in org
@@ -65,20 +84,22 @@ export async function allocateSalesQuotationNumber(
         .select('quotation_number')
         .eq('organization_id', organizationId)
         .not('quotation_number', 'is', null)
-        .limit(500);
+        .limit(1000);
 
       const max = maxSequenceFromNumbers(
-        (existing || []).map((r: { quotation_number: string }) => r.quotation_number)
+        (existing || []).map(
+          (r: { quotation_number: string }) => r.quotation_number
+        )
       );
       const next = max + 1;
       await supabase.from('sales_number_sequences').insert([
         {
           organization_id: organizationId,
-          prefix: 'QT',
+          prefix: QUOTATION_PREFIX,
           next_number: next + 1,
         },
       ]);
-      return padQt(next);
+      return padS(next);
     } catch {
       // sequences table may not exist yet — fall through
     }
@@ -89,10 +110,10 @@ export async function allocateSalesQuotationNumber(
     .select('quotation_number')
     .not('quotation_number', 'is', null)
     .order('created_at', { ascending: false })
-    .limit(200);
+    .limit(500);
 
   const max = maxSequenceFromNumbers(
     (lastRows || []).map((r: { quotation_number: string }) => r.quotation_number)
   );
-  return padQt(max + 1);
+  return padS(max + 1);
 }

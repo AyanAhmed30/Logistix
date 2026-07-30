@@ -1415,6 +1415,7 @@ export type CustomerSearchResult = {
 /**
  * Search contacts for customer/contact pickers (quotations, CRM opportunities).
  * Server-filtered with a small limit — avoids loading the full contacts table.
+ * Matches Customer Name and Customer ID (lead_id_formatted).
  */
 export async function searchCustomerContacts(
   query: string,
@@ -1428,13 +1429,26 @@ export async function searchCustomerContacts(
     if ('empty' in org) return { contacts: [] };
 
     const { applyOrganizationFilter } = await import('@/lib/admin-organization-context');
-    const { mergeContactLeadIdsForPicker, CONTACTS_PICKER_SELECT } = await import(
-      '@/lib/contact-lead-id'
-    );
+    const {
+      mergeContactLeadIdsForPicker,
+      CONTACTS_PICKER_SELECT,
+      isContactLeadIdColumnAvailable,
+      findContactIdsByCustomerId,
+      looksLikeCustomerIdQuery,
+      customerIdSearchTokens,
+    } = await import('@/lib/contact-lead-id');
 
     const supabase = await createAdminClient();
     const needle = String(query || '').trim();
     const limit = needle ? 40 : 50;
+    const idTokens = customerIdSearchTokens(needle);
+    const idQuery = looksLikeCustomerIdQuery(needle);
+
+    // Dedicated Customer ID lookup (works even when name/email filters miss).
+    const idMatchedIds =
+      needle && idTokens.length
+        ? await findContactIdsByCustomerId(supabase, needle, limit)
+        : [];
 
     let q = supabase
       .from('contacts')
@@ -1447,7 +1461,7 @@ export async function searchCustomerContacts(
       q = applyOrganizationFilter(q, org.organizationId);
     }
 
-    if (needle) {
+    if (needle && !idQuery) {
       const escaped = needle.replace(/[%_,.()]/g, ' ').trim();
       const phoneDigits = needle.replace(/\D/g, '');
       const orParts = [
@@ -1458,6 +1472,28 @@ export async function searchCustomerContacts(
       ];
       if (phoneDigits.length >= 3) {
         orParts.push(`phone.ilike.%${phoneDigits}%`);
+      }
+      const columnOk = await isContactLeadIdColumnAvailable(supabase);
+      if (columnOk && idTokens.length) {
+        for (const token of idTokens) {
+          orParts.push(`lead_id_formatted.ilike.%${token}%`);
+        }
+      }
+      q = q.or(orParts.join(','));
+    } else if (needle && idQuery && idMatchedIds.length) {
+      q = q.in('id', idMatchedIds);
+    } else if (needle && idQuery) {
+      const escaped = needle.replace(/[%_,.()]/g, ' ').trim();
+      const orParts = [
+        `name.ilike.%${escaped}%`,
+        `company_name.ilike.%${escaped}%`,
+      ];
+      const columnOk = await isContactLeadIdColumnAvailable(supabase);
+      if (columnOk) {
+        for (const token of idTokens) {
+          orParts.push(`lead_id_formatted.eq.${token}`);
+          orParts.push(`lead_id_formatted.ilike.%${token}%`);
+        }
       }
       q = q.or(orParts.join(','));
     }
@@ -1473,6 +1509,26 @@ export async function searchCustomerContacts(
         lead_id_formatted?: string | null;
       }
     >;
+
+    // Merge any ID hits that the text query missed (e.g. schema-cache gaps).
+    if (idMatchedIds.length) {
+      const have = new Set(rows.map((r) => r.id));
+      const missing = idMatchedIds.filter((id) => !have.has(id));
+      if (missing.length) {
+        let idQ = supabase
+          .from('contacts')
+          .select(CONTACTS_PICKER_SELECT)
+          .in('id', missing)
+          .or(CONTACTS_LIST_OR_FILTER);
+        if (!('unscoped' in org)) {
+          idQ = applyOrganizationFilter(idQ, org.organizationId);
+        }
+        const { data: extra } = await idQ;
+        if (extra?.length) {
+          rows = [...rows, ...(extra as typeof rows)];
+        }
+      }
+    }
 
     try {
       const {
@@ -1498,13 +1554,6 @@ export async function searchCustomerContacts(
 
     rows = await mergeContactLeadIdsForPicker(supabase, rows);
 
-    // Customer ID search when column is not exposed via REST
-    if (/^\d{6}$/.test(needle) && !rows.some((r) => r.lead_id_formatted === needle)) {
-      const { mergeContactLeadIdsFromRpc } = await import('@/lib/contact-lead-id');
-      rows = await mergeContactLeadIdsFromRpc(supabase, rows);
-      rows = rows.filter((c) => String(c.lead_id_formatted || '').includes(needle));
-    }
-
     if (options?.scope === 'vendor') {
       rows = rows.filter((row) => Number(row.vendor_rank) > 0);
     } else if (options?.scope !== 'all') {
@@ -1514,8 +1563,14 @@ export async function searchCustomerContacts(
     }
 
     const needleLower = needle.toLowerCase();
+    const idTokenSet = new Set(idTokens.map((t) => t.toLowerCase()));
+    const digitsNeedle = needle.replace(/\D/g, '').toLowerCase();
     if (needleLower) {
       rows = rows.filter((c) => {
+        const leadId = String(c.lead_id_formatted || '').toLowerCase();
+        if (idTokenSet.size && [...idTokenSet].some((t) => leadId.includes(t))) {
+          return true;
+        }
         const hay = [
           c.name,
           c.company_name,
@@ -1527,12 +1582,37 @@ export async function searchCustomerContacts(
         ]
           .map((v) => String(v || '').toLowerCase())
           .join(' ');
-        return hay.includes(needleLower);
+        return (
+          hay.includes(needleLower) ||
+          (digitsNeedle.length >= 3 && hay.includes(digitsNeedle))
+        );
+      });
+    }
+
+    // Relevance: exact Customer ID → ID prefix → name prefix → recent
+    if (needleLower) {
+      rows.sort((a, b) => {
+        const aId = String(a.lead_id_formatted || '').toLowerCase();
+        const bId = String(b.lead_id_formatted || '').toLowerCase();
+        const aExact = idTokenSet.has(aId) || aId === needleLower ? 1 : 0;
+        const bExact = idTokenSet.has(bId) || bId === needleLower ? 1 : 0;
+        if (aExact !== bExact) return bExact - aExact;
+        const aIdPrefix = [...idTokenSet].some((t) => aId.startsWith(t)) ? 1 : 0;
+        const bIdPrefix = [...idTokenSet].some((t) => bId.startsWith(t)) ? 1 : 0;
+        if (aIdPrefix !== bIdPrefix) return bIdPrefix - aIdPrefix;
+        const aName = String(a.name || '').toLowerCase();
+        const bName = String(b.name || '').toLowerCase();
+        const aPrefix = aName.startsWith(needleLower) ? 1 : 0;
+        const bPrefix = bName.startsWith(needleLower) ? 1 : 0;
+        if (aPrefix !== bPrefix) return bPrefix - aPrefix;
+        const aCreated = a.created_at ? Date.parse(a.created_at) : 0;
+        const bCreated = b.created_at ? Date.parse(b.created_at) : 0;
+        return bCreated - aCreated;
       });
     }
 
     return {
-      contacts: rows.map((row) => ({
+      contacts: rows.slice(0, limit).map((row) => ({
         id: row.id,
         name: row.name,
         company_name: row.company_name,

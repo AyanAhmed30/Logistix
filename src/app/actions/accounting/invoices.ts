@@ -16,9 +16,11 @@ export type AccountingInvoiceListItem = {
   invoice_date: string;
   due_date: string | null;
   status: AccountingInvoiceStatus;
-  payment_state: 'not_paid' | 'partial' | 'paid' | 'overdue';
+  payment_state: 'not_paid' | 'in_payment' | 'partial' | 'paid' | 'overdue';
   amount_residual: number;
+  untaxed_amount: number;
   total_amount: number;
+  last_reminder_at: string | null;
   organization_id: string | null;
   organization_name: string | null;
 };
@@ -41,7 +43,7 @@ export type AccountingInvoiceDetail = {
   id: string;
   invoice_number: string;
   status: AccountingInvoiceStatus;
-  payment_state: 'not_paid' | 'partial' | 'paid' | 'overdue';
+  payment_state: 'not_paid' | 'in_payment' | 'partial' | 'paid' | 'overdue';
   amount_paid: number;
   amount_residual: number;
   contact_id: string | null;
@@ -484,6 +486,9 @@ export async function createManualAccountingInvoice() {
       organization_id: orgId,
       invoice_number: invoiceNumber,
       status: 'draft',
+      payment_state: 'not_paid',
+      amount_paid: 0,
+      amount_residual: 0,
       contact_id: null,
       customer_name: '',
       customer_lead_id: null,
@@ -515,8 +520,11 @@ export async function createManualAccountingInvoice() {
       .select('id')
       .single();
 
-    if (invError && /customer_notes|column/i.test(invError.message)) {
+    if (invError && /customer_notes|payment_state|amount_paid|amount_residual|column/i.test(invError.message)) {
       delete insertPayload.customer_notes;
+      delete insertPayload.payment_state;
+      delete insertPayload.amount_paid;
+      delete insertPayload.amount_residual;
       const retry = await supabase
         .from('accounting_customer_invoices')
         .insert([insertPayload])
@@ -639,8 +647,8 @@ export async function getAccountingCustomerInvoices(filters: {
     const supabase = await createAdminClient();
     const page = Math.max(1, filters.page || 1);
     const pageSize = Math.min(100, Math.max(10, filters.pageSize || 40));
-    const sortBy = filters.sortBy || 'invoice_date';
-    const ascending = filters.sortDir === 'asc';
+    const sortBy = filters.sortBy || 'invoice_number';
+    const ascending = filters.sortDir !== 'desc';
 
     let query = supabase
       .from('accounting_customer_invoices')
@@ -664,6 +672,7 @@ export async function getAccountingCustomerInvoices(filters: {
 
     query = query
       .order(sortBy, { ascending, nullsFirst: false })
+      .order('created_at', { ascending, nullsFirst: false })
       .range((page - 1) * pageSize, page * pageSize - 1);
 
     const { data, error, count } = await query;
@@ -700,16 +709,47 @@ export async function getAccountingCustomerInvoices(filters: {
     }
 
     const { computePaymentState } = await import('@/lib/accounting-payments');
+
+    const invoiceIds = rows.map((r) => String(r.id));
+    const reminderMap = new Map<string, string>();
+    if (invoiceIds.length) {
+      try {
+        const { data: reminders } = await supabase
+          .from('accounting_reminders')
+          .select('invoice_id, sent_at, due_at, status, created_at')
+          .in('invoice_id', invoiceIds)
+          .order('created_at', { ascending: false });
+        for (const rem of reminders || []) {
+          const invId = String(rem.invoice_id || '');
+          if (!invId || reminderMap.has(invId)) continue;
+          const at = rem.sent_at || rem.due_at || rem.created_at;
+          if (at) reminderMap.set(invId, String(at));
+        }
+      } catch {
+        // reminders table optional
+      }
+    }
+
     const invoices: AccountingInvoiceListItem[] = rows.map((r) => {
       const orgId = r.organization_id ? String(r.organization_id) : null;
       const total = Number(r.total_amount) || 0;
       const paid = Number(r.amount_paid) || 0;
-      const computed = computePaymentState({
-        total,
-        amountPaid: paid,
-        dueDate: r.due_date ? String(r.due_date) : null,
-        workflowStatus: String(r.status || ''),
-      });
+      const storedState = String(r.payment_state || 'not_paid');
+      const computed =
+        storedState === 'in_payment'
+          ? {
+              paymentState: 'in_payment' as const,
+              outstanding: Number.isFinite(Number(r.amount_residual))
+                ? Number(r.amount_residual)
+                : Math.max(0, total - paid),
+              amountPaid: paid,
+            }
+          : computePaymentState({
+              total,
+              amountPaid: paid,
+              dueDate: r.due_date ? String(r.due_date) : null,
+              workflowStatus: String(r.status || ''),
+            });
       return {
         id: String(r.id),
         invoice_number: String(r.invoice_number || ''),
@@ -723,7 +763,9 @@ export async function getAccountingCustomerInvoices(filters: {
         status: (String(r.status || 'draft') as AccountingInvoiceStatus) || 'draft',
         payment_state: computed.paymentState,
         amount_residual: computed.outstanding,
+        untaxed_amount: Number(r.untaxed_amount) || 0,
         total_amount: total,
+        last_reminder_at: reminderMap.get(String(r.id)) || null,
         organization_id: orgId,
         organization_name: orgId ? orgMap.get(orgId) || null : null,
       };
@@ -818,12 +860,24 @@ export async function getAccountingInvoiceDetail(invoiceId: string) {
     }
 
     const { computePaymentState } = await import('@/lib/accounting-payments');
-    const paymentComputed = computePaymentState({
-      total: totalAmount,
-      amountPaid,
-      dueDate: inv.due_date ? String(inv.due_date) : null,
-      workflowStatus: String(inv.status || ''),
-    });
+    const storedState = String(inv.payment_state || 'not_paid');
+    const paymentComputed =
+      storedState === 'in_payment'
+        ? {
+            paymentState: 'in_payment' as const,
+            amountPaid: Number.isFinite(Number(inv.amount_paid))
+              ? Number(inv.amount_paid)
+              : 0,
+            outstanding: Number.isFinite(Number(inv.amount_residual))
+              ? Number(inv.amount_residual)
+              : Math.max(0, totalAmount - (Number(inv.amount_paid) || 0)),
+          }
+        : computePaymentState({
+            total: totalAmount,
+            amountPaid,
+            dueDate: inv.due_date ? String(inv.due_date) : null,
+            workflowStatus: String(inv.status || ''),
+          });
 
     const detail: AccountingInvoiceDetail = {
       id: String(inv.id),

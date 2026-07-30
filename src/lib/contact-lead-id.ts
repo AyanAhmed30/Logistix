@@ -67,12 +67,21 @@ type ContactLeadRow = {
 
 type SupabaseAdmin = Awaited<ReturnType<typeof createAdminClient>>;
 
+let leadIdColumnAvailableCache: boolean | null = null;
+
 export async function isContactLeadIdColumnAvailable(
   supabase: SupabaseAdmin
 ): Promise<boolean> {
+  if (leadIdColumnAvailableCache !== null) return leadIdColumnAvailableCache;
   const { error } = await supabase.from('contacts').select('lead_id_formatted').limit(1);
-  if (!error) return true;
-  return !isMissingLeadIdColumnError(error);
+  if (!error) {
+    leadIdColumnAvailableCache = true;
+    return true;
+  }
+  const missing = isMissingLeadIdColumnError(error);
+  // Cache positive "available"; only cache missing when clearly a schema issue.
+  if (missing) leadIdColumnAvailableCache = false;
+  return !missing;
 }
 
 type ContactLeadLookupMeta = {
@@ -317,6 +326,109 @@ export async function mergeContactLeadIdsForPicker<T extends ContactLeadRow>(
   contacts: T[]
 ): Promise<T[]> {
   return mergeContactLeadIdsForList(supabase, contacts);
+}
+
+/**
+ * Normalize picker input into Customer ID search tokens.
+ * Accepts `123456`, `#123456`, `C123456`, `C000123`, etc.
+ */
+export function customerIdSearchTokens(raw: string): string[] {
+  const trimmed = String(raw || '').trim();
+  if (!trimmed) return [];
+
+  const tokens = new Set<string>();
+  const noHash = trimmed.replace(/^#/, '');
+  const digitsOnly = noHash.replace(/\D/g, '');
+
+  if (/^\d{6}$/.test(trimmed)) tokens.add(trimmed);
+  if (/^\d{6}$/.test(noHash)) tokens.add(noHash);
+  if (/^[Cc]\d+$/.test(noHash)) {
+    const d = noHash.slice(1);
+    tokens.add(d);
+    if (d.length < 6) tokens.add(d.padStart(6, '0'));
+    if (d.length > 6) tokens.add(d.slice(-6));
+  }
+  if (digitsOnly.length >= 3 && digitsOnly.length <= 8) {
+    tokens.add(digitsOnly);
+    if (digitsOnly.length < 6) tokens.add(digitsOnly.padStart(6, '0'));
+    if (digitsOnly.length > 6) tokens.add(digitsOnly.slice(-6));
+  }
+
+  return [...tokens].filter(Boolean);
+}
+
+/** True when the query is primarily a Customer ID lookup (not a free-text name). */
+export function looksLikeCustomerIdQuery(raw: string): boolean {
+  const trimmed = String(raw || '').trim();
+  if (!trimmed) return false;
+  if (/^#?\d{4,8}$/.test(trimmed)) return true;
+  if (/^#?[Cc]\d{3,8}$/.test(trimmed)) return true;
+  const digits = trimmed.replace(/\D/g, '');
+  return digits.length >= 4 && digits.length / Math.max(trimmed.length, 1) >= 0.7;
+}
+
+/**
+ * Resolve contact UUIDs that match a Customer ID (lead_id_formatted),
+ * even when PostgREST omits the column from schema cache.
+ */
+export async function findContactIdsByCustomerId(
+  supabase: SupabaseAdmin,
+  rawQuery: string,
+  limit = 40
+): Promise<string[]> {
+  const tokens = customerIdSearchTokens(rawQuery);
+  if (!tokens.length) return [];
+
+  const found = new Set<string>();
+
+  const columnOk = await isContactLeadIdColumnAvailable(supabase);
+  if (columnOk) {
+    for (const token of tokens) {
+      if (found.size >= limit) break;
+      const { data: exact } = await supabase
+        .from('contacts')
+        .select('id')
+        .eq('lead_id_formatted', token)
+        .limit(limit);
+      for (const row of exact || []) {
+        if (row?.id) found.add(String(row.id));
+      }
+
+      if (token.length >= 3) {
+        const { data: partial } = await supabase
+          .from('contacts')
+          .select('id')
+          .ilike('lead_id_formatted', `%${token}%`)
+          .limit(limit);
+        for (const row of partial || []) {
+          if (row?.id) found.add(String(row.id));
+        }
+      }
+    }
+  }
+
+  // Fallback via linked leads table (always has lead_id_formatted in CRM).
+  if (found.size < limit) {
+    for (const token of tokens) {
+      if (found.size >= limit) break;
+      let leadQ = supabase
+        .from('leads')
+        .select('contact_id, lead_id_formatted')
+        .not('contact_id', 'is', null)
+        .limit(limit);
+      if (/^\d{6}$/.test(token)) {
+        leadQ = leadQ.eq('lead_id_formatted', token);
+      } else {
+        leadQ = leadQ.ilike('lead_id_formatted', `%${token}%`);
+      }
+      const { data: leads } = await leadQ;
+      for (const row of leads || []) {
+        if (row?.contact_id) found.add(String(row.contact_id));
+      }
+    }
+  }
+
+  return [...found].slice(0, limit);
 }
 
 async function readStoredContactLeadId(

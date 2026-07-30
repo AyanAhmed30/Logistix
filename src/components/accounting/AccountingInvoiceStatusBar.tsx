@@ -22,9 +22,11 @@ function resolveActiveStep(
   paymentState?: string | null
 ): number {
   if (status === "cancelled") return -1;
+  // Draft is always step 0 — never treat empty/zero drafts as Paid
+  if (status === "draft") return 0;
   if (status === "paid" || paymentState === "paid") return 2;
   if (status === "posted") return 1;
-  return 0; // draft
+  return 0;
 }
 
 export function AccountingInvoiceStatusBar({

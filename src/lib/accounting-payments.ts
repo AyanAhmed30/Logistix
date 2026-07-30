@@ -2,9 +2,12 @@ export type AccountingPaymentMethod = 'cash' | 'bank_transfer' | 'cheque';
 
 export type AccountingPaymentState =
   | 'not_paid'
+  | 'in_payment'
   | 'partial'
   | 'paid'
   | 'overdue';
+
+export type AccountingPaymentJournal = 'bank' | 'cash';
 
 const METHOD_LABELS: Record<AccountingPaymentMethod, string> = {
   cash: 'Cash',
@@ -20,6 +23,8 @@ export function paymentStateLabel(state: string) {
   switch (state) {
     case 'not_paid':
       return 'Not Paid';
+    case 'in_payment':
+      return 'In Payment';
     case 'partial':
       return 'Partial';
     case 'paid':
@@ -40,6 +45,9 @@ export function computePaymentState(opts: {
   amountPaid: number;
   dueDate: string | null | undefined;
   workflowStatus: string;
+  /** Bank payments stay In Payment until treated as reconciled (cash → Paid). */
+  journal?: AccountingPaymentJournal | null;
+  preferInPayment?: boolean;
 }): {
   paymentState: AccountingPaymentState;
   outstanding: number;
@@ -57,10 +65,27 @@ export function computePaymentState(opts: {
     };
   }
 
+  // Draft invoices are never Paid/Partial until posted (Odoo: Draft → Posted → Paid)
+  if (opts.workflowStatus === 'draft') {
+    return {
+      paymentState: 'not_paid',
+      outstanding,
+      amountPaid,
+    };
+  }
+
+  const bankStyle = opts.preferInPayment === true || opts.journal === 'bank';
+
   if (outstanding <= 0.004) {
+    if (amountPaid > 0.004 && bankStyle) {
+      return { paymentState: 'in_payment', outstanding: 0, amountPaid };
+    }
     return { paymentState: 'paid', outstanding: 0, amountPaid };
   }
   if (amountPaid > 0.004) {
+    if (bankStyle) {
+      return { paymentState: 'in_payment', outstanding, amountPaid };
+    }
     return { paymentState: 'partial', outstanding, amountPaid };
   }
 

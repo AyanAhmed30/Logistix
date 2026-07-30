@@ -11,6 +11,7 @@ import {
   postAccountingInvoiceNote,
   type AccountingInvoiceLog,
 } from "@/app/actions/accounting/invoice-workflow";
+import { paymentStateLabel } from "@/lib/accounting-payments";
 
 type Props = {
   invoiceId: string;
@@ -59,11 +60,22 @@ function actionLabel(log: AccountingInvoiceLog): string[] {
       const amount = details.amount != null ? Number(details.amount) : null;
       const outstanding =
         details.outstanding != null ? Number(details.outstanding) : null;
+      const prevPay = details.previous_payment_state
+        ? String(details.previous_payment_state)
+        : null;
+      const nextPay = details.payment_state
+        ? String(details.payment_state)
+        : null;
       const lines = [
         amount != null
           ? `Registered Payment ${amount.toFixed(2)} PKR`
           : "Payment registered",
       ];
+      if (prevPay && nextPay && prevPay !== nextPay) {
+        lines.push(
+          `${paymentStateLabel(prevPay)} → ${paymentStateLabel(nextPay)} (Payment Status)`
+        );
+      }
       if (details.payment_method_label) {
         lines.push(`Method: ${String(details.payment_method_label)}`);
       }

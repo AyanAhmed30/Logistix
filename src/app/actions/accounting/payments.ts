@@ -34,6 +34,8 @@ export type RegisterAccountingPaymentInput = {
   reference?: string | null;
   notes?: string | null;
   idempotency_key?: string | null;
+  /** Odoo Pay wizard journal — Bank keeps In Payment; Cash marks Paid when settled. */
+  journal?: 'bank' | 'cash' | null;
 };
 
 async function resolveScope() {
@@ -97,24 +99,64 @@ async function sumPayments(
 async function applyPaymentTotals(
   supabase: Awaited<ReturnType<typeof createAdminClient>>,
   invoiceId: string,
-  username: string
+  username: string,
+  opts?: { journal?: 'bank' | 'cash' | null }
 ) {
   const { data: inv } = await supabase
     .from('accounting_customer_invoices')
-    .select('id, total_amount, due_date, status, payment_state')
+    .select('id, total_amount, due_date, status, payment_state, amount_paid, amount_residual')
     .eq('id', invoiceId)
     .maybeSingle();
   if (!inv) return { error: 'Invoice not found' as const };
 
   const amountPaid = await sumPayments(supabase, invoiceId);
+  const total = Number(inv.total_amount) || 0;
+  const journal = opts?.journal ?? null;
+  const workflowStatus = String(inv.status) as AccountingInvoiceStatus;
+  const previousPaymentState = String(inv.payment_state || 'not_paid');
+
+  // Bank (Odoo outstanding receipts): mark In Payment, keep Amount Due until reconcile.
+  if (journal === 'bank' || (journal == null && previousPaymentState === 'in_payment' && amountPaid > 0.004)) {
+    const residual =
+      previousPaymentState === 'in_payment'
+        ? round2(Math.max(0, Number(inv.amount_residual) || 0))
+        : round2(Math.max(0, Number(inv.amount_residual) ?? total - (Number(inv.amount_paid) || 0)));
+    const keptResidual =
+      journal === 'bank' && previousPaymentState !== 'in_payment'
+        ? round2(Math.max(0, Number(inv.amount_residual) ?? total - (Number(inv.amount_paid) || 0)))
+        : residual;
+
+    await supabase
+      .from('accounting_customer_invoices')
+      .update({
+        amount_paid: round2(Number(inv.amount_paid) || 0),
+        amount_residual: keptResidual,
+        payment_state: 'in_payment',
+        status: workflowStatus === 'paid' ? 'posted' : workflowStatus === 'posted' ? 'posted' : workflowStatus,
+        updated_by: username,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', invoiceId);
+
+    return {
+      amountPaid: round2(Number(inv.amount_paid) || 0),
+      outstanding: keptResidual,
+      paymentState: 'in_payment' as AccountingPaymentState,
+      previousPaymentState,
+      previousStatus: workflowStatus,
+      nextStatus: (workflowStatus === 'paid' ? 'posted' : workflowStatus) as AccountingInvoiceStatus,
+    };
+  }
+
   const computed = computePaymentState({
-    total: Number(inv.total_amount) || 0,
+    total,
     amountPaid,
     dueDate: inv.due_date ? String(inv.due_date) : null,
     workflowStatus: String(inv.status || ''),
+    journal,
+    preferInPayment: false,
   });
 
-  const workflowStatus = String(inv.status) as AccountingInvoiceStatus;
   let nextStatus = workflowStatus;
   if (workflowStatus === 'posted' || workflowStatus === 'paid') {
     nextStatus = computed.paymentState === 'paid' ? 'paid' : 'posted';
@@ -136,7 +178,7 @@ async function applyPaymentTotals(
     amountPaid: computed.amountPaid,
     outstanding: computed.outstanding,
     paymentState: computed.paymentState as AccountingPaymentState,
-    previousPaymentState: String(inv.payment_state || 'not_paid'),
+    previousPaymentState,
     previousStatus: workflowStatus,
     nextStatus,
   };
@@ -159,6 +201,13 @@ export async function registerAccountingPayment(
     if (!['cash', 'bank_transfer', 'cheque'].includes(method)) {
       return { error: 'Invalid payment method' };
     }
+
+    const journal =
+      input.journal === 'cash' || input.journal === 'bank'
+        ? input.journal
+        : method === 'cash'
+          ? ('cash' as const)
+          : ('bank' as const);
 
     const paymentDate = String(input.payment_date || '').trim();
     if (!paymentDate) return { error: 'Payment date is required' };
@@ -264,7 +313,8 @@ export async function registerAccountingPayment(
     const totals = await applyPaymentTotals(
       supabase,
       invoiceId,
-      scope.session!.username
+      scope.session!.username,
+      { journal }
     );
     if ('error' in totals && totals.error) return { error: totals.error };
 

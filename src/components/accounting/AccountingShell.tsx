@@ -61,6 +61,31 @@ export function AccountingShell({ access, children }: Props) {
     if (pathname === "/accounting/customers/new") return true;
     if (pathname === "/accounting/vendors/new") return true;
     if (
+      pathname.startsWith("/accounting/journal-entries/") &&
+      pathname !== "/accounting/journal-entries"
+    ) {
+      return true;
+    }
+    if (
+      pathname.startsWith("/accounting/assets/") &&
+      pathname !== "/accounting/assets" &&
+      !pathname.startsWith("/accounting/assets/categories")
+    ) {
+      return true;
+    }
+    if (
+      pathname.startsWith("/accounting/loans/") &&
+      pathname !== "/accounting/loans"
+    ) {
+      return true;
+    }
+    if (
+      pathname.startsWith("/accounting/tax-returns/") &&
+      pathname !== "/accounting/tax-returns"
+    ) {
+      return true;
+    }
+    if (
       pathname.startsWith("/accounting/invoices/") &&
       pathname !== "/accounting/invoices"
     ) {
@@ -98,6 +123,36 @@ export function AccountingShell({ access, children }: Props) {
       return true;
     }
     if (
+      pathname.startsWith("/accounting/configuration/chart-of-accounts/") &&
+      pathname !== "/accounting/configuration/chart-of-accounts"
+    ) {
+      return true;
+    }
+    if (
+      pathname.startsWith("/accounting/configuration/journals/") &&
+      pathname !== "/accounting/configuration/journals"
+    ) {
+      return true;
+    }
+    if (
+      pathname.startsWith("/accounting/configuration/taxes/") &&
+      pathname !== "/accounting/configuration/taxes"
+    ) {
+      return true;
+    }
+    if (
+      pathname.startsWith("/accounting/configuration/payment-terms/") &&
+      pathname !== "/accounting/configuration/payment-terms"
+    ) {
+      return true;
+    }
+    if (
+      pathname.startsWith("/accounting/configuration/currencies/") &&
+      pathname !== "/accounting/configuration/currencies"
+    ) {
+      return true;
+    }
+    if (
       pathname.startsWith("/accounting/customers/") &&
       pathname !== "/accounting/customers"
     ) {
@@ -118,7 +173,19 @@ export function AccountingShell({ access, children }: Props) {
 
   useEffect(() => {
     setSearchQuery("");
-    setActiveFilterId("all");
+    if (pathname.startsWith("/accounting/reconcile")) {
+      setActiveFilterId("with_residual");
+    } else if (
+      pathname.startsWith("/accounting/configuration/chart-of-accounts") ||
+      pathname.startsWith("/accounting/configuration/journals") ||
+      pathname.startsWith("/accounting/configuration/taxes") ||
+      pathname.startsWith("/accounting/configuration/payment-terms") ||
+      pathname.startsWith("/accounting/configuration/currencies")
+    ) {
+      setActiveFilterId("active");
+    } else {
+      setActiveFilterId("all");
+    }
   }, [switchVersion, pathname]);
 
   const shellContext = useMemo(

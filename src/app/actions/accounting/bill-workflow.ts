@@ -34,11 +34,13 @@ export type UpdateAccountingBillInput = {
   bill_date?: string;
   due_date?: string | null;
   payment_terms?: string | null;
+  payment_term_id?: string | null;
   reference?: string | null;
   notes?: string | null;
   vendor_notes?: string | null;
   lines?: {
     sequence?: number;
+    product_id?: string | null;
     product_name: string;
     description?: string | null;
     quantity: number;
@@ -96,6 +98,16 @@ export async function updateAccountingBill(
     if (String(row.status) !== 'draft') {
       return { error: 'Only draft bills can be edited' };
     }
+    const { getAccountingDocumentLockError } = await import('@/lib/accounting-lock-dates');
+    const nextBillDateEarly =
+      payload.bill_date !== undefined ? payload.bill_date : row.bill_date;
+    const lockErr = await getAccountingDocumentLockError(
+      row.organization_id ? String(row.organization_id) : null,
+      nextBillDateEarly ? String(nextBillDateEarly) : null,
+      'purchase'
+    );
+    if (lockErr) return { error: lockErr };
+
     if (
       scope.organizationId &&
       !scope.isGlobalAdminView &&
@@ -112,19 +124,30 @@ export async function updateAccountingBill(
       payload.bill_date !== undefined ? payload.bill_date : row.bill_date;
     const nextTerms =
       payload.payment_terms !== undefined ? payload.payment_terms : row.payment_terms;
+    const nextTermId =
+      payload.payment_term_id !== undefined
+        ? payload.payment_term_id
+        : (row as { payment_term_id?: string | null }).payment_term_id || null;
     let nextDueDate =
       payload.due_date !== undefined ? payload.due_date : row.due_date;
 
     if (
       payload.due_date === undefined &&
-      (payload.payment_terms !== undefined || payload.bill_date !== undefined)
+      (payload.payment_terms !== undefined ||
+        payload.payment_term_id !== undefined ||
+        payload.bill_date !== undefined)
     ) {
-      const { computeDueDateFromTerms } = await import('@/lib/accounting-due-dates');
-      nextDueDate =
-        computeDueDateFromTerms(
-          nextBillDate ? String(nextBillDate) : null,
-          nextTerms ? String(nextTerms) : null
-        ) || nextDueDate;
+      const { computeAccountingDueDate } = await import(
+        '@/app/actions/accounting/payment-terms'
+      );
+      const computed = await computeAccountingDueDate({
+        documentDate: nextBillDate ? String(nextBillDate) : '',
+        paymentTermId: nextTermId ? String(nextTermId) : null,
+        paymentTermsText: nextTerms ? String(nextTerms) : null,
+      });
+      if (!('error' in computed) && computed.due_date) {
+        nextDueDate = computed.due_date;
+      }
     }
 
     const residual =
@@ -156,6 +179,9 @@ export async function updateAccountingBill(
         bill_date: nextBillDate,
         due_date: nextDueDate,
         payment_terms: nextTerms,
+        ...(payload.payment_term_id !== undefined
+          ? { payment_term_id: payload.payment_term_id || null }
+          : {}),
         reference:
           payload.reference !== undefined ? payload.reference : row.reference,
         notes: payload.notes !== undefined ? payload.notes : row.notes,
@@ -181,6 +207,7 @@ export async function updateAccountingBill(
             lines.map((l, idx) => ({
               bill_id: billId,
               sequence: l.sequence || (idx + 1) * 10,
+              product_id: l.product_id || null,
               product_name: l.product_name || '',
               description: l.description || null,
               quantity: Number(l.quantity) || 0,
@@ -193,7 +220,28 @@ export async function updateAccountingBill(
                 computeBillLineTotal(l),
             }))
           );
-        if (lineErr) return { error: lineErr.message };
+        if (lineErr && /product_id|column/i.test(lineErr.message)) {
+          const bare = lines.map((l, idx) => ({
+            bill_id: billId,
+            sequence: l.sequence || (idx + 1) * 10,
+            product_name: l.product_name || '',
+            description: l.description || null,
+            quantity: Number(l.quantity) || 0,
+            uom: l.uom || 'Units',
+            unit_price: Number(l.unit_price) || 0,
+            discount: Number(l.discount) || 0,
+            taxes: Number(l.taxes) || 0,
+            line_total:
+              Number(l.line_total) ||
+              computeBillLineTotal(l),
+          }));
+          const retry = await supabase
+            .from('accounting_vendor_bill_lines')
+            .insert(bare);
+          if (retry.error) return { error: retry.error.message };
+        } else if (lineErr) {
+          return { error: lineErr.message };
+        }
       }
     }
 
@@ -298,6 +346,14 @@ export async function postAccountingBill(billId: string) {
     if (String(row.status) !== 'draft') {
       return { error: `Cannot post from status "${row.status}"` };
     }
+    const { getAccountingDocumentLockError } = await import('@/lib/accounting-lock-dates');
+    const postLockErr = await getAccountingDocumentLockError(
+      row.organization_id ? String(row.organization_id) : null,
+      row.bill_date ? String(row.bill_date) : null,
+      'purchase'
+    );
+    if (postLockErr) return { error: postLockErr };
+
     if (!String(row.vendor_name || '').trim() && !row.contact_id) {
       return { error: 'Vendor is required before posting' };
     }
@@ -319,16 +375,177 @@ export async function postAccountingBill(billId: string) {
     };
   }
 
-  return transitionStatus(billId, 'posted', 'posted', { allowFrom: ['draft'] });
+  const posted = await transitionStatus(billId, 'posted', 'posted', {
+    allowFrom: ['draft'],
+  });
+  if ('error' in posted && posted.error) return posted;
+
+  try {
+    const { postJournalEntryForVendorBill } = await import(
+      '@/app/actions/accounting/journal-entries'
+    );
+    const je = await postJournalEntryForVendorBill(billId);
+    if ('error' in je && je.error) {
+      const supabase = await createAdminClient();
+      const { rollbackDocumentPostToDraft } = await import(
+        '@/lib/accounting-je-lifecycle'
+      );
+      const scope = await resolveVendorAccountingScope();
+      const actor =
+        !('error' in scope) && scope.session ? scope.session.username : 'system';
+      await rollbackDocumentPostToDraft(
+        supabase,
+        'accounting_vendor_bills',
+        billId,
+        actor
+      );
+      return { error: `Bill not posted — journal entry failed: ${je.error}` };
+    }
+  } catch (err) {
+    const supabase = await createAdminClient();
+    const { rollbackDocumentPostToDraft } = await import(
+      '@/lib/accounting-je-lifecycle'
+    );
+    const scope = await resolveVendorAccountingScope();
+    const actor =
+      !('error' in scope) && scope.session ? scope.session.username : 'system';
+    await rollbackDocumentPostToDraft(
+      supabase,
+      'accounting_vendor_bills',
+      billId,
+      actor
+    );
+    return {
+      error: `Bill not posted — journal entry failed: ${
+        err instanceof Error ? err.message : 'unknown error'
+      }`,
+    };
+  }
+
+  return posted;
 }
 
 export async function cancelAccountingBill(billId: string) {
+  try {
+    const scope = await resolveVendorAccountingScope();
+    if ('error' in scope && scope.error) return { error: scope.error };
+    const supabase = await createAdminClient();
+    const { data: bill } = await supabase
+      .from('accounting_vendor_bills')
+      .select('id, organization_id, bill_date, status, amount_paid, journal_entry_id')
+      .eq('id', billId)
+      .maybeSingle();
+    if (!bill) return { error: 'Bill not found' };
+    const { getAccountingDocumentLockError } = await import(
+      '@/lib/accounting-lock-dates'
+    );
+    const lockErr = await getAccountingDocumentLockError(
+      bill.organization_id ? String(bill.organization_id) : scope.organizationId,
+      bill.bill_date ? String(bill.bill_date) : null,
+      'purchase'
+    );
+    if (lockErr) return { error: lockErr };
+
+    if (
+      String(bill.status) === 'posted' &&
+      (Number(bill.amount_paid) || 0) > 0.004
+    ) {
+      return {
+        error:
+          'Cannot cancel a posted bill with payments. Remove payments first or issue a refund.',
+      };
+    }
+
+    if (String(bill.status) === 'posted' || String(bill.status) === 'paid') {
+      const { cancelLinkedAccountingJournalEntry } = await import(
+        '@/lib/accounting-je-lifecycle'
+      );
+      await cancelLinkedAccountingJournalEntry(supabase, {
+        journalEntryId: bill.journal_entry_id
+          ? String(bill.journal_entry_id)
+          : null,
+        sourceType: 'vendor_bill',
+        sourceId: billId,
+        organizationId: bill.organization_id
+          ? String(bill.organization_id)
+          : scope.organizationId,
+        performedBy: scope.session!.username,
+        reason: 'bill_cancelled',
+      });
+      await supabase
+        .from('accounting_vendor_bills')
+        .update({
+          journal_entry_id: null,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', billId);
+    }
+  } catch (err) {
+    return {
+      error: err instanceof Error ? err.message : 'Failed to cancel bill',
+    };
+  }
   return transitionStatus(billId, 'cancelled', 'cancelled', {
     allowFrom: ['draft', 'posted'],
   });
 }
 
 export async function resetAccountingBillToDraft(billId: string) {
+  try {
+    const scope = await resolveVendorAccountingScope();
+    if ('error' in scope && scope.error) return { error: scope.error };
+    const supabase = await createAdminClient();
+    const { data: bill } = await supabase
+      .from('accounting_vendor_bills')
+      .select(
+        'id, organization_id, bill_date, status, amount_paid, journal_entry_id'
+      )
+      .eq('id', billId)
+      .maybeSingle();
+    if (!bill) return { error: 'Bill not found' };
+    const { getAccountingDocumentLockError } = await import(
+      '@/lib/accounting-lock-dates'
+    );
+    const lockErr = await getAccountingDocumentLockError(
+      bill.organization_id ? String(bill.organization_id) : scope.organizationId,
+      bill.bill_date ? String(bill.bill_date) : null,
+      'purchase'
+    );
+    if (lockErr) return { error: lockErr };
+
+    if ((Number(bill.amount_paid) || 0) > 0.004) {
+      return {
+        error: 'Cannot reset to draft while payments exist on this bill.',
+      };
+    }
+
+    const { cancelLinkedAccountingJournalEntry } = await import(
+      '@/lib/accounting-je-lifecycle'
+    );
+    await cancelLinkedAccountingJournalEntry(supabase, {
+      journalEntryId: bill.journal_entry_id
+        ? String(bill.journal_entry_id)
+        : null,
+      sourceType: 'vendor_bill',
+      sourceId: billId,
+      organizationId: bill.organization_id
+        ? String(bill.organization_id)
+        : scope.organizationId,
+      performedBy: scope.session!.username,
+      reason: 'bill_reset_to_draft',
+    });
+    await supabase
+      .from('accounting_vendor_bills')
+      .update({
+        journal_entry_id: null,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', billId);
+  } catch (err) {
+    return {
+      error: err instanceof Error ? err.message : 'Failed to reset bill',
+    };
+  }
   return transitionStatus(billId, 'draft', 'reset_to_draft', {
     allowFrom: ['posted', 'cancelled'],
   });

@@ -28,6 +28,7 @@ export type AccountingInvoiceListItem = {
 export type AccountingInvoiceLine = {
   id: string;
   sequence: number;
+  product_id?: string | null;
   product_name: string;
   description: string | null;
   quantity: number;
@@ -69,6 +70,7 @@ export type AccountingInvoiceDetail = {
   total_amount: number;
   organization_id: string | null;
   organization_name: string | null;
+  journal_entry_id: string | null;
   company_address: string | null;
   company_email: string | null;
   company_phone: string | null;
@@ -259,6 +261,7 @@ export async function createAccountingInvoiceFromOrder(quotationId: string) {
       tax += taxAmt;
       return {
         sequence: Number(line.sequence) || (idx + 1) * 10,
+        product_id: line.product_id ? String(line.product_id) : null,
         product_name: String(line.product_name || ''),
         description: line.description ? String(line.description) : null,
         quantity: qty,
@@ -281,6 +284,7 @@ export async function createAccountingInvoiceFromOrder(quotationId: string) {
       tax = taxAmt;
       lineRows.push({
         sequence: 10,
+        product_id: null,
         product_name: String(order.product_service || 'Sales Order'),
         description: null,
         quantity: qty,
@@ -322,6 +326,25 @@ export async function createAccountingInvoiceFromOrder(quotationId: string) {
       order.expiration_date ||
       today;
 
+    let paymentTermId: string | null =
+      (contact as { payment_term_id?: string | null } | null)?.payment_term_id
+        ? String((contact as { payment_term_id?: string }).payment_term_id)
+        : null;
+    if (!paymentTermId && paymentTerms) {
+      const { data: terms } = await supabase
+        .from('accounting_payment_terms')
+        .select('id, name, code')
+        .eq('is_active', true)
+        .limit(80);
+      const needle = String(paymentTerms).trim().toLowerCase();
+      const match = (terms || []).find(
+        (t) =>
+          String(t.name || '').trim().toLowerCase() === needle ||
+          String(t.code || '').trim().toLowerCase() === needle
+      );
+      paymentTermId = match?.id ? String(match.id) : null;
+    }
+
     const insertPayload: Record<string, unknown> = {
           organization_id: orgId,
           invoice_number: invoiceNumber,
@@ -337,6 +360,7 @@ export async function createAccountingInvoiceFromOrder(quotationId: string) {
           salesperson_id: order.salesperson_id || null,
           salesperson_name: salespersonName,
           payment_terms: paymentTerms,
+          payment_term_id: paymentTermId,
           invoice_date: today,
           due_date: autoDue,
           billing_address: address,
@@ -357,6 +381,25 @@ export async function createAccountingInvoiceFromOrder(quotationId: string) {
           updated_by: scope.session!.username,
         };
 
+    try {
+      const { resolveDocumentCurrencyFields } = await import(
+        '@/app/actions/accounting/currencies'
+      );
+      const fx = await resolveDocumentCurrencyFields({
+        organizationId: orgId,
+        rateDate: today,
+        totalAmount: Number(insertPayload.total_amount) || 0,
+      });
+      if ('currency_id' in fx) {
+        insertPayload.currency_id = fx.currency_id;
+        insertPayload.currency_code = fx.currency_code;
+        insertPayload.exchange_rate = fx.exchange_rate;
+        insertPayload.amount_total_company = fx.amount_total_company;
+      }
+    } catch {
+      /* Currency Engine optional until migration applied */
+    }
+
     let { data: invoice, error: invError } = await supabase
       .from('accounting_customer_invoices')
       .insert([insertPayload])
@@ -366,6 +409,32 @@ export async function createAccountingInvoiceFromOrder(quotationId: string) {
     if (invError && /customer_notes|column/i.test(invError.message)) {
       delete insertPayload.customer_notes;
       insertPayload.notes = order.customer_notes || null;
+      if (/currency_id|currency_code|exchange_rate|amount_total_company|payment_term_id/i.test(invError.message)) {
+        delete insertPayload.currency_id;
+        delete insertPayload.currency_code;
+        delete insertPayload.exchange_rate;
+        delete insertPayload.amount_total_company;
+        delete insertPayload.payment_term_id;
+      }
+      const retry = await supabase
+        .from('accounting_customer_invoices')
+        .insert([insertPayload])
+        .select('id')
+        .single();
+      invoice = retry.data;
+      invError = retry.error;
+    }
+
+    if (
+      invError &&
+      /currency_id|currency_code|exchange_rate|amount_total_company/i.test(
+        invError.message
+      )
+    ) {
+      delete insertPayload.currency_id;
+      delete insertPayload.currency_code;
+      delete insertPayload.exchange_rate;
+      delete insertPayload.amount_total_company;
       const retry = await supabase
         .from('accounting_customer_invoices')
         .insert([insertPayload])
@@ -386,9 +455,17 @@ export async function createAccountingInvoiceFromOrder(quotationId: string) {
     }
 
     if (lineRows.length) {
-      await supabase.from('accounting_customer_invoice_lines').insert(
-        lineRows.map((l) => ({ ...l, invoice_id: invoice.id }))
-      );
+      const { error: soLineErr } = await supabase
+        .from('accounting_customer_invoice_lines')
+        .insert(lineRows.map((l) => ({ ...l, invoice_id: invoice.id })));
+      if (soLineErr && /product_id|column/i.test(soLineErr.message)) {
+        await supabase.from('accounting_customer_invoice_lines').insert(
+          lineRows.map(({ product_id: _p, ...l }) => ({
+            ...l,
+            invoice_id: invoice.id,
+          }))
+        );
+      }
     }
 
     try {
@@ -514,17 +591,40 @@ export async function createManualAccountingInvoice() {
       updated_by: scope.session!.username,
     };
 
+    try {
+      const { resolveDocumentCurrencyFields } = await import(
+        '@/app/actions/accounting/currencies'
+      );
+      const fx = await resolveDocumentCurrencyFields({
+        organizationId: orgId,
+        rateDate: today,
+        totalAmount: 0,
+      });
+      if ('currency_id' in fx) {
+        insertPayload.currency_id = fx.currency_id;
+        insertPayload.currency_code = fx.currency_code;
+        insertPayload.exchange_rate = fx.exchange_rate;
+        insertPayload.amount_total_company = fx.amount_total_company;
+      }
+    } catch {
+      /* optional until Currency Engine migration */
+    }
+
     let { data: invoice, error: invError } = await supabase
       .from('accounting_customer_invoices')
       .insert([insertPayload])
       .select('id')
       .single();
 
-    if (invError && /customer_notes|payment_state|amount_paid|amount_residual|column/i.test(invError.message)) {
+    if (invError && /customer_notes|payment_state|amount_paid|amount_residual|currency_id|currency_code|exchange_rate|amount_total_company|column/i.test(invError.message)) {
       delete insertPayload.customer_notes;
       delete insertPayload.payment_state;
       delete insertPayload.amount_paid;
       delete insertPayload.amount_residual;
+      delete insertPayload.currency_id;
+      delete insertPayload.currency_code;
+      delete insertPayload.exchange_rate;
+      delete insertPayload.amount_total_company;
       const retry = await supabase
         .from('accounting_customer_invoices')
         .insert([insertPayload])
@@ -913,6 +1013,9 @@ export async function getAccountingInvoiceDetail(invoiceId: string) {
       total_amount: totalAmount,
       organization_id: inv.organization_id ? String(inv.organization_id) : null,
       organization_name,
+      journal_entry_id: inv.journal_entry_id
+        ? String(inv.journal_entry_id)
+        : null,
       company_address,
       company_email,
       company_phone,
@@ -921,6 +1024,9 @@ export async function getAccountingInvoiceDetail(invoiceId: string) {
       lines: (lines || []).map((l) => ({
         id: String(l.id),
         sequence: Number(l.sequence) || 0,
+        product_id: (l as { product_id?: string | null }).product_id
+          ? String((l as { product_id?: string | null }).product_id)
+          : null,
         product_name: String(l.product_name || ''),
         description: l.description ? String(l.description) : null,
         quantity: Number(l.quantity) || 0,
@@ -948,35 +1054,151 @@ export async function getAccountingDashboardStats() {
     const scope = await resolveAccountingOrgScope();
     if ('error' in scope && scope.error) return { error: scope.error };
     if ('empty' in scope && scope.empty) {
-      return { draftCount: 0, invoiceCount: 0, customerCount: 0 };
+      return {
+        draftCount: 0,
+        invoiceCount: 0,
+        customerCount: 0,
+        billCount: 0,
+        jeCount: 0,
+        assetCount: 0,
+        loanCount: 0,
+        taxReturnCount: 0,
+        hardLockDate: null as string | null,
+        openFiscalYears: 0,
+        receivablesOutstanding: 0,
+        payablesOutstanding: 0,
+      };
     }
 
     const supabase = await createAdminClient();
     let invQuery = supabase
       .from('accounting_customer_invoices')
-      .select('id, status', { count: 'exact' });
+      .select('id, status, amount_residual, total_amount', { count: 'exact' });
     let custQuery = supabase
       .from('contacts')
       .select('id', { count: 'exact', head: true })
       .gt('customer_rank', 0)
       .is('parent_id', null);
+    let billQuery = supabase
+      .from('accounting_vendor_bills')
+      .select('id, status, amount_residual, total_amount', { count: 'exact' });
+    let jeQuery = supabase
+      .from('accounting_journal_entries')
+      .select('id', { count: 'exact', head: true })
+      .eq('status', 'posted');
 
     if (scope.organizationId && !scope.isGlobalAdminView) {
       invQuery = invQuery.eq('organization_id', scope.organizationId);
       custQuery = custQuery.eq('organization_id', scope.organizationId);
+      billQuery = billQuery.eq('organization_id', scope.organizationId);
+      jeQuery = jeQuery.eq('organization_id', scope.organizationId);
     }
 
-    const [invRes, custRes] = await Promise.all([invQuery, custQuery]);
+    const [invRes, custRes, billRes, jeRes] = await Promise.all([
+      invQuery,
+      custQuery,
+      billQuery,
+      jeQuery,
+    ]);
+
+    let assetCount = 0;
+    let loanCount = 0;
+    let taxReturnCount = 0;
+    let hardLockDate: string | null = null;
+    let openFiscalYears = 0;
+
+    if (scope.organizationId && !scope.isGlobalAdminView) {
+      const [assets, loans, taxes, locks, years] = await Promise.all([
+        supabase
+          .from('accounting_assets')
+          .select('id', { count: 'exact', head: true })
+          .eq('organization_id', scope.organizationId)
+          .neq('status', 'cancelled'),
+        supabase
+          .from('accounting_loans')
+          .select('id', { count: 'exact', head: true })
+          .eq('organization_id', scope.organizationId)
+          .neq('status', 'cancelled'),
+        supabase
+          .from('accounting_tax_returns')
+          .select('id', { count: 'exact', head: true })
+          .eq('organization_id', scope.organizationId)
+          .neq('status', 'cancelled'),
+        supabase
+          .from('accounting_lock_settings')
+          .select('hard_lock_date')
+          .eq('organization_id', scope.organizationId)
+          .maybeSingle(),
+        supabase
+          .from('accounting_fiscal_years')
+          .select('id', { count: 'exact', head: true })
+          .eq('organization_id', scope.organizationId)
+          .eq('status', 'open'),
+      ]);
+      assetCount = assets.count || 0;
+      loanCount = loans.count || 0;
+      taxReturnCount = taxes.count || 0;
+      hardLockDate = locks.data?.hard_lock_date
+        ? String(locks.data.hard_lock_date).slice(0, 10)
+        : null;
+      openFiscalYears = years.count || 0;
+    }
 
     if (invRes.error && /accounting_customer_invoices|relation/i.test(invRes.error.message)) {
-      return { draftCount: 0, invoiceCount: 0, customerCount: custRes.count ?? 0 };
+      return {
+        draftCount: 0,
+        invoiceCount: 0,
+        customerCount: custRes.count ?? 0,
+        billCount: 0,
+        jeCount: 0,
+        assetCount,
+        loanCount,
+        taxReturnCount,
+        hardLockDate,
+        openFiscalYears,
+        receivablesOutstanding: 0,
+        payablesOutstanding: 0,
+      };
     }
 
     const rows = invRes.data || [];
+    const billRows = billRes.data || [];
+    const receivablesOutstanding = Math.round(
+      rows
+        .filter((r) => r.status === 'posted' || r.status === 'paid')
+        .reduce((s, r) => {
+          const residual =
+            r.amount_residual != null
+              ? Number(r.amount_residual)
+              : Number(r.total_amount) || 0;
+          return s + (Number.isFinite(residual) ? Math.max(0, residual) : 0);
+        }, 0) * 100
+    ) / 100;
+    const payablesOutstanding = Math.round(
+      billRows
+        .filter((r) => r.status === 'posted' || r.status === 'paid')
+        .reduce((s, r) => {
+          const residual =
+            (r as { amount_residual?: number | null }).amount_residual != null
+              ? Number((r as { amount_residual?: number | null }).amount_residual)
+              : Number((r as { total_amount?: number }).total_amount) || 0;
+          return s + (Number.isFinite(residual) ? Math.max(0, residual) : 0);
+        }, 0) * 100
+    ) / 100;
+
     return {
       draftCount: rows.filter((r) => r.status === 'draft').length,
       invoiceCount: invRes.count ?? rows.length,
       customerCount: custRes.count ?? 0,
+      billCount: billRes.count ?? billRows.length,
+      jeCount: jeRes.count ?? 0,
+      assetCount,
+      loanCount,
+      taxReturnCount,
+      hardLockDate,
+      openFiscalYears,
+      receivablesOutstanding,
+      payablesOutstanding,
     };
   } catch (err) {
     return {

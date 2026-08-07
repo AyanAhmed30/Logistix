@@ -90,6 +90,7 @@ import { AccountingActivitiesPanel } from "@/components/accounting/AccountingAct
 import { AccountingFormSkeleton } from "@/components/accounting/AccountingSkeleton";
 import { scheduleAccountingReminder } from "@/app/actions/accounting/automation";
 import { computeDueDateFromTerms } from "@/lib/accounting-due-dates";
+import { searchAccountingPaymentTerms } from "@/app/actions/accounting/payment-terms";
 import { useAccountingShortcuts } from "@/hooks/useAccountingShortcuts";
 import { useAdminOrganization } from "@/contexts/AdminOrganizationContext";
 import { useDashboardAccess } from "@/contexts/DashboardAccessContext";
@@ -119,6 +120,7 @@ function linesFromDetail(detail: AccountingInvoiceDetail): QuotationLineDraft[] 
   return detail.lines.map((l) =>
     newLineDraft({
       id: l.id,
+      product_id: l.product_id || null,
       product_name: l.product_name,
       description: l.description || "",
       quantity: String(l.quantity),
@@ -184,9 +186,14 @@ export function AccountingInvoiceFormView({ invoiceId }: Props) {
   const [paymentError, setPaymentError] = useState<string | null>(null);
   const [paymentsCount, setPaymentsCount] = useState(0);
   const [paymentsSum, setPaymentsSum] = useState(0);
+  const [primaryPaymentId, setPrimaryPaymentId] = useState<string | null>(null);
   const [creditNoteOpen, setCreditNoteOpen] = useState(false);
   const [creditNoteMode, setCreditNoteMode] = useState<"full" | "partial">("full");
   const [dueDateManual, setDueDateManual] = useState(false);
+  const [paymentTermId, setPaymentTermId] = useState("");
+  const [termOptions, setTermOptions] = useState<
+    { id: string; name: string; code?: string | null }[]
+  >([]);
   const [activeTab, setActiveTab] = useState<"lines" | "other">("lines");
   const [taxMode, setTaxMode] = useState<"excl" | "incl">("excl");
   const [catalogOpen, setCatalogOpen] = useState(false);
@@ -251,6 +258,9 @@ export function AccountingInvoiceFormView({ invoiceId }: Props) {
     setInvoiceDate(inv.invoice_date || "");
     setDueDate(inv.due_date || "");
     setPaymentTerms(inv.payment_terms || "Immediate");
+    setPaymentTermId(
+      (inv as { payment_term_id?: string | null }).payment_term_id || ""
+    );
     setSalespersonName(inv.salesperson_name || "");
     setInternalNotes(inv.notes || "");
     setCustomerNotes(inv.customer_notes || "");
@@ -286,28 +296,38 @@ export function AccountingInvoiceFormView({ invoiceId }: Props) {
   }, [load, switchVersion]);
 
   useEffect(() => {
+    void searchAccountingPaymentTerms({ limit: 80 }).then((res) => {
+      if (res.terms) setTermOptions(res.terms as { id: string; name: string; code?: string | null }[]);
+    });
+  }, [switchVersion]);
+
+  useEffect(() => {
     if (!invoiceId || isDraft) {
       setPaymentsCount(0);
       setPaymentsSum(0);
+      setPrimaryPaymentId(null);
       return;
     }
     let cancelled = false;
-    void getAccountingInvoicePayments(invoiceId, { page: 1, pageSize: 50 }).then(
-      (res) => {
-        if (cancelled) return;
-        if ("error" in res && res.error) {
-          setPaymentsCount(0);
-          setPaymentsSum(0);
-          return;
-        }
-        setPaymentsCount(Number(res.total) || 0);
-        const sum = (res.payments || []).reduce(
-          (acc, p) => acc + (Number(p.amount) || 0),
-          0
-        );
-        setPaymentsSum(Math.round(sum * 100) / 100);
+    void getAccountingInvoicePayments(invoiceId, {
+      page: 1,
+      pageSize: 50,
+      sortBy: "created_at",
+      sortDir: "desc",
+    }).then((res) => {
+      if (cancelled) return;
+      if ("error" in res && res.error) {
+        setPaymentsCount(0);
+        setPaymentsSum(0);
+        setPrimaryPaymentId(null);
+        return;
       }
-    );
+      const list = res.payments || [];
+      setPaymentsCount(Number(res.total) || 0);
+      setPrimaryPaymentId(list[0]?.id ? String(list[0].id) : null);
+      const sum = list.reduce((acc, p) => acc + (Number(p.amount) || 0), 0);
+      setPaymentsSum(Math.round(sum * 100) / 100);
+    });
     return () => {
       cancelled = true;
     };
@@ -336,6 +356,7 @@ export function AccountingInvoiceFormView({ invoiceId }: Props) {
       invoice_date: invoiceDate,
       due_date: dueDate || null,
       payment_terms: paymentTerms || "Immediate",
+      payment_term_id: paymentTermId || null,
       salesperson_name: salespersonName || null,
       notes: internalNotes || null,
       customer_notes: customerNotes || null,
@@ -344,6 +365,7 @@ export function AccountingInvoiceFormView({ invoiceId }: Props) {
         return {
           id: line.id,
           sequence: (idx + 1) * 10,
+          product_id: line.product_id || null,
           product_name: line.product_name,
           description: line.description || null,
           quantity: parseFloat(line.quantity) || 0,
@@ -879,8 +901,14 @@ export function AccountingInvoiceFormView({ invoiceId }: Props) {
             <div className="flex flex-wrap items-stretch gap-2">
               <button
                 type="button"
-                className="inline-flex min-w-[88px] flex-col items-center justify-center rounded-sm border border-slate-200 bg-white px-3 py-2 text-center hover:bg-slate-50"
+                className="inline-flex min-w-[88px] flex-col items-center justify-center rounded-sm border border-slate-200 bg-white px-3 py-2 text-center hover:bg-slate-50 disabled:opacity-50"
+                disabled={paymentsCount < 1}
                 onClick={() => {
+                  // Odoo: Payments smart button → open payment form when linked.
+                  if (primaryPaymentId) {
+                    router.push(`/accounting/payments/${primaryPaymentId}`);
+                    return;
+                  }
                   router.push("/accounting/payments");
                 }}
               >
@@ -903,6 +931,7 @@ export function AccountingInvoiceFormView({ invoiceId }: Props) {
           ) : null}
 
           {/* Odoo sheet header */}
+          <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
             <p className="text-xs font-medium text-secondary-muted tracking-wide">
               Customer Invoice
@@ -928,6 +957,25 @@ export function AccountingInvoiceFormView({ invoiceId }: Props) {
                 {detail.invoice_number}
               </p>
             ) : null}
+          </div>
+          {detail.journal_entry_id ? (
+            <button
+              type="button"
+              onClick={() =>
+                router.push(
+                  `/accounting/journal-entries/${detail.journal_entry_id}`
+                )
+              }
+              className="rounded-sm border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-left hover:border-[#017e84]/40 min-w-[72px]"
+            >
+              <div className="text-sm font-semibold text-[#017e84] leading-none">
+                1
+              </div>
+              <div className="text-[10px] text-secondary-muted mt-0.5">
+                Journal Entry
+              </div>
+            </button>
+          ) : null}
           </div>
 
           {/* Compact header fields — Customer | dates */}
@@ -1002,23 +1050,58 @@ export function AccountingInvoiceFormView({ invoiceId }: Props) {
                 </div>
               </div>
               <div className="space-y-1">
-                <Label className="text-xs text-secondary-muted font-normal">
-                  Payment Terms
-                </Label>
-                <Input
-                  value={paymentTerms}
-                  onChange={(e) => {
-                    const next = e.target.value;
-                    setPaymentTerms(next);
-                    if (!dueDateManual && !readOnly) {
-                      const auto = computeDueDateFromTerms(invoiceDate, next);
-                      if (auto) setDueDate(auto);
-                    }
-                  }}
-                  disabled={readOnly}
-                  className="h-9 rounded-sm border-0 border-b border-slate-200 shadow-none px-0 focus-visible:ring-0"
-                />
-              </div>
+                  <Label className="text-xs text-secondary-muted font-normal">
+                    Payment Terms
+                  </Label>
+                  {termOptions.length > 0 ? (
+                    <select
+                      value={paymentTermId || ""}
+                      disabled={readOnly}
+                      className="h-9 w-full rounded-sm border-0 border-b border-slate-200 bg-transparent px-0 text-sm focus:outline-none disabled:opacity-70"
+                      onChange={(e) => {
+                        const id = e.target.value;
+                        setPaymentTermId(id);
+                        const term = termOptions.find((t) => t.id === id);
+                        const label = term?.name || paymentTerms || "Immediate";
+                        setPaymentTerms(label);
+                        setDueDateManual(false);
+                        if (!readOnly) {
+                          const auto = computeDueDateFromTerms(
+                            invoiceDate,
+                            label
+                          );
+                          if (auto) setDueDate(auto);
+                        }
+                      }}
+                    >
+                      <option value="">Custom / Immediate</option>
+                      {termOptions.map((t) => (
+                        <option key={t.id} value={t.id}>
+                          {t.name}
+                          {t.code ? ` (${t.code})` : ""}
+                        </option>
+                      ))}
+                    </select>
+                  ) : (
+                    <Input
+                      value={paymentTerms}
+                      onChange={(e) => {
+                        const next = e.target.value;
+                        setPaymentTerms(next);
+                        setPaymentTermId("");
+                        if (!dueDateManual && !readOnly) {
+                          const auto = computeDueDateFromTerms(
+                            invoiceDate,
+                            next
+                          );
+                          if (auto) setDueDate(auto);
+                        }
+                      }}
+                      disabled={readOnly}
+                      className="h-9 rounded-sm border-0 border-b border-slate-200 shadow-none px-0 focus-visible:ring-0"
+                    />
+                  )}
+                </div>
             </div>
           </div>
 
@@ -1246,6 +1329,7 @@ export function AccountingInvoiceFormView({ invoiceId }: Props) {
                                 <SalesProductLinePicker
                                   valueName={line.product_name}
                                   disabled={readOnly}
+                                  forSale
                                   onSelect={(product, freeText) => {
                                     if (product) {
                                       updateLine(line.key, {
@@ -1259,7 +1343,13 @@ export function AccountingInvoiceFormView({ invoiceId }: Props) {
                                         unit_price: String(
                                           product.list_price || 0
                                         ),
-                                        account: line.account || "Sales",
+                                        taxes: String(
+                                          product.sales_tax_rate || 0
+                                        ),
+                                        account:
+                                          product.income_account_label ||
+                                          line.account ||
+                                          "Sales",
                                       });
                                     } else if (typeof freeText === "string") {
                                       updateLine(line.key, {
@@ -1982,7 +2072,9 @@ export function AccountingInvoiceFormView({ invoiceId }: Props) {
                               product.name,
                             uom: product.uom || "Units",
                             unit_price: String(product.list_price || 0),
-                            account: "Sales",
+                            taxes: String(product.sales_tax_rate || 0),
+                            account:
+                              product.income_account_label || "Sales",
                           });
                           if (empty) {
                             return prev.map((l) =>

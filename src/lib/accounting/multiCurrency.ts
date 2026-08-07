@@ -1,27 +1,27 @@
-import { createAdminClient } from '@/utils/supabase/server';
 import { createAndPostJournalEntry, getAccountByCode } from '@/app/actions/accounting_posting';
+import {
+  calculateRealizedExchangeDifference,
+  convertToBaseAmount,
+  toFiniteAmount,
+} from '@/lib/accounting-currencies';
+import { resolveExchangeRateToBase } from '@/app/actions/accounting/currencies';
 
 function toAmount(value: unknown) {
-  const parsed = Number(value || 0);
-  return Number.isFinite(parsed) ? parsed : 0;
+  return toFiniteAmount(value);
 }
 
+/** @deprecated Prefer resolveExchangeRateToBase from Currency Engine. */
 export async function get_exchange_rate(currencyCode: string, date?: string) {
-  const supabase = await createAdminClient();
-  const { data, error } = await supabase.rpc('get_exchange_rate', {
-    p_currency_code: String(currencyCode || '').toUpperCase(),
-    p_rate_date: date || new Date().toISOString().slice(0, 10),
-  });
-  if (error) throw new Error(error.message);
-  return toAmount(data);
+  const res = await resolveExchangeRateToBase(currencyCode, date);
+  if ('error' in res) throw new Error(res.error);
+  return res.rate;
 }
 
+/** @deprecated Prefer convertToBaseAmount from Currency Engine. */
 export function convert_to_base(amount: number, rate: number) {
   const a = toAmount(amount);
-  const r = toAmount(rate);
   if (a <= 0) throw new Error('Amount must be greater than zero.');
-  if (r <= 0) throw new Error('Rate must be greater than zero.');
-  return Math.round(a * r * 100) / 100;
+  return convertToBaseAmount(a, rate, 2);
 }
 
 export async function create_foreign_currency_entry(args: {
@@ -66,18 +66,15 @@ export async function create_foreign_currency_entry(args: {
   });
 }
 
+/** @deprecated Prefer calculateRealizedExchangeDifference from Currency Engine. */
 export function calculate_exchange_difference(args: {
   settledBase: number;
   originalBase: number;
 }) {
-  const settled = toAmount(args.settledBase);
-  const original = toAmount(args.originalBase);
-  const difference = Math.round((settled - original) * 100) / 100;
-  return {
-    difference,
-    type: difference > 0 ? ('loss' as const) : difference < 0 ? ('gain' as const) : ('none' as const),
-    absolute: Math.abs(difference),
-  };
+  return calculateRealizedExchangeDifference({
+    settledCompanyAmount: args.settledBase,
+    originalCompanyAmount: args.originalBase,
+  });
 }
 
 export async function post_exchange_gain_loss(args: {

@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
-import { ArrowLeft, FileText, UserRound } from "lucide-react";
+import { ArrowLeft, UserRound } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { getAccountingCustomerPaymentDetail } from "@/app/actions/accounting/payments";
 import { paymentMethodLabel } from "@/lib/accounting-payments";
@@ -111,8 +111,8 @@ export function AccountingPaymentDetailView({ paymentId }: Props) {
             }
             className="rounded-sm border border-slate-200 bg-white px-2.5 py-1.5 text-left hover:border-[#017e84]/40 min-w-[84px]"
           >
-            <div className="flex items-center gap-1 text-sm font-semibold text-[#017e84]">
-              <FileText className="h-3.5 w-3.5" />
+            <div className="text-sm font-semibold tabular-nums text-[#017e84] leading-none">
+              1
             </div>
             <div className="text-[10px] text-secondary-muted mt-0.5">
               Invoice

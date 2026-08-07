@@ -13,6 +13,7 @@ import {
   accountingCanManageConfig,
   accountingCanManageCreditNotes,
   accountingCanManageRefunds,
+  accountingCanManageLockDates,
   accountingCanDeleteInvoices,
   accountingCanRegisterPayments,
   type AccountingAccessLevel,
@@ -69,6 +70,7 @@ export async function requireAccountingActionAccess(opts?: {
   refunds?: boolean;
   deleteInvoice?: boolean;
   payments?: boolean;
+  lockDates?: boolean;
 }) {
   const session = await getSession();
   if (!session || !sessionHasAccountingAccess(session)) {
@@ -95,6 +97,9 @@ export async function requireAccountingActionAccess(opts?: {
   }
   if (opts?.payments && !accountingCanRegisterPayments(level)) {
     return { error: 'Payment registration not permitted' as const, status: 403 as const };
+  }
+  if (opts?.lockDates && !accountingCanManageLockDates(level)) {
+    return { error: 'Lock dates require Accountant access' as const, status: 403 as const };
   }
   return { session, level };
 }

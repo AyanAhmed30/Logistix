@@ -11,13 +11,19 @@ import {
 type Props = {
   valueName: string;
   disabled?: boolean;
+  /** Filter to saleable products (quotations / invoices). */
+  forSale?: boolean;
+  /** Filter to purchasable products (vendor bills). */
+  forPurchase?: boolean;
   onSelect: (product: SalesProduct | null, freeText?: string) => void;
 };
 
-/** Odoo-style product search for quotation order lines. */
+/** Odoo-style product search for quotation / invoice / bill lines. */
 export function SalesProductLinePicker({
   valueName,
   disabled = false,
+  forSale,
+  forPurchase,
   onSelect,
 }: Props) {
   const [open, setOpen] = useState(false);
@@ -43,7 +49,10 @@ export function SalesProductLinePicker({
   function runSearch(q: string) {
     setLoading(true);
     startTransition(async () => {
-      const res = await searchSalesProductsForQuotation(q, 25);
+      const res = await searchSalesProductsForQuotation(q, 25, {
+        forSale: forSale || undefined,
+        forPurchase: forPurchase || undefined,
+      });
       setLoading(false);
       if ("products" in res) setResults(res.products || []);
       else setResults([]);

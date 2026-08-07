@@ -291,6 +291,9 @@ export async function registerAccountingPayment(
           payment_date: paymentDate,
           amount,
           payment_method: method,
+          journal,
+          reconcile_status: journal === 'cash' ? 'reconciled' : 'outstanding',
+          amount_reconciled: journal === 'cash' ? amount : 0,
           reference: ref || null,
           notes: String(input.notes || '').trim() || null,
           paid_by: scope.session!.username,
@@ -301,6 +304,81 @@ export async function registerAccountingPayment(
       .single();
 
     if (payError || !payment) {
+      // Retry without Phase-2 reconcile columns if migration not applied yet.
+      if (payError && /journal|reconcile_status|amount_reconciled|column/i.test(payError.message)) {
+        const retry = await supabase
+          .from('accounting_invoice_payments')
+          .insert([
+            {
+              organization_id: orgId,
+              invoice_id: invoiceId,
+              payment_date: paymentDate,
+              amount,
+              payment_method: method,
+              reference: ref || null,
+              notes: String(input.notes || '').trim() || null,
+              paid_by: scope.session!.username,
+              created_by: scope.session!.username,
+            },
+          ])
+          .select('id')
+          .single();
+        if (retry.error || !retry.data) {
+          if (
+            retry.error &&
+            /accounting_invoice_payments|relation|schema cache/i.test(retry.error.message)
+          ) {
+            return {
+              error:
+                'Run create_accounting_payments_phase4.sql migration to enable payments.',
+            };
+          }
+          return { error: retry.error?.message || 'Failed to register payment' };
+        }
+        // Continue with retry.data as payment
+        const totals = await applyPaymentTotals(
+          supabase,
+          invoiceId,
+          scope.session!.username,
+          { journal }
+        );
+        if ('error' in totals && totals.error) return { error: totals.error };
+
+        await supabase.from('accounting_invoice_logs').insert([
+          {
+            invoice_id: invoiceId,
+            action: 'payment_registered',
+            previous_status: totals.previousStatus,
+            new_status: totals.nextStatus,
+            performed_by: scope.session!.username,
+            details: {
+              payment_id: retry.data.id,
+              amount,
+              payment_method: method,
+              payment_method_label: paymentMethodLabel(method),
+              payment_date: paymentDate,
+              reference: ref || null,
+              outstanding: totals.outstanding,
+              amount_paid: totals.amountPaid,
+              payment_state: totals.paymentState,
+              previous_payment_state: totals.previousPaymentState,
+              journal,
+              idempotency_key: input.idempotency_key || null,
+            },
+          },
+        ]);
+
+        try {
+          const { postJournalEntryForCustomerPayment } = await import(
+            '@/app/actions/accounting/journal-entries'
+          );
+          await postJournalEntryForCustomerPayment(String(retry.data.id));
+        } catch {
+          /* best-effort */
+        }
+
+        return getAccountingInvoiceDetail(invoiceId);
+      }
       if (payError && /accounting_invoice_payments|relation|schema cache/i.test(payError.message)) {
         return {
           error:
@@ -360,6 +438,69 @@ export async function registerAccountingPayment(
       });
     } catch {
       // soft
+    }
+
+    try {
+      const { postJournalEntryForCustomerPayment } = await import(
+        '@/app/actions/accounting/journal-entries'
+      );
+      const je = await postJournalEntryForCustomerPayment(String(payment.id));
+      if ('error' in je && je.error) {
+        await supabase
+          .from('accounting_invoice_payments')
+          .delete()
+          .eq('id', payment.id);
+        // restore invoice payment totals
+        const { computePaymentState } = await import('@/lib/accounting-payments');
+        const { data: inv } = await supabase
+          .from('accounting_customer_invoices')
+          .select('id, total_amount, due_date, status')
+          .eq('id', invoiceId)
+          .maybeSingle();
+        if (inv) {
+          const { data: pays } = await supabase
+            .from('accounting_invoice_payments')
+            .select('amount')
+            .eq('invoice_id', invoiceId);
+          const paid = Math.round(
+            (pays || []).reduce((s, r) => s + (Number(r.amount) || 0), 0) * 100
+          ) / 100;
+          const computed = computePaymentState({
+            total: Number(inv.total_amount) || 0,
+            amountPaid: paid,
+            dueDate: inv.due_date ? String(inv.due_date) : null,
+            workflowStatus: String(inv.status || ''),
+          });
+          await supabase
+            .from('accounting_customer_invoices')
+            .update({
+              amount_paid: computed.amountPaid,
+              amount_residual: computed.outstanding,
+              payment_state: computed.paymentState,
+              status:
+                String(inv.status) === 'posted' || String(inv.status) === 'paid'
+                  ? computed.paymentState === 'paid'
+                    ? 'paid'
+                    : 'posted'
+                  : inv.status,
+              updated_at: new Date().toISOString(),
+            })
+            .eq('id', invoiceId);
+        }
+        return {
+          error: `Payment not registered — journal entry failed: ${je.error}`,
+        };
+      }
+    } catch (err) {
+      await supabase
+        .from('accounting_invoice_payments')
+        .delete()
+        .eq('id', payment.id);
+      return {
+        error: `Payment not registered — journal entry failed: ${
+          err instanceof Error ? err.message : 'unknown error'
+        }`,
+      };
     }
 
     return getAccountingInvoiceDetail(invoiceId);

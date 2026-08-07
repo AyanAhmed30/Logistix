@@ -1439,6 +1439,7 @@ export function SalesQuotationFormView({
                           <SalesProductLinePicker
                             valueName={line.product_name}
                             disabled={readOnly}
+                            forSale
                             onSelect={(product, freeText) => {
                               if (product) {
                                 updateLine(line.key, {
@@ -1452,6 +1453,7 @@ export function SalesQuotationFormView({
                                   unit_price: String(
                                     product.list_price || 0
                                   ),
+                                  taxes: String(product.sales_tax_rate || 0),
                                 });
                               } else if (typeof freeText === "string") {
                                 updateLine(line.key, {
@@ -2190,6 +2192,7 @@ export function SalesQuotationFormView({
                               product.name,
                             uom: product.uom || "Units",
                             unit_price: String(product.list_price || 0),
+                            taxes: String(product.sales_tax_rate || 0),
                           });
                           if (empty) {
                             return prev.map((l) =>

@@ -112,3 +112,13 @@ export function accountingCanManageAutomation(level: AccountingAccessLevel) {
 export function accountingCanExportReports(level: AccountingAccessLevel) {
   return level === 'accountant' || level === 'admin';
 }
+
+/** Lock dates, journal locks, period locks — Accountant+ */
+export function accountingCanManageLockDates(level: AccountingAccessLevel) {
+  return level === 'accountant' || level === 'admin';
+}
+
+/** Year-end close / reopen / hard lock — Admin only (also uses accountingCanManageConfig) */
+export function accountingCanCloseFiscalYear(level: AccountingAccessLevel) {
+  return level === 'admin';
+}

@@ -15,10 +15,36 @@ import {
   Package,
   Truck,
   Receipt,
+  BookOpen,
+  Calculator,
+  Link2,
+  Building2,
+  Landmark,
+  Lock,
+  ListTree,
+  BookMarked,
+  Percent,
+  CalendarClock,
+  Coins,
+  SlidersHorizontal,
 } from 'lucide-react';
 
 export type AccountingNavId =
   | 'accounting-dashboard'
+  | 'accounting-accounting-menu'
+  | 'accounting-journal-entries'
+  | 'accounting-reconcile'
+  | 'accounting-assets'
+  | 'accounting-asset-categories'
+  | 'accounting-loans'
+  | 'accounting-tax-returns'
+  | 'accounting-lock-dates'
+  | 'accounting-configuration-menu'
+  | 'accounting-chart-of-accounts'
+  | 'accounting-journals'
+  | 'accounting-taxes'
+  | 'accounting-payment-terms'
+  | 'accounting-currencies'
   | 'accounting-customers-menu'
   | 'accounting-vendors-menu'
   | 'accounting-invoices'
@@ -53,7 +79,11 @@ export type AccountingNavEntry =
   | { type: 'link'; item: AccountingNavItem }
   | {
       type: 'menu';
-      id: 'accounting-customers-menu' | 'accounting-vendors-menu';
+      id:
+        | 'accounting-accounting-menu'
+        | 'accounting-configuration-menu'
+        | 'accounting-customers-menu'
+        | 'accounting-vendors-menu';
       label: string;
       icon: LucideIcon;
       children: AccountingNavChild[];
@@ -74,12 +104,97 @@ export type AccountingPageMeta = {
     | 'refunds'
     | 'payments'
     | 'vendor-payments'
-    | 'products';
+    | 'products'
+    | 'journal-entries'
+    | 'reconcile'
+    | 'assets'
+    | 'loans'
+    | 'tax-returns'
+    | 'lock-dates'
+    | 'chart-of-accounts'
+    | 'journals'
+    | 'taxes'
+    | 'payment-terms'
+    | 'currencies';
   showCreate?: boolean;
   showFilters?: boolean;
   showFavorites?: boolean;
   filters?: { id: string; label: string }[];
 };
+
+/** Odoo Configuration submenu (foundation settings) */
+export const ACCOUNTING_CONFIGURATION_MENU: AccountingNavChild[] = [
+  {
+    id: 'accounting-chart-of-accounts',
+    label: 'Chart of Accounts',
+    href: '/accounting/configuration/chart-of-accounts',
+    icon: ListTree,
+  },
+  {
+    id: 'accounting-journals',
+    label: 'Journals',
+    href: '/accounting/configuration/journals',
+    icon: BookMarked,
+  },
+  {
+    id: 'accounting-taxes',
+    label: 'Taxes',
+    href: '/accounting/configuration/taxes',
+    icon: Percent,
+  },
+  {
+    id: 'accounting-payment-terms',
+    label: 'Payment Terms',
+    href: '/accounting/configuration/payment-terms',
+    icon: CalendarClock,
+  },
+  {
+    id: 'accounting-currencies',
+    label: 'Currencies',
+    href: '/accounting/configuration/currencies',
+    icon: Coins,
+  },
+  {
+    id: 'accounting-lock-dates',
+    label: 'Lock Dates',
+    href: '/accounting/configuration/lock-dates',
+    icon: Lock,
+  },
+];
+
+/** Odoo Accounting submenu (GL foundation) */
+export const ACCOUNTING_ACCOUNTING_MENU: AccountingNavChild[] = [
+  {
+    id: 'accounting-journal-entries',
+    label: 'Journal Entries',
+    href: '/accounting/journal-entries',
+    icon: BookOpen,
+  },
+  {
+    id: 'accounting-reconcile',
+    label: 'Reconcile',
+    href: '/accounting/reconcile',
+    icon: Link2,
+  },
+  {
+    id: 'accounting-assets',
+    label: 'Assets',
+    href: '/accounting/assets',
+    icon: Building2,
+  },
+  {
+    id: 'accounting-loans',
+    label: 'Loans',
+    href: '/accounting/loans',
+    icon: Landmark,
+  },
+  {
+    id: 'accounting-tax-returns',
+    label: 'Tax Returns',
+    href: '/accounting/tax-returns',
+    icon: Receipt,
+  },
+];
 
 /** Odoo Customers submenu */
 export const ACCOUNTING_CUSTOMERS_MENU: AccountingNavChild[] = [
@@ -149,7 +264,7 @@ export const ACCOUNTING_VENDORS_MENU: AccountingNavChild[] = [
   },
 ];
 
-/** Top-level nav (Customers + Vendors dropdowns). */
+/** Top-level nav (Accounting + Customers + Vendors dropdowns). */
 export const ACCOUNTING_NAV_STRUCTURE: AccountingNavEntry[] = [
   {
     type: 'link',
@@ -159,6 +274,20 @@ export const ACCOUNTING_NAV_STRUCTURE: AccountingNavEntry[] = [
       href: '/accounting',
       icon: LayoutDashboard,
     },
+  },
+  {
+    type: 'menu',
+    id: 'accounting-accounting-menu',
+    label: 'Accounting',
+    icon: Calculator,
+    children: ACCOUNTING_ACCOUNTING_MENU,
+  },
+  {
+    type: 'menu',
+    id: 'accounting-configuration-menu',
+    label: 'Configuration',
+    icon: SlidersHorizontal,
+    children: ACCOUNTING_CONFIGURATION_MENU,
   },
   {
     type: 'menu',
@@ -211,6 +340,8 @@ export const ACCOUNTING_NAV_ITEMS: AccountingNavItem[] = [
     href: '/accounting',
     icon: LayoutDashboard,
   },
+  ...ACCOUNTING_ACCOUNTING_MENU,
+  ...ACCOUNTING_CONFIGURATION_MENU,
   ...ACCOUNTING_CUSTOMERS_MENU,
   ...ACCOUNTING_VENDORS_MENU,
   {
@@ -234,6 +365,420 @@ export const ACCOUNTING_NAV_ITEMS: AccountingNavItem[] = [
 ];
 
 export function getAccountingPageMeta(pathname: string): AccountingPageMeta {
+  if (
+    pathname.startsWith('/accounting/journal-entries/') &&
+    pathname !== '/accounting/journal-entries'
+  ) {
+    return {
+      title: 'Journal Entry',
+      breadcrumbs: [
+        { label: 'Accounting', href: '/accounting' },
+        { label: 'Accounting', href: '/accounting/journal-entries' },
+        { label: 'Journal Entries', href: '/accounting/journal-entries' },
+        { label: 'Entry' },
+      ],
+      searchMode: 'none',
+      showFilters: false,
+    };
+  }
+  if (pathname.startsWith('/accounting/journal-entries')) {
+    return {
+      title: 'Journal Entries',
+      subtitle: 'General ledger journal entries',
+      breadcrumbs: [
+        { label: 'Accounting', href: '/accounting' },
+        { label: 'Accounting' },
+        { label: 'Journal Entries' },
+      ],
+      searchMode: 'journal-entries',
+      showCreate: true,
+      showFilters: true,
+      showFavorites: true,
+      filters: [
+        { id: 'all', label: 'All' },
+        { id: 'draft', label: 'Draft' },
+        { id: 'posted', label: 'Posted' },
+        { id: 'cancelled', label: 'Cancelled' },
+      ],
+    };
+  }
+
+  if (pathname.startsWith('/accounting/reconcile')) {
+    return {
+      title: 'Journal Items to reconcile',
+      subtitle: undefined,
+      breadcrumbs: [
+        { label: 'Accounting', href: '/accounting' },
+        { label: 'Accounting' },
+        { label: 'Reconcile' },
+      ],
+      searchMode: 'reconcile',
+      showCreate: false,
+      showFilters: true,
+      showFavorites: true,
+      filters: [
+        { id: 'with_residual', label: 'With residual' },
+        { id: 'posted', label: 'Posted' },
+        { id: 'all', label: 'All' },
+      ],
+    };
+  }
+
+  if (
+    pathname.startsWith('/accounting/assets/') &&
+    pathname !== '/accounting/assets' &&
+    !pathname.startsWith('/accounting/assets/categories')
+  ) {
+    return {
+      title: 'Asset',
+      breadcrumbs: [
+        { label: 'Accounting', href: '/accounting' },
+        { label: 'Accounting', href: '/accounting/journal-entries' },
+        { label: 'Assets', href: '/accounting/assets' },
+        { label: 'Asset' },
+      ],
+      searchMode: 'none',
+      showFilters: false,
+    };
+  }
+
+  if (pathname.startsWith('/accounting/assets/categories')) {
+    return {
+      title: 'Asset Categories',
+      breadcrumbs: [
+        { label: 'Accounting', href: '/accounting' },
+        { label: 'Accounting' },
+        { label: 'Assets', href: '/accounting/assets' },
+        { label: 'Categories' },
+      ],
+      searchMode: 'none',
+      showFilters: false,
+    };
+  }
+
+  if (pathname.startsWith('/accounting/assets')) {
+    return {
+      title: 'Assets',
+      subtitle: 'Fixed assets and depreciation',
+      breadcrumbs: [
+        { label: 'Accounting', href: '/accounting' },
+        { label: 'Accounting' },
+        { label: 'Assets' },
+      ],
+      searchMode: 'assets',
+      showCreate: true,
+      showFilters: true,
+      showFavorites: true,
+      filters: [
+        { id: 'all', label: 'All' },
+        { id: 'draft', label: 'Draft' },
+        { id: 'running', label: 'Running' },
+        { id: 'fully_depreciated', label: 'Fully Depreciated' },
+        { id: 'disposed', label: 'Disposed' },
+      ],
+    };
+  }
+
+  if (
+    pathname.startsWith('/accounting/loans/') &&
+    pathname !== '/accounting/loans'
+  ) {
+    return {
+      title: 'Loan',
+      subtitle: 'Loan details and installments',
+      breadcrumbs: [
+        { label: 'Accounting', href: '/accounting' },
+        { label: 'Accounting' },
+        { label: 'Loans', href: '/accounting/loans' },
+        { label: 'Loan' },
+      ],
+      searchMode: 'none',
+      showFilters: false,
+    };
+  }
+
+  if (pathname.startsWith('/accounting/loans')) {
+    return {
+      title: 'Loans',
+      subtitle: 'Loan management and amortization',
+      breadcrumbs: [
+        { label: 'Accounting', href: '/accounting' },
+        { label: 'Accounting' },
+        { label: 'Loans' },
+      ],
+      searchMode: 'loans',
+      showCreate: true,
+      showFilters: true,
+      showFavorites: true,
+      filters: [
+        { id: 'all', label: 'All' },
+        { id: 'draft', label: 'Draft' },
+        { id: 'active', label: 'Active' },
+        { id: 'partially_paid', label: 'Partially Paid' },
+        { id: 'fully_paid', label: 'Fully Paid' },
+        { id: 'closed', label: 'Closed' },
+      ],
+    };
+  }
+
+  if (
+    pathname.startsWith('/accounting/tax-returns/') &&
+    pathname !== '/accounting/tax-returns'
+  ) {
+    return {
+      title: 'Tax Return',
+      subtitle: 'GST / VAT return details',
+      breadcrumbs: [
+        { label: 'Accounting', href: '/accounting' },
+        { label: 'Accounting' },
+        { label: 'Tax Returns', href: '/accounting/tax-returns' },
+        { label: 'Return' },
+      ],
+      searchMode: 'none',
+      showFilters: false,
+    };
+  }
+
+  if (pathname.startsWith('/accounting/tax-returns')) {
+    return {
+      title: 'Tax Returns',
+      subtitle: 'Tax dashboard, reports, and returns',
+      breadcrumbs: [
+        { label: 'Accounting', href: '/accounting' },
+        { label: 'Accounting' },
+        { label: 'Tax Returns' },
+      ],
+      searchMode: 'tax-returns',
+      showCreate: true,
+      showFilters: true,
+      showFavorites: true,
+      filters: [
+        { id: 'all', label: 'All' },
+        { id: 'draft', label: 'Draft' },
+        { id: 'generated', label: 'Generated' },
+        { id: 'confirmed', label: 'Confirmed' },
+        { id: 'filed', label: 'Filed' },
+        { id: 'cancelled', label: 'Cancelled' },
+      ],
+    };
+  }
+
+  if (pathname.startsWith('/accounting/lock-dates') ||
+      pathname.startsWith('/accounting/configuration/lock-dates')) {
+    return {
+      title: 'Lock Dates',
+      subtitle: 'Fiscal lock, journal locks, soft lock, and year-end closing',
+      breadcrumbs: [
+        { label: 'Accounting', href: '/accounting' },
+        {
+          label: 'Configuration',
+          href: '/accounting/configuration/lock-dates',
+        },
+        { label: 'Lock Dates' },
+      ],
+      searchMode: 'none',
+      showFilters: false,
+      showFavorites: false,
+    };
+  }
+
+  if (
+    pathname.startsWith('/accounting/configuration/chart-of-accounts/') &&
+    pathname !== '/accounting/configuration/chart-of-accounts'
+  ) {
+    return {
+      title: 'Account',
+      breadcrumbs: [
+        { label: 'Accounting', href: '/accounting' },
+        { label: 'Configuration', href: '/accounting/configuration/chart-of-accounts' },
+        { label: 'Chart of Accounts', href: '/accounting/configuration/chart-of-accounts' },
+        { label: 'Account' },
+      ],
+      searchMode: 'none',
+      showFilters: false,
+    };
+  }
+  if (pathname.startsWith('/accounting/configuration/chart-of-accounts')) {
+    return {
+      title: 'Chart of Accounts',
+      subtitle: 'Accounts used by journals, invoices, payments, and reports',
+      breadcrumbs: [
+        { label: 'Accounting', href: '/accounting' },
+        { label: 'Configuration' },
+        { label: 'Chart of Accounts' },
+      ],
+      searchMode: 'chart-of-accounts',
+      showCreate: true,
+      showFilters: true,
+      showFavorites: true,
+      filters: [
+        { id: 'active', label: 'Active' },
+        { id: 'archived', label: 'Archived' },
+        { id: 'all', label: 'All' },
+      ],
+    };
+  }
+
+  if (
+    pathname.startsWith('/accounting/configuration/journals/') &&
+    pathname !== '/accounting/configuration/journals'
+  ) {
+    return {
+      title: 'Journal',
+      breadcrumbs: [
+        { label: 'Accounting', href: '/accounting' },
+        { label: 'Configuration', href: '/accounting/configuration/journals' },
+        { label: 'Journals', href: '/accounting/configuration/journals' },
+        { label: 'Journal' },
+      ],
+      searchMode: 'none',
+      showFilters: false,
+    };
+  }
+  if (pathname.startsWith('/accounting/configuration/journals')) {
+    return {
+      title: 'Journals',
+      subtitle: 'Transaction journals for invoices, bills, payments, and entries',
+      breadcrumbs: [
+        { label: 'Accounting', href: '/accounting' },
+        { label: 'Configuration' },
+        { label: 'Journals' },
+      ],
+      searchMode: 'journals',
+      showCreate: true,
+      showFilters: true,
+      showFavorites: true,
+      filters: [
+        { id: 'active', label: 'Active' },
+        { id: 'archived', label: 'Archived' },
+        { id: 'all', label: 'All' },
+      ],
+    };
+  }
+
+  if (
+    pathname.startsWith('/accounting/configuration/taxes/') &&
+    pathname !== '/accounting/configuration/taxes'
+  ) {
+    return {
+      title: 'Tax',
+      breadcrumbs: [
+        { label: 'Accounting', href: '/accounting' },
+        { label: 'Configuration', href: '/accounting/configuration/taxes' },
+        { label: 'Taxes', href: '/accounting/configuration/taxes' },
+        { label: 'Tax' },
+      ],
+      searchMode: 'none',
+      showFilters: false,
+    };
+  }
+  if (pathname.startsWith('/accounting/configuration/taxes')) {
+    return {
+      title: 'Taxes',
+      subtitle: 'Sales, purchase, and withholding tax configuration',
+      breadcrumbs: [
+        { label: 'Accounting', href: '/accounting' },
+        { label: 'Configuration' },
+        { label: 'Taxes' },
+      ],
+      searchMode: 'taxes',
+      showCreate: true,
+      showFilters: true,
+      showFavorites: true,
+      filters: [
+        { id: 'active', label: 'Active' },
+        { id: 'archived', label: 'Archived' },
+        { id: 'all', label: 'All' },
+      ],
+    };
+  }
+
+  if (
+    pathname.startsWith('/accounting/configuration/payment-terms/') &&
+    pathname !== '/accounting/configuration/payment-terms'
+  ) {
+    return {
+      title: 'Payment Term',
+      breadcrumbs: [
+        { label: 'Accounting', href: '/accounting' },
+        {
+          label: 'Configuration',
+          href: '/accounting/configuration/payment-terms',
+        },
+        {
+          label: 'Payment Terms',
+          href: '/accounting/configuration/payment-terms',
+        },
+        { label: 'Payment Term' },
+      ],
+      searchMode: 'none',
+      showFilters: false,
+    };
+  }
+  if (pathname.startsWith('/accounting/configuration/payment-terms')) {
+    return {
+      title: 'Payment Terms',
+      subtitle: 'Due date policies for invoices, bills, and receivables',
+      breadcrumbs: [
+        { label: 'Accounting', href: '/accounting' },
+        { label: 'Configuration' },
+        { label: 'Payment Terms' },
+      ],
+      searchMode: 'payment-terms',
+      showCreate: true,
+      showFilters: true,
+      showFavorites: true,
+      filters: [
+        { id: 'active', label: 'Active' },
+        { id: 'archived', label: 'Archived' },
+        { id: 'all', label: 'All' },
+      ],
+    };
+  }
+
+  if (
+    pathname.startsWith('/accounting/configuration/currencies/') &&
+    pathname !== '/accounting/configuration/currencies'
+  ) {
+    return {
+      title: 'Currency',
+      breadcrumbs: [
+        { label: 'Accounting', href: '/accounting' },
+        {
+          label: 'Configuration',
+          href: '/accounting/configuration/currencies',
+        },
+        {
+          label: 'Currencies',
+          href: '/accounting/configuration/currencies',
+        },
+        { label: 'Currency' },
+      ],
+      searchMode: 'none',
+      showFilters: false,
+    };
+  }
+  if (pathname.startsWith('/accounting/configuration/currencies')) {
+    return {
+      title: 'Currencies',
+      subtitle: 'Exchange rates and monetary precision for the ERP',
+      breadcrumbs: [
+        { label: 'Accounting', href: '/accounting' },
+        { label: 'Configuration' },
+        { label: 'Currencies' },
+      ],
+      searchMode: 'currencies',
+      showCreate: true,
+      showFilters: true,
+      showFavorites: true,
+      filters: [
+        { id: 'active', label: 'Active' },
+        { id: 'archived', label: 'Archived' },
+        { id: 'all', label: 'All' },
+      ],
+    };
+  }
+
   if (pathname.startsWith('/accounting/reports')) {
     return {
       title: 'Reports',
@@ -705,6 +1250,21 @@ export function defaultAccountingRoute(): string {
   return '/accounting';
 }
 
+export function isAccountingGlMenuPath(pathname: string): boolean {
+  return (
+    pathname.startsWith('/accounting/journal-entries') ||
+    pathname.startsWith('/accounting/reconcile') ||
+    pathname.startsWith('/accounting/assets') ||
+    pathname.startsWith('/accounting/loans') ||
+    pathname.startsWith('/accounting/tax-returns') ||
+    pathname.startsWith('/accounting/lock-dates')
+  );
+}
+
+export function isConfigurationMenuPath(pathname: string): boolean {
+  return pathname.startsWith('/accounting/configuration');
+}
+
 export function isCustomersMenuPath(pathname: string): boolean {
   return (
     pathname.startsWith('/accounting/invoices') ||
@@ -724,9 +1284,19 @@ export function isVendorsMenuPath(pathname: string): boolean {
 }
 
 export function isMenuPathActive(
-  menuId: 'accounting-customers-menu' | 'accounting-vendors-menu',
+  menuId:
+    | 'accounting-accounting-menu'
+    | 'accounting-configuration-menu'
+    | 'accounting-customers-menu'
+    | 'accounting-vendors-menu',
   pathname: string
 ): boolean {
+  if (menuId === 'accounting-accounting-menu') {
+    return isAccountingGlMenuPath(pathname);
+  }
+  if (menuId === 'accounting-configuration-menu') {
+    return isConfigurationMenuPath(pathname);
+  }
   if (menuId === 'accounting-customers-menu') return isCustomersMenuPath(pathname);
   return isVendorsMenuPath(pathname);
 }

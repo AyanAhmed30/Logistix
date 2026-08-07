@@ -8,10 +8,6 @@ import {
   resolveCrmOrganizationScope,
   revalidateCrmPipelinePaths,
 } from '@/app/actions/crm/shared';
-import {
-  buildAdminVirtualStageId,
-  parseAdminVirtualStageName,
-} from '@/lib/crm-pipeline-utils';
 import { ensureDefaultCrmStages, resolveCrmPipelineStageForOrg } from '@/app/actions/crm/stages';
 import { attachNextActivitiesToOpportunities } from '@/lib/crm-activity-enrichment';
 import {
@@ -20,7 +16,13 @@ import {
   logOpportunityStageChangedAudit,
   logOpportunityUpdatedAudit,
 } from '@/app/actions/crm/chatter';
-import { DEFAULT_CRM_PIPELINE_STAGES } from '@/lib/crm-pipeline-utils';
+import {
+  DEFAULT_CRM_PIPELINE_STAGES,
+  buildAdminVirtualStageId,
+  parseAdminVirtualStageName,
+  CRM_AUTO_OPPORTUNITY_SOURCE,
+  buildAutoOpportunityName,
+} from '@/lib/crm-pipeline-utils';
 import type {
   CrmOpportunityCard,
   CrmOpportunityUpsertInput,
@@ -255,6 +257,186 @@ function validateOpportunityInput(input: CrmOpportunityUpsertInput) {
   const revenue = Number(input.expected_revenue ?? 0);
   if (!Number.isFinite(revenue) || revenue < 0) return 'Expected revenue cannot be negative.';
   return null;
+}
+
+/**
+ * Odoo-style automation: ensure exactly one auto Opportunity in Pipeline → New
+ * for a newly created Contact. Reuses stage resolution + insert side effects.
+ * Does NOT replace manual createCrmOpportunity. Soft-fails; never throws to callers.
+ */
+export async function ensureAutoOpportunityForNewContact(input: {
+  contactId: string;
+  contactName: string;
+  organizationId: string;
+  email?: string | null;
+  phone?: string | null;
+  mobile?: string | null;
+  website?: string | null;
+  salespersonId?: string | null;
+  createdBy: string;
+  customerLeadId?: string | null;
+}): Promise<{ opportunityId?: string; skipped?: boolean; error?: string }> {
+  try {
+    const contactId = String(input.contactId || '').trim();
+    const organizationId = String(input.organizationId || '').trim();
+    if (!contactId || !organizationId) {
+      return { skipped: true, error: 'contact and organization required' };
+    }
+
+    const supabase = await createAdminClient();
+
+    // Duplicate protection: only one auto-opportunity per contact
+    const { data: existingAuto } = await supabase
+      .from('crm_opportunities')
+      .select('id')
+      .eq('organization_id', organizationId)
+      .eq('contact_id', contactId)
+      .eq('source', CRM_AUTO_OPPORTUNITY_SOURCE)
+      .limit(1)
+      .maybeSingle();
+
+    if (existingAuto?.id) {
+      return { opportunityId: String(existingAuto.id), skipped: true };
+    }
+
+    // Fallback: same auto-generated name already linked to this contact
+    const autoName = buildAutoOpportunityName(input.contactName);
+    const { data: existingByName } = await supabase
+      .from('crm_opportunities')
+      .select('id')
+      .eq('organization_id', organizationId)
+      .eq('contact_id', contactId)
+      .eq('name', autoName)
+      .limit(1)
+      .maybeSingle();
+
+    if (existingByName?.id) {
+      return { opportunityId: String(existingByName.id), skipped: true };
+    }
+
+    const resolvedStage = await resolveCrmPipelineStageForOrg(organizationId, {
+      stageNameHint: 'New',
+    });
+    if (!resolvedStage) {
+      return { error: 'No pipeline stage available' };
+    }
+
+    const { resolveSalesAgentForSession } = await import('@/lib/legacy-user-bridge');
+    const { resolveCrmVisibilityScope } = await import('@/lib/crm-visibility');
+    const { getSession } = await import('@/lib/auth/session');
+    const session = await getSession();
+
+    let salespersonId = input.salespersonId || null;
+    if (session) {
+      const agent = await resolveSalesAgentForSession(supabase, session);
+      const visibility = await resolveCrmVisibilityScope(session);
+      if (visibility.mode === 'assigned' && agent?.id) {
+        salespersonId = agent.id;
+      } else if (!salespersonId && agent?.id) {
+        salespersonId = agent.id;
+      }
+    }
+
+    const { probabilityForStageName, computeLeadScore } = await import(
+      '@/lib/crm-automation'
+    );
+    const probability = probabilityForStageName(
+      String(resolvedStage.name || 'New'),
+      Boolean(resolvedStage.is_won),
+      Boolean(resolvedStage.is_lost),
+      resolvedStage.default_probability
+    );
+    const lead_score = computeLeadScore({
+      probability,
+      expectedRevenue: 0,
+      isWon: Boolean(resolvedStage.is_won),
+      isLost: Boolean(resolvedStage.is_lost),
+      activitiesTotal: 0,
+      activitiesDone: 0,
+    });
+
+    const now = new Date().toISOString();
+    const row = {
+      organization_id: organizationId,
+      stage_id: resolvedStage.id,
+      name: autoName,
+      contact_id: contactId,
+      contact_person_id: null as string | null,
+      expected_revenue: 0,
+      probability,
+      probability_manual: false,
+      lead_score,
+      priority: 0,
+      salesperson_id: salespersonId,
+      sales_team: null as string | null,
+      tags: [] as string[],
+      campaign: null as string | null,
+      medium: null as string | null,
+      source: CRM_AUTO_OPPORTUNITY_SOURCE,
+      email: input.email || null,
+      phone: input.phone || null,
+      mobile: input.mobile || null,
+      website: input.website || null,
+      expected_closing_date: null as string | null,
+      internal_notes: null as string | null,
+      created_by: input.createdBy,
+      updated_at: now,
+    };
+
+    let { data, error } = await supabase
+      .from('crm_opportunities')
+      .insert(row)
+      .select('id')
+      .single();
+
+    if (error && /probability_manual|lead_score|column/i.test(error.message)) {
+      const {
+        probability_manual: _pm,
+        lead_score: _ls,
+        ...legacy
+      } = row;
+      const retry = await supabase
+        .from('crm_opportunities')
+        .insert(legacy)
+        .select('id')
+        .single();
+      data = retry.data;
+      error = retry.error;
+    }
+
+    // Race: concurrent auto-creates
+    if (error && /duplicate|unique/i.test(error.message)) {
+      const { data: raced } = await supabase
+        .from('crm_opportunities')
+        .select('id')
+        .eq('organization_id', organizationId)
+        .eq('contact_id', contactId)
+        .eq('source', CRM_AUTO_OPPORTUNITY_SOURCE)
+        .limit(1)
+        .maybeSingle();
+      if (raced?.id) return { opportunityId: String(raced.id), skipped: true };
+      return { error: error.message };
+    }
+
+    if (error || !data) {
+      return { error: error?.message || 'Failed to create auto opportunity' };
+    }
+
+    const opportunityId = String(data.id);
+    scheduleOpportunityCreatedSideEffects({
+      opportunityId,
+      organizationId,
+      username: input.createdBy,
+      opportunityName: autoName,
+      contactId,
+    });
+
+    return { opportunityId };
+  } catch (err) {
+    return {
+      error: err instanceof Error ? err.message : 'Auto opportunity failed',
+    };
+  }
 }
 
 export async function getCrmPipelineBoard(filters: CrmPipelineBoardFilters = {}) {

@@ -9,6 +9,7 @@ export type AccountingCreditNoteLine = {
   id: string;
   sequence: number;
   invoice_line_id: string | null;
+  product_id?: string | null;
   product_name: string;
   description: string | null;
   quantity: number;
@@ -212,6 +213,9 @@ function mapCreditNoteDetail(
       id: String(l.id),
       sequence: Number(l.sequence) || 0,
       invoice_line_id: l.invoice_line_id ? String(l.invoice_line_id) : null,
+      product_id: (l as { product_id?: string | null }).product_id
+        ? String((l as { product_id?: string | null }).product_id)
+        : null,
       product_name: String(l.product_name || ''),
       description: l.description ? String(l.description) : null,
       quantity: Number(l.quantity) || 0,
@@ -422,6 +426,22 @@ export async function updateAccountingCreditNote(
     if (String(row.status) !== 'draft') {
       return { error: 'Only draft credit notes can be edited' };
     }
+    const { getAccountingDocumentLockError } = await import('@/lib/accounting-lock-dates');
+    const cnEditLock = await getAccountingDocumentLockError(
+      row.organization_id ? String(row.organization_id) : null,
+      (payload.credit_note_date !== undefined
+        ? payload.credit_note_date
+        : row.credit_note_date)
+        ? String(
+            payload.credit_note_date !== undefined
+              ? payload.credit_note_date
+              : row.credit_note_date
+          )
+        : null,
+      'sale'
+    );
+    if (cnEditLock) return { error: cnEditLock };
+
     if (
       scope.organizationId &&
       !scope.isGlobalAdminView &&
@@ -561,7 +581,7 @@ export async function resetAccountingCreditNoteToDraft(creditNoteId: string) {
     const supabase = await createAdminClient();
     const { data: cn } = await supabase
       .from('accounting_credit_notes')
-      .select('id, status, amount_refunded')
+      .select('id, status, amount_refunded, journal_entry_id, organization_id, invoice_id')
       .eq('id', creditNoteId)
       .maybeSingle();
     if (!cn) return { error: 'Credit note not found' };
@@ -572,16 +592,70 @@ export async function resetAccountingCreditNoteToDraft(creditNoteId: string) {
       return getAccountingCreditNoteDetail(creditNoteId);
     }
 
+    // Cancel linked journal entry (Odoo: draft docs have no active JE).
+    const jeId = cn.journal_entry_id ? String(cn.journal_entry_id) : null;
+    if (jeId) {
+      const { data: je } = await supabase
+        .from('accounting_journal_entries')
+        .select('id, status')
+        .eq('id', jeId)
+        .maybeSingle();
+      if (je && String(je.status) !== 'cancelled') {
+        await supabase
+          .from('accounting_journal_entries')
+          .update({
+            status: 'cancelled',
+            updated_by: scope.session!.username,
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', jeId);
+      }
+    } else {
+      const { data: bySource } = await supabase
+        .from('accounting_journal_entries')
+        .select('id')
+        .eq('source_type', 'credit_note')
+        .eq('source_id', creditNoteId)
+        .neq('status', 'cancelled')
+        .maybeSingle();
+      if (bySource?.id) {
+        await supabase
+          .from('accounting_journal_entries')
+          .update({
+            status: 'cancelled',
+            updated_by: scope.session!.username,
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', bySource.id);
+      }
+    }
+
     await supabase
       .from('accounting_credit_notes')
       .update({
         status: 'draft',
         posted_at: null,
         cancelled_at: null,
+        journal_entry_id: null,
         updated_by: scope.session!.username,
         updated_at: new Date().toISOString(),
       })
       .eq('id', creditNoteId);
+
+    if (cn.invoice_id) {
+      await supabase.from('accounting_invoice_logs').insert([
+        {
+          invoice_id: cn.invoice_id,
+          action: 'journal_entry_removed',
+          performed_by: scope.session!.username,
+          details: {
+            credit_note_id: creditNoteId,
+            journal_entry_id: jeId,
+            reason: 'credit_note_reset_to_draft',
+          },
+        },
+      ]);
+    }
 
     return getAccountingCreditNoteDetail(creditNoteId);
   } catch (err) {
@@ -592,15 +666,24 @@ export async function resetAccountingCreditNoteToDraft(creditNoteId: string) {
 }
 
 /**
- * Create a draft Credit Note from a Posted/Paid invoice.
- * lineIds optional — when provided, only those invoice lines (partial).
+ * Create a draft Credit Note from a Posted/Paid invoice (Odoo Credit Note wizard).
  */
 export async function createCreditNoteFromInvoice(
   invoiceId: string,
   opts?: {
     reason?: string;
+    /** Accounting / reversal date (defaults today). */
+    reversalDate?: string;
+    /** Journal used when posting the credit note JE. */
+    journalId?: string | null;
+    /** full_refund | partial_refund | cancel_invoice */
+    creditMethod?: 'full_refund' | 'partial_refund' | 'cancel_invoice';
     lineIds?: string[];
     quantities?: Record<string, number>;
+    /** Odoo "Reverse" posts only when autoPost; draft otherwise. */
+    autoPost?: boolean;
+    /** Odoo "Reverse and Create Invoice" — post CN + open new draft invoice. */
+    createReplacementInvoice?: boolean;
   }
 ) {
   try {
@@ -618,6 +701,9 @@ export async function createCreditNoteFromInvoice(
     const supabase = await createAdminClient();
     const orgId = inv.organization_id || scope.organizationId;
     if (!orgId) return { error: 'Organization is required' };
+
+    const method = opts?.creditMethod || 'full_refund';
+    const isPartialMethod = method === 'partial_refund';
 
     let lines = inv.lines;
     if (opts?.lineIds?.length) {
@@ -643,6 +729,7 @@ export async function createCreditNoteFromInvoice(
       return {
         sequence: (idx + 1) * 10,
         invoice_line_id: l.id,
+        product_id: l.product_id || null,
         product_name: l.product_name,
         description: l.description,
         quantity: qty,
@@ -666,6 +753,7 @@ export async function createCreditNoteFromInvoice(
     const tax = round2(validLines.reduce((a, l) => a + (l._tax || 0), 0));
     const total = round2(untaxed + tax);
     const isPartial =
+      isPartialMethod ||
       Boolean(opts?.lineIds?.length) ||
       validLines.some((l) => {
         const orig = inv.lines.find((x) => x.id === l.invoice_line_id);
@@ -675,6 +763,12 @@ export async function createCreditNoteFromInvoice(
 
     const number = await allocateCreditNoteNumber(supabase, orgId);
     const today = new Date().toISOString().slice(0, 10);
+    const reversalDate = String(opts?.reversalDate || today).slice(0, 10);
+    const reasonText =
+      opts?.reason?.trim() ||
+      (method === 'cancel_invoice'
+        ? `Cancel invoice ${inv.invoice_number}`
+        : `Reversal of: ${inv.invoice_number}`);
 
     const { data: cn, error } = await supabase
       .from('accounting_credit_notes')
@@ -688,10 +782,10 @@ export async function createCreditNoteFromInvoice(
           contact_id: inv.contact_id,
           customer_name: inv.customer_name,
           customer_lead_id: inv.customer_lead_id,
-          reason: opts?.reason || null,
+          reason: reasonText,
           refund_type: isPartial ? 'partial' : 'full',
           salesperson_name: inv.salesperson_name,
-          credit_note_date: today,
+          credit_note_date: reversalDate,
           billing_address: inv.billing_address,
           shipping_address: inv.shipping_address,
           contact_person_name: inv.contact_person_name,
@@ -719,21 +813,41 @@ export async function createCreditNoteFromInvoice(
       return { error: error?.message || 'Failed to create credit note' };
     }
 
-    await supabase.from('accounting_credit_note_lines').insert(
-      validLines.map((l) => ({
-        credit_note_id: cn.id,
-        sequence: l.sequence,
-        invoice_line_id: l.invoice_line_id,
-        product_name: l.product_name,
-        description: l.description,
-        quantity: l.quantity,
-        uom: l.uom,
-        unit_price: l.unit_price,
-        discount: l.discount,
-        taxes: l.taxes,
-        line_total: l.line_total,
-      }))
-    );
+    const { error: cnLineErr } = await supabase
+      .from('accounting_credit_note_lines')
+      .insert(
+        validLines.map((l) => ({
+          credit_note_id: cn.id,
+          sequence: l.sequence,
+          invoice_line_id: l.invoice_line_id,
+          product_id: (l as { product_id?: string | null }).product_id || null,
+          product_name: l.product_name,
+          description: l.description,
+          quantity: l.quantity,
+          uom: l.uom,
+          unit_price: l.unit_price,
+          discount: l.discount,
+          taxes: l.taxes,
+          line_total: l.line_total,
+        }))
+      );
+    if (cnLineErr && /product_id|column/i.test(cnLineErr.message)) {
+      await supabase.from('accounting_credit_note_lines').insert(
+        validLines.map((l) => ({
+          credit_note_id: cn.id,
+          sequence: l.sequence,
+          invoice_line_id: l.invoice_line_id,
+          product_name: l.product_name,
+          description: l.description,
+          quantity: l.quantity,
+          uom: l.uom,
+          unit_price: l.unit_price,
+          discount: l.discount,
+          taxes: l.taxes,
+          line_total: l.line_total,
+        }))
+      );
+    }
 
     await supabase.from('accounting_invoice_logs').insert([
       {
@@ -745,11 +859,87 @@ export async function createCreditNoteFromInvoice(
           credit_note_number: number,
           amount: total,
           refund_type: isPartial ? 'partial' : 'full',
+          credit_method: method,
+          reversal_date: reversalDate,
+          journal_id: opts?.journalId || null,
         },
       },
     ]);
 
-    return { creditNoteId: String(cn.id) };
+    const creditNoteId = String(cn.id);
+    let replacementInvoiceId: string | null = null;
+
+    const shouldAutoPost =
+      Boolean(opts?.autoPost) ||
+      Boolean(opts?.createReplacementInvoice) ||
+      method === 'cancel_invoice';
+
+    if (shouldAutoPost) {
+      const posted = await postAccountingCreditNote(creditNoteId, {
+        journalId: opts?.journalId || null,
+      });
+      if ('error' in posted && posted.error) {
+        return { error: posted.error, creditNoteId };
+      }
+    }
+
+    if (method === 'cancel_invoice') {
+      await supabase
+        .from('accounting_customer_invoices')
+        .update({
+          status: 'cancelled',
+          cancelled_at: new Date().toISOString(),
+          refund_status: 'refunded',
+          updated_by: scope.session!.username,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', invoiceId);
+
+      await supabase.from('accounting_invoice_logs').insert([
+        {
+          invoice_id: invoiceId,
+          action: 'invoice_reversed',
+          previous_status: inv.status,
+          new_status: 'cancelled',
+          performed_by: scope.session!.username,
+          details: {
+            credit_note_id: creditNoteId,
+            credit_note_number: number,
+            method: 'cancel_invoice',
+          },
+        },
+      ]);
+    }
+
+    if (opts?.createReplacementInvoice) {
+      const { duplicateAccountingInvoice } = await import(
+        '@/app/actions/accounting/invoice-workflow'
+      );
+      const dup = await duplicateAccountingInvoice(invoiceId);
+      if ('error' in dup && dup.error) {
+        return {
+          error: dup.error,
+          creditNoteId,
+        };
+      }
+      replacementInvoiceId = dup.invoiceId ? String(dup.invoiceId) : null;
+      if (replacementInvoiceId) {
+        await supabase.from('accounting_invoice_logs').insert([
+          {
+            invoice_id: invoiceId,
+            action: 'invoice_reversed',
+            performed_by: scope.session!.username,
+            details: {
+              credit_note_id: creditNoteId,
+              replacement_invoice_id: replacementInvoiceId,
+              method: 'reverse_and_create_invoice',
+            },
+          },
+        ]);
+      }
+    }
+
+    return { creditNoteId, replacementInvoiceId };
   } catch (err) {
     return {
       error: err instanceof Error ? err.message : 'Failed to create credit note',
@@ -800,7 +990,10 @@ export async function getAccountingCreditNoteDetail(creditNoteId: string) {
   }
 }
 
-export async function postAccountingCreditNote(creditNoteId: string) {
+export async function postAccountingCreditNote(
+  creditNoteId: string,
+  opts?: { journalId?: string | null }
+) {
   try {
     const scope = await resolveScope({ creditNotes: true });
     if ('error' in scope && scope.error) return { error: scope.error };
@@ -815,6 +1008,14 @@ export async function postAccountingCreditNote(creditNoteId: string) {
     if (String(cn.status) !== 'draft') {
       return { error: 'Only draft credit notes can be posted' };
     }
+    const { getAccountingDocumentLockError } = await import('@/lib/accounting-lock-dates');
+    const cnLockErr = await getAccountingDocumentLockError(
+      cn.organization_id ? String(cn.organization_id) : null,
+      cn.credit_note_date ? String(cn.credit_note_date) : null,
+      'sale'
+    );
+    if (cnLockErr) return { error: cnLockErr };
+
     if (!String(cn.customer_name || '').trim() && !cn.contact_id) {
       return { error: 'Customer is required before posting' };
     }
@@ -834,13 +1035,43 @@ export async function postAccountingCreditNote(creditNoteId: string) {
 
     if (cn.invoice_id) {
       const isFull = String(cn.refund_type) === 'full';
+      const cnTotal = Math.round((Number(cn.total_amount) || 0) * 100) / 100;
+      const { data: inv } = await supabase
+        .from('accounting_customer_invoices')
+        .select('id, total_amount, amount_paid, amount_residual')
+        .eq('id', cn.invoice_id)
+        .maybeSingle();
+
+      const invTotal = Number(inv?.total_amount) || 0;
+      const amountPaid = Number(inv?.amount_paid) || 0;
+      const priorResidual =
+        inv?.amount_residual != null
+          ? Number(inv.amount_residual)
+          : Math.max(0, invTotal - amountPaid);
+      const nextResidual =
+        Math.round(Math.max(0, priorResidual - cnTotal) * 100) / 100;
+      const paymentState =
+        nextResidual <= 0.004
+          ? 'paid'
+          : amountPaid > 0.004 || cnTotal > 0.004
+            ? 'partial'
+            : 'not_paid';
+
+      const invPatch: Record<string, unknown> = {
+        refund_status:
+          isFull || nextResidual <= 0.004 ? 'refunded' : 'partial',
+        amount_residual: nextResidual,
+        payment_state: paymentState,
+        updated_by: scope.session!.username,
+        updated_at: new Date().toISOString(),
+      };
+      if (nextResidual <= 0.004) {
+        invPatch.status = 'paid';
+      }
+
       await supabase
         .from('accounting_customer_invoices')
-        .update({
-          refund_status: isFull ? 'refunded' : 'partial',
-          updated_by: scope.session!.username,
-          updated_at: new Date().toISOString(),
-        })
+        .update(invPatch)
         .eq('id', cn.invoice_id);
 
       await supabase.from('accounting_invoice_logs').insert([
@@ -852,9 +1083,48 @@ export async function postAccountingCreditNote(creditNoteId: string) {
             credit_note_id: creditNoteId,
             credit_note_number: cn.credit_note_number,
             amount: cn.total_amount,
+            amount_residual: nextResidual,
           },
         },
       ]);
+    }
+
+    try {
+      const { postJournalEntryForCreditNote } = await import(
+        '@/app/actions/accounting/journal-entries'
+      );
+      const je = await postJournalEntryForCreditNote(creditNoteId, {
+        journalId: opts?.journalId || null,
+      });
+      if ('error' in je && je.error) {
+        const { rollbackDocumentPostToDraft } = await import(
+          '@/lib/accounting-je-lifecycle'
+        );
+        await rollbackDocumentPostToDraft(
+          supabase,
+          'accounting_credit_notes',
+          creditNoteId,
+          scope.session!.username
+        );
+        return {
+          error: `Credit note not posted — journal entry failed: ${je.error}`,
+        };
+      }
+    } catch (err) {
+      const { rollbackDocumentPostToDraft } = await import(
+        '@/lib/accounting-je-lifecycle'
+      );
+      await rollbackDocumentPostToDraft(
+        supabase,
+        'accounting_credit_notes',
+        creditNoteId,
+        scope.session!.username
+      );
+      return {
+        error: `Credit note not posted — journal entry failed: ${
+          err instanceof Error ? err.message : 'unknown error'
+        }`,
+      };
     }
 
     return getAccountingCreditNoteDetail(creditNoteId);
@@ -873,7 +1143,9 @@ export async function cancelAccountingCreditNote(creditNoteId: string) {
     const supabase = await createAdminClient();
     const { data: cn } = await supabase
       .from('accounting_credit_notes')
-      .select('id, status')
+      .select(
+        'id, status, organization_id, credit_note_date, journal_entry_id, invoice_id, total_amount, refund_type'
+      )
       .eq('id', creditNoteId)
       .maybeSingle();
     if (!cn) return { error: 'Credit note not found' };
@@ -881,11 +1153,76 @@ export async function cancelAccountingCreditNote(creditNoteId: string) {
       return getAccountingCreditNoteDetail(creditNoteId);
     }
 
+    const { getAccountingDocumentLockError } = await import(
+      '@/lib/accounting-lock-dates'
+    );
+    const cnCancelLock = await getAccountingDocumentLockError(
+      cn.organization_id ? String(cn.organization_id) : scope.organizationId,
+      cn.credit_note_date ? String(cn.credit_note_date) : null,
+      'sale'
+    );
+    if (cnCancelLock) return { error: cnCancelLock };
+
+    if (String(cn.status) === 'posted') {
+      const { cancelLinkedAccountingJournalEntry } = await import(
+        '@/lib/accounting-je-lifecycle'
+      );
+      await cancelLinkedAccountingJournalEntry(supabase, {
+        journalEntryId: cn.journal_entry_id
+          ? String(cn.journal_entry_id)
+          : null,
+        sourceType: 'credit_note',
+        sourceId: creditNoteId,
+        organizationId: cn.organization_id
+          ? String(cn.organization_id)
+          : scope.organizationId,
+        performedBy: scope.session!.username,
+        reason: 'credit_note_cancelled',
+      });
+
+      if (cn.invoice_id) {
+        const cnTotal = Math.round((Number(cn.total_amount) || 0) * 100) / 100;
+        const { data: inv } = await supabase
+          .from('accounting_customer_invoices')
+          .select('id, total_amount, amount_paid, amount_residual, refund_status')
+          .eq('id', cn.invoice_id)
+          .maybeSingle();
+        if (inv) {
+          const invTotal = Number(inv.total_amount) || 0;
+          const amountPaid = Number(inv.amount_paid) || 0;
+          const priorResidual =
+            inv.amount_residual != null
+              ? Number(inv.amount_residual)
+              : Math.max(0, invTotal - amountPaid);
+          const restored =
+            Math.round((priorResidual + cnTotal) * 100) / 100;
+          const capped = Math.min(restored, Math.max(0, invTotal - amountPaid));
+          await supabase
+            .from('accounting_customer_invoices')
+            .update({
+              amount_residual: capped,
+              refund_status: capped >= invTotal - amountPaid - 0.004 ? 'none' : 'partial',
+              payment_state:
+                capped <= 0.004
+                  ? 'paid'
+                  : amountPaid > 0.004
+                    ? 'partial'
+                    : 'not_paid',
+              status: capped <= 0.004 ? 'paid' : 'posted',
+              updated_by: scope.session!.username,
+              updated_at: new Date().toISOString(),
+            })
+            .eq('id', cn.invoice_id);
+        }
+      }
+    }
+
     await supabase
       .from('accounting_credit_notes')
       .update({
         status: 'cancelled',
         cancelled_at: new Date().toISOString(),
+        journal_entry_id: null,
         updated_by: scope.session!.username,
         updated_at: new Date().toISOString(),
       })

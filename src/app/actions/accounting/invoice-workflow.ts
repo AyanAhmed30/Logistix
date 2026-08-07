@@ -23,6 +23,7 @@ export type AccountingInvoiceLog = {
 export type AccountingInvoiceLineInput = {
   id?: string | null;
   sequence: number;
+  product_id?: string | null;
   product_name: string;
   description?: string | null;
   quantity: number;
@@ -46,6 +47,7 @@ export type AccountingInvoiceUpdatePayload = {
   invoice_date?: string;
   due_date?: string | null;
   payment_terms?: string | null;
+  payment_term_id?: string | null;
   salesperson_name?: string | null;
   notes?: string | null;
   customer_notes?: string | null;
@@ -204,6 +206,16 @@ export async function updateAccountingInvoice(
       return { error: 'Only draft invoices can be edited' };
     }
 
+    const { getAccountingDocumentLockError } = await import('@/lib/accounting-lock-dates');
+    const nextInvoiceDateEarly =
+      payload.invoice_date !== undefined ? payload.invoice_date : row.invoice_date;
+    const lockErr = await getAccountingDocumentLockError(
+      row.organization_id ? String(row.organization_id) : null,
+      nextInvoiceDateEarly ? String(nextInvoiceDateEarly) : null,
+      'sale'
+    );
+    if (lockErr) return { error: lockErr };
+
     if (
       scope.organizationId &&
       !scope.isGlobalAdminView &&
@@ -220,74 +232,107 @@ export async function updateAccountingInvoice(
       payload.invoice_date !== undefined ? payload.invoice_date : row.invoice_date;
     const nextTerms =
       payload.payment_terms !== undefined ? payload.payment_terms : row.payment_terms;
+    const nextTermId =
+      payload.payment_term_id !== undefined
+        ? payload.payment_term_id
+        : (row as { payment_term_id?: string | null }).payment_term_id || null;
     let nextDueDate =
       payload.due_date !== undefined ? payload.due_date : row.due_date;
     // Auto due date when terms/date change and client didn't send an explicit due_date
     if (
       payload.due_date === undefined &&
-      (payload.payment_terms !== undefined || payload.invoice_date !== undefined)
+      (payload.payment_terms !== undefined ||
+        payload.payment_term_id !== undefined ||
+        payload.invoice_date !== undefined)
     ) {
-      const { computeDueDateFromTerms } = await import('@/lib/accounting-due-dates');
-      nextDueDate =
-        computeDueDateFromTerms(
-          nextInvoiceDate ? String(nextInvoiceDate) : null,
-          nextTerms ? String(nextTerms) : null
-        ) || nextDueDate;
+      const { computeAccountingDueDate } = await import(
+        '@/app/actions/accounting/payment-terms'
+      );
+      const computed = await computeAccountingDueDate({
+        documentDate: nextInvoiceDate ? String(nextInvoiceDate) : '',
+        paymentTermId: nextTermId ? String(nextTermId) : null,
+        paymentTermsText: nextTerms ? String(nextTerms) : null,
+      });
+      if (!('error' in computed) && computed.due_date) {
+        nextDueDate = computed.due_date;
+      }
+    }
+
+    const updatePayload: Record<string, unknown> = {
+      customer_name:
+        payload.customer_name !== undefined
+          ? payload.customer_name
+          : row.customer_name,
+      contact_id:
+        payload.contact_id !== undefined ? payload.contact_id : row.contact_id,
+      customer_lead_id:
+        payload.customer_lead_id !== undefined
+          ? payload.customer_lead_id
+          : row.customer_lead_id,
+      billing_address:
+        payload.billing_address !== undefined
+          ? payload.billing_address
+          : row.billing_address,
+      shipping_address:
+        payload.shipping_address !== undefined
+          ? payload.shipping_address
+          : row.shipping_address,
+      contact_person_name:
+        payload.contact_person_name !== undefined
+          ? payload.contact_person_name
+          : row.contact_person_name,
+      email: payload.email !== undefined ? payload.email : row.email,
+      phone: payload.phone !== undefined ? payload.phone : row.phone,
+      invoice_date: nextInvoiceDate,
+      due_date: nextDueDate,
+      payment_terms: nextTerms,
+      salesperson_name:
+        payload.salesperson_name !== undefined
+          ? payload.salesperson_name
+          : row.salesperson_name,
+      notes: payload.notes !== undefined ? payload.notes : row.notes,
+      customer_notes:
+        payload.customer_notes !== undefined
+          ? payload.customer_notes
+          : row.customer_notes,
+      ...(totals || {}),
+      updated_by: scope.session!.username,
+      updated_at: new Date().toISOString(),
+    };
+
+    if (payload.payment_term_id !== undefined) {
+      updatePayload.payment_term_id = payload.payment_term_id || null;
     }
 
     const { error: updError } = await supabase
       .from('accounting_customer_invoices')
-      .update({
-        customer_name:
-          payload.customer_name !== undefined
-            ? payload.customer_name
-            : row.customer_name,
-        contact_id:
-          payload.contact_id !== undefined ? payload.contact_id : row.contact_id,
-        customer_lead_id:
-          payload.customer_lead_id !== undefined
-            ? payload.customer_lead_id
-            : row.customer_lead_id,
-        billing_address:
-          payload.billing_address !== undefined
-            ? payload.billing_address
-            : row.billing_address,
-        shipping_address:
-          payload.shipping_address !== undefined
-            ? payload.shipping_address
-            : row.shipping_address,
-        contact_person_name:
-          payload.contact_person_name !== undefined
-            ? payload.contact_person_name
-            : row.contact_person_name,
-        email: payload.email !== undefined ? payload.email : row.email,
-        phone: payload.phone !== undefined ? payload.phone : row.phone,
-        invoice_date: nextInvoiceDate,
-        due_date: nextDueDate,
-        payment_terms: nextTerms,
-        salesperson_name:
-          payload.salesperson_name !== undefined
-            ? payload.salesperson_name
-            : row.salesperson_name,
-        notes: payload.notes !== undefined ? payload.notes : row.notes,
-        customer_notes:
-          payload.customer_notes !== undefined
-            ? payload.customer_notes
-            : row.customer_notes,
-        ...(totals || {}),
-        updated_by: scope.session!.username,
-        updated_at: new Date().toISOString(),
-      })
+      .update(updatePayload)
       .eq('id', invoiceId);
 
     if (updError) {
-      if (/customer_notes|column/i.test(updError.message)) {
+      if (/payment_term_id|column/i.test(updError.message)) {
+        delete updatePayload.payment_term_id;
+        const retry = await supabase
+          .from('accounting_customer_invoices')
+          .update(updatePayload)
+          .eq('id', invoiceId);
+        if (retry.error) {
+          if (/customer_notes|column/i.test(retry.error.message)) {
+            return {
+              error:
+                'Run create_accounting_invoice_workflow_phase2.sql migration.',
+            };
+          }
+          return { error: retry.error.message };
+        }
+      } else if (/customer_notes|column/i.test(updError.message)) {
         return {
           error:
             'Run create_accounting_invoice_workflow_phase2.sql migration.',
         };
+      } else {
+        return { error: updError.message };
       }
-      return { error: updError.message };
     }
 
     if (lines) {
@@ -299,6 +344,7 @@ export async function updateAccountingInvoice(
         const rows = lines.map((l, idx) => ({
           invoice_id: invoiceId,
           sequence: l.sequence || (idx + 1) * 10,
+          product_id: l.product_id || null,
           product_name: l.product_name || '',
           description: l.description || null,
           quantity: Number(l.quantity) || 0,
@@ -312,12 +358,28 @@ export async function updateAccountingInvoice(
         const { error: lineErr } = await supabase
           .from('accounting_customer_invoice_lines')
           .insert(rows);
-        if (lineErr && /account|column/i.test(lineErr.message)) {
-          const legacy = rows.map(({ account: _a, ...rest }) => rest);
+        if (lineErr && /product_id|account|column/i.test(lineErr.message)) {
+          const stripProduct = /product_id/i.test(lineErr.message);
+          const stripAccount = /account/i.test(lineErr.message);
+          const retryRows = rows.map((r) => {
+            const next: Record<string, unknown> = { ...r };
+            if (stripProduct) delete next.product_id;
+            if (stripAccount) delete next.account;
+            return next;
+          });
           const retry = await supabase
             .from('accounting_customer_invoice_lines')
-            .insert(legacy);
-          if (retry.error) return { error: retry.error.message };
+            .insert(retryRows);
+          if (retry.error) {
+            // Last resort: strip both optional columns
+            const bare = rows.map(
+              ({ account: _a, product_id: _p, ...rest }) => rest
+            );
+            const bareRetry = await supabase
+              .from('accounting_customer_invoice_lines')
+              .insert(bare);
+            if (bareRetry.error) return { error: bareRetry.error.message };
+          }
         } else if (lineErr) {
           return { error: lineErr.message };
         }
@@ -422,6 +484,14 @@ export async function postAccountingInvoice(invoiceId: string) {
     if (String(row.status) !== 'draft') {
       return { error: `Cannot post from status "${row.status}"` };
     }
+    const { getAccountingDocumentLockError } = await import('@/lib/accounting-lock-dates');
+    const postLockErr = await getAccountingDocumentLockError(
+      row.organization_id ? String(row.organization_id) : null,
+      row.invoice_date ? String(row.invoice_date) : null,
+      'sale'
+    );
+    if (postLockErr) return { error: postLockErr };
+
     if (!String(row.customer_name || '').trim() && !row.contact_id) {
       return { error: 'Customer is required before posting' };
     }
@@ -443,21 +513,310 @@ export async function postAccountingInvoice(invoiceId: string) {
     };
   }
 
-  return transitionStatus(invoiceId, 'posted', 'posted', {
+  const posted = await transitionStatus(invoiceId, 'posted', 'posted', {
     allowFrom: ['draft'],
   });
+  if ('error' in posted && posted.error) return posted;
+
+  try {
+    const { postJournalEntryForCustomerInvoice } = await import(
+      '@/app/actions/accounting/journal-entries'
+    );
+    const je = await postJournalEntryForCustomerInvoice(invoiceId);
+    if ('error' in je && je.error) {
+      const supabase = await createAdminClient();
+      const { rollbackDocumentPostToDraft } = await import(
+        '@/lib/accounting-je-lifecycle'
+      );
+      const scope = await resolveScope();
+      const actor =
+        !('error' in scope) && scope.session ? scope.session.username : 'system';
+      await rollbackDocumentPostToDraft(
+        supabase,
+        'accounting_customer_invoices',
+        invoiceId,
+        actor
+      );
+      return {
+        error: `Invoice not posted — journal entry failed: ${je.error}`,
+      };
+    }
+    if ('journalEntryId' in je && je.journalEntryId && !je.alreadyExists) {
+      const supabase = await createAdminClient();
+      const scope = await resolveScope();
+      if (!('error' in scope) || !scope.error) {
+        await appendLog(supabase, {
+          invoiceId,
+          action: 'journal_entry_created',
+          previousStatus: 'draft',
+          newStatus: 'posted',
+          performedBy:
+            !('error' in scope) && scope.session
+              ? scope.session.username
+              : 'system',
+          details: { journal_entry_id: je.journalEntryId },
+        });
+      }
+    }
+  } catch (err) {
+    const supabase = await createAdminClient();
+    const { rollbackDocumentPostToDraft } = await import(
+      '@/lib/accounting-je-lifecycle'
+    );
+    const scope = await resolveScope();
+    const actor =
+      !('error' in scope) && scope.session ? scope.session.username : 'system';
+    await rollbackDocumentPostToDraft(
+      supabase,
+      'accounting_customer_invoices',
+      invoiceId,
+      actor
+    );
+    return {
+      error: `Invoice not posted — journal entry failed: ${
+        err instanceof Error ? err.message : 'unknown error'
+      }`,
+    };
+  }
+
+  return posted;
 }
 
 export async function cancelAccountingInvoice(invoiceId: string) {
+  try {
+    const scope = await resolveScope();
+    if ('error' in scope && scope.error) return { error: scope.error };
+
+    const supabase = await createAdminClient();
+    const loaded = await loadInvoiceRow(supabase, invoiceId);
+    if ('error' in loaded) return { error: loaded.error };
+    const row = loaded.invoice;
+
+    const { getAccountingDocumentLockError } = await import(
+      '@/lib/accounting-lock-dates'
+    );
+    const lockErr = await getAccountingDocumentLockError(
+      row.organization_id ? String(row.organization_id) : scope.organizationId,
+      row.invoice_date ? String(row.invoice_date) : null,
+      'sale'
+    );
+    if (lockErr) return { error: lockErr };
+
+    const amountPaid = Number(row.amount_paid) || 0;
+    if (amountPaid > 0.004 && String(row.status) === 'posted') {
+      return {
+        error:
+          'Cannot cancel a posted invoice with payments. Reset payments first or issue a credit note.',
+      };
+    }
+
+    if (String(row.status) === 'posted') {
+      const { cancelLinkedAccountingJournalEntry } = await import(
+        '@/lib/accounting-je-lifecycle'
+      );
+      await cancelLinkedAccountingJournalEntry(supabase, {
+        journalEntryId: row.journal_entry_id
+          ? String(row.journal_entry_id)
+          : null,
+        sourceType: 'customer_invoice',
+        sourceId: invoiceId,
+        organizationId: row.organization_id
+          ? String(row.organization_id)
+          : scope.organizationId,
+        performedBy: scope.session!.username,
+        reason: 'invoice_cancelled',
+      });
+      await supabase
+        .from('accounting_customer_invoices')
+        .update({
+          journal_entry_id: null,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', invoiceId);
+    }
+  } catch (err) {
+    return {
+      error: err instanceof Error ? err.message : 'Failed to cancel invoice',
+    };
+  }
   return transitionStatus(invoiceId, 'cancelled', 'cancelled', {
     allowFrom: ['draft', 'posted'],
   });
 }
 
 export async function resetAccountingInvoiceToDraft(invoiceId: string) {
-  return transitionStatus(invoiceId, 'draft', 'reset_to_draft', {
-    allowFrom: ['posted', 'cancelled'],
-  });
+  try {
+    const scope = await resolveScope();
+    if ('error' in scope && scope.error) return { error: scope.error };
+
+    const supabase = await createAdminClient();
+    const loaded = await loadInvoiceRow(supabase, invoiceId);
+    if ('error' in loaded) return { error: loaded.error };
+    const row = loaded.invoice;
+    const from = String(row.status) as AccountingInvoiceStatus;
+
+    if (!['posted', 'cancelled'].includes(from)) {
+      return { error: `Cannot reset to draft from status "${from}"` };
+    }
+
+    if (
+      scope.organizationId &&
+      !scope.isGlobalAdminView &&
+      row.organization_id &&
+      String(row.organization_id) !== scope.organizationId
+    ) {
+      return { error: 'Invoice not in the selected organization' };
+    }
+
+    // Block when payments exist (Odoo: cannot reset paid / in-payment with payments).
+    const amountPaid = Number(row.amount_paid) || 0;
+    if (amountPaid > 0.004) {
+      return { error: 'Cannot reset to draft while payments exist on this invoice.' };
+    }
+
+    const { getAccountingDocumentLockError } = await import(
+      '@/lib/accounting-lock-dates'
+    );
+    const resetLockErr = await getAccountingDocumentLockError(
+      row.organization_id ? String(row.organization_id) : scope.organizationId,
+      row.invoice_date ? String(row.invoice_date) : null,
+      'sale'
+    );
+    if (resetLockErr) return { error: resetLockErr };
+
+    const previousJeId = row.journal_entry_id
+      ? String(row.journal_entry_id)
+      : null;
+    let cancelledJeId: string | null = null;
+
+    // Odoo: Reset to Draft removes the active journal entry from accounting.
+    if (previousJeId) {
+      const { data: je } = await supabase
+        .from('accounting_journal_entries')
+        .select('id, status')
+        .eq('id', previousJeId)
+        .maybeSingle();
+      if (je && String(je.status) !== 'cancelled') {
+        await supabase
+          .from('accounting_journal_entries')
+          .update({
+            status: 'cancelled',
+            updated_by: scope.session!.username,
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', previousJeId);
+        cancelledJeId = previousJeId;
+        try {
+          await supabase.from('accounting_journal_entry_logs').insert([
+            {
+              journal_entry_id: previousJeId,
+              organization_id: row.organization_id
+                ? String(row.organization_id)
+                : null,
+              action: 'cancelled',
+              performed_by: scope.session!.username,
+              previous_status: String(je.status),
+              new_status: 'cancelled',
+              details: {
+                reason: 'invoice_reset_to_draft',
+                invoice_id: invoiceId,
+              },
+            },
+          ]);
+        } catch {
+          /* best-effort log */
+        }
+      }
+    } else {
+      // Fallback: cancel any active JE linked by source.
+      const { data: bySource } = await supabase
+        .from('accounting_journal_entries')
+        .select('id, status')
+        .eq('source_type', 'customer_invoice')
+        .eq('source_id', invoiceId)
+        .neq('status', 'cancelled')
+        .maybeSingle();
+      if (bySource?.id) {
+        await supabase
+          .from('accounting_journal_entries')
+          .update({
+            status: 'cancelled',
+            updated_by: scope.session!.username,
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', bySource.id);
+        cancelledJeId = String(bySource.id);
+      }
+    }
+
+    const { error } = await supabase
+      .from('accounting_customer_invoices')
+      .update({
+        status: 'draft',
+        posted_at: null,
+        cancelled_at: null,
+        journal_entry_id: null,
+        payment_state: 'not_paid',
+        updated_by: scope.session!.username,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', invoiceId);
+
+    if (error) {
+      if (/payment_state|journal_entry_id|column/i.test(error.message)) {
+        const retry = await supabase
+          .from('accounting_customer_invoices')
+          .update({
+            status: 'draft',
+            posted_at: null,
+            cancelled_at: null,
+            updated_by: scope.session!.username,
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', invoiceId);
+        if (retry.error) return { error: retry.error.message };
+        // Best-effort clear JE link separately.
+        await supabase
+          .from('accounting_customer_invoices')
+          .update({ journal_entry_id: null })
+          .eq('id', invoiceId);
+      } else {
+        return { error: error.message };
+      }
+    }
+
+    await appendLog(supabase, {
+      invoiceId,
+      action: 'reset_to_draft',
+      previousStatus: from,
+      newStatus: 'draft',
+      performedBy: scope.session!.username,
+      details: {
+        journal_entry_removed: Boolean(cancelledJeId || previousJeId),
+        journal_entry_id: cancelledJeId || previousJeId,
+      },
+    });
+
+    if (cancelledJeId || previousJeId) {
+      await appendLog(supabase, {
+        invoiceId,
+        action: 'journal_entry_removed',
+        previousStatus: from,
+        newStatus: 'draft',
+        performedBy: scope.session!.username,
+        details: {
+          journal_entry_id: cancelledJeId || previousJeId,
+        },
+      });
+    }
+
+    return getAccountingInvoiceDetail(invoiceId);
+  } catch (err) {
+    return {
+      error:
+        err instanceof Error ? err.message : 'Failed to reset invoice to draft',
+    };
+  }
 }
 
 /** @deprecated Use registerAccountingPayment from payments.ts */

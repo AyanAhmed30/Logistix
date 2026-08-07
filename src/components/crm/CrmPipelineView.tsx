@@ -49,7 +49,6 @@ import {
 import {
   ChevronDown,
   ChevronUp,
-  GripVertical,
   Loader2,
   Plus,
   Send,
@@ -107,64 +106,64 @@ function OpportunityCard({
   const createdLabel = formatCardDateTime(opportunity.created_at);
 
   return (
-    <div ref={setNodeRef} style={style} className="touch-none">
+    <div
+      ref={setNodeRef}
+      style={style}
+      className="touch-none"
+      {...attributes}
+      {...listeners}
+    >
       <div
-        className="rounded-lg border border-slate-200 bg-white shadow-sm hover:shadow-md transition-shadow cursor-pointer"
-        onClick={() => onOpen(opportunity.id)}
+        className="rounded-lg border border-slate-200 bg-white shadow-sm hover:shadow-md transition-shadow cursor-grab active:cursor-grabbing"
+        onClick={() => {
+          if (!isDragging) onOpen(opportunity.id);
+        }}
       >
-        <div className="flex items-start gap-2 p-3">
-          <button
-            type="button"
-            className="mt-0.5 text-slate-300 hover:text-slate-500 cursor-grab active:cursor-grabbing"
-            {...attributes}
-            {...listeners}
-            onClick={(e) => e.stopPropagation()}
-          >
-            <GripVertical className="h-4 w-4" />
-          </button>
-          <div className="min-w-0 flex-1 space-y-1">
-            <h3 className="font-semibold text-sm text-primary-dark truncate">
-              {opportunity.name}
-            </h3>
-            {opportunity.customer_name ? (
-              <p className="text-xs text-secondary-muted truncate">
-                <span className="text-slate-400">Customer </span>
-                <span className="text-primary-dark font-medium">{opportunity.customer_name}</span>
-              </p>
-            ) : null}
-            {opportunity.customer_lead_id ? (
-              <p className="text-xs text-secondary-muted truncate">
-                <span className="text-slate-400">Customer ID </span>
-                <span className="font-mono font-semibold text-primary-dark">
-                  {opportunity.customer_lead_id}
-                </span>
-              </p>
-            ) : null}
-            {createdLabel ? (
-              <p className="text-[11px] text-slate-400 truncate">{createdLabel}</p>
-            ) : null}
-            {showSendInquiry ? (
-              <div className="pt-2">
-                <Button
-                  type="button"
-                  size="sm"
-                  disabled={sendingInquiry}
-                  className="h-7 w-full text-xs bg-[#017e84] hover:bg-[#016970] text-white disabled:opacity-70"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onSendInquiry(opportunity.id);
-                  }}
-                >
-                  {sendingInquiry ? (
-                    <Loader2 className="h-3 w-3 mr-1.5 animate-spin" />
-                  ) : (
-                    <Send className="h-3 w-3 mr-1.5" />
-                  )}
-                  {sendingInquiry ? "Opening…" : "Send Inquiry"}
-                </Button>
-              </div>
-            ) : null}
-          </div>
+        <div className="p-3 space-y-1">
+          <h3 className="font-semibold text-sm text-primary-dark truncate">
+            {opportunity.name}
+          </h3>
+          {opportunity.customer_name ? (
+            <p className="text-xs text-secondary-muted truncate">
+              <span className="text-slate-400">Customer </span>
+              <span className="text-primary-dark font-medium">
+                {opportunity.customer_name}
+              </span>
+            </p>
+          ) : null}
+          {opportunity.customer_lead_id ? (
+            <p className="text-xs text-secondary-muted truncate">
+              <span className="text-slate-400">Customer ID </span>
+              <span className="font-mono font-semibold text-primary-dark">
+                {opportunity.customer_lead_id}
+              </span>
+            </p>
+          ) : null}
+          {createdLabel ? (
+            <p className="text-[11px] text-slate-400 truncate">{createdLabel}</p>
+          ) : null}
+          {showSendInquiry ? (
+            <div className="pt-2">
+              <Button
+                type="button"
+                size="sm"
+                disabled={sendingInquiry}
+                className="h-7 w-full text-xs bg-[#017e84] hover:bg-[#016970] text-white disabled:opacity-70"
+                onPointerDown={(e) => e.stopPropagation()}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onSendInquiry(opportunity.id);
+                }}
+              >
+                {sendingInquiry ? (
+                  <Loader2 className="h-3 w-3 mr-1.5 animate-spin" />
+                ) : (
+                  <Send className="h-3 w-3 mr-1.5" />
+                )}
+                {sendingInquiry ? "Opening…" : "Send Inquiry"}
+              </Button>
+            </div>
+          ) : null}
         </div>
       </div>
     </div>

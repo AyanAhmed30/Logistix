@@ -5,8 +5,10 @@ import type { AccountingAccessLevel } from '@/lib/accounting-roles';
 import {
   accountingCanAccessReports,
   accountingCanManageAutomation,
+  accountingCanManageConfig,
   accountingCanManageCreditNotes,
   accountingCanManageRefunds,
+  accountingCanManageLockDates,
 } from '@/lib/accounting-roles';
 import {
   ACCOUNTING_NAV_STRUCTURE,
@@ -22,6 +24,12 @@ function childAllowed(
   if (id === 'accounting-credit-notes') return accountingCanManageCreditNotes(level);
   if (id === 'accounting-vendor-refunds') return accountingCanManageCreditNotes(level);
   if (id === 'accounting-refunds') return accountingCanManageRefunds(level);
+  if (id === 'accounting-lock-dates') return accountingCanManageLockDates(level);
+  if (id === 'accounting-chart-of-accounts') return accountingCanManageConfig(level);
+  if (id === 'accounting-journals') return accountingCanManageConfig(level);
+  if (id === 'accounting-taxes') return accountingCanManageConfig(level);
+  if (id === 'accounting-payment-terms') return accountingCanManageConfig(level);
+  if (id === 'accounting-currencies') return accountingCanManageConfig(level);
   return true;
 }
 
@@ -44,6 +52,13 @@ export function getAccountingNavStructureForLevel(
       }
       return entry;
     }
+    if (
+      entry.id === 'accounting-configuration-menu' &&
+      !accountingCanManageConfig(level) &&
+      !accountingCanManageLockDates(level)
+    ) {
+      return null;
+    }
     const children = entry.children.filter((c) => childAllowed(c.id, level));
     if (!children.length) return null;
     return { ...entry, children };
@@ -59,6 +74,12 @@ export function getAccountingNavItemsForLevel(
     if (item.id === 'accounting-automation') return accountingCanManageAutomation(level);
     if (item.id === 'accounting-credit-notes') return accountingCanManageCreditNotes(level);
     if (item.id === 'accounting-refunds') return accountingCanManageRefunds(level);
+    if (item.id === 'accounting-chart-of-accounts') return accountingCanManageConfig(level);
+    if (item.id === 'accounting-journals') return accountingCanManageConfig(level);
+    if (item.id === 'accounting-taxes') return accountingCanManageConfig(level);
+    if (item.id === 'accounting-payment-terms') return accountingCanManageConfig(level);
+    if (item.id === 'accounting-currencies') return accountingCanManageConfig(level);
+    if (item.id === 'accounting-lock-dates') return accountingCanManageLockDates(level);
     return true;
   });
 }

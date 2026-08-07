@@ -28,6 +28,7 @@ export type AccountingBillListItem = {
 export type AccountingBillLine = {
   id: string;
   sequence: number;
+  product_id?: string | null;
   product_name: string;
   description: string | null;
   quantity: number;
@@ -171,10 +172,7 @@ export async function createManualAccountingBill() {
     const { computeDueDateFromTerms } = await import('@/lib/accounting-due-dates');
     const dueDate = computeDueDateFromTerms(today, 'Immediate') || today;
 
-    const { data: bill, error } = await supabase
-      .from('accounting_vendor_bills')
-      .insert([
-        {
+    const billPayload: Record<string, unknown> = {
           organization_id: orgId,
           bill_number: billNumber,
           status: 'draft',
@@ -190,10 +188,51 @@ export async function createManualAccountingBill() {
           amount_residual: 0,
           created_by: scope.session!.username,
           updated_by: scope.session!.username,
-        },
-      ])
+        };
+
+    try {
+      const { resolveDocumentCurrencyFields } = await import(
+        '@/app/actions/accounting/currencies'
+      );
+      const fx = await resolveDocumentCurrencyFields({
+        organizationId: orgId,
+        rateDate: today,
+        totalAmount: 0,
+      });
+      if ('currency_id' in fx) {
+        billPayload.currency_id = fx.currency_id;
+        billPayload.currency_code = fx.currency_code;
+        billPayload.exchange_rate = fx.exchange_rate;
+        billPayload.amount_total_company = fx.amount_total_company;
+      }
+    } catch {
+      /* optional until Currency Engine migration */
+    }
+
+    let { data: bill, error } = await supabase
+      .from('accounting_vendor_bills')
+      .insert([billPayload])
       .select('id')
       .single();
+
+    if (
+      error &&
+      /currency_id|currency_code|exchange_rate|amount_total_company|column/i.test(
+        error.message
+      )
+    ) {
+      delete billPayload.currency_id;
+      delete billPayload.currency_code;
+      delete billPayload.exchange_rate;
+      delete billPayload.amount_total_company;
+      const retry = await supabase
+        .from('accounting_vendor_bills')
+        .insert([billPayload])
+        .select('id')
+        .single();
+      bill = retry.data;
+      error = retry.error;
+    }
 
     if (error || !bill) {
       if (error && /accounting_vendor_bills|relation|schema cache/i.test(error.message)) {
@@ -379,6 +418,9 @@ export async function getAccountingBillDetail(billId: string) {
     const lines: AccountingBillLine[] = (lineRows || []).map((l) => ({
       id: String(l.id),
       sequence: Number(l.sequence) || 10,
+      product_id: (l as { product_id?: string | null }).product_id
+        ? String((l as { product_id?: string | null }).product_id)
+        : null,
       product_name: String(l.product_name || ''),
       description: l.description ? String(l.description) : null,
       quantity: Number(l.quantity) || 0,

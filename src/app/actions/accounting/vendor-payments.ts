@@ -193,6 +193,38 @@ export async function registerVendorBillPayment(
       // optional
     }
 
+    try {
+      const { postJournalEntryForVendorPayment } = await import(
+        '@/app/actions/accounting/journal-entries'
+      );
+      const je = await postJournalEntryForVendorPayment(String(payment.id));
+      if ('error' in je && je.error) {
+        await supabase
+          .from('accounting_vendor_payments')
+          .delete()
+          .eq('id', payment.id);
+        await refreshBillPaymentState(
+          supabase,
+          billId,
+          scope.session!.username
+        );
+        return {
+          error: `Payment not registered — journal entry failed: ${je.error}`,
+        };
+      }
+    } catch (err) {
+      await supabase
+        .from('accounting_vendor_payments')
+        .delete()
+        .eq('id', payment.id);
+      await refreshBillPaymentState(supabase, billId, scope.session!.username);
+      return {
+        error: `Payment not registered — journal entry failed: ${
+          err instanceof Error ? err.message : 'unknown error'
+        }`,
+      };
+    }
+
     return getAccountingBillDetail(billId);
   } catch (err) {
     return {

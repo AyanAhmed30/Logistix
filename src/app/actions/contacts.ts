@@ -1,5 +1,6 @@
 'use server';
 
+import { after } from 'next/server';
 import { revalidatePath } from 'next/cache';
 import { getSession } from '@/lib/auth/session';
 import { createAdminClient } from '@/utils/supabase/server';
@@ -1055,6 +1056,42 @@ export async function createContact(input: ContactUpsertInput) {
         metadata: { diff: diffLines },
       },
     ]);
+
+    // Odoo-style: silently create one CRM Opportunity in Pipeline → New.
+    // Skip child/related contacts (parent_id set) and org-less rows.
+    // Manual CRM → New create remains unchanged.
+    const autoOrgId = data.organization_id
+      ? String(data.organization_id)
+      : !('unscoped' in org)
+        ? String(org.organizationId)
+        : '';
+    const isChildContact = Boolean(data.parent_id);
+    if (autoOrgId && !isChildContact) {
+      const snapshot = {
+        contactId: String(data.id),
+        contactName: String(data.name || ''),
+        organizationId: autoOrgId,
+        email: data.email ? String(data.email) : null,
+        phone: data.phone ? String(data.phone) : null,
+        mobile: data.mobile ? String(data.mobile) : null,
+        website: data.website ? String(data.website) : null,
+        salespersonId: data.salesperson_id ? String(data.salesperson_id) : null,
+        createdBy: s.username,
+        customerLeadId: data.lead_id_formatted
+          ? String(data.lead_id_formatted)
+          : null,
+      };
+      after(async () => {
+        try {
+          const { ensureAutoOpportunityForNewContact } = await import(
+            '@/app/actions/crm/opportunities'
+          );
+          await ensureAutoOpportunityForNewContact(snapshot);
+        } catch {
+          // Never block or surface errors on Contact create
+        }
+      });
+    }
 
     return { contact: data as Contact };
   } catch (err) {

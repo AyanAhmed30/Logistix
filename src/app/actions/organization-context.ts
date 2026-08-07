@@ -32,25 +32,52 @@ export type AdminOrganizationState = {
   isAdminContext: boolean;
 };
 
-async function loadAllActiveOrganizations() {
-  const supabase = await createAdminClient();
-  const { data, error } = await supabase
-    .from('organizations')
-    .select('id, organization_name')
-    .eq('status', 'active')
-    .order('organization_name', { ascending: true });
+function isTransientSupabaseError(message: string, code?: string | null) {
+  const msg = String(message || '').toLowerCase();
+  return (
+    msg.includes('fetch failed') ||
+    msg.includes('network') ||
+    msg.includes('econnreset') ||
+    msg.includes('etimedout') ||
+    msg.includes('enotfound') ||
+    msg.includes('socket') ||
+    code === '42P01' ||
+    msg.includes('does not exist')
+  );
+}
 
-  if (error) {
-    if (error.message.includes('does not exist') || error.code === '42P01') {
+async function loadAllActiveOrganizations() {
+  try {
+    const supabase = await createAdminClient();
+    const { data, error } = await supabase
+      .from('organizations')
+      .select('id, organization_name')
+      .eq('status', 'active')
+      .order('organization_name', { ascending: true });
+
+    if (error) {
+      const msg = String(error.message || '');
+      if (isTransientSupabaseError(msg, error.code)) {
+        if (!msg.toLowerCase().includes('fetch failed')) {
+          console.error('[loadAllActiveOrganizations]', msg);
+        }
+        return [] as OrganizationSwitcherItem[];
+      }
+      console.error('[loadAllActiveOrganizations]', msg);
       return [] as OrganizationSwitcherItem[];
     }
-    throw new Error(error.message);
-  }
 
-  return (data || []).map((row) => ({
-    id: String(row.id),
-    organization_name: String(row.organization_name || 'Organization'),
-  }));
+    return (data || []).map((row) => ({
+      id: String(row.id),
+      organization_name: String(row.organization_name || 'Organization'),
+    }));
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    if (!msg.toLowerCase().includes('fetch failed')) {
+      console.error('[loadAllActiveOrganizations]', msg);
+    }
+    return [] as OrganizationSwitcherItem[];
+  }
 }
 
 async function resolveOrganizationName(organizationId: string) {
@@ -132,29 +159,79 @@ export async function getAdminOrganizationState(): Promise<AdminOrganizationStat
   let activeOrganizationId: string | null = session.organizationId ?? null;
   let activeOrganizationName: string | null = session.organizationName ?? null;
 
-  if (isSuperAdminSession(session)) {
-    organizations = await loadAllActiveOrganizations();
-  } else if (isPortalAccountSession(session) && session.appUserId) {
-    const assignment = await resolvePortalOrganizationAccess(session);
-    organizations = assignment.organizations;
-    activeOrganizationId = assignment.activeOrganizationId;
-    activeOrganizationName = assignment.activeOrganizationName;
+  try {
+    if (isSuperAdminSession(session)) {
+      organizations = await loadAllActiveOrganizations();
+      // Soft fallback: keep current org visible in switcher if DB is unreachable
+      if (
+        organizations.length === 0 &&
+        session.organizationId &&
+        !isSuperAdminInAdminContext(session)
+      ) {
+        organizations = [
+          {
+            id: session.organizationId,
+            organization_name: session.organizationName || 'Organization',
+          },
+        ];
+      }
+    } else if (isPortalAccountSession(session) && session.appUserId) {
+      const assignment = await resolvePortalOrganizationAccess(session);
+      organizations = assignment.organizations;
+      activeOrganizationId = assignment.activeOrganizationId;
+      activeOrganizationName = assignment.activeOrganizationName;
 
-    // Do NOT write cookies here — getAdminOrganizationState is called from
-    // Server Components (e.g. admin dashboard). Cookie mutation is only allowed
-    // in Server Actions / Route Handlers (switchAdminOrganization, etc.).
-  } else if (session.organizationIds && session.organizationIds.length > 0) {
-    const supabase = await createAdminClient();
-    const { data } = await supabase
-      .from('organizations')
-      .select('id, organization_name')
-      .in('id', session.organizationIds)
-      .eq('status', 'active')
-      .order('organization_name', { ascending: true });
-    organizations = (data || []).map((row) => ({
-      id: String(row.id),
-      organization_name: String(row.organization_name || 'Organization'),
-    }));
+      // Do NOT write cookies here — getAdminOrganizationState is called from
+      // Server Components (e.g. admin dashboard). Cookie mutation is only allowed
+      // in Server Actions / Route Handlers (switchAdminOrganization, etc.).
+    } else if (session.organizationIds && session.organizationIds.length > 0) {
+      try {
+        const supabase = await createAdminClient();
+        const { data, error } = await supabase
+          .from('organizations')
+          .select('id, organization_name')
+          .in('id', session.organizationIds)
+          .eq('status', 'active')
+          .order('organization_name', { ascending: true });
+
+        if (error || !data?.length) {
+          organizations = session.organizationIds.map((id) => ({
+            id,
+            organization_name:
+              id === session.organizationId
+                ? session.organizationName || 'Organization'
+                : 'Organization',
+          }));
+        } else {
+          organizations = data.map((row) => ({
+            id: String(row.id),
+            organization_name: String(row.organization_name || 'Organization'),
+          }));
+        }
+      } catch {
+        organizations = session.organizationIds.map((id) => ({
+          id,
+          organization_name:
+            id === session.organizationId
+              ? session.organizationName || 'Organization'
+              : 'Organization',
+        }));
+      }
+    }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    if (!msg.toLowerCase().includes('fetch failed')) {
+      console.error('[getAdminOrganizationState]', msg);
+    }
+    // Never crash the admin dashboard on org-switcher load failures
+    if (session.organizationId) {
+      organizations = [
+        {
+          id: session.organizationId,
+          organization_name: session.organizationName || 'Organization',
+        },
+      ];
+    }
   }
 
   return buildAdminOrganizationState(session, organizations, {

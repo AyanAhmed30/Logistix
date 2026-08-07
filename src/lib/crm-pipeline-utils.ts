@@ -22,3 +22,12 @@ export function parseAdminVirtualStageName(stageId: string): string | null {
   if (!stageId.startsWith(CRM_ADMIN_STAGE_PREFIX)) return null;
   return stageId.slice(CRM_ADMIN_STAGE_PREFIX.length);
 }
+
+/** Marker on crm_opportunities.source for Contact→CRM auto-create (duplicate guard). */
+export const CRM_AUTO_OPPORTUNITY_SOURCE = 'contact_auto';
+
+export function buildAutoOpportunityName(contactName: string): string {
+  const name = String(contactName || '').trim();
+  if (!name) return "New Contact's Opportunity";
+  return `${name}'s Opportunity`;
+}

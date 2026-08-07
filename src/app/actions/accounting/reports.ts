@@ -7,6 +7,7 @@ import {
   sessionHasAccountingAccess,
 } from '@/lib/accounting-page-access';
 import { computePaymentState } from '@/lib/accounting-payments';
+import { daysOverdueFromDueDate } from '@/lib/accounting-payment-terms';
 import { accountingCanAccessReports } from '@/lib/accounting-roles';
 
 export type ReportFilters = {
@@ -371,10 +372,9 @@ export async function getAccountingReportBundle(filters: ReportFilters = {}) {
         });
         let daysOverdue = 0;
         if (i.due_date && c.outstanding > 0.004) {
-          const due = new Date(`${i.due_date}T12:00:00`);
-          daysOverdue = Math.max(
-            0,
-            Math.floor((today.getTime() - due.getTime()) / 86400000)
+          daysOverdue = daysOverdueFromDueDate(
+            i.due_date,
+            today.toISOString().slice(0, 10)
           );
         }
         return {

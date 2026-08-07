@@ -56,6 +56,31 @@ function actionLabel(log: AccountingInvoiceLog): string[] {
       return [`Cancelled${from && to ? ` (${from} → ${to})` : ""}`];
     case "reset_to_draft":
       return [`Reset to Draft${from && to ? ` (${from} → ${to})` : ""}`];
+    case "journal_entry_removed":
+      return ["Journal Entry Removed"];
+    case "journal_entry_created":
+    case "journal_entry_recreated":
+      return ["Journal Entry Created"];
+    case "credit_note_created":
+      return [
+        details.credit_note_number
+          ? `Credit Note Created (${String(details.credit_note_number)})`
+          : "Credit Note Created",
+      ];
+    case "credit_note_posted":
+      return [
+        details.credit_note_number
+          ? `Credit Note Posted (${String(details.credit_note_number)})`
+          : "Credit Note Posted",
+      ];
+    case "invoice_reversed":
+      return ["Invoice Reversed"];
+    case "reconciled":
+      return ["Reconciled"];
+    case "partially_reconciled":
+      return ["Partially Reconciled"];
+    case "unreconciled":
+      return ["Unreconciled"];
     case "payment_registered": {
       const amount = details.amount != null ? Number(details.amount) : null;
       const outstanding =

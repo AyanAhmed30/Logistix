@@ -66,9 +66,12 @@ import { AccountingActivitiesPanel } from "@/components/accounting/AccountingAct
 import { AccountingFormSkeleton } from "@/components/accounting/AccountingSkeleton";
 import { generateAccountingBillPdf } from "@/lib/accounting-bill-pdf";
 import { computeBillLineTotal, computeBillTotals } from "@/lib/accounting-bill-math";
+import { computeDueDateFromTerms } from "@/lib/accounting-due-dates";
+import { searchAccountingPaymentTerms } from "@/app/actions/accounting/payment-terms";
 import { formatMoney } from "@/lib/sales-quotation-form";
 import { useAdminOrganization } from "@/contexts/AdminOrganizationContext";
 import type { AccountingPaymentMethod } from "@/lib/accounting-payments";
+import { SalesProductLinePicker } from "@/components/sales/SalesProductLinePicker";
 
 type Props = { billId: string };
 
@@ -79,6 +82,7 @@ function blankLine(seq: number): EditLine {
     id: `tmp-${seq}`,
     _key: `tmp-${seq}-${Math.random()}`,
     sequence: seq,
+    product_id: null,
     product_name: "",
     description: null,
     quantity: 1,
@@ -108,6 +112,11 @@ export function AccountingBillFormView({ billId }: Props) {
   const [billDate, setBillDate] = useState("");
   const [dueDate, setDueDate] = useState("");
   const [paymentTerms, setPaymentTerms] = useState("Immediate");
+  const [paymentTermId, setPaymentTermId] = useState("");
+  const [termOptions, setTermOptions] = useState<
+    { id: string; name: string }[]
+  >([]);
+  const [dueDateManual, setDueDateManual] = useState(false);
   const [reference, setReference] = useState("");
   const [notes, setNotes] = useState("");
   const [vendorNotes, setVendorNotes] = useState("");
@@ -139,6 +148,10 @@ export function AccountingBillFormView({ billId }: Props) {
       setBillDate(b.bill_date || "");
       setDueDate(b.due_date || "");
       setPaymentTerms(b.payment_terms || "Immediate");
+      setPaymentTermId(
+        (b as { payment_term_id?: string | null }).payment_term_id || ""
+      );
+      setDueDateManual(false);
       setReference(b.reference || "");
       setNotes(b.notes || "");
       setVendorNotes(b.vendor_notes || "");
@@ -156,6 +169,16 @@ export function AccountingBillFormView({ billId }: Props) {
   useEffect(() => {
     void load();
   }, [load, switchVersion]);
+
+  useEffect(() => {
+    void searchAccountingPaymentTerms({ limit: 80 }).then((res) => {
+      if (res.terms) {
+        setTermOptions(
+          res.terms.map((t) => ({ id: String(t.id), name: String(t.name) }))
+        );
+      }
+    });
+  }, [switchVersion]);
 
   const isDraft = detail?.status === "draft";
   const isPosted =
@@ -186,11 +209,13 @@ export function AccountingBillFormView({ billId }: Props) {
       bill_date: billDate,
       due_date: dueDate || null,
       payment_terms: paymentTerms,
+      payment_term_id: paymentTermId || null,
       reference: reference || null,
       notes: notes || null,
       vendor_notes: vendorNotes || null,
       lines: lines.map((l, idx) => ({
         sequence: (idx + 1) * 10,
+        product_id: l.product_id || null,
         product_name: l.product_name,
         description: l.description,
         quantity: l.quantity,
@@ -211,7 +236,7 @@ export function AccountingBillFormView({ billId }: Props) {
         return;
       }
       toast.success("Bill saved");
-      if (res.bill) setDetail(res.bill);
+      if ("bill" in res && res.bill) setDetail(res.bill);
       setChatterKey((k) => k + 1);
       then?.();
     });
@@ -520,7 +545,14 @@ export function AccountingBillFormView({ billId }: Props) {
                 <Input
                   type="date"
                   value={billDate}
-                  onChange={(e) => setBillDate(e.target.value)}
+                  onChange={(e) => {
+                    const next = e.target.value;
+                    setBillDate(next);
+                    if (!dueDateManual) {
+                      const auto = computeDueDateFromTerms(next, paymentTerms);
+                      if (auto) setDueDate(auto);
+                    }
+                  }}
                   className="h-8 rounded-sm"
                 />
               ) : (
@@ -533,7 +565,10 @@ export function AccountingBillFormView({ billId }: Props) {
                 <Input
                   type="date"
                   value={dueDate}
-                  onChange={(e) => setDueDate(e.target.value)}
+                  onChange={(e) => {
+                    setDueDateManual(true);
+                    setDueDate(e.target.value);
+                  }}
                   className="h-8 rounded-sm"
                 />
               ) : (
@@ -543,16 +578,42 @@ export function AccountingBillFormView({ billId }: Props) {
             <div>
               <Label className="text-xs text-secondary-muted">Payment Terms</Label>
               {isDraft ? (
-                <Select value={paymentTerms} onValueChange={setPaymentTerms}>
+                <Select
+                  value={paymentTermId || paymentTerms}
+                  onValueChange={(val) => {
+                    const term = termOptions.find((t) => t.id === val);
+                    if (term) {
+                      setPaymentTermId(term.id);
+                      setPaymentTerms(term.name);
+                    } else {
+                      setPaymentTermId("");
+                      setPaymentTerms(val);
+                    }
+                    setDueDateManual(false);
+                    const label = term?.name || val;
+                    const auto = computeDueDateFromTerms(billDate, label);
+                    if (auto) setDueDate(auto);
+                  }}
+                >
                   <SelectTrigger className="h-8 rounded-sm">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="Immediate">Immediate</SelectItem>
-                    <SelectItem value="15 Days">15 Days</SelectItem>
-                    <SelectItem value="30 Days">30 Days</SelectItem>
-                    <SelectItem value="45 Days">45 Days</SelectItem>
-                    <SelectItem value="60 Days">60 Days</SelectItem>
+                    {termOptions.length > 0 ? (
+                      termOptions.map((t) => (
+                        <SelectItem key={t.id} value={t.id}>
+                          {t.name}
+                        </SelectItem>
+                      ))
+                    ) : (
+                      <>
+                        <SelectItem value="Immediate">Immediate</SelectItem>
+                        <SelectItem value="15 Days">15 Days</SelectItem>
+                        <SelectItem value="30 Days">30 Days</SelectItem>
+                        <SelectItem value="45 Days">45 Days</SelectItem>
+                        <SelectItem value="60 Days">60 Days</SelectItem>
+                      </>
+                    )}
                   </SelectContent>
                 </Select>
               ) : (
@@ -604,12 +665,29 @@ export function AccountingBillFormView({ billId }: Props) {
                 <TableRow key={l._key}>
                   <TableCell>
                     {isDraft ? (
-                      <Input
-                        value={l.product_name}
-                        onChange={(e) =>
-                          updateLine(l._key, { product_name: e.target.value })
-                        }
-                        className="h-8 rounded-sm"
+                      <SalesProductLinePicker
+                        valueName={l.product_name}
+                        forPurchase
+                        onSelect={(product, freeText) => {
+                          if (product) {
+                            updateLine(l._key, {
+                              product_id: product.id,
+                              product_name: product.name,
+                              description:
+                                product.description ||
+                                product.description_sale ||
+                                product.name,
+                              uom: product.uom || l.uom,
+                              unit_price: product.standard_price || 0,
+                              taxes: product.purchase_tax_rate || 0,
+                            });
+                          } else if (typeof freeText === "string") {
+                            updateLine(l._key, {
+                              product_id: null,
+                              product_name: freeText,
+                            });
+                          }
+                        }}
                       />
                     ) : (
                       l.product_name || "—"

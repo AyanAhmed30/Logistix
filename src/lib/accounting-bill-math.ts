@@ -1,4 +1,7 @@
-/** Pure bill line/totals helpers (client + server safe). */
+/** Pure bill line/totals helpers (client + server safe).
+ * Delegates to the central Tax Engine for consistent math.
+ */
+import { computeDocumentTaxes, computeLineTax } from '@/lib/accounting-tax-engine';
 
 export function computeBillLineTotal(line: {
   quantity: number;
@@ -6,33 +9,29 @@ export function computeBillLineTotal(line: {
   discount?: number;
   taxes?: number;
 }) {
-  const qty = Number(line.quantity) || 0;
-  const price = Number(line.unit_price) || 0;
-  const discount = Math.max(0, Number(line.discount) || 0);
-  const taxes = Math.max(0, Number(line.taxes) || 0);
-  const base = qty * price * (1 - discount / 100);
-  return Math.round(base * (1 + taxes / 100) * 100) / 100;
+  const r = computeLineTax({
+    quantity: line.quantity,
+    unitPrice: line.unit_price,
+    discountPercent: line.discount,
+    taxPercent: line.taxes,
+  });
+  return r.total;
 }
 
 export function computeBillTotals(
   lines: { quantity: number; unit_price: number; discount?: number; taxes?: number }[]
 ) {
-  let untaxed = 0;
-  let tax = 0;
-  for (const line of lines) {
-    const qty = Number(line.quantity) || 0;
-    const price = Number(line.unit_price) || 0;
-    const discount = Math.max(0, Number(line.discount) || 0);
-    const taxPct = Math.max(0, Number(line.taxes) || 0);
-    const base = qty * price * (1 - discount / 100);
-    untaxed += base;
-    tax += base * (taxPct / 100);
-  }
-  untaxed = Math.round(untaxed * 100) / 100;
-  tax = Math.round(tax * 100) / 100;
+  const doc = computeDocumentTaxes(
+    lines.map((line) => ({
+      quantity: line.quantity,
+      unitPrice: line.unit_price,
+      discountPercent: line.discount,
+      taxPercent: line.taxes,
+    }))
+  );
   return {
-    untaxed_amount: untaxed,
-    tax_amount: tax,
-    total_amount: Math.round((untaxed + tax) * 100) / 100,
+    untaxed_amount: doc.untaxed_amount,
+    tax_amount: doc.tax_amount,
+    total_amount: doc.total_amount,
   };
 }

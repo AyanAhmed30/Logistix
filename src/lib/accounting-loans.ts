@@ -109,7 +109,7 @@ export function buildLoanAmortizationSchedule(opts: {
   for (let i = 1; i <= n; i++) {
     const due = addMonths(first, (i - 1) * step);
     const opening = balance;
-    let interest = round2(balance * r);
+    const interest = round2(balance * r);
     let principalAmt = i === n ? round2(balance) : round2(emi - interest);
     if (principalAmt > balance) principalAmt = round2(balance);
     if (principalAmt < 0) principalAmt = 0;

@@ -178,7 +178,7 @@ async function buildJournalItemsFromLines(
       ? 0
       : round2(Number(line.amount_reconciled) || 0);
     const isReconciled = opts.legacy ? false : Boolean(line.is_reconciled);
-    let residual = opts.legacy
+    const residual = opts.legacy
       ? lineTotal
       : Number.isFinite(Number(line.amount_residual))
         ? round2(Math.max(0, Number(line.amount_residual)))
@@ -576,7 +576,7 @@ export async function getAccountingOutstandingEntries(filters?: {
               : 'outstanding';
           if (status === 'reconciled' || residual <= 0.004) continue;
 
-          let matchStatus: OutstandingEntry['match_status'] =
+          const matchStatus: OutstandingEntry['match_status'] =
             reconciled > 0.004 ? 'partial' : 'outstanding';
           if (statusFilter === 'partial' && matchStatus !== 'partial') continue;
           if (statusFilter === 'outstanding' && matchStatus !== 'outstanding') continue;

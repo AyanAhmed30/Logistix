@@ -11,6 +11,7 @@ import {
   formatLeadPhoneForStorage,
   normalizePakistaniPhone,
 } from '@/lib/pakistan-phone';
+import { LEAD_SOURCE_VALUES, isValidLeadSource } from '@/lib/lead-source';
 import { listInquiriesForLead, type LeadInquiry } from '@/app/actions/inquiries';
 import { resolveSalesAgentForSession } from '@/lib/legacy-user-bridge';
 import type { SessionPayload } from '@/lib/auth/session';
@@ -435,8 +436,10 @@ export async function createLead(formData: FormData) {
       return { error: 'Number and source are required' };
     }
 
-    if (!['Meta', 'LinkedIn', 'WhatsApp', 'Others'].includes(source)) {
-      return { error: 'Invalid source. Must be one of: Meta, LinkedIn, WhatsApp, Others' };
+    if (!isValidLeadSource(source)) {
+      return {
+        error: `Invalid source. Must be one of: ${LEAD_SOURCE_VALUES.join(', ')}`,
+      };
     }
 
     const supabase = await createAdminClient();
@@ -1194,8 +1197,10 @@ export async function updateLead(formData: FormData) {
       return { error: 'Lead ID, name, number, and source are required' };
     }
 
-    if (!['Meta', 'LinkedIn', 'WhatsApp', 'Others'].includes(source)) {
-      return { error: 'Invalid source. Must be one of: Meta, LinkedIn, WhatsApp, Others' };
+    if (!isValidLeadSource(source)) {
+      return {
+        error: `Invalid source. Must be one of: ${LEAD_SOURCE_VALUES.join(', ')}`,
+      };
     }
 
     const supabase = await createAdminClient();

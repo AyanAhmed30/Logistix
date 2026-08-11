@@ -10,6 +10,7 @@ import { isCrmQualifiedStage } from '@/lib/crm-inquiry-utils';
 import { resolveSalesAgentForSession } from '@/lib/legacy-user-bridge';
 import { formatLeadPhoneForStorage, normalizePakistaniPhone } from '@/lib/pakistan-phone';
 import { resolveContactCustomerId } from '@/lib/contact-lead-id';
+import { normalizeLeadSource } from '@/lib/lead-source';
 import type { Lead } from '@/app/actions/leads';
 import type { LeadInquiry } from '@/app/actions/inquiries';
 import { listInquiriesForLead } from '@/app/actions/inquiries';
@@ -178,7 +179,7 @@ function mapLeadRow(row: Record<string, unknown>): Lead {
     lead_id_formatted: row.lead_id_formatted ? String(row.lead_id_formatted) : null,
     name: String(row.name || ''),
     number: String(row.number || ''),
-    source: (row.source as Lead['source']) || 'Others',
+    source: normalizeLeadSource(row.source as string | null),
     status: (row.status as Lead['status']) || 'Leads',
     sales_agent_id: String(row.sales_agent_id || ''),
     created_by_sales_agent_id: row.created_by_sales_agent_id
@@ -330,7 +331,9 @@ async function resolveLeadForCrmOpportunityWithContext(
   const numberNormalized = normalized?.ok ? normalized.value : null;
 
   const leadName = opportunity.customer_name || opportunity.name || 'CRM Customer';
-  const source = (opportunity.source as Lead['source']) || 'Others';
+  // leads.source CHECK allows only Meta|LinkedIn|WhatsApp|Others.
+  // crm_opportunities.source is free-text (e.g. contact_auto) — never copy raw.
+  const source = normalizeLeadSource(opportunity.source);
 
   let customerId: string | null = null;
   if (opportunity.contact_id) {

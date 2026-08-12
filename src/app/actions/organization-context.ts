@@ -107,6 +107,30 @@ async function resolvePortalOrganizationAccess(session: SessionPayload) {
     };
   }
 
+  // Fast path: single-org portal users already have identity in the JWT —
+  // avoid re-querying user_organizations + organizations on every layout render.
+  const sessionOrgIds = (session.organizationIds || [])
+    .map((id) => String(id || '').trim())
+    .filter(Boolean);
+  if (
+    sessionOrgIds.length === 1 &&
+    session.organizationId &&
+    session.organizationName &&
+    sessionOrgIds[0] === session.organizationId
+  ) {
+    return {
+      organizationIds: sessionOrgIds,
+      organizations: [
+        {
+          id: sessionOrgIds[0],
+          organization_name: session.organizationName,
+        },
+      ],
+      activeOrganizationId: session.organizationId,
+      activeOrganizationName: session.organizationName,
+    };
+  }
+
   const supabase = await createAdminClient();
   return fetchPortalUserOrganizationAssignments(supabase, session.appUserId, {
     preferredOrganizationId: session.organizationId,

@@ -2,6 +2,7 @@
 
 import {
   createContext,
+  Suspense,
   useCallback,
   useContext,
   useEffect,
@@ -242,10 +243,12 @@ export function AccountingShell({ access, children }: Props) {
       <div className="min-h-screen bg-[#f8f9fa] flex flex-col">
         <header className="sticky top-0 z-50 bg-[#017e84] relative">
           <div className="h-12 px-2 sm:px-3 md:px-4 flex items-center justify-between gap-2">
-            <AccountingTopNav
-              mobileOpen={mobileNavOpen}
-              onMobileOpenChange={setMobileNavOpen}
-            />
+            <Suspense fallback={<div className="h-9 flex-1" />}>
+              <AccountingTopNav
+                mobileOpen={mobileNavOpen}
+                onMobileOpenChange={setMobileNavOpen}
+              />
+            </Suspense>
             <div className="flex items-center gap-1 sm:gap-2 shrink-0">
               <div className="[&_button]:h-8 [&_button]:border-white/25 [&_button]:bg-white/10 [&_button]:text-white [&_button]:hover:bg-white/20 [&_button]:max-w-[120px] sm:[&_button]:max-w-[200px] [&_svg]:text-white">
                 <OrganizationSwitcher />

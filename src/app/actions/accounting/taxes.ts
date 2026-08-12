@@ -890,11 +890,22 @@ export async function resolveDefaultTaxAccount(opts: {
         accountId: String(data.account_id),
         taxId: String(data.id),
         label: String(data.invoice_label || data.name || 'Tax'),
+        rateValue: Number(data.rate_value) || 0,
       };
     }
-    return { accountId: null as string | null, taxId: null, label: 'Tax' };
+    return {
+      accountId: null as string | null,
+      taxId: null as string | null,
+      label: 'Tax',
+      rateValue: null as number | null,
+    };
   } catch {
-    return { accountId: null as string | null, taxId: null, label: 'Tax' };
+    return {
+      accountId: null as string | null,
+      taxId: null as string | null,
+      label: 'Tax',
+      rateValue: null as number | null,
+    };
   }
 }
 

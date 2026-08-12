@@ -1,27 +1,15 @@
-"use client";
+import { Suspense } from "react";
+import { AccountingStatementReportsView } from "@/components/accounting/AccountingStatementReportsView";
+import { AccountingTableSkeleton } from "@/components/accounting/AccountingSkeleton";
 
-import dynamic from "next/dynamic";
-import { AccountingKpiSkeleton, AccountingChartSkeleton } from "@/components/accounting/AccountingSkeleton";
-
-const AccountingReportsView = dynamic(
-  () =>
-    import("@/components/accounting/AccountingReportsView").then(
-      (m) => m.AccountingReportsView
-    ),
-  {
-    ssr: false,
-    loading: () => (
-      <div className="space-y-4">
-        <AccountingKpiSkeleton count={4} />
-        <div className="grid gap-3 lg:grid-cols-2">
-          <AccountingChartSkeleton />
-          <AccountingChartSkeleton />
-        </div>
-      </div>
-    ),
-  }
-);
-
+/**
+ * Accounting → Reporting (Phase 1 Statement Reports).
+ * Legacy invoice-analytics Reporting UI has been replaced.
+ */
 export default function AccountingReportsPage() {
-  return <AccountingReportsView />;
+  return (
+    <Suspense fallback={<AccountingTableSkeleton rows={8} cols={2} />}>
+      <AccountingStatementReportsView />
+    </Suspense>
+  );
 }

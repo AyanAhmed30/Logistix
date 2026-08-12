@@ -1,9 +1,9 @@
-"use client";
+﻿"use client";
 
 import Link from "next/link";
 import Image from "next/image";
 import { useMemo, useState } from "react";
-import { usePathname } from "next/navigation";
+import { usePathname, useSearchParams } from "next/navigation";
 import { ChevronDown, Menu, X } from "lucide-react";
 import { getAccountingNavStructureForLevel } from "@/lib/accounting-nav-access";
 import { isMenuPathActive } from "@/lib/accounting-navigation";
@@ -21,17 +21,28 @@ type Props = {
   onMobileOpenChange: (open: boolean) => void;
 };
 
-function isActive(pathname: string, href: string) {
+function isActive(pathname: string, href: string, search: string) {
+  const [hrefPath, hrefQuery = ""] = href.split("?");
   const path = pathname.replace(/\/$/, "") || "/";
-  const base = href.replace(/\/$/, "") || "/";
+  const base = hrefPath.replace(/\/$/, "") || "/";
   if (base === "/accounting") return path === "/accounting";
   if (base === "/accounting/customers") return path === "/accounting/customers";
   if (base === "/accounting/vendors") return path === "/accounting/vendors";
-  return path === base || path.startsWith(`${base}/`);
+  const pathMatch = path === base || path.startsWith(`${base}/`);
+  if (!pathMatch) return false;
+  if (!hrefQuery) return true;
+  const want = new URLSearchParams(hrefQuery);
+  const have = new URLSearchParams(search);
+  for (const [k, v] of want.entries()) {
+    if (have.get(k) !== v) return false;
+  }
+  return true;
 }
 
 export function AccountingTopNav({ mobileOpen, onMobileOpenChange }: Props) {
   const pathname = usePathname();
+  const searchParams = useSearchParams();
+  const search = searchParams.toString();
   const access = useDashboardAccess();
   const [mobileOpenMenus, setMobileOpenMenus] = useState<Record<string, boolean>>(
     {}
@@ -81,7 +92,7 @@ export function AccountingTopNav({ mobileOpen, onMobileOpenChange }: Props) {
           {navEntries.map((entry) => {
             if (entry.type === "link") {
               const item = entry.item;
-              const active = isActive(pathname, item.href);
+              const active = isActive(pathname, item.href, search);
               const Icon = item.icon;
               return (
                 <Link
@@ -123,7 +134,7 @@ export function AccountingTopNav({ mobileOpen, onMobileOpenChange }: Props) {
                 >
                   {entry.children.map((child) => {
                     const ChildIcon = child.icon;
-                    const childActive = isActive(pathname, child.href);
+                    const childActive = isActive(pathname, child.href, search);
                     return (
                       <DropdownMenuItem key={child.id} asChild>
                         <Link
@@ -151,7 +162,7 @@ export function AccountingTopNav({ mobileOpen, onMobileOpenChange }: Props) {
             {navEntries.map((entry) => {
               if (entry.type === "link") {
                 const item = entry.item;
-                const active = isActive(pathname, item.href);
+                const active = isActive(pathname, item.href, search);
                 const Icon = item.icon;
                 return (
                   <Link
@@ -202,7 +213,7 @@ export function AccountingTopNav({ mobileOpen, onMobileOpenChange }: Props) {
                   {open
                     ? entry.children.map((child) => {
                         const ChildIcon = child.icon;
-                        const childActive = isActive(pathname, child.href);
+                        const childActive = isActive(pathname, child.href, search);
                         return (
                           <Link
                             key={child.id}

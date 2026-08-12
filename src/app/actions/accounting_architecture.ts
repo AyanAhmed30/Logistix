@@ -5,15 +5,8 @@ import { processAccountingEvent } from '@/lib/accounting/eventProcessor';
 import { validateBusinessFlow } from '@/lib/accounting/flowValidators';
 import type { AccountingEvent } from '@/lib/accounting/events';
 import {
-  getAPAging,
-  getARAging,
-  getBalanceSheet,
-  getCashFlow,
   getCodOutstanding,
-  getGeneralLedger,
-  getProfitAndLoss,
   getShipmentProfitability,
-  getTrialBalance,
 } from '@/lib/accounting/reporting';
 import {
   convert_to_base,
@@ -458,34 +451,104 @@ export async function getFinancialReports(input: {
   shipment_reference?: string;
   shipment_id?: string;
   as_of?: string;
+  organization_id?: string | null;
 }) {
   try {
     const session = await getSession();
     ensureAdmin(session);
 
-    switch (input.report) {
-      case 'general_ledger':
+    // Phase 1+2 reports → new financial-reporting foundation (posted JE truth)
+    if (
+      input.report === 'profit_and_loss' ||
+      input.report === 'balance_sheet' ||
+      input.report === 'cash_flow' ||
+      input.report === 'trial_balance' ||
+      input.report === 'general_ledger'
+    ) {
+      const {
+        buildBalanceSheet,
+        buildCashFlow,
+        buildProfitAndLoss,
+        buildTrialBalance,
+        buildGeneralLedger,
+      } = await import('@/lib/accounting/financial-reporting');
+      const today = new Date().toISOString().slice(0, 10);
+      const orgId =
+        input.organization_id === undefined ? null : input.organization_id;
+      if (input.report === 'balance_sheet') {
         return {
-          data: await getGeneralLedger({
-            from: input.from,
-            to: input.to,
-            account_id: input.account_id,
-            partner_reference: input.partner_reference,
-            shipment_reference: input.shipment_reference,
+          data: await buildBalanceSheet({
+            organizationId: orgId,
+            asOf: input.as_of || today,
           }),
         };
-      case 'trial_balance':
-        return { data: await getTrialBalance(input.from, input.to) };
-      case 'profit_and_loss':
-        return { data: await getProfitAndLoss(input.from, input.to) };
-      case 'balance_sheet':
-        return { data: await getBalanceSheet(input.as_of) };
-      case 'cash_flow':
-        return { data: await getCashFlow(input.from, input.to) };
-      case 'ar_aging':
-        return { data: await getARAging(input.as_of) };
-      case 'ap_aging':
-        return { data: await getAPAging(input.as_of) };
+      }
+      const dateTo = input.to || today;
+      const dateFrom = input.from || `${dateTo.slice(0, 4)}-01-01`;
+      if (input.report === 'profit_and_loss') {
+        return {
+          data: await buildProfitAndLoss({
+            organizationId: orgId,
+            dateFrom,
+            dateTo,
+          }),
+        };
+      }
+      if (input.report === 'cash_flow') {
+        return {
+          data: await buildCashFlow({
+            organizationId: orgId,
+            dateFrom,
+            dateTo,
+          }),
+        };
+      }
+      if (input.report === 'trial_balance') {
+        return {
+          data: await buildTrialBalance({
+            organizationId: orgId,
+            dateFrom,
+            dateTo,
+          }),
+        };
+      }
+      return {
+        data: await buildGeneralLedger({
+          organizationId: orgId,
+          dateFrom,
+          dateTo,
+          search: input.partner_reference || null,
+        }),
+      };
+    }
+
+    switch (input.report) {
+      case 'ar_aging': {
+        const { buildAgedReceivable } = await import(
+          '@/lib/accounting/financial-reporting'
+        );
+        const today = new Date().toISOString().slice(0, 10);
+        return {
+          data: await buildAgedReceivable({
+            organizationId:
+              input.organization_id === undefined ? null : input.organization_id,
+            asOf: input.as_of || today,
+          }),
+        };
+      }
+      case 'ap_aging': {
+        const { buildAgedPayable } = await import(
+          '@/lib/accounting/financial-reporting'
+        );
+        const today = new Date().toISOString().slice(0, 10);
+        return {
+          data: await buildAgedPayable({
+            organizationId:
+              input.organization_id === undefined ? null : input.organization_id,
+            asOf: input.as_of || today,
+          }),
+        };
+      }
       case 'cod_outstanding':
         return { data: await getCodOutstanding() };
       case 'shipment_profitability':

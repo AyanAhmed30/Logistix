@@ -1,5 +1,6 @@
 'use strict';
 
+import { cache } from 'react';
 import { cookies } from 'next/headers';
 import { SignJWT, jwtVerify } from 'jose';
 import {
@@ -85,8 +86,8 @@ export async function parseSessionToken(token: string): Promise<SessionPayload |
     }
 }
 
-export async function getSession(): Promise<SessionPayload | null> {
+export const getSession = cache(async (): Promise<SessionPayload | null> => {
     const session = (await cookies()).get('session')?.value;
     if (!session) return null;
     return parseSessionToken(session);
-}
+});

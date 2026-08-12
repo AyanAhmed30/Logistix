@@ -55,6 +55,7 @@ import {
 import { SalesQuotationStatusBar } from "@/components/sales/SalesQuotationStatusBar";
 import { SalesQuotationChatter } from "@/components/sales/SalesQuotationChatter";
 import { SalesProductLinePicker } from "@/components/sales/SalesProductLinePicker";
+import { ContactInfoSummary, type ContactInfoSummaryData } from "@/components/shared/ContactInfoSummary";
 import { SalesPageSkeleton } from "@/components/sales/SalesSkeleton";
 import { getSalesQuotationPdfPayload } from "@/app/actions/sales/quotation-pdf";
 import { generateSalesQuotationPdf } from "@/lib/sales-quotation-pdf";
@@ -156,6 +157,9 @@ export function SalesQuotationFormView({
 
   const [contactId, setContactId] = useState<string | null>(null);
   const [customerName, setCustomerName] = useState("");
+  const [customerInfo, setCustomerInfo] = useState<ContactInfoSummaryData | null>(
+    null
+  );
   const [contactPersonId, setContactPersonId] = useState<string | null>(null);
   const [deliveryAddressId, setDeliveryAddressId] = useState<string | null>(
     null
@@ -295,7 +299,25 @@ export function SalesQuotationFormView({
     async (id: string, opts?: { autofill?: boolean }) => {
       const res = await getContactById(id);
       if ("contact" in res && res.contact) {
-        applyContactChildren(res.contact);
+        const c = res.contact;
+        applyContactChildren(c);
+        setCustomerInfo({
+          name: c.name,
+          company_name: c.company_name,
+          email: c.email,
+          phone: c.phone,
+          mobile: c.mobile,
+          lead_id_formatted: c.lead_id_formatted,
+          street: c.street,
+          street2: c.street2,
+          city: c.city,
+          state: c.state,
+          zip: c.zip,
+          country: c.country,
+          address: formatContactAddress(c),
+          website: c.website,
+          tax_id: c.tax_id,
+        });
       }
       if (opts?.autofill) {
         const autofill = await getContactAutofillData(id);
@@ -317,6 +339,11 @@ export function SalesQuotationFormView({
     setDetail(q);
     setContactId(q.contact_id);
     setCustomerName(q.customer_name);
+    setCustomerInfo(
+      q.contact_id
+        ? { name: q.customer_name, lead_id_formatted: null }
+        : null
+    );
     setContactPersonId(q.contact_person_id);
     setDeliveryAddressId(q.delivery_address_id);
     setInvoiceAddressId(q.invoice_address_id);
@@ -454,6 +481,13 @@ export function SalesQuotationFormView({
   function handleCustomerPicked(customer: PickedCustomer) {
     setContactId(customer.contact_id);
     setCustomerName(customer.name);
+    setCustomerInfo({
+      name: customer.name,
+      company_name: customer.company_name,
+      email: customer.email,
+      phone: customer.phone,
+      lead_id_formatted: customer.lead_id_formatted,
+    });
     void loadCustomerRelations(customer.contact_id, { autofill: true });
   }
 
@@ -1169,18 +1203,7 @@ export function SalesQuotationFormView({
               disabled={readOnly}
               inputClassName="h-9 rounded-none border-0 border-b border-[#017e84] bg-transparent px-0 shadow-none focus-visible:ring-0"
             />
-            {(
-              deliveryOptions.find((o) => o.id === deliveryAddressId)
-                ?.address ||
-              childOptions.find((o) => o.id === contactId)?.address ||
-              null
-            ) ? (
-              <p className="text-xs text-secondary-muted whitespace-pre-line pt-0.5">
-                {deliveryOptions.find((o) => o.id === deliveryAddressId)
-                  ?.address ||
-                  childOptions.find((o) => o.id === contactId)?.address}
-              </p>
-            ) : null}
+            <ContactInfoSummary data={customerInfo} />
           </div>
 
           <div className="space-y-3">

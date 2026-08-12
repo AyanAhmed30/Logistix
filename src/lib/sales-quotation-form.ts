@@ -13,8 +13,10 @@ export type QuotationLineDraft = {
   quantity: string;
   /** Delivered qty (Sales Order). Editable until Warehouse automation. */
   qty_delivered: string;
-  /** Income / GL account label (Accounting invoice lines). */
+  /** Income / GL account display label (Accounting invoice lines). */
   account?: string;
+  /** Chart of Accounts id when selected from live CoA. */
+  account_id?: string | null;
   uom: string;
   unit_price: string;
   discount: string;
@@ -45,6 +47,7 @@ export function newLineDraft(partial?: Partial<QuotationLineDraft>): QuotationLi
     quantity: '1',
     qty_delivered: '0',
     account: 'Sales',
+    account_id: null,
     uom: 'Units',
     unit_price: '0',
     discount: '0',

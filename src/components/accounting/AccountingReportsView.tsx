@@ -1,5 +1,12 @@
 "use client";
 
+/**
+ * @deprecated Legacy invoice/payment analytics dashboard.
+ * Financial Statement Reports (BS / P&L / Cash Flow) live in
+ * AccountingStatementReportsView + financial-reporting foundation.
+ * This component is retained only for reference and is no longer routed.
+ */
+
 import { useCallback, useEffect, useMemo, useState, useTransition } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";

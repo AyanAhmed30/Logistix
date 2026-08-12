@@ -1112,6 +1112,7 @@ export async function createAndPostAutomaticJournalEntry(args: {
 
   const lineRows = validated.lines!.map((l, idx) => {
     const amount = Math.max(Number(l.debit) || 0, Number(l.credit) || 0);
+    const src = args.lines[idx];
     return {
       journal_entry_id: row.id,
       sequence: (idx + 1) * 10,
@@ -1121,6 +1122,7 @@ export async function createAndPostAutomaticJournalEntry(args: {
       contact_id: l.contact_id || null,
       debit: l.debit,
       credit: l.credit,
+      tax_label: src?.tax_label || null,
       amount_residual: amount,
       is_reconciled: amount <= 0.004,
     };
@@ -1129,11 +1131,23 @@ export async function createAndPostAutomaticJournalEntry(args: {
   let { error: lineErr } = await supabase
     .from('accounting_journal_entry_lines')
     .insert(lineRows);
+  if (lineErr && /tax_label|column/i.test(lineErr.message)) {
+    const withoutTax = lineRows.map(({ tax_label: _t, ...rest }) => {
+      void _t;
+      return rest;
+    });
+    const retryTax = await supabase
+      .from('accounting_journal_entry_lines')
+      .insert(withoutTax);
+    lineErr = retryTax.error;
+  }
   if (lineErr && /amount_residual|is_reconciled|column/i.test(lineErr.message)) {
     const legacy = lineRows.map((row) => {
-      const { amount_residual: _a, is_reconciled: _i, ...rest } = row;
+      const { amount_residual: _a, is_reconciled: _i, tax_label: _t, ...rest } =
+        row;
       void _a;
       void _i;
+      void _t;
       return rest;
     });
     const retry = await supabase

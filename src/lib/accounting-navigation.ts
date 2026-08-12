@@ -27,6 +27,11 @@ import {
   CalendarClock,
   Coins,
   SlidersHorizontal,
+  TrendingUp,
+  Scale,
+  ScrollText,
+  ContactRound,
+  Hourglass,
 } from 'lucide-react';
 
 export type AccountingNavId =
@@ -59,6 +64,16 @@ export type AccountingNavId =
   | 'accounting-vendors'
   | 'accounting-refunds'
   | 'accounting-reports'
+  | 'accounting-reports-menu'
+  | 'accounting-report-balance-sheet'
+  | 'accounting-report-profit-loss'
+  | 'accounting-report-cash-flow'
+  | 'accounting-report-trial-balance'
+  | 'accounting-report-general-ledger'
+  | 'accounting-report-partner-ledger'
+  | 'accounting-report-aged-receivable'
+  | 'accounting-report-aged-payable'
+  | 'accounting-report-tax'
   | 'accounting-automation';
 
 export type AccountingNavItem = {
@@ -83,7 +98,8 @@ export type AccountingNavEntry =
         | 'accounting-accounting-menu'
         | 'accounting-configuration-menu'
         | 'accounting-customers-menu'
-        | 'accounting-vendors-menu';
+        | 'accounting-vendors-menu'
+        | 'accounting-reports-menu';
       label: string;
       icon: LucideIcon;
       children: AccountingNavChild[];
@@ -264,6 +280,64 @@ export const ACCOUNTING_VENDORS_MENU: AccountingNavChild[] = [
   },
 ];
 
+/** Reporting — Statement + Ledger reports */
+export const ACCOUNTING_REPORTS_MENU: AccountingNavChild[] = [
+  {
+    id: 'accounting-report-balance-sheet',
+    label: 'Balance Sheet',
+    href: '/accounting/reports?statement=balance_sheet',
+    icon: Landmark,
+  },
+  {
+    id: 'accounting-report-profit-loss',
+    label: 'Profit & Loss',
+    href: '/accounting/reports?statement=profit_loss',
+    icon: TrendingUp,
+  },
+  {
+    id: 'accounting-report-cash-flow',
+    label: 'Cash Flow Statement',
+    href: '/accounting/reports?statement=cash_flow',
+    icon: Wallet,
+  },
+  {
+    id: 'accounting-report-trial-balance',
+    label: 'Trial Balance',
+    href: '/accounting/reports?statement=trial_balance',
+    icon: Scale,
+  },
+  {
+    id: 'accounting-report-general-ledger',
+    label: 'General Ledger',
+    href: '/accounting/reports?statement=general_ledger',
+    icon: ScrollText,
+  },
+  {
+    id: 'accounting-report-partner-ledger',
+    label: 'Partner Ledger',
+    href: '/accounting/reports?statement=partner_ledger',
+    icon: ContactRound,
+  },
+  {
+    id: 'accounting-report-aged-receivable',
+    label: 'Aged Receivable',
+    href: '/accounting/reports?statement=aged_receivable',
+    icon: Hourglass,
+  },
+  {
+    id: 'accounting-report-aged-payable',
+    label: 'Aged Payable',
+    href: '/accounting/reports?statement=aged_payable',
+    icon: Hourglass,
+  },
+  {
+    id: 'accounting-report-tax',
+    label: 'Tax Report',
+    href: '/accounting/reports?statement=tax_report',
+    icon: Percent,
+  },
+];
+
 /** Top-level nav (Accounting + Customers + Vendors dropdowns). */
 export const ACCOUNTING_NAV_STRUCTURE: AccountingNavEntry[] = [
   {
@@ -313,13 +387,11 @@ export const ACCOUNTING_NAV_STRUCTURE: AccountingNavEntry[] = [
     },
   },
   {
-    type: 'link',
-    item: {
-      id: 'accounting-reports',
-      label: 'Reports',
-      href: '/accounting/reports',
-      icon: BarChart3,
-    },
+    type: 'menu',
+    id: 'accounting-reports-menu',
+    label: 'Reporting',
+    icon: BarChart3,
+    children: ACCOUNTING_REPORTS_MENU,
   },
   {
     type: 'link',
@@ -350,12 +422,7 @@ export const ACCOUNTING_NAV_ITEMS: AccountingNavItem[] = [
     href: '/accounting/refunds',
     icon: Undo2,
   },
-  {
-    id: 'accounting-reports',
-    label: 'Reports',
-    href: '/accounting/reports',
-    icon: BarChart3,
-  },
+  ...ACCOUNTING_REPORTS_MENU,
   {
     id: 'accounting-automation',
     label: 'Automation',
@@ -781,11 +848,12 @@ export function getAccountingPageMeta(pathname: string): AccountingPageMeta {
 
   if (pathname.startsWith('/accounting/reports')) {
     return {
-      title: 'Reports',
-      subtitle: 'Revenue, customers, invoices, payments, aging',
+      title: 'Reporting',
+      subtitle: 'Statement reports from posted journal entries',
       breadcrumbs: [
         { label: 'Accounting', href: '/accounting' },
-        { label: 'Reports' },
+        { label: 'Reporting', href: '/accounting/reports' },
+        { label: 'Statement Reports' },
       ],
       searchMode: 'none',
       showFilters: false,
@@ -1288,7 +1356,8 @@ export function isMenuPathActive(
     | 'accounting-accounting-menu'
     | 'accounting-configuration-menu'
     | 'accounting-customers-menu'
-    | 'accounting-vendors-menu',
+    | 'accounting-vendors-menu'
+    | 'accounting-reports-menu',
   pathname: string
 ): boolean {
   if (menuId === 'accounting-accounting-menu') {
@@ -1298,5 +1367,8 @@ export function isMenuPathActive(
     return isConfigurationMenuPath(pathname);
   }
   if (menuId === 'accounting-customers-menu') return isCustomersMenuPath(pathname);
+  if (menuId === 'accounting-reports-menu') {
+    return pathname.startsWith('/accounting/reports');
+  }
   return isVendorsMenuPath(pathname);
 }

@@ -110,6 +110,12 @@ import {
   getContactAutofillData,
 } from "@/app/actions/contacts";
 import { SalesProductLinePicker } from "@/components/sales/SalesProductLinePicker";
+import { ContactInfoSummary, type ContactInfoSummaryData } from "@/components/shared/ContactInfoSummary";
+import { getAccountingChartAccounts } from "@/app/actions/accounting/journal-entries";
+import {
+  listOrganizationBankAccounts,
+  type OrganizationBankAccount,
+} from "@/app/actions/accounting/bank-accounts";
 
 type Props = {
   invoiceId: string;
@@ -129,6 +135,8 @@ function linesFromDetail(detail: AccountingInvoiceDetail): QuotationLineDraft[] 
       discount: String(l.discount),
       taxes: String(l.taxes),
       account: l.account || "Sales",
+      account_id:
+        (l as { account_id?: string | null }).account_id || null,
     })
   );
 }
@@ -207,13 +215,17 @@ export function AccountingInvoiceFormView({ invoiceId }: Props) {
     taxes: true,
     amount: true,
   });
-
-  const INCOME_ACCOUNTS = [
-    "Sales",
-    "Product Sales",
-    "Service Revenue",
-    "Other Income",
-  ] as const;
+  const [customerInfo, setCustomerInfo] =
+    useState<ContactInfoSummaryData | null>(null);
+  const [coaAccounts, setCoaAccounts] = useState<
+    Array<{ id: string; code: string; name: string; type?: string | null }>
+  >([]);
+  const [coaSearch, setCoaSearch] = useState("");
+  const [bankAccountId, setBankAccountId] = useState("");
+  const [bankAccounts, setBankAccounts] = useState<OrganizationBankAccount[]>(
+    []
+  );
+  const [bankSearch, setBankSearch] = useState("");
 
   const isDraft = status === "draft";
   const isPosted = status === "posted";
@@ -272,6 +284,20 @@ export function AccountingInvoiceFormView({ invoiceId }: Props) {
     setPaymentNotes("");
     setPaymentError(null);
     setDueDateManual(false);
+    setBankAccountId(
+      (inv as { bank_account_id?: string | null }).bank_account_id || ""
+    );
+    setCustomerInfo(
+      inv.contact_id || inv.customer_name
+        ? {
+            name: inv.customer_name,
+            email: inv.email,
+            phone: inv.phone,
+            lead_id_formatted: inv.customer_lead_id,
+            address: inv.billing_address,
+          }
+        : null
+    );
     window.dispatchEvent(
       new CustomEvent("accounting:document-title", {
         detail: { title: inv.invoice_number },
@@ -285,8 +311,32 @@ export function AccountingInvoiceFormView({ invoiceId }: Props) {
     if ("error" in res && res.error) {
       toast.error(res.error);
       setDetail(null);
+      setCustomerInfo(null);
     } else if (res.invoice) {
       hydrate(res.invoice);
+      if (res.invoice.contact_id) {
+        const contactRes = await getContactById(res.invoice.contact_id);
+        if ("contact" in contactRes && contactRes.contact) {
+          const c = contactRes.contact;
+          setCustomerInfo({
+            name: c.name,
+            company_name: c.company_name,
+            email: c.email,
+            phone: c.phone,
+            mobile: c.mobile,
+            lead_id_formatted: c.lead_id_formatted,
+            street: c.street,
+            street2: c.street2,
+            city: c.city,
+            state: c.state,
+            zip: c.zip,
+            country: c.country,
+            address: formatContactAddress(c) || res.invoice.billing_address,
+            website: c.website,
+            tax_id: c.tax_id,
+          });
+        }
+      }
     }
     setLoading(false);
   }, [hydrate, invoiceId]);
@@ -294,6 +344,49 @@ export function AccountingInvoiceFormView({ invoiceId }: Props) {
   useEffect(() => {
     void load();
   }, [load, switchVersion]);
+
+  useEffect(() => {
+    let cancelled = false;
+    void getAccountingChartAccounts(undefined, {
+      types: ["income"],
+      limit: 150,
+    }).then((res) => {
+      if (cancelled) return;
+      if ("accounts" in res && res.accounts) {
+        setCoaAccounts(
+          (res.accounts as Array<{
+            id: string;
+            code: string;
+            name: string;
+            type?: string | null;
+          }>) || []
+        );
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [switchVersion]);
+
+  useEffect(() => {
+    let cancelled = false;
+    void listOrganizationBankAccounts({ limit: 80 }).then((res) => {
+      if (cancelled) return;
+      if ("accounts" in res && res.accounts) {
+        setBankAccounts(res.accounts);
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [switchVersion]);
+
+  useEffect(() => {
+    if (bankAccountId || bankAccounts.length === 0 || !isDraft) return;
+    if (!detail?.bank_account_id) {
+      setBankAccountId(bankAccounts[0].id);
+    }
+  }, [bankAccounts, bankAccountId, isDraft, detail?.bank_account_id]);
 
   useEffect(() => {
     void searchAccountingPaymentTerms({ limit: 80 }).then((res) => {
@@ -360,6 +453,7 @@ export function AccountingInvoiceFormView({ invoiceId }: Props) {
       salesperson_name: salespersonName || null,
       notes: internalNotes || null,
       customer_notes: customerNotes || null,
+      bank_account_id: bankAccountId || null,
       lines: lines.map((line, idx) => {
         const amounts = computeLineAmounts(line);
         return {
@@ -375,6 +469,7 @@ export function AccountingInvoiceFormView({ invoiceId }: Props) {
           taxes: parseFloat(line.taxes) || 0,
           line_total: amounts.total,
           account: line.account || "Sales",
+          account_id: line.account_id || null,
         };
       }),
     };
@@ -435,6 +530,13 @@ export function AccountingInvoiceFormView({ invoiceId }: Props) {
     setEmail(picked.email || "");
     setPhone(picked.phone || "");
     if (picked.name) setContactPerson(picked.name);
+    setCustomerInfo({
+      name: picked.name,
+      company_name: picked.company_name,
+      email: picked.email,
+      phone: picked.phone,
+      lead_id_formatted: picked.lead_id_formatted,
+    });
 
     const [contactRes, autofill] = await Promise.all([
       getContactById(picked.contact_id),
@@ -449,6 +551,23 @@ export function AccountingInvoiceFormView({ invoiceId }: Props) {
       if (c.email) setEmail(String(c.email));
       if (c.phone || c.mobile) setPhone(String(c.phone || c.mobile || ""));
       if (c.lead_id_formatted) setCustomerLeadId(String(c.lead_id_formatted));
+      setCustomerInfo({
+        name: c.name,
+        company_name: c.company_name,
+        email: c.email,
+        phone: c.phone,
+        mobile: c.mobile,
+        lead_id_formatted: c.lead_id_formatted,
+        street: c.street,
+        street2: c.street2,
+        city: c.city,
+        state: c.state,
+        zip: c.zip,
+        country: c.country,
+        address,
+        website: c.website,
+        tax_id: c.tax_id,
+      });
       const children = c.children || [];
       const invoiceChild = children.find((ch) => ch.contact_kind === "invoice");
       const deliveryChild = children.find((ch) => ch.contact_kind === "delivery");
@@ -468,7 +587,7 @@ export function AccountingInvoiceFormView({ invoiceId }: Props) {
       if (autofill.data.payment_terms) {
         const terms = String(autofill.data.payment_terms);
         setPaymentTerms(terms);
-        if (!dueDateManual) {
+        if (!dueDateManual && !readOnly) {
           const auto = computeDueDateFromTerms(invoiceDate, terms);
           if (auto) setDueDate(auto);
         }
@@ -624,6 +743,11 @@ export function AccountingInvoiceFormView({ invoiceId }: Props) {
     const idempotencyKey = `${invoiceId}-${paymentDate}-${amount}-${method}-${Date.now()}`;
     startTransition(async () => {
       try {
+        if (bankAccountId && paymentJournal === "bank") {
+          await updateAccountingInvoice(invoiceId, {
+            bank_account_id: bankAccountId,
+          });
+        }
         const res = await registerAccountingPayment(invoiceId, {
           payment_date: paymentDate,
           amount,
@@ -1000,15 +1124,19 @@ export function AccountingInvoiceFormView({ invoiceId }: Props) {
                   className="h-9 rounded-sm border-0 border-b border-slate-200 shadow-none px-0 bg-transparent"
                 />
               )}
-              {customerLeadId ? (
-                <p className="text-[11px] text-secondary-muted font-mono">
-                  #{customerLeadId}
-                </p>
-              ) : null}
-              {billingAddress ? (
-                <p className="text-xs text-secondary-muted whitespace-pre-line mt-1 leading-relaxed">
-                  {billingAddress}
-                </p>
+              {customerLeadId || billingAddress || customerInfo ? (
+                <ContactInfoSummary
+                  data={{
+                    ...(customerInfo || {}),
+                    lead_id_formatted:
+                      customerLeadId || customerInfo?.lead_id_formatted,
+                    address:
+                      billingAddress || customerInfo?.address || null,
+                    email: email || customerInfo?.email,
+                    phone: phone || customerInfo?.phone,
+                    name: customerName || customerInfo?.name,
+                  }}
+                />
               ) : null}
             </div>
 
@@ -1350,6 +1478,8 @@ export function AccountingInvoiceFormView({ invoiceId }: Props) {
                                           product.income_account_label ||
                                           line.account ||
                                           "Sales",
+                                        account_id:
+                                          product.income_account_id || null,
                                       });
                                     } else if (typeof freeText === "string") {
                                       updateLine(line.key, {
@@ -1386,31 +1516,86 @@ export function AccountingInvoiceFormView({ invoiceId }: Props) {
                             )}
                           </TableCell>
                           {visibleCols.account ? (
-                            <TableCell className="py-1.5 align-top min-w-[140px]">
+                            <TableCell className="py-1.5 align-top min-w-[180px]">
                               {readOnly ? (
                                 <span className="text-sm">
                                   {line.account || "Sales"}
                                 </span>
                               ) : (
                                 <Select
-                                  value={line.account || "Sales"}
-                                  onValueChange={(v) =>
-                                    updateLine(line.key, { account: v })
+                                  value={
+                                    line.account_id ||
+                                    line.account ||
+                                    "none"
                                   }
+                                  onValueChange={(v) => {
+                                    if (v === "none") {
+                                      updateLine(line.key, {
+                                        account_id: null,
+                                        account: "Sales",
+                                      });
+                                      return;
+                                    }
+                                    const acc = coaAccounts.find(
+                                      (a) => a.id === v
+                                    );
+                                    if (acc) {
+                                      updateLine(line.key, {
+                                        account_id: acc.id,
+                                        account: `${acc.code} — ${acc.name}`,
+                                      });
+                                    } else {
+                                      updateLine(line.key, {
+                                        account_id: null,
+                                        account: v,
+                                      });
+                                    }
+                                  }}
                                 >
                                   <SelectTrigger className="h-8 rounded-sm border-0 border-b border-transparent hover:border-slate-200 focus:border-[#017e84] shadow-none px-1">
-                                    <SelectValue />
+                                    <SelectValue placeholder="Income account" />
                                   </SelectTrigger>
-                                  <SelectContent>
-                                    {INCOME_ACCOUNTS.map((acc) => (
-                                      <SelectItem key={acc} value={acc}>
-                                        {acc}
-                                      </SelectItem>
-                                    ))}
-                                    {line.account &&
-                                    !(INCOME_ACCOUNTS as readonly string[]).includes(
-                                      line.account
+                                  <SelectContent className="max-h-64">
+                                    <div className="px-2 py-1.5 sticky top-0 bg-white z-10">
+                                      <Input
+                                        className="h-7 rounded-sm text-xs"
+                                        placeholder="Search accounts…"
+                                        value={coaSearch}
+                                        onChange={(e) =>
+                                          setCoaSearch(e.target.value)
+                                        }
+                                        onClick={(e) => e.stopPropagation()}
+                                        onKeyDown={(e) => e.stopPropagation()}
+                                      />
+                                    </div>
+                                    <SelectItem value="none">
+                                      Default (Product / 4100)
+                                    </SelectItem>
+                                    {coaAccounts
+                                      .filter((a) => {
+                                        const q = coaSearch.trim().toLowerCase();
+                                        if (!q) return true;
+                                        return (
+                                          a.code.toLowerCase().includes(q) ||
+                                          a.name.toLowerCase().includes(q)
+                                        );
+                                      })
+                                      .map((a) => (
+                                        <SelectItem key={a.id} value={a.id}>
+                                          {a.code} — {a.name}
+                                        </SelectItem>
+                                      ))}
+                                    {line.account_id &&
+                                    !coaAccounts.some(
+                                      (a) => a.id === line.account_id
                                     ) ? (
+                                      <SelectItem value={line.account_id}>
+                                        {line.account}
+                                      </SelectItem>
+                                    ) : null}
+                                    {!line.account_id &&
+                                    line.account &&
+                                    line.account !== "Sales" ? (
                                       <SelectItem value={line.account}>
                                         {line.account}
                                       </SelectItem>
@@ -1753,6 +1938,69 @@ export function AccountingInvoiceFormView({ invoiceId }: Props) {
                     className="h-9 rounded-sm bg-slate-50 font-mono"
                   />
                 </div>
+                <div className="space-y-1 sm:col-span-2">
+                  <Label className="text-xs text-secondary-muted">
+                    Recipient Bank Account
+                  </Label>
+                  {bankAccounts.length === 0 ? (
+                    <p className="h-9 flex items-center text-sm text-secondary-muted border border-dashed border-slate-200 rounded-sm px-2">
+                      No bank accounts configured
+                    </p>
+                  ) : (
+                    <Select
+                      value={bankAccountId || "none"}
+                      onValueChange={(v) =>
+                        setBankAccountId(v === "none" ? "" : v)
+                      }
+                      disabled={readOnly}
+                    >
+                      <SelectTrigger className="h-9 rounded-sm">
+                        <SelectValue placeholder="Select bank account" />
+                      </SelectTrigger>
+                      <SelectContent className="max-h-64">
+                        <div className="px-2 py-1.5 sticky top-0 bg-white z-10">
+                          <Input
+                            className="h-7 rounded-sm text-xs"
+                            placeholder="Search bank accounts…"
+                            value={bankSearch}
+                            onChange={(e) => setBankSearch(e.target.value)}
+                            onClick={(e) => e.stopPropagation()}
+                            onKeyDown={(e) => e.stopPropagation()}
+                          />
+                        </div>
+                        <SelectItem value="none">—</SelectItem>
+                        {bankAccounts
+                          .filter((a) => {
+                            const q = bankSearch.trim().toLowerCase();
+                            if (!q) return true;
+                            return (
+                              a.name.toLowerCase().includes(q) ||
+                              a.code.toLowerCase().includes(q) ||
+                              (a.account_mask || "").toLowerCase().includes(q)
+                            );
+                          })
+                          .map((a) => (
+                            <SelectItem key={a.id} value={a.id}>
+                              <span className="flex flex-col text-left">
+                                <span>{a.name}</span>
+                                <span className="text-[10px] text-secondary-muted">
+                                  {[a.account_mask, a.currency]
+                                    .filter(Boolean)
+                                    .join(" · ") || a.code}
+                                </span>
+                              </span>
+                            </SelectItem>
+                          ))}
+                        {bankAccountId &&
+                        !bankAccounts.some((a) => a.id === bankAccountId) ? (
+                          <SelectItem value={bankAccountId}>
+                            {detail?.bank_account?.name || "Selected bank"}
+                          </SelectItem>
+                        ) : null}
+                      </SelectContent>
+                    </Select>
+                  )}
+                </div>
               </div>
               <div className="space-y-1">
                 <Label className="text-xs text-secondary-muted">
@@ -1934,9 +2182,34 @@ export function AccountingInvoiceFormView({ invoiceId }: Props) {
                 <Label className="text-xs text-secondary-muted">
                   Recipient Bank Account
                 </Label>
-                <p className="h-8 flex items-center text-sm text-secondary-muted">
-                  —
-                </p>
+                {paymentJournal === "cash" ? (
+                  <p className="h-8 flex items-center text-sm text-secondary-muted">
+                    —
+                  </p>
+                ) : bankAccounts.length === 0 ? (
+                  <p className="h-8 flex items-center text-sm text-secondary-muted">
+                    No bank accounts configured
+                  </p>
+                ) : (
+                  <Select
+                    value={bankAccountId || "none"}
+                    onValueChange={(v) =>
+                      setBankAccountId(v === "none" ? "" : v)
+                    }
+                  >
+                    <SelectTrigger className="h-8 rounded-sm">
+                      <SelectValue placeholder="Select bank account" />
+                    </SelectTrigger>
+                    <SelectContent className="max-h-64">
+                      <SelectItem value="none">—</SelectItem>
+                      {bankAccounts.map((a) => (
+                        <SelectItem key={a.id} value={a.id}>
+                          {a.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                )}
               </div>
             </div>
 
@@ -2075,6 +2348,7 @@ export function AccountingInvoiceFormView({ invoiceId }: Props) {
                             taxes: String(product.sales_tax_rate || 0),
                             account:
                               product.income_account_label || "Sales",
+                            account_id: product.income_account_id || null,
                           });
                           if (empty) {
                             return prev.map((l) =>

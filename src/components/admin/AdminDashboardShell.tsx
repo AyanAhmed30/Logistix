@@ -124,6 +124,8 @@ function AdminDashboardContent({
 
   useEffect(() => {
     if (access.isPortalAccount) return;
+    // Defer user list until Settings is opened — faster login→dashboard.
+    if (activeModule !== "settings") return;
     let isMounted = true;
     void getAppUsers()
       .then((result) => {
@@ -142,7 +144,7 @@ function AdminDashboardContent({
     return () => {
       isMounted = false;
     };
-  }, [access.isPortalAccount]);
+  }, [access.isPortalAccount, activeModule]);
 
   useEffect(() => {
     function onOpenQuotation(e: Event) {

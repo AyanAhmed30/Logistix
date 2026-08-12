@@ -33,6 +33,7 @@ export type AccountingInvoiceLineInput = {
   taxes: number;
   line_total: number;
   account?: string | null;
+  account_id?: string | null;
 };
 
 export type AccountingInvoiceUpdatePayload = {
@@ -51,6 +52,7 @@ export type AccountingInvoiceUpdatePayload = {
   salesperson_name?: string | null;
   notes?: string | null;
   customer_notes?: string | null;
+  bank_account_id?: string | null;
   lines?: AccountingInvoiceLineInput[];
 };
 
@@ -303,6 +305,9 @@ export async function updateAccountingInvoice(
     if (payload.payment_term_id !== undefined) {
       updatePayload.payment_term_id = payload.payment_term_id || null;
     }
+    if (payload.bank_account_id !== undefined) {
+      updatePayload.bank_account_id = payload.bank_account_id || null;
+    }
 
     const { error: updError } = await supabase
       .from('accounting_customer_invoices')
@@ -310,7 +315,38 @@ export async function updateAccountingInvoice(
       .eq('id', invoiceId);
 
     if (updError) {
-      if (/payment_term_id|column/i.test(updError.message)) {
+      if (/bank_account_id|column/i.test(updError.message) && updatePayload.bank_account_id !== undefined) {
+        delete updatePayload.bank_account_id;
+        const retryBank = await supabase
+          .from('accounting_customer_invoices')
+          .update(updatePayload)
+          .eq('id', invoiceId);
+        if (retryBank.error) {
+          if (/payment_term_id|column/i.test(retryBank.error.message)) {
+            delete updatePayload.payment_term_id;
+            const retry = await supabase
+              .from('accounting_customer_invoices')
+              .update(updatePayload)
+              .eq('id', invoiceId);
+            if (retry.error) {
+              if (/customer_notes|column/i.test(retry.error.message)) {
+                return {
+                  error:
+                    'Run create_accounting_invoice_workflow_phase2.sql migration.',
+                };
+              }
+              return { error: retry.error.message };
+            }
+          } else if (/customer_notes|column/i.test(retryBank.error.message)) {
+            return {
+              error:
+                'Run create_accounting_invoice_workflow_phase2.sql migration.',
+            };
+          } else {
+            return { error: retryBank.error.message };
+          }
+        }
+      } else if (/payment_term_id|column/i.test(updError.message)) {
         delete updatePayload.payment_term_id;
         const retry = await supabase
           .from('accounting_customer_invoices')
@@ -354,16 +390,19 @@ export async function updateAccountingInvoice(
           taxes: Number(l.taxes) || 0,
           line_total: Number(l.line_total) || 0,
           account: String(l.account || 'Sales').trim() || 'Sales',
+          account_id: l.account_id || null,
         }));
         const { error: lineErr } = await supabase
           .from('accounting_customer_invoice_lines')
           .insert(rows);
-        if (lineErr && /product_id|account|column/i.test(lineErr.message)) {
+        if (lineErr && /product_id|account_id|account|column/i.test(lineErr.message)) {
           const stripProduct = /product_id/i.test(lineErr.message);
-          const stripAccount = /account/i.test(lineErr.message);
+          const stripAccountId = /account_id/i.test(lineErr.message);
+          const stripAccount = /account(?!_id)/i.test(lineErr.message);
           const retryRows = rows.map((r) => {
             const next: Record<string, unknown> = { ...r };
             if (stripProduct) delete next.product_id;
+            if (stripAccountId) delete next.account_id;
             if (stripAccount) delete next.account;
             return next;
           });
@@ -371,9 +410,8 @@ export async function updateAccountingInvoice(
             .from('accounting_customer_invoice_lines')
             .insert(retryRows);
           if (retry.error) {
-            // Last resort: strip both optional columns
             const bare = rows.map(
-              ({ account: _a, product_id: _p, ...rest }) => rest
+              ({ account: _a, account_id: _aid, product_id: _p, ...rest }) => rest
             );
             const bareRetry = await supabase
               .from('accounting_customer_invoice_lines')

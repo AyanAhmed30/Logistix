@@ -192,17 +192,29 @@ export async function login(formData: FormData) {
       }
     }
 
-    // 2) Legacy Sales Person — migrate to unified portal user, then sign in
+    // 2+3+4) Legacy Sales / Operations / Organization — parallel after portal miss
     {
+      const [salesAgentResult, opsUserResult, organizationResult] = await Promise.all([
+        supabase
+          .from('sales_agents')
+          .select('id, name, username, password, email, permissions')
+          .eq('username', username)
+          .eq('password', password)
+          .maybeSingle(),
+        supabase
+          .from('operations_users')
+          .select('id, name, username, password, permissions')
+          .eq('username', username)
+          .eq('password', password)
+          .maybeSingle(),
+        supabase
+          .from('organizations')
+          .select('username, password, organization_name, status')
+          .eq('username', username)
+          .maybeSingle(),
+      ]);
+
       let salesRow: LegacySalesLoginRow | null = null;
-
-      const salesAgentResult = await supabase
-        .from('sales_agents')
-        .select('id, name, username, password, email, permissions')
-        .eq('username', username)
-        .eq('password', password)
-        .maybeSingle();
-
       if (salesAgentResult.error) {
         if (
           salesAgentResult.error.message.includes('permissions') ||
@@ -249,19 +261,8 @@ export async function login(formData: FormData) {
           });
         }
       }
-    }
 
-    // 3) Legacy Operations Person — migrate to unified portal user, then sign in
-    {
       let opsRow: LegacyOpsLoginRow | null = null;
-
-      const opsUserResult = await supabase
-        .from('operations_users')
-        .select('id, name, username, password, permissions')
-        .eq('username', username)
-        .eq('password', password)
-        .maybeSingle();
-
       if (opsUserResult.error) {
         if (
           opsUserResult.error.message.includes('permissions') ||
@@ -287,9 +288,12 @@ export async function login(formData: FormData) {
       }
 
       if (opsRow) {
-        const migrated = await migrateLegacyAccountToPortal(supabase, 'operations', opsRow);
+        const migrated = await migrateLegacyAccountToPortal(
+          supabase,
+          'operations',
+          opsRow
+        );
         if (migrated) {
-          const appUserRole: SessionAppUserRole = 'user';
           const orgs = await loadPortalUserOrganizations(
             supabase,
             migrated.id,
@@ -299,7 +303,7 @@ export async function login(formData: FormData) {
             username: migrated.username,
             role: 'user',
             appUserId: migrated.id,
-            appUserRole,
+            appUserRole: 'user',
             fullName: migrated.full_name?.trim() || migrated.username,
             permissions: migrated.permissions,
             organizationName: orgs.organizationName,
@@ -308,15 +312,6 @@ export async function login(formData: FormData) {
           });
         }
       }
-    }
-
-    // 4) Organization portal accounts
-    {
-      const organizationResult = await supabase
-        .from('organizations')
-        .select('username, password, organization_name, status')
-        .eq('username', username)
-        .maybeSingle();
 
       if (
         organizationResult.error &&

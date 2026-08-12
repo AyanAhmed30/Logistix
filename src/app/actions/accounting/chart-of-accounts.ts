@@ -31,6 +31,8 @@ export type AccountingCoaListItem = {
   is_active: boolean;
   default_tax_id: string | null;
   notes: string | null;
+  bank_account_number: string | null;
+  bank_currency: string | null;
   updated_at: string;
   depth: number;
   can_post: boolean;
@@ -135,6 +137,10 @@ function mapRow(
     is_active: r.is_active !== false,
     default_tax_id: r.default_tax_id ? String(r.default_tax_id) : null,
     notes: r.notes ? String(r.notes) : null,
+    bank_account_number: r.bank_account_number
+      ? String(r.bank_account_number)
+      : null,
+    bank_currency: r.bank_currency ? String(r.bank_currency) : null,
     updated_at: String(r.updated_at || ''),
     depth: extras?.depth ?? 0,
     can_post: type !== 'view',
@@ -459,6 +465,8 @@ export async function createAccountingCoaAccount(payload: {
   allow_reconciliation?: boolean;
   default_tax_id?: string | null;
   notes?: string | null;
+  bank_account_number?: string | null;
+  bank_currency?: string | null;
   /** When true, create as org-specific; default shared template if no org */
   orgSpecific?: boolean;
 }) {
@@ -510,6 +518,14 @@ export async function createAccountingCoaAccount(payload: {
           allow_reconciliation: allowRecon,
           default_tax_id: payload.default_tax_id || null,
           notes: payload.notes || null,
+          bank_account_number:
+            accountType === 'bank'
+              ? payload.bank_account_number?.trim() || null
+              : null,
+          bank_currency:
+            accountType === 'bank'
+              ? (payload.bank_currency || 'PKR').trim().toUpperCase() || 'PKR'
+              : null,
           is_active: true,
           created_by: scope.session.username,
           updated_by: scope.session.username,
@@ -520,6 +536,42 @@ export async function createAccountingCoaAccount(payload: {
       .single();
 
     if (error) {
+      if (/bank_account_number|bank_currency|column/i.test(error.message)) {
+        const retry = await supabase
+          .from('chart_of_accounts')
+          .insert([
+            {
+              code,
+              name,
+              type,
+              account_type: accountType,
+              parent_id: parentId,
+              organization_id: organizationId,
+              allow_reconciliation: allowRecon,
+              default_tax_id: payload.default_tax_id || null,
+              notes: payload.notes || null,
+              is_active: true,
+              created_by: scope.session.username,
+              updated_by: scope.session.username,
+              updated_at: new Date().toISOString(),
+            },
+          ])
+          .select('id')
+          .single();
+        if (retry.error) {
+          if (/account_type|organization_id|column/i.test(retry.error.message)) {
+            return {
+              error:
+                'Run enhance_accounting_chart_of_accounts_foundation.sql in Supabase first.',
+            };
+          }
+          if (/unique|duplicate/i.test(retry.error.message)) {
+            return { error: 'Account code must be unique within the organization' };
+          }
+          return { error: retry.error.message };
+        }
+        return { accountId: String(retry.data.id) };
+      }
       if (/account_type|organization_id|column/i.test(error.message)) {
         return {
           error:
@@ -551,6 +603,8 @@ export async function updateAccountingCoaAccount(
     allow_reconciliation?: boolean;
     default_tax_id?: string | null;
     notes?: string | null;
+    bank_account_number?: string | null;
+    bank_currency?: string | null;
     is_active?: boolean;
   }
 ) {
@@ -634,6 +688,13 @@ export async function updateAccountingCoaAccount(
       patch.default_tax_id = payload.default_tax_id || null;
     }
     if (payload.notes !== undefined) patch.notes = payload.notes || null;
+    if (payload.bank_account_number !== undefined) {
+      patch.bank_account_number = payload.bank_account_number?.trim() || null;
+    }
+    if (payload.bank_currency !== undefined) {
+      patch.bank_currency =
+        payload.bank_currency?.trim().toUpperCase() || 'PKR';
+    }
 
     if (payload.is_active !== undefined) {
       if (payload.is_active === false) {
@@ -656,10 +717,24 @@ export async function updateAccountingCoaAccount(
       .update(patch)
       .eq('id', accountId);
     if (error) {
-      if (/unique|duplicate/i.test(error.message)) {
+      if (/bank_account_number|bank_currency|column/i.test(error.message)) {
+        delete patch.bank_account_number;
+        delete patch.bank_currency;
+        const retry = await supabase
+          .from('chart_of_accounts')
+          .update(patch)
+          .eq('id', accountId);
+        if (retry.error) {
+          if (/unique|duplicate/i.test(retry.error.message)) {
+            return { error: 'Account code must be unique within the organization' };
+          }
+          return { error: retry.error.message };
+        }
+      } else if (/unique|duplicate/i.test(error.message)) {
         return { error: 'Account code must be unique within the organization' };
+      } else {
+        return { error: error.message };
       }
-      return { error: error.message };
     }
 
     return getAccountingCoaAccountDetail(accountId);

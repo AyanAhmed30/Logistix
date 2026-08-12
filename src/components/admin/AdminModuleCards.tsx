@@ -11,6 +11,16 @@ type Props = {
   access: DashboardAccessState;
 };
 
+function routeForModule(
+  module: AdminModule,
+  access: DashboardAccessState
+): string | null {
+  if (module === "crm") return defaultCrmRouteForAccess(access);
+  if (module === "sales") return defaultSalesRouteForAccess(access);
+  if (module === "accounting") return defaultAccountingRouteForAccess(access);
+  return null;
+}
+
 export function AdminModuleCards({ onModuleSelect, access }: Props) {
   const router = useRouter();
   const modules = ADMIN_MODULES.filter((module) =>
@@ -18,19 +28,17 @@ export function AdminModuleCards({ onModuleSelect, access }: Props) {
   );
 
   function handleOpenModule(module: AdminModule) {
-    if (module === "crm") {
-      router.push(defaultCrmRouteForAccess(access));
-      return;
-    }
-    if (module === "sales") {
-      router.push(defaultSalesRouteForAccess(access));
-      return;
-    }
-    if (module === "accounting") {
-      router.push(defaultAccountingRouteForAccess(access));
+    const route = routeForModule(module, access);
+    if (route) {
+      router.push(route);
       return;
     }
     onModuleSelect(module);
+  }
+
+  function prefetchModule(module: AdminModule) {
+    const route = routeForModule(module, access);
+    if (route) router.prefetch(route);
   }
 
   return (
@@ -50,6 +58,8 @@ export function AdminModuleCards({ onModuleSelect, access }: Props) {
               key={module.id}
               type="button"
               onClick={() => handleOpenModule(module.id)}
+              onMouseEnter={() => prefetchModule(module.id)}
+              onFocus={() => prefetchModule(module.id)}
               className="text-left group"
             >
               <Card

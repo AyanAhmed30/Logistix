@@ -8,6 +8,7 @@ import {
   lineUntaxedAmount,
   splitAmountsByAccount,
 } from '@/lib/product-accounting';
+import { formatTaxReportLabel } from '@/lib/accounting/financial-reporting/tax-label';
 
 export type AutoPostingLine = {
   account_id: string;
@@ -16,11 +17,15 @@ export type AutoPostingLine = {
   contact_id?: string | null;
   debit: number;
   credit: number;
+  /** Tax master display label for Tax Report (e.g. "GST 18% (18.0%)"). */
+  tax_label?: string | null;
 };
 
 function round2(n: number) {
   return Math.round((Number(n) || 0) * 100) / 100;
 }
+
+export { formatTaxReportLabel };
 
 async function accountByCode(code: string, organizationId?: string | null) {
   const supabase = await createAdminClient();
@@ -259,15 +264,55 @@ export async function buildCustomerInvoiceLines(args: {
 
   if (args.invoiceId) {
     const supabase = await createAdminClient();
-    const { data: invLines } = await supabase
+    let invLines: Array<Record<string, unknown>> | null = null;
+    const withAccount = await supabase
       .from('accounting_customer_invoice_lines')
-      .select('product_id, quantity, unit_price, discount')
+      .select('product_id, account_id, quantity, unit_price, discount')
       .eq('invoice_id', args.invoiceId);
-    const loaded = await loadProductAccountSplits({
-      lines: invLines || [],
-      side: 'income',
-      fallbackAccountId: revenue.id,
-    });
+    if (withAccount.error && /account_id|column/i.test(withAccount.error.message)) {
+      const legacy = await supabase
+        .from('accounting_customer_invoice_lines')
+        .select('product_id, quantity, unit_price, discount')
+        .eq('invoice_id', args.invoiceId);
+      invLines = (legacy.data || []) as Array<Record<string, unknown>>;
+    } else {
+      invLines = (withAccount.data || []) as Array<Record<string, unknown>>;
+    }
+
+    // Prefer explicit line account_id (CoA), else product income account, else 4100
+    const rows = (invLines || []).map((l) => ({
+      product_id: l.product_id ? String(l.product_id) : null,
+      account_id: l.account_id ? String(l.account_id) : null,
+      quantity: Number(l.quantity) || 0,
+      unit_price: Number(l.unit_price) || 0,
+      discount: Number(l.discount) || 0,
+    }));
+
+    const productIds = [
+      ...new Set(rows.map((r) => r.product_id).filter(Boolean) as string[]),
+    ];
+    const productIncome = new Map<string, string>();
+    if (productIds.length) {
+      const { data: products } = await supabase
+        .from('products')
+        .select('id, income_account_id')
+        .in('id', productIds);
+      for (const p of products || []) {
+        if (p.income_account_id) {
+          productIncome.set(String(p.id), String(p.income_account_id));
+        }
+      }
+    }
+
+    const splitRows = rows.map((r) => ({
+      accountId:
+        r.account_id ||
+        (r.product_id ? productIncome.get(r.product_id) || null : null),
+      amount: lineUntaxedAmount(r),
+    }));
+    const loaded = splitAmountsByAccount(splitRows, revenue.id).filter(
+      (s) => s.amount > 0
+    );
     if (loaded.some((s) => s.amount > 0)) {
       revenueSplits = scaleSplitsToTarget(
         loaded,
@@ -303,6 +348,7 @@ export async function buildCustomerInvoiceLines(args: {
       });
     }
     let taxAccountId = args.taxAccountId || null;
+    let taxDisplayLabel: string | null = null;
     if (!taxAccountId) {
       try {
         const { resolveDefaultTaxAccount } = await import(
@@ -313,6 +359,10 @@ export async function buildCustomerInvoiceLines(args: {
           kind: 'sales',
         });
         taxAccountId = resolved.accountId;
+        taxDisplayLabel = formatTaxReportLabel(
+          resolved.label,
+          resolved.rateValue
+        );
       } catch {
         taxAccountId = null;
       }
@@ -325,6 +375,7 @@ export async function buildCustomerInvoiceLines(args: {
     lines.push({
       account_id: taxAccount.id,
       label: `Tax ${args.invoiceNumber}`,
+      tax_label: taxDisplayLabel || `Tax ${args.invoiceNumber}`,
       debit: 0,
       credit: tax,
     });
@@ -450,6 +501,7 @@ export async function buildCreditNoteLines(args: {
       });
     }
     let taxAccountId = args.taxAccountId || null;
+    let taxDisplayLabel: string | null = null;
     if (!taxAccountId) {
       try {
         const { resolveDefaultTaxAccount } = await import(
@@ -460,6 +512,10 @@ export async function buildCreditNoteLines(args: {
           kind: 'sales',
         });
         taxAccountId = resolved.accountId;
+        taxDisplayLabel = formatTaxReportLabel(
+          resolved.label,
+          resolved.rateValue
+        );
       } catch {
         taxAccountId = null;
       }
@@ -472,6 +528,7 @@ export async function buildCreditNoteLines(args: {
     lines.push({
       account_id: taxAccount.id,
       label: `Tax credit ${args.creditNoteNumber}`,
+      tax_label: taxDisplayLabel || `Tax credit ${args.creditNoteNumber}`,
       debit: tax,
       credit: 0,
     });
@@ -566,6 +623,7 @@ export async function buildVendorBillLines(args: {
     }
 
     let taxAccountId = args.taxAccountId || null;
+    let taxDisplayLabel: string | null = null;
     if (!taxAccountId) {
       try {
         const { resolveDefaultTaxAccount } = await import(
@@ -576,6 +634,10 @@ export async function buildVendorBillLines(args: {
           kind: 'purchase',
         });
         taxAccountId = resolved.accountId;
+        taxDisplayLabel = formatTaxReportLabel(
+          resolved.label,
+          resolved.rateValue
+        );
       } catch {
         taxAccountId = null;
       }
@@ -589,6 +651,7 @@ export async function buildVendorBillLines(args: {
     lines.push({
       account_id: taxAccount.id,
       label: `Tax ${args.billNumber}`,
+      tax_label: taxDisplayLabel || `Tax ${args.billNumber}`,
       partner_name: args.partnerName,
       contact_id: args.contactId || null,
       debit: tax,

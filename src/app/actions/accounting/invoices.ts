@@ -38,6 +38,7 @@ export type AccountingInvoiceLine = {
   taxes: number;
   line_total: number;
   account: string | null;
+  account_id?: string | null;
 };
 
 export type AccountingInvoiceDetail = {
@@ -76,6 +77,14 @@ export type AccountingInvoiceDetail = {
   company_phone: string | null;
   company_website: string | null;
   logo_url: string | null;
+  bank_account_id?: string | null;
+  bank_account?: {
+    id: string;
+    name: string;
+    code: string;
+    account_mask: string | null;
+    currency: string;
+  } | null;
   lines: AccountingInvoiceLine[];
 };
 
@@ -1021,6 +1030,8 @@ export async function getAccountingInvoiceDetail(invoiceId: string) {
       company_phone,
       company_website,
       logo_url,
+      bank_account_id: inv.bank_account_id ? String(inv.bank_account_id) : null,
+      bank_account: null as AccountingInvoiceDetail['bank_account'],
       lines: (lines || []).map((l) => ({
         id: String(l.id),
         sequence: Number(l.sequence) || 0,
@@ -1038,8 +1049,27 @@ export async function getAccountingInvoiceDetail(invoiceId: string) {
         account: (l as { account?: string | null }).account
           ? String((l as { account?: string | null }).account)
           : 'Sales',
+        account_id: (l as { account_id?: string | null }).account_id
+          ? String((l as { account_id?: string | null }).account_id)
+          : null,
       })),
     };
+
+    if (detail.bank_account_id) {
+      const { getOrganizationBankAccountById } = await import(
+        '@/app/actions/accounting/bank-accounts'
+      );
+      const bankRes = await getOrganizationBankAccountById(detail.bank_account_id);
+      if ('account' in bankRes && bankRes.account) {
+        detail.bank_account = {
+          id: bankRes.account.id,
+          name: bankRes.account.name,
+          code: bankRes.account.code,
+          account_mask: bankRes.account.account_mask,
+          currency: bankRes.account.currency,
+        };
+      }
+    }
 
     return { invoice: detail };
   } catch (err) {

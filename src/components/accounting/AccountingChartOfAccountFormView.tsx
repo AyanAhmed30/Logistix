@@ -111,6 +111,8 @@ export function AccountingChartOfAccountFormView({ accountId }: Props) {
   const [orgSpecific, setOrgSpecific] = useState(false);
   const [defaultTaxId, setDefaultTaxId] = useState("");
   const [taxOptions, setTaxOptions] = useState<TaxOpt[]>([]);
+  const [bankAccountNumber, setBankAccountNumber] = useState("");
+  const [bankCurrency, setBankCurrency] = useState("PKR");
 
   const typeOptions = useMemo(() => {
     if (classification === "view") return [];
@@ -144,6 +146,8 @@ export function AccountingChartOfAccountFormView({ accountId }: Props) {
       setAllowReconciliation(a.allow_reconciliation);
       setNotes(a.notes || "");
       setDefaultTaxId(a.default_tax_id || "");
+      setBankAccountNumber(a.bank_account_number || "");
+      setBankCurrency(a.bank_currency || "PKR");
       setParents(parentRes.parents || []);
       setTaxOptions((taxesRes.taxes as TaxOpt[]) || []);
       setLoading(false);
@@ -189,6 +193,9 @@ export function AccountingChartOfAccountFormView({ accountId }: Props) {
           allow_reconciliation: allowReconciliation,
           default_tax_id: defaultTaxId || null,
           notes: notes || null,
+          bank_account_number:
+            accountType === "bank" ? bankAccountNumber || null : null,
+          bank_currency: accountType === "bank" ? bankCurrency || "PKR" : null,
           orgSpecific,
         });
         if ("error" in res && res.error) {
@@ -211,6 +218,9 @@ export function AccountingChartOfAccountFormView({ accountId }: Props) {
         allow_reconciliation: allowReconciliation,
         default_tax_id: defaultTaxId || null,
         notes: notes || null,
+        bank_account_number:
+          accountType === "bank" ? bankAccountNumber || null : null,
+        bank_currency: accountType === "bank" ? bankCurrency || "PKR" : null,
       });
       if ("error" in res && res.error) {
         toast.error(res.error);
@@ -422,6 +432,30 @@ export function AccountingChartOfAccountFormView({ accountId }: Props) {
               ))}
             </select>
           </FormRow>
+          {accountType === "bank" ? (
+            <>
+              <FormRow
+                label="Account Number"
+                tip="Stored securely; invoices/PDFs show a masked ending only"
+              >
+                <Input
+                  className="h-8 rounded-sm"
+                  value={bankAccountNumber}
+                  onChange={(e) => setBankAccountNumber(e.target.value)}
+                  placeholder="e.g. 1234567890123"
+                />
+              </FormRow>
+              <FormRow label="Currency">
+                <Input
+                  className="h-8 rounded-sm uppercase"
+                  value={bankCurrency}
+                  onChange={(e) => setBankCurrency(e.target.value.toUpperCase())}
+                  placeholder="PKR"
+                  maxLength={6}
+                />
+              </FormRow>
+            </>
+          ) : null}
         </div>
 
         {isNew ? (

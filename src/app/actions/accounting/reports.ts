@@ -1,5 +1,12 @@
 'use server';
 
+/**
+ * @deprecated Invoice/payment KPI analytics — NOT financial statement reporting.
+ * Phase 1 Statement Reports (BS / P&L / Cash Flow) use
+ * `actions/accounting/financial-statements.ts` + `lib/accounting/financial-reporting`.
+ * These KPIs are unused by the Reporting UI route after the rebuild.
+ */
+
 import { createAdminClient } from '@/utils/supabase/server';
 import { getSession } from '@/lib/auth/session';
 import {

@@ -17,6 +17,9 @@ export type SalesQuotationPdfPayload = {
   customer: {
     name: string;
     contactPerson: string | null;
+    company?: string | null;
+    email?: string | null;
+    phone?: string | null;
     invoiceAddress: string;
     deliveryAddress: string;
   };
@@ -34,6 +37,7 @@ export type SalesQuotationPdfPayload = {
     product: string;
     description: string;
     quantity: number;
+    qtyDelivered?: number | null;
     uom: string;
     unitPrice: number;
     discount: number;
@@ -42,6 +46,7 @@ export type SalesQuotationPdfPayload = {
   }>;
   totals: {
     untaxed: number;
+    discount?: number;
     tax: number;
     total: number;
   };
@@ -146,11 +151,49 @@ export async function getSalesQuotationPdfPayload(quotationId: string) {
       q.delivery_address_id || q.contact_id
     );
 
+    let customerEmail: string | null = null;
+    let customerPhone: string | null = null;
+    let customerCompany: string | null = null;
+    if (q.contact_id) {
+      const { data: cust } = await supabase
+        .from('contacts')
+        .select('email, phone, mobile, company_name')
+        .eq('id', q.contact_id)
+        .maybeSingle();
+      if (cust) {
+        customerEmail = cust.email ? String(cust.email) : null;
+        customerPhone = String(cust.phone || cust.mobile || '') || null;
+        customerCompany = cust.company_name ? String(cust.company_name) : null;
+      }
+    }
+
+    let discountTotal = 0;
+    const linePayload = q.lines.map((line) => {
+      const qty = Number(line.quantity) || 0;
+      const price = Number(line.unit_price) || 0;
+      const disc = Number(line.discount) || 0;
+      discountTotal += qty * price * (disc / 100);
+      return {
+        product: line.product_name,
+        description: line.description || line.product_name,
+        quantity: line.quantity,
+        qtyDelivered: line.qty_delivered ?? null,
+        uom: line.uom,
+        unitPrice: line.unit_price,
+        discount: line.discount,
+        taxes: line.taxes,
+        lineTotal: line.line_total,
+      };
+    });
+
     const payload: SalesQuotationPdfPayload = {
       organization: org,
       customer: {
         name: q.customer_name,
         contactPerson: contactPerson.name,
+        company: customerCompany,
+        email: customerEmail,
+        phone: customerPhone,
         invoiceAddress: invoice.address,
         deliveryAddress: delivery.address,
       },
@@ -164,18 +207,10 @@ export async function getSalesQuotationPdfPayload(quotationId: string) {
         customerNotes: q.customer_notes,
         status: q.status,
       },
-      lines: q.lines.map((line) => ({
-        product: line.product_name,
-        description: line.description || line.product_name,
-        quantity: line.quantity,
-        uom: line.uom,
-        unitPrice: line.unit_price,
-        discount: line.discount,
-        taxes: line.taxes,
-        lineTotal: line.line_total,
-      })),
+      lines: linePayload,
       totals: {
         untaxed: q.untaxed_amount,
+        discount: Math.round(discountTotal * 100) / 100,
         tax: q.tax_amount,
         total: q.total_amount,
       },

@@ -1,16 +1,10 @@
 import type { AccountingInvoiceDetail } from '@/app/actions/accounting/invoices';
-import { LOGISTIX_LOGO_PATH } from '@/lib/logistix-logo';
-import { paymentStateLabel } from '@/lib/accounting-payments';
-import { SALES_CURRENCY } from '@/lib/sales-quotation-form';
-
-const COLORS = {
-  charcoal: [33, 37, 41] as [number, number, number],
-  muted: [108, 117, 125] as [number, number, number],
-  border: [222, 226, 230] as [number, number, number],
-  tableHeader: [230, 244, 245] as [number, number, number],
-  accent: [1, 126, 132] as [number, number, number],
-  light: [248, 249, 250] as [number, number, number],
-};
+import {
+  getLogistixLogoImageFormat,
+  LOGISTIX_LOGO_PATH,
+  LOGISTIX_LOGO_PDF_HEIGHT,
+  LOGISTIX_LOGO_PDF_WIDTH,
+} from '@/lib/logistix-logo';
 
 export type GenerateAccountingInvoicePdfOptions = {
   download?: boolean;
@@ -18,6 +12,11 @@ export type GenerateAccountingInvoicePdfOptions = {
   openInNewTab?: boolean;
   generatedBy?: string | null;
 };
+
+/** Brand accent only — layout mirrors Odoo ReportLab invoice. */
+const THEME: [number, number, number] = [1, 126, 132]; // #017e84
+const INK: [number, number, number] = [0, 0, 0];
+const MUTED: [number, number, number] = [80, 80, 80];
 
 async function loadImageAsDataUrl(url: string): Promise<string | null> {
   try {
@@ -35,314 +34,461 @@ async function loadImageAsDataUrl(url: string): Promise<string | null> {
   }
 }
 
-function money(n: number) {
-  return new Intl.NumberFormat(undefined, {
-    style: 'currency',
-    currency: SALES_CURRENCY,
+/** Odoo: Rs. 7,020.00 */
+function rs(n: number) {
+  return `Rs. ${new Intl.NumberFormat('en-US', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(n || 0)}`;
+}
+
+/** Odoo: 78.00 */
+function num2(n: number) {
+  return new Intl.NumberFormat('en-US', {
+    minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   }).format(n || 0);
 }
 
-function formatDate(value: string | null | undefined) {
-  if (!value) return '—';
+/** Odoo: 08/12/2026 */
+function mdY(value: string | null | undefined) {
+  if (!value) return '';
   const d = new Date(value);
-  if (Number.isNaN(d.getTime())) return value;
-  return d.toLocaleDateString();
+  if (Number.isNaN(d.getTime())) return String(value);
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  const dd = String(d.getDate()).padStart(2, '0');
+  return `${mm}/${dd}/${d.getFullYear()}`;
 }
 
-function splitMultiline(text: string | null | undefined) {
-  return String(text || '')
-    .split(/\r?\n/)
-    .map((l) => l.trim())
-    .filter(Boolean);
+function addressLines(text: string | null | undefined): string[] {
+  const raw = String(text || '').trim();
+  if (!raw) return [];
+  if (raw.includes('\n')) {
+    return raw
+      .split(/\r?\n/)
+      .map((l) => l.trim())
+      .filter(Boolean);
+  }
+  // Avoid dumping one huge comma line — break into readable chunks
+  const parts = raw.split(',').map((p) => p.trim()).filter(Boolean);
+  if (parts.length <= 2) return [raw];
+  const out: string[] = [];
+  for (let i = 0; i < parts.length; i += 2) {
+    out.push(parts.slice(i, i + 2).join(', '));
+  }
+  return out;
+}
+
+/** Odoo Amount column = untaxed (qty × price × (1 − discount%)). */
+function lineUntaxed(line: {
+  quantity: number;
+  unit_price: number;
+  discount: number;
+}) {
+  const qty = Number(line.quantity) || 0;
+  const price = Number(line.unit_price) || 0;
+  const disc = Number(line.discount) || 0;
+  return Math.round(qty * price * (1 - disc / 100) * 100) / 100;
 }
 
 /**
- * Professional Odoo-inspired Accounting Invoice PDF.
- * Used for Preview, Print, and Send — one template only.
+ * Odoo invoice pattern (exact structure from INV_26-27_0001):
+ *
+ * [LOGO] Company Name
+ *        Company address
+ *
+ * Customer name / address
+ *
+ * Invoice INV/…
+ * Invoice Date          Due Date
+ * MM/DD/YYYY            MM/DD/YYYY
+ *
+ * Description | Quantity | Unit Price | Taxes | Amount
+ * …
+ *
+ * Payment Communication: INV/…     Untaxed Amount
+ *                                  General Sales Tax
+ *                                  Total
+ *
+ *              company@email
+ *               Page X / Y
+ *
+ * Theme: Logistix logo + teal title only.
  */
 export async function generateAccountingInvoicePdf(
   invoice: AccountingInvoiceDetail,
   options: GenerateAccountingInvoicePdfOptions = {}
 ) {
   const { jsPDF } = await import('jspdf');
-  const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
-  const pageW = doc.internal.pageSize.getWidth();
-  const pageH = doc.internal.pageSize.getHeight();
-  const margin = 14;
-  let y = margin;
+  const doc = new jsPDF({ orientation: 'portrait', unit: 'pt', format: 'a4' });
+  const pageW = doc.internal.pageSize.getWidth(); // 595.28
+  const pageH = doc.internal.pageSize.getHeight(); // 841.89
+
+  // Odoo-like margins (~62pt content start)
+  const left = 62;
+  const right = pageW - 40;
+  let y = 50; // jsPDF: origin top-left, y grows downward
 
   const logoUrl = invoice.logo_url || LOGISTIX_LOGO_PATH;
-  const logoData = await loadImageAsDataUrl(
+  const resolvedLogo =
     logoUrl.startsWith('http') || logoUrl.startsWith('data:')
       ? logoUrl
       : typeof window !== 'undefined'
         ? `${window.location.origin}${logoUrl.startsWith('/') ? '' : '/'}${logoUrl}`
-        : logoUrl
-  );
+        : logoUrl;
+  const logoData = await loadImageAsDataUrl(resolvedLogo);
+
+  const logoW = Math.min(LOGISTIX_LOGO_PDF_WIDTH * 2.8346, 110);
+  const logoH = LOGISTIX_LOGO_PDF_HEIGHT * 2.8346;
+
+  const ensureSpace = (needed: number) => {
+    if (y + needed > pageH - 50) {
+      doc.addPage();
+      y = 50;
+      return true;
+    }
+    return false;
+  };
+
+  // ─────────────────────────────────────────────
+  // 1) HEADER: Logo + company name/address (left)
+  // ─────────────────────────────────────────────
+  let companyX = left;
+  const headerY = y;
 
   if (logoData) {
     try {
-      doc.addImage(logoData, 'JPEG', margin, y, 22, 22);
+      doc.addImage(
+        logoData,
+        getLogistixLogoImageFormat(logoData),
+        40,
+        headerY - 6,
+        logoW,
+        logoH
+      );
+      companyX = 40 + logoW + 10;
     } catch {
       try {
-        doc.addImage(logoData, 'PNG', margin, y, 22, 22);
+        doc.addImage(logoData, 'JPEG', 40, headerY - 6, logoW, logoH);
+        companyX = 40 + logoW + 10;
       } catch {
-        // ignore
+        /* ignore */
       }
     }
   }
 
+  // Company name — 15pt bold (Odoo)
   doc.setFont('helvetica', 'bold');
-  doc.setFontSize(14);
-  doc.setTextColor(...COLORS.charcoal);
-  doc.text(invoice.organization_name || 'Company', margin + 26, y + 7);
+  doc.setFontSize(15);
+  doc.setTextColor(...INK);
+  const companyName = String(invoice.organization_name || 'Company').trim();
+  const nameWidth = Math.max(160, right - companyX - 20);
+  const nameLines = doc.splitTextToSize(companyName, nameWidth);
+  doc.text(nameLines, companyX, y);
+  y += nameLines.length * 16;
 
+  // Company address — 9pt (Odoo)
   doc.setFont('helvetica', 'normal');
-  doc.setFontSize(8);
-  doc.setTextColor(...COLORS.muted);
-  let cy = y + 12;
-  for (const line of [
-    invoice.company_address,
-    invoice.company_phone ? `Tel: ${invoice.company_phone}` : null,
-    invoice.company_email,
-    invoice.company_website,
-  ].filter(Boolean) as string[]) {
-    doc.text(line, margin + 26, cy);
-    cy += 3.8;
+  doc.setFontSize(9);
+  doc.setTextColor(...MUTED);
+  for (const line of addressLines(invoice.company_address).slice(0, 4)) {
+    doc.text(line, companyX, y);
+    y += 12;
+  }
+  // Keep company block at least as tall as logo
+  if (logoData) {
+    y = Math.max(y, headerY + logoH + 8);
+  }
+  y += 18;
+
+  // ─────────────────────────────────────────────
+  // 2) CUSTOMER DETAILS — professional label/value table
+  // ─────────────────────────────────────────────
+  const customerName = String(invoice.customer_name || '').trim();
+  const customerAddress = addressLines(invoice.billing_address)
+    .filter(
+      (line) =>
+        !customerName || line.toLowerCase() !== customerName.toLowerCase()
+    )
+    .join(', ');
+  const customerEmail = String(invoice.email || '').trim();
+  const customerPhone = String(invoice.phone || '').trim();
+  const contactPerson = String(invoice.contact_person_name || '').trim();
+
+  const customerRows: Array<{ label: string; value: string }> = [];
+  if (customerName) customerRows.push({ label: 'Customer', value: customerName });
+  if (contactPerson && contactPerson.toLowerCase() !== customerName.toLowerCase()) {
+    customerRows.push({ label: 'Contact', value: contactPerson });
+  }
+  if (customerAddress) customerRows.push({ label: 'Address', value: customerAddress });
+  if (customerEmail) customerRows.push({ label: 'Email', value: customerEmail });
+  if (customerPhone) customerRows.push({ label: 'Phone', value: customerPhone });
+
+  if (customerRows.length) {
+    const tableX = left;
+    const tableW = right - left;
+    const labelW = 78;
+    const valueX = tableX + labelW + 8;
+    const valueW = tableW - labelW - 16;
+    const padY = 7;
+    const rowGap = 2;
+
+    // Section title
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(8);
+    doc.setTextColor(...THEME);
+    doc.text('CUSTOMER DETAILS', tableX, y);
+    y += 8;
+
+    // Top rule
+    doc.setDrawColor(...THEME);
+    doc.setLineWidth(1);
+    doc.line(tableX, y, tableX + tableW, y);
+    y += padY + 2;
+
+    for (let i = 0; i < customerRows.length; i++) {
+      const row = customerRows[i];
+      const valueLines = doc.splitTextToSize(row.value, valueW);
+      const rowH = Math.max(12, valueLines.length * 11);
+
+      ensureSpace(rowH + padY + 6);
+
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(8.5);
+      doc.setTextColor(...MUTED);
+      doc.text(row.label, tableX + 2, y + 8);
+
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(9.5);
+      doc.setTextColor(...INK);
+      doc.text(valueLines, valueX, y + 8);
+
+      y += rowH + padY;
+
+      // Subtle row separator (not after last)
+      if (i < customerRows.length - 1) {
+        doc.setDrawColor(220, 220, 220);
+        doc.setLineWidth(0.4);
+        doc.line(tableX, y - rowGap, tableX + tableW, y - rowGap);
+      }
+    }
+
+    // Bottom rule
+    doc.setDrawColor(...THEME);
+    doc.setLineWidth(0.7);
+    doc.line(tableX, y, tableX + tableW, y);
+    y += 20;
+  } else {
+    y += 10;
   }
 
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(18);
-  doc.setTextColor(...COLORS.accent);
-  doc.text('INVOICE', pageW - margin, y + 8, { align: 'right' });
-  doc.setFontSize(11);
-  doc.setTextColor(...COLORS.charcoal);
-  doc.text(invoice.invoice_number, pageW - margin, y + 15, { align: 'right' });
+  // ─────────────────────────────────────────────
+  // 3) DOCUMENT TITLE — left, large (Odoo: below customer)
+  // ─────────────────────────────────────────────
   doc.setFont('helvetica', 'normal');
-  doc.setFontSize(8);
-  doc.setTextColor(...COLORS.muted);
-  doc.text(
-    `Status: ${String(invoice.status).replace(/_/g, ' ')} · ${paymentStateLabel(invoice.payment_state)}`,
-    pageW - margin,
-    y + 20,
-    { align: 'right' }
-  );
+  doc.setFontSize(22);
+  doc.setTextColor(...THEME);
+  doc.text(`Invoice ${invoice.invoice_number || ''}`.trim(), left, y);
+  y += 28;
 
-  y = Math.max(cy, y + 28) + 6;
-  doc.setDrawColor(...COLORS.accent);
-  doc.setLineWidth(0.4);
-  doc.line(margin, y, pageW - margin, y);
-  y += 8;
-
-  // Customer + Invoice meta
-  const leftX = margin;
-  const rightX = pageW / 2 + 4;
+  // ─────────────────────────────────────────────
+  // 4) DATES — two columns side by side (Odoo)
+  // ─────────────────────────────────────────────
+  const dateCol1 = left;
+  const dateCol2 = 300;
 
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(9);
-  doc.setTextColor(...COLORS.accent);
-  doc.text('Bill To', leftX, y);
-  doc.text('Invoice Details', rightX, y);
-  y += 5;
-
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(11);
-  doc.setTextColor(...COLORS.charcoal);
-  doc.text(invoice.customer_name || '—', leftX, y);
-  y += 4.5;
+  doc.setTextColor(...INK);
+  doc.text('Invoice Date', dateCol1, y);
+  doc.text('Due Date', dateCol2, y);
+  y += 13;
 
   doc.setFont('helvetica', 'normal');
-  doc.setFontSize(8);
-  doc.setTextColor(...COLORS.muted);
-  const customerLines = [
-    invoice.customer_lead_id ? `Customer ID: ${invoice.customer_lead_id}` : null,
-    invoice.contact_person_name ? `Contact: ${invoice.contact_person_name}` : null,
-    invoice.email,
-    invoice.phone,
-    ...splitMultiline(invoice.billing_address),
-  ].filter(Boolean) as string[];
-
-  let leftY = y;
-  for (const line of customerLines) {
-    const wrapped = doc.splitTextToSize(line, pageW / 2 - margin - 6);
-    doc.text(wrapped, leftX, leftY);
-    leftY += wrapped.length * 3.6;
-  }
-
-  if (invoice.shipping_address && invoice.shipping_address !== invoice.billing_address) {
-    leftY += 2;
-    doc.setFont('helvetica', 'bold');
-    doc.setTextColor(...COLORS.accent);
-    doc.text('Ship To', leftX, leftY);
-    leftY += 4;
-    doc.setFont('helvetica', 'normal');
-    doc.setTextColor(...COLORS.muted);
-    for (const line of splitMultiline(invoice.shipping_address)) {
-      const wrapped = doc.splitTextToSize(line, pageW / 2 - margin - 6);
-      doc.text(wrapped, leftX, leftY);
-      leftY += wrapped.length * 3.6;
-    }
-  }
-
-  const meta: [string, string][] = [
-    ['Invoice Date', formatDate(invoice.invoice_date)],
-    ['Due Date', formatDate(invoice.due_date)],
-    ['Payment Terms', invoice.payment_terms || 'Immediate'],
-    ['Salesperson', invoice.salesperson_name || '—'],
-    ['Sales Order', invoice.sales_order_number || '—'],
-    ['Quotation', invoice.quotation_number || '—'],
-    ['Organization', invoice.organization_name || '—'],
-    ['Amount Due', money(invoice.amount_residual)],
-  ];
-
-  let rightY = y;
-  doc.setFontSize(8);
-  for (const [label, value] of meta) {
-    doc.setTextColor(...COLORS.muted);
-    doc.text(`${label}:`, rightX, rightY);
-    doc.setTextColor(...COLORS.charcoal);
-    doc.text(value, pageW - margin, rightY, { align: 'right' });
-    rightY += 4.2;
-  }
-
-  y = Math.max(leftY, rightY) + 8;
-
-  // Products table
-  const colW = [48, 42, 14, 16, 22, 14, 12, 22];
-  const headers = ['Product', 'Description', 'Qty', 'UOM', 'Price', 'Disc%', 'Tax%', 'Total'];
-  let x = margin;
-  doc.setFillColor(...COLORS.tableHeader);
-  doc.rect(margin, y, pageW - margin * 2, 8, 'F');
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(7.5);
-  doc.setTextColor(...COLORS.charcoal);
-  headers.forEach((h, i) => {
-    doc.text(h, x + 1, y + 5.2);
-    x += colW[i];
-  });
-  y += 10;
-
-  doc.setFont('helvetica', 'normal');
-  doc.setFontSize(7.5);
-  for (const line of invoice.lines) {
-    if (y > pageH - 55) {
-      doc.addPage();
-      y = margin;
-    }
-    x = margin;
-    const cells = [
-      String(line.product_name || '').slice(0, 28),
-      String(line.description || '').slice(0, 24),
-      String(line.quantity),
-      String(line.uom || '').slice(0, 8),
-      money(line.unit_price),
-      String(line.discount),
-      String(line.taxes),
-      money(line.line_total),
-    ];
-    doc.setTextColor(...COLORS.charcoal);
-    cells.forEach((cell, i) => {
-      doc.text(cell, x + 1, y);
-      x += colW[i];
-    });
-    y += 5.5;
-  }
-
-  y += 4;
-  doc.setDrawColor(...COLORS.border);
-  doc.line(pageW - margin - 70, y, pageW - margin, y);
-  y += 6;
-
-  const totals: [string, string][] = [
-    ['Subtotal', money(invoice.untaxed_amount)],
-    ['Taxes', money(invoice.tax_amount)],
-    ['Grand Total', money(invoice.total_amount)],
-    ['Amount Paid', money(invoice.amount_paid)],
-    ['Outstanding', money(invoice.amount_residual)],
-  ];
-  for (const [label, value] of totals) {
-    const isGrand = label === 'Grand Total' || label === 'Outstanding';
-    doc.setFont('helvetica', isGrand ? 'bold' : 'normal');
-    doc.setFontSize(isGrand ? 10 : 9);
-    doc.setTextColor(...COLORS.muted);
-    doc.text(label, pageW - margin - 55, y);
-    doc.setTextColor(...COLORS.charcoal);
-    doc.text(value, pageW - margin, y, { align: 'right' });
-    y += 5.5;
-  }
-
-  if (invoice.customer_notes) {
-    y += 4;
-    if (y > pageH - 40) {
-      doc.addPage();
-      y = margin;
-    }
-    doc.setFont('helvetica', 'bold');
-    doc.setFontSize(8);
-    doc.setTextColor(...COLORS.accent);
-    doc.text('Notes', margin, y);
-    y += 4;
-    doc.setFont('helvetica', 'normal');
-    doc.setTextColor(...COLORS.muted);
-    const split = doc.splitTextToSize(invoice.customer_notes, pageW - margin * 2);
-    doc.text(split, margin, y);
-    y += split.length * 3.8 + 4;
-  }
-
-  // Footer block
-  if (y > pageH - 48) {
-    doc.addPage();
-    y = margin;
-  } else {
-    y = Math.max(y + 8, pageH - 48);
-  }
-
-  doc.setDrawColor(...COLORS.border);
-  doc.line(margin, y, pageW - margin, y);
-  y += 6;
-
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(8);
-  doc.setTextColor(...COLORS.charcoal);
-  doc.text('Terms & Conditions', margin, y);
-  doc.text('Authorized Signature', pageW - margin - 50, y);
-  y += 4;
-  doc.setFont('helvetica', 'normal');
-  doc.setFontSize(7);
-  doc.setTextColor(...COLORS.muted);
-  const terms = doc.splitTextToSize(
-    invoice.payment_terms
-      ? `Payment terms: ${invoice.payment_terms}. Please include the invoice number with your payment.`
-      : 'Please include the invoice number with your payment.',
-    100
-  );
-  doc.text(terms, margin, y);
-  doc.line(pageW - margin - 50, y + 12, pageW - margin, y + 12);
-
-  y += 18;
-  doc.setFontSize(7);
+  doc.setFontSize(9.5);
+  doc.text(mdY(invoice.invoice_date) || '—', dateCol1, y);
   doc.text(
-    `Generated ${new Date().toLocaleString()} · ${options.generatedBy || 'System'} · ${invoice.organization_name || ''}`,
-    margin,
+    mdY(invoice.due_date) || mdY(invoice.invoice_date) || '—',
+    dateCol2,
+    y
+  );
+  y += 28;
+
+  // ─────────────────────────────────────────────
+  // 5) TABLE — Odoo column x positions
+  // ─────────────────────────────────────────────
+  // From Odoo PDF: 62.4, 222.3, 307.0, 382.3, 438.8
+  const col = {
+    desc: left,
+    qty: 222,
+    price: 307,
+    taxes: 382,
+    amount: 439,
+  };
+
+  const drawTableHeader = () => {
+    ensureSpace(30);
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(9);
+    doc.setTextColor(...INK);
+    doc.text('Description', col.desc, y);
+    doc.text('Quantity', col.qty, y);
+    doc.text('Unit Price', col.price, y);
+    doc.text('Taxes', col.taxes, y);
+    doc.text('Amount', col.amount, y);
+    y += 5;
+    doc.setDrawColor(...INK);
+    doc.setLineWidth(0.6);
+    doc.line(left, y, right, y);
+    y += 14;
+  };
+
+  drawTableHeader();
+
+  const productLines = (invoice.lines || []).filter((l) => {
+    const name = String(l.product_name || '').trim();
+    return Boolean(name) || Number(l.quantity) > 0 || Number(l.unit_price) > 0;
+  });
+
+  for (const line of productLines) {
+    const title = String(line.product_name || 'Item').trim();
+    const descRaw = String(line.description || '').trim();
+    // Odoo shows product name; only add description if different and useful
+    const showDesc =
+      descRaw &&
+      descRaw.toLowerCase() !== title.toLowerCase() &&
+      descRaw.toLowerCase() !== 'product';
+    const label = showDesc ? `${title}\n${descRaw}` : title;
+    const descLines = doc.splitTextToSize(label, col.qty - col.desc - 8);
+    const rowH = Math.max(16, descLines.length * 11 + 4);
+
+    if (ensureSpace(rowH + 10)) drawTableHeader();
+
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(9.5);
+    doc.setTextColor(...INK);
+    doc.text(descLines, col.desc, y);
+
+    const taxPct = Number(line.taxes) || 0;
+    const untaxed = lineUntaxed(line);
+
+    doc.text(num2(Number(line.quantity) || 0), col.qty, y);
+    doc.text(num2(Number(line.unit_price) || 0), col.price, y);
+    doc.text(taxPct ? `${taxPct}%` : '', col.taxes, y);
+    doc.text(rs(untaxed), col.amount, y);
+
+    y += rowH;
+  }
+
+  y += 8;
+  doc.setDrawColor(...INK);
+  doc.setLineWidth(0.5);
+  doc.line(left, y, right, y);
+  y += 20;
+
+  // ─────────────────────────────────────────────
+  // 6) Payment Communication + Totals (Odoo)
+  // ─────────────────────────────────────────────
+  ensureSpace(72);
+  const totalsTop = y;
+
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(9);
+  doc.setTextColor(...INK);
+  const payLabel = 'Payment Communication: ';
+  doc.text(payLabel, left, y);
+  doc.setFont('helvetica', 'bold');
+  doc.text(
+    String(invoice.invoice_number || ''),
+    left + doc.getTextWidth(payLabel),
     y
   );
 
-  const dataUrl = doc.output('datauristring');
-  if (options.download) {
-    doc.save(`${invoice.invoice_number || 'invoice'}.pdf`);
+  // Optional bank (our ERP feature) — keep minimal under communication
+  let leftY = y + 14;
+  const bank = invoice.bank_account;
+  if (bank?.name || bank?.account_mask) {
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(9);
+    doc.setTextColor(...MUTED);
+    const bits = [bank.name, bank.account_mask, bank.currency]
+      .filter(Boolean)
+      .join(' · ');
+    if (bits) {
+      doc.text(bits, left, leftY);
+      leftY += 12;
+    }
   }
-  if (options.openPrintDialog) {
-    const blob = doc.output('blob');
-    const url = URL.createObjectURL(blob);
-    const w = window.open(url);
-    w?.addEventListener('load', () => {
-      w.print();
+
+  // Totals — Odoo x ~317 / ~425
+  const tLabelX = 318;
+  const tValueX = 425;
+  let ty = totalsTop;
+
+  const row = (label: string, value: string, bold = false) => {
+    doc.setFont('helvetica', bold ? 'bold' : 'normal');
+    doc.setFontSize(bold ? 10 : 9.5);
+    doc.setTextColor(...INK);
+    doc.text(label, tLabelX, ty);
+    doc.text(value, tValueX, ty);
+    ty += bold ? 16 : 14;
+  };
+
+  row('Untaxed Amount', rs(Number(invoice.untaxed_amount) || 0));
+  if (Number(invoice.tax_amount) > 0.004) {
+    row('General Sales Tax', rs(Number(invoice.tax_amount) || 0));
+  }
+  row('Total', rs(Number(invoice.total_amount) || 0), true);
+
+  if (Number(invoice.amount_paid) > 0.004) {
+    row('Amount Paid', rs(Number(invoice.amount_paid) || 0));
+    row('Amount Due', rs(Number(invoice.amount_residual) || 0), true);
+  }
+
+  y = Math.max(leftY, ty) + 12;
+
+  // Notes only if present
+  const notes = String(invoice.customer_notes || '').trim();
+  if (notes) {
+    ensureSpace(36);
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(9.5);
+    doc.setTextColor(...INK);
+    for (const line of doc.splitTextToSize(notes, right - left)) {
+      ensureSpace(12);
+      doc.text(line, left, y);
+      y += 12;
+    }
+  }
+
+  // ─────────────────────────────────────────────
+  // 7) FOOTER — email + Page X / Y centered (Odoo)
+  // ─────────────────────────────────────────────
+  const pages = doc.getNumberOfPages();
+  const footerEmail = String(invoice.company_email || '').trim();
+  for (let i = 1; i <= pages; i++) {
+    doc.setPage(i);
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(8.5);
+    doc.setTextColor(...MUTED);
+    if (footerEmail) {
+      doc.text(footerEmail, pageW / 2, pageH - 34, { align: 'center' });
+    }
+    doc.text(`Page ${i} / ${pages}`, pageW / 2, pageH - 24, {
+      align: 'center',
     });
-  } else if (!options.download && options.openInNewTab !== false) {
-    const blob = doc.output('blob');
-    const url = URL.createObjectURL(blob);
-    window.open(url, '_blank');
+  }
+
+  const dataUrl = doc.output('datauristring');
+  const fileName = `${String(invoice.invoice_number || 'invoice').replace(/\//g, '_')}_Invoice.pdf`;
+
+  if (options.download) {
+    doc.save(fileName);
+  } else if (options.openPrintDialog && typeof window !== 'undefined') {
+    const w = window.open(dataUrl);
+    w?.addEventListener('load', () => w.print());
+  } else if (options.openInNewTab !== false && typeof window !== 'undefined') {
+    window.open(dataUrl, '_blank');
   }
 
   return { dataUrl };

@@ -1,5 +1,12 @@
 import { createAdminClient } from '@/utils/supabase/server';
 
+/**
+ * @deprecated LEGACY reporting against wrong tables (`journal_entries` /
+ * `journal_entry_lines`). Phase 1 financial statements use
+ * `@/lib/accounting/financial-reporting` + `accounting_journal_*` instead.
+ * Do not use getProfitAndLoss / getBalanceSheet / getCashFlow for product UI.
+ */
+
 function toAmount(value: unknown) {
   const parsed = Number(value || 0);
   return Number.isFinite(parsed) ? parsed : 0;
@@ -63,6 +70,7 @@ export async function getTrialBalance(from?: string, to?: string) {
 }
 
 export async function getProfitAndLoss(from?: string, to?: string) {
+  /** @deprecated Use buildProfitAndLoss from financial-reporting */
   const supabase = await createAdminClient();
   const { data: accounts, error: accountsError } = await supabase
     .from('chart_of_accounts')
@@ -87,6 +95,7 @@ export async function getProfitAndLoss(from?: string, to?: string) {
 }
 
 export async function getBalanceSheet(asOf?: string) {
+  /** @deprecated Use buildBalanceSheet from financial-reporting */
   const supabase = await createAdminClient();
   const { data: accounts, error: accountsError } = await supabase
     .from('chart_of_accounts')
@@ -113,6 +122,7 @@ export async function getBalanceSheet(asOf?: string) {
 }
 
 export async function getCashFlow(from?: string, to?: string) {
+  /** @deprecated Use buildCashFlow from financial-reporting */
   const supabase = await createAdminClient();
   const { data: cashAccounts, error } = await supabase
     .from('chart_of_accounts')

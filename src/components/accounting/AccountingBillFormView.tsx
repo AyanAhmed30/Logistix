@@ -255,7 +255,7 @@ export function AccountingBillFormView({ billId }: Props) {
       if ("error" in res && res.error) toast.error(res.error);
       else {
         toast.success("Bill posted");
-        if (res.bill) setDetail(res.bill);
+        if ("bill" in res && res.bill) setDetail(res.bill);
         setChatterKey((k) => k + 1);
       }
     });
@@ -274,7 +274,7 @@ export function AccountingBillFormView({ billId }: Props) {
       else {
         toast.success("Payment registered");
         setPayOpen(false);
-        if (res.bill) setDetail(res.bill);
+        if ("bill" in res && res.bill) setDetail(res.bill);
         setChatterKey((k) => k + 1);
         void load();
       }
@@ -382,9 +382,28 @@ export function AccountingBillFormView({ billId }: Props) {
             <Printer className="h-3.5 w-3.5" />
             Print
           </Button>
+          {detail.journal_entry_id ? (
+            <Button
+              size="sm"
+              variant="outline"
+              className="h-8 rounded-sm"
+              onClick={() =>
+                router.push(
+                  `/accounting/journal-entries/${detail.journal_entry_id}`
+                )
+              }
+            >
+              Journal Entry
+            </Button>
+          ) : null}
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <Button size="sm" variant="outline" className="h-8 rounded-sm px-2">
+              <Button
+                size="sm"
+                variant="outline"
+                className="h-8 rounded-sm px-2"
+                aria-label="More actions"
+              >
                 <MoreHorizontal className="h-4 w-4" />
               </Button>
             </DropdownMenuTrigger>

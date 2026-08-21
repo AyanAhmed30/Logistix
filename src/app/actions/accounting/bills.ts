@@ -69,6 +69,7 @@ export type AccountingBillDetail = {
   company_phone: string | null;
   company_website: string | null;
   logo_url: string | null;
+  journal_entry_id: string | null;
   lines: AccountingBillLine[];
 };
 
@@ -153,6 +154,7 @@ function mapBill(row: Record<string, unknown>, lines: AccountingBillLine[], org?
     company_phone: org?.phone || null,
     company_website: org?.website || null,
     logo_url: org?.logo_url || null,
+    journal_entry_id: row.journal_entry_id ? String(row.journal_entry_id) : null,
     lines,
   };
 }

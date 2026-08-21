@@ -9,6 +9,7 @@ import {
   type AccountingPaymentMethod,
   type AccountingPaymentState,
 } from '@/lib/accounting-payments';
+import { billOpenAmount } from '@/lib/accounting-document-outstanding';
 import { resolveVendorAccountingScope } from '@/lib/accounting-vendor-scope';
 
 function round2(n: number) {
@@ -26,7 +27,7 @@ async function sumPayments(
   return round2((data || []).reduce((s, r) => s + (Number(r.amount) || 0), 0));
 }
 
-async function refreshBillPaymentState(
+export async function refreshBillPaymentState(
   supabase: Awaited<ReturnType<typeof createAdminClient>>,
   billId: string,
   username: string
@@ -39,11 +40,18 @@ async function refreshBillPaymentState(
   if (!bill) return { error: 'Bill not found' as const };
 
   const amountPaid = await sumPayments(supabase, billId);
+  const total = Number(bill.total_amount) || 0;
+  const residualDue = await billOpenAmount(supabase, {
+    billId,
+    total,
+    amountPaid,
+  });
   const computed = computePaymentState({
-    total: Number(bill.total_amount) || 0,
+    total,
     amountPaid,
     dueDate: bill.due_date ? String(bill.due_date) : null,
     workflowStatus: String(bill.status || ''),
+    amountResidual: residualDue,
   });
 
   const workflowStatus = String(bill.status) as AccountingBillStatus;
@@ -128,9 +136,23 @@ export async function registerVendorBillPayment(
       : scope.organizationId;
     if (!orgId) return { error: 'Bill organization is missing' };
 
+    const { getAccountingDocumentLockError } = await import(
+      '@/lib/accounting-lock-dates'
+    );
+    const payLock = await getAccountingDocumentLockError(
+      orgId,
+      paymentDate,
+      'purchase'
+    );
+    if (payLock) return { error: payLock };
+
     const alreadyPaid = await sumPayments(supabase, billId);
     const total = round2(Number(bill.total_amount) || 0);
-    const outstanding = round2(Math.max(0, total - alreadyPaid));
+    const outstanding = await billOpenAmount(supabase, {
+      billId,
+      total,
+      amountPaid: alreadyPaid,
+    });
     if (amount - outstanding > 0.004) {
       return {
         error: `Payment amount cannot exceed outstanding balance (${outstanding.toFixed(2)})`,

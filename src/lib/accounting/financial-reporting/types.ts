@@ -181,6 +181,7 @@ export function groupLabelForAccountType(
     fixed_assets: 'Fixed Assets',
     non_current_assets: 'Non-current Assets',
     prepayments: 'Prepayments',
+    deferred_revenue: 'Deferred Revenue',
     payable: 'Payables',
     credit_card: 'Credit Cards',
     current_liabilities: 'Current Liabilities',

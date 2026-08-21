@@ -31,6 +31,8 @@ export function journalEntrySourceHref(args: {
         return `/accounting/bills/${sourceId}`;
       case 'vendor_payment':
         return `/accounting/vendor-payments/${sourceId}`;
+      case 'vendor_refund':
+        return `/accounting/vendor-refunds/${sourceId}`;
       case 'asset_purchase':
       case 'asset_disposal':
         return `/accounting/assets/${sourceId}`;

@@ -8,14 +8,13 @@ import {
   Users,
   FileText,
   FileMinus2,
-  Undo2,
   BarChart3,
-  Settings2,
   Wallet,
   Package,
   Truck,
   Receipt,
   BookOpen,
+  ClipboardCheck,
   Calculator,
   Link2,
   Building2,
@@ -28,10 +27,16 @@ import {
   Coins,
   SlidersHorizontal,
   TrendingUp,
+  TrendingDown,
   Scale,
   ScrollText,
   ContactRound,
   Hourglass,
+  FileSearch,
+  History,
+  Rows3,
+  FolderOpen,
+  FileOutput,
 } from 'lucide-react';
 
 export type AccountingNavId =
@@ -74,6 +79,16 @@ export type AccountingNavId =
   | 'accounting-report-aged-receivable'
   | 'accounting-report-aged-payable'
   | 'accounting-report-tax'
+  | 'accounting-review-menu'
+  | 'accounting-review-journal-items'
+  | 'accounting-review-journal-audit'
+  | 'accounting-review-audit-trail'
+  | 'accounting-review-loans-analysis'
+  | 'accounting-review-invoices-to-be-issued'
+  | 'accounting-review-working-files'
+  | 'accounting-review-deferred-revenues'
+  | 'accounting-review-deferred-expenses'
+  | 'accounting-review-annual-report'
   | 'accounting-automation';
 
 export type AccountingNavItem = {
@@ -99,7 +114,8 @@ export type AccountingNavEntry =
         | 'accounting-configuration-menu'
         | 'accounting-customers-menu'
         | 'accounting-vendors-menu'
-        | 'accounting-reports-menu';
+        | 'accounting-reports-menu'
+        | 'accounting-review-menu';
       label: string;
       icon: LucideIcon;
       children: AccountingNavChild[];
@@ -131,12 +147,73 @@ export type AccountingPageMeta = {
     | 'journals'
     | 'taxes'
     | 'payment-terms'
-    | 'currencies';
+    | 'currencies'
+    | 'review-journal-items'
+    | 'review-journal-audit'
+    | 'review-audit-trail';
   showCreate?: boolean;
   showFilters?: boolean;
   showFavorites?: boolean;
   filters?: { id: string; label: string }[];
 };
+
+/** Review — Control + Logs */
+export const ACCOUNTING_REVIEW_MENU: AccountingNavChild[] = [
+  {
+    id: 'accounting-review-journal-items',
+    label: 'Journal Items',
+    href: '/accounting/review/journal-items',
+    icon: Rows3,
+  },
+  {
+    id: 'accounting-review-journal-audit',
+    label: 'Journal Audit',
+    href: '/accounting/review/journal-audit',
+    icon: FileSearch,
+  },
+  {
+    id: 'accounting-review-audit-trail',
+    label: 'Audit Trail',
+    href: '/accounting/review/audit-trail',
+    icon: History,
+  },
+  {
+    id: 'accounting-review-loans-analysis',
+    label: 'Loans Analysis',
+    href: '/accounting/review/loans-analysis',
+    icon: Landmark,
+  },
+  {
+    id: 'accounting-review-invoices-to-be-issued',
+    label: 'Invoices To Be Issued',
+    href: '/accounting/review/invoices-to-be-issued',
+    icon: FileOutput,
+  },
+  {
+    id: 'accounting-review-working-files',
+    label: 'Working Files',
+    href: '/accounting/review/working-files',
+    icon: FolderOpen,
+  },
+  {
+    id: 'accounting-review-deferred-revenues',
+    label: 'Deferred Revenues',
+    href: '/accounting/review/deferred-revenues',
+    icon: TrendingUp,
+  },
+  {
+    id: 'accounting-review-deferred-expenses',
+    label: 'Deferred Expenses',
+    href: '/accounting/review/deferred-expenses',
+    icon: TrendingDown,
+  },
+  {
+    id: 'accounting-review-annual-report',
+    label: 'Annual Report',
+    href: '/accounting/review/annual-report',
+    icon: ScrollText,
+  },
+];
 
 /** Odoo Configuration submenu (foundation settings) */
 export const ACCOUNTING_CONFIGURATION_MENU: AccountingNavChild[] = [
@@ -358,6 +435,20 @@ export const ACCOUNTING_NAV_STRUCTURE: AccountingNavEntry[] = [
   },
   {
     type: 'menu',
+    id: 'accounting-review-menu',
+    label: 'Review',
+    icon: ClipboardCheck,
+    children: ACCOUNTING_REVIEW_MENU,
+  },
+  {
+    type: 'menu',
+    id: 'accounting-reports-menu',
+    label: 'Reporting',
+    icon: BarChart3,
+    children: ACCOUNTING_REPORTS_MENU,
+  },
+  {
+    type: 'menu',
     id: 'accounting-configuration-menu',
     label: 'Configuration',
     icon: SlidersHorizontal,
@@ -377,31 +468,6 @@ export const ACCOUNTING_NAV_STRUCTURE: AccountingNavEntry[] = [
     icon: Truck,
     children: ACCOUNTING_VENDORS_MENU,
   },
-  {
-    type: 'link',
-    item: {
-      id: 'accounting-refunds',
-      label: 'Refunds',
-      href: '/accounting/refunds',
-      icon: Undo2,
-    },
-  },
-  {
-    type: 'menu',
-    id: 'accounting-reports-menu',
-    label: 'Reporting',
-    icon: BarChart3,
-    children: ACCOUNTING_REPORTS_MENU,
-  },
-  {
-    type: 'link',
-    item: {
-      id: 'accounting-automation',
-      label: 'Automation',
-      href: '/accounting/automation',
-      icon: Settings2,
-    },
-  },
 ];
 
 /** Flat list for access filtering / legacy helpers. */
@@ -413,22 +479,11 @@ export const ACCOUNTING_NAV_ITEMS: AccountingNavItem[] = [
     icon: LayoutDashboard,
   },
   ...ACCOUNTING_ACCOUNTING_MENU,
+  ...ACCOUNTING_REVIEW_MENU,
+  ...ACCOUNTING_REPORTS_MENU,
   ...ACCOUNTING_CONFIGURATION_MENU,
   ...ACCOUNTING_CUSTOMERS_MENU,
   ...ACCOUNTING_VENDORS_MENU,
-  {
-    id: 'accounting-refunds',
-    label: 'Refunds',
-    href: '/accounting/refunds',
-    icon: Undo2,
-  },
-  ...ACCOUNTING_REPORTS_MENU,
-  {
-    id: 'accounting-automation',
-    label: 'Automation',
-    href: '/accounting/automation',
-    icon: Settings2,
-  },
 ];
 
 export function getAccountingPageMeta(pathname: string): AccountingPageMeta {
@@ -467,6 +522,119 @@ export function getAccountingPageMeta(pathname: string): AccountingPageMeta {
         { id: 'posted', label: 'Posted' },
         { id: 'cancelled', label: 'Cancelled' },
       ],
+    };
+  }
+
+  if (pathname.startsWith('/accounting/review/journal-items')) {
+    return {
+      title: 'Journal Items',
+      breadcrumbs: [],
+      searchMode: 'none',
+      showCreate: false,
+      showFilters: false,
+      showFavorites: false,
+    };
+  }
+
+  if (pathname.startsWith('/accounting/review/journal-audit')) {
+    return {
+      title: 'Journal Audit',
+      breadcrumbs: [],
+      searchMode: 'none',
+      showCreate: false,
+      showFilters: false,
+      showFavorites: false,
+    };
+  }
+
+  if (pathname.startsWith('/accounting/review/audit-trail')) {
+    return {
+      title: 'Audit Trail',
+      breadcrumbs: [],
+      searchMode: 'none',
+      showCreate: false,
+      showFilters: false,
+      showFavorites: false,
+    };
+  }
+
+  if (pathname.startsWith('/accounting/review/loans-analysis')) {
+    return {
+      title: 'Loans Analysis',
+      breadcrumbs: [],
+      searchMode: 'none',
+      showCreate: false,
+      showFilters: false,
+      showFavorites: false,
+    };
+  }
+
+  if (pathname.startsWith('/accounting/review/invoices-to-be-issued')) {
+    return {
+      title: 'Invoices To Be Issued',
+      breadcrumbs: [],
+      searchMode: 'none',
+      showCreate: false,
+      showFilters: false,
+      showFavorites: false,
+    };
+  }
+
+  if (pathname.startsWith('/accounting/review/working-files')) {
+    return {
+      title: 'Working Files',
+      breadcrumbs: [],
+      searchMode: 'none',
+      showCreate: false,
+      showFilters: false,
+      showFavorites: false,
+    };
+  }
+
+  if (pathname.startsWith('/accounting/review/deferred-revenues')) {
+    return {
+      title: 'Deferred Revenue',
+      breadcrumbs: [],
+      searchMode: 'none',
+      showCreate: false,
+      showFilters: false,
+      showFavorites: false,
+    };
+  }
+
+  if (pathname.startsWith('/accounting/review/deferred-expenses')) {
+    return {
+      title: 'Deferred Expense',
+      breadcrumbs: [],
+      searchMode: 'none',
+      showCreate: false,
+      showFilters: false,
+      showFavorites: false,
+    };
+  }
+
+  if (pathname.startsWith('/accounting/review/annual-report')) {
+    return {
+      title: 'Annual Reports',
+      breadcrumbs: [],
+      searchMode: 'none',
+      showCreate: false,
+      showFilters: false,
+      showFavorites: false,
+    };
+  }
+
+  if (pathname === '/accounting/review') {
+    return {
+      title: 'Review',
+      subtitle: 'Accounting control and audit workspace',
+      breadcrumbs: [
+        { label: 'Accounting', href: '/accounting' },
+        { label: 'Review' },
+      ],
+      searchMode: 'none',
+      showFilters: false,
+      showFavorites: false,
     };
   }
 
@@ -1329,6 +1497,10 @@ export function isAccountingGlMenuPath(pathname: string): boolean {
   );
 }
 
+export function isReviewMenuPath(pathname: string): boolean {
+  return pathname.startsWith('/accounting/review');
+}
+
 export function isConfigurationMenuPath(pathname: string): boolean {
   return pathname.startsWith('/accounting/configuration');
 }
@@ -1357,11 +1529,15 @@ export function isMenuPathActive(
     | 'accounting-configuration-menu'
     | 'accounting-customers-menu'
     | 'accounting-vendors-menu'
-    | 'accounting-reports-menu',
+    | 'accounting-reports-menu'
+    | 'accounting-review-menu',
   pathname: string
 ): boolean {
   if (menuId === 'accounting-accounting-menu') {
     return isAccountingGlMenuPath(pathname);
+  }
+  if (menuId === 'accounting-review-menu') {
+    return isReviewMenuPath(pathname);
   }
   if (menuId === 'accounting-configuration-menu') {
     return isConfigurationMenuPath(pathname);

@@ -844,21 +844,14 @@ export async function getAccountingCustomerInvoices(filters: {
       const total = Number(r.total_amount) || 0;
       const paid = Number(r.amount_paid) || 0;
       const storedState = String(r.payment_state || 'not_paid');
-      const computed =
-        storedState === 'in_payment'
-          ? {
-              paymentState: 'in_payment' as const,
-              outstanding: Number.isFinite(Number(r.amount_residual))
-                ? Number(r.amount_residual)
-                : Math.max(0, total - paid),
-              amountPaid: paid,
-            }
-          : computePaymentState({
-              total,
-              amountPaid: paid,
-              dueDate: r.due_date ? String(r.due_date) : null,
-              workflowStatus: String(r.status || ''),
-            });
+      const computed = computePaymentState({
+        total,
+        amountPaid: paid,
+        dueDate: r.due_date ? String(r.due_date) : null,
+        workflowStatus: String(r.status || ''),
+        amountResidual: r.amount_residual != null ? Number(r.amount_residual) : null,
+        preferInPayment: storedState === 'in_payment',
+      });
       return {
         id: String(r.id),
         invoice_number: String(r.invoice_number || ''),
@@ -970,23 +963,15 @@ export async function getAccountingInvoiceDetail(invoiceId: string) {
 
     const { computePaymentState } = await import('@/lib/accounting-payments');
     const storedState = String(inv.payment_state || 'not_paid');
-    const paymentComputed =
-      storedState === 'in_payment'
-        ? {
-            paymentState: 'in_payment' as const,
-            amountPaid: Number.isFinite(Number(inv.amount_paid))
-              ? Number(inv.amount_paid)
-              : 0,
-            outstanding: Number.isFinite(Number(inv.amount_residual))
-              ? Number(inv.amount_residual)
-              : Math.max(0, totalAmount - (Number(inv.amount_paid) || 0)),
-          }
-        : computePaymentState({
-            total: totalAmount,
-            amountPaid,
-            dueDate: inv.due_date ? String(inv.due_date) : null,
-            workflowStatus: String(inv.status || ''),
-          });
+    const paymentComputed = computePaymentState({
+      total: totalAmount,
+      amountPaid,
+      dueDate: inv.due_date ? String(inv.due_date) : null,
+      workflowStatus: String(inv.status || ''),
+      amountResidual:
+        inv.amount_residual != null ? Number(inv.amount_residual) : null,
+      preferInPayment: storedState === 'in_payment',
+    });
 
     const detail: AccountingInvoiceDetail = {
       id: String(inv.id),
@@ -1101,35 +1086,59 @@ export async function getAccountingDashboardStats() {
     }
 
     const supabase = await createAdminClient();
-    let invQuery = supabase
+    let invCountQuery = supabase
       .from('accounting_customer_invoices')
-      .select('id, status, amount_residual, total_amount', { count: 'exact' });
+      .select('id', { count: 'exact', head: true })
+      .neq('status', 'cancelled');
+    let draftQuery = supabase
+      .from('accounting_customer_invoices')
+      .select('id', { count: 'exact', head: true })
+      .eq('status', 'draft');
+    let arQuery = supabase
+      .from('accounting_customer_invoices')
+      .select('amount_residual, total_amount')
+      .in('status', ['posted', 'paid']);
     let custQuery = supabase
       .from('contacts')
       .select('id', { count: 'exact', head: true })
       .gt('customer_rank', 0)
       .is('parent_id', null);
-    let billQuery = supabase
+    let billCountQuery = supabase
       .from('accounting_vendor_bills')
-      .select('id, status, amount_residual, total_amount', { count: 'exact' });
+      .select('id', { count: 'exact', head: true })
+      .neq('status', 'cancelled');
+    let apQuery = supabase
+      .from('accounting_vendor_bills')
+      .select('amount_residual, total_amount')
+      .in('status', ['posted', 'paid']);
     let jeQuery = supabase
       .from('accounting_journal_entries')
       .select('id', { count: 'exact', head: true })
       .eq('status', 'posted');
 
     if (scope.organizationId && !scope.isGlobalAdminView) {
-      invQuery = invQuery.eq('organization_id', scope.organizationId);
+      invCountQuery = invCountQuery.eq('organization_id', scope.organizationId);
+      draftQuery = draftQuery.eq('organization_id', scope.organizationId);
+      arQuery = arQuery.eq('organization_id', scope.organizationId);
       custQuery = custQuery.eq('organization_id', scope.organizationId);
-      billQuery = billQuery.eq('organization_id', scope.organizationId);
+      billCountQuery = billCountQuery.eq(
+        'organization_id',
+        scope.organizationId
+      );
+      apQuery = apQuery.eq('organization_id', scope.organizationId);
       jeQuery = jeQuery.eq('organization_id', scope.organizationId);
     }
 
-    const [invRes, custRes, billRes, jeRes] = await Promise.all([
-      invQuery,
-      custQuery,
-      billQuery,
-      jeQuery,
-    ]);
+    const [invCountRes, draftRes, arRes, custRes, billCountRes, apRes, jeRes] =
+      await Promise.all([
+        invCountQuery,
+        draftQuery,
+        arQuery,
+        custQuery,
+        billCountQuery,
+        apQuery,
+        jeQuery,
+      ]);
 
     let assetCount = 0;
     let loanCount = 0;
@@ -1174,7 +1183,10 @@ export async function getAccountingDashboardStats() {
       openFiscalYears = years.count || 0;
     }
 
-    if (invRes.error && /accounting_customer_invoices|relation/i.test(invRes.error.message)) {
+    if (
+      invCountRes.error &&
+      /accounting_customer_invoices|relation/i.test(invCountRes.error.message)
+    ) {
       return {
         draftCount: 0,
         invoiceCount: 0,
@@ -1191,36 +1203,27 @@ export async function getAccountingDashboardStats() {
       };
     }
 
-    const rows = invRes.data || [];
-    const billRows = billRes.data || [];
-    const receivablesOutstanding = Math.round(
-      rows
-        .filter((r) => r.status === 'posted' || r.status === 'paid')
-        .reduce((s, r) => {
+    const sumResidual = (
+      rows: Array<{ amount_residual?: number | null; total_amount?: number }>
+    ) =>
+      Math.round(
+        rows.reduce((s, r) => {
           const residual =
             r.amount_residual != null
               ? Number(r.amount_residual)
               : Number(r.total_amount) || 0;
           return s + (Number.isFinite(residual) ? Math.max(0, residual) : 0);
         }, 0) * 100
-    ) / 100;
-    const payablesOutstanding = Math.round(
-      billRows
-        .filter((r) => r.status === 'posted' || r.status === 'paid')
-        .reduce((s, r) => {
-          const residual =
-            (r as { amount_residual?: number | null }).amount_residual != null
-              ? Number((r as { amount_residual?: number | null }).amount_residual)
-              : Number((r as { total_amount?: number }).total_amount) || 0;
-          return s + (Number.isFinite(residual) ? Math.max(0, residual) : 0);
-        }, 0) * 100
-    ) / 100;
+      ) / 100;
+
+    const receivablesOutstanding = sumResidual(arRes.data || []);
+    const payablesOutstanding = sumResidual(apRes.data || []);
 
     return {
-      draftCount: rows.filter((r) => r.status === 'draft').length,
-      invoiceCount: invRes.count ?? rows.length,
+      draftCount: draftRes.count ?? 0,
+      invoiceCount: invCountRes.count ?? 0,
       customerCount: custRes.count ?? 0,
-      billCount: billRes.count ?? billRows.length,
+      billCount: billCountRes.count ?? 0,
       jeCount: jeRes.count ?? 0,
       assetCount,
       loanCount,

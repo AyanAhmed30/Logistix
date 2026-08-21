@@ -13,7 +13,7 @@ import {
   requireAccountingActionAccess,
   sessionHasAccountingAccess,
 } from '@/lib/accounting-page-access';
-import { computePaymentState } from '@/lib/accounting-payments';
+import { documentPaymentSnapshot } from '@/lib/accounting-payments';
 import { daysOverdueFromDueDate } from '@/lib/accounting-payment-terms';
 import { accountingCanAccessReports } from '@/lib/accounting-roles';
 
@@ -180,11 +180,13 @@ async function loadInvoices(filters: ReportFilters = {}) {
 
   if (filters.paymentStatus && filters.paymentStatus !== 'all') {
     invoices = invoices.filter((inv) => {
-      const computed = computePaymentState({
+      const computed = documentPaymentSnapshot({
         total: inv.total_amount,
         amountPaid: inv.amount_paid,
         dueDate: inv.due_date,
         workflowStatus: inv.status,
+        amountResidual: inv.amount_residual,
+        storedPaymentState: inv.payment_state,
       });
       return computed.paymentState === filters.paymentStatus;
     });
@@ -202,11 +204,13 @@ function buildKpis(
   const collected = round2(payments.reduce((a, p) => a + p.amount, 0));
   const outstanding = round2(
     posted.reduce((a, i) => {
-      const c = computePaymentState({
+      const c = documentPaymentSnapshot({
         total: i.total_amount,
         amountPaid: i.amount_paid,
         dueDate: i.due_date,
         workflowStatus: i.status,
+        amountResidual: i.amount_residual,
+        storedPaymentState: i.payment_state,
       });
       return a + c.outstanding;
     }, 0)
@@ -286,11 +290,13 @@ export async function getAccountingReportBundle(filters: ReportFilters = {}) {
       {
         name: 'Partial',
         value: invoices.filter((i) => {
-          const c = computePaymentState({
+          const c = documentPaymentSnapshot({
             total: i.total_amount,
             amountPaid: i.amount_paid,
             dueDate: i.due_date,
             workflowStatus: i.status,
+            amountResidual: i.amount_residual,
+            storedPaymentState: i.payment_state,
           });
           return c.paymentState === 'partial';
         }).length,
@@ -298,11 +304,13 @@ export async function getAccountingReportBundle(filters: ReportFilters = {}) {
       {
         name: 'Overdue',
         value: invoices.filter((i) => {
-          const c = computePaymentState({
+          const c = documentPaymentSnapshot({
             total: i.total_amount,
             amountPaid: i.amount_paid,
             dueDate: i.due_date,
             workflowStatus: i.status,
+            amountResidual: i.amount_residual,
+            storedPaymentState: i.payment_state,
           });
           return c.paymentState === 'overdue';
         }).length,
@@ -337,11 +345,13 @@ export async function getAccountingReportBundle(filters: ReportFilters = {}) {
         count: 0,
       };
       cur.revenue += inv.total_amount;
-      const c = computePaymentState({
+      const c = documentPaymentSnapshot({
         total: inv.total_amount,
         amountPaid: inv.amount_paid,
         dueDate: inv.due_date,
         workflowStatus: inv.status,
+        amountResidual: inv.amount_residual,
+        storedPaymentState: inv.payment_state,
       });
       cur.outstanding += c.outstanding;
       cur.count += 1;
@@ -371,11 +381,13 @@ export async function getAccountingReportBundle(filters: ReportFilters = {}) {
     const outstandingRows = invoices
       .filter((i) => i.status === 'posted' || i.status === 'paid')
       .map((i) => {
-        const c = computePaymentState({
+        const c = documentPaymentSnapshot({
           total: i.total_amount,
           amountPaid: i.amount_paid,
           dueDate: i.due_date,
           workflowStatus: i.status,
+          amountResidual: i.amount_residual,
+          storedPaymentState: i.payment_state,
         });
         let daysOverdue = 0;
         if (i.due_date && c.outstanding > 0.004) {

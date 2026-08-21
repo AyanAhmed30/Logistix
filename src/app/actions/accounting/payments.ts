@@ -7,10 +7,15 @@ import { getAccountingInvoiceDetail } from '@/app/actions/accounting/invoices';
 import type { AccountingInvoiceStatus } from '@/app/actions/accounting/invoices';
 import {
   computePaymentState,
+  outstandingFromComponents,
   paymentMethodLabel,
   type AccountingPaymentMethod,
   type AccountingPaymentState,
 } from '@/lib/accounting-payments';
+import {
+  invoiceOpenAmount,
+  sumPostedCreditNotesForInvoice,
+} from '@/lib/accounting-document-outstanding';
 
 export type AccountingInvoicePayment = {
   id: string;
@@ -114,23 +119,19 @@ async function applyPaymentTotals(
   const journal = opts?.journal ?? null;
   const workflowStatus = String(inv.status) as AccountingInvoiceStatus;
   const previousPaymentState = String(inv.payment_state || 'not_paid');
+  const residualDue = await invoiceOpenAmount(supabase, {
+    invoiceId,
+    total,
+  });
 
-  // Bank (Odoo outstanding receipts): mark In Payment, keep Amount Due until reconcile.
+  // Bank (Odoo outstanding receipts): In Payment until reconcile.
+  // Amount Due = total − reconciled payments − posted credit notes (not unreconciled bank).
   if (journal === 'bank' || (journal == null && previousPaymentState === 'in_payment' && amountPaid > 0.004)) {
-    const residual =
-      previousPaymentState === 'in_payment'
-        ? round2(Math.max(0, Number(inv.amount_residual) || 0))
-        : round2(Math.max(0, Number(inv.amount_residual) ?? total - (Number(inv.amount_paid) || 0)));
-    const keptResidual =
-      journal === 'bank' && previousPaymentState !== 'in_payment'
-        ? round2(Math.max(0, Number(inv.amount_residual) ?? total - (Number(inv.amount_paid) || 0)))
-        : residual;
-
     await supabase
       .from('accounting_customer_invoices')
       .update({
         amount_paid: round2(Number(inv.amount_paid) || 0),
-        amount_residual: keptResidual,
+        amount_residual: residualDue,
         payment_state: 'in_payment',
         status: workflowStatus === 'paid' ? 'posted' : workflowStatus === 'posted' ? 'posted' : workflowStatus,
         updated_by: username,
@@ -140,7 +141,7 @@ async function applyPaymentTotals(
 
     return {
       amountPaid: round2(Number(inv.amount_paid) || 0),
-      outstanding: keptResidual,
+      outstanding: residualDue,
       paymentState: 'in_payment' as AccountingPaymentState,
       previousPaymentState,
       previousStatus: workflowStatus,
@@ -155,6 +156,7 @@ async function applyPaymentTotals(
     workflowStatus: String(inv.status || ''),
     journal,
     preferInPayment: false,
+    amountResidual: residualDue,
   });
 
   let nextStatus = workflowStatus;
@@ -238,9 +240,24 @@ export async function registerAccountingPayment(
     const orgId = inv.organization_id ? String(inv.organization_id) : scope.organizationId;
     if (!orgId) return { error: 'Invoice organization is missing' };
 
+    const { getAccountingDocumentLockError } = await import(
+      '@/lib/accounting-lock-dates'
+    );
+    const payLock = await getAccountingDocumentLockError(
+      orgId,
+      paymentDate,
+      'sale'
+    );
+    if (payLock) return { error: payLock };
+
     const alreadyPaid = await sumPayments(supabase, invoiceId);
     const total = round2(Number(inv.total_amount) || 0);
-    const outstanding = round2(Math.max(0, total - alreadyPaid));
+    const creditNotes = await sumPostedCreditNotesForInvoice(supabase, invoiceId);
+    const outstanding = outstandingFromComponents({
+      total,
+      amountPaid: alreadyPaid,
+      adjustments: creditNotes,
+    });
 
     if (amount - outstanding > 0.004) {
       return {
@@ -458,6 +475,10 @@ export async function registerAccountingPayment(
           .eq('id', invoiceId)
           .maybeSingle();
         if (inv) {
+          const residualDue = await invoiceOpenAmount(supabase, {
+            invoiceId,
+            total: Number(inv.total_amount) || 0,
+          });
           const { data: pays } = await supabase
             .from('accounting_invoice_payments')
             .select('amount')
@@ -470,6 +491,7 @@ export async function registerAccountingPayment(
             amountPaid: paid,
             dueDate: inv.due_date ? String(inv.due_date) : null,
             workflowStatus: String(inv.status || ''),
+            amountResidual: residualDue,
           });
           await supabase
             .from('accounting_customer_invoices')

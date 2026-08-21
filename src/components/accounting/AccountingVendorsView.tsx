@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState, useTransition } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import Link from "next/link";
 import { toast } from "sonner";
 import {
   Table,
@@ -77,9 +78,9 @@ export function AccountingVendorsView() {
           <Button
             size="sm"
             className="h-8 rounded-sm bg-[#017e84] hover:bg-[#016970] text-white font-medium"
-            onClick={() => router.push("/accounting/vendors/new")}
+            asChild
           >
-            New
+            <Link href="/accounting/vendors/new">New</Link>
           </Button>
           <p className="text-sm text-secondary-muted">
             Contacts marked as Vendors — shared with Contacts module.
@@ -100,9 +101,9 @@ export function AccountingVendorsView() {
               <Button
                 size="sm"
                 className="h-8 rounded-sm bg-[#017e84] hover:bg-[#016970] text-white"
-                onClick={() => router.push("/accounting/vendors/new")}
+                asChild
               >
-                New Vendor
+                <Link href="/accounting/vendors/new">New Vendor</Link>
               </Button>
             </div>
           ) : (

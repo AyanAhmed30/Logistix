@@ -45,6 +45,7 @@ export function OrganizationSwitcher() {
           variant="outline"
           className="gap-2 border-slate-200 bg-white hover:bg-slate-50 text-primary-dark max-w-[240px]"
           disabled={isSwitching}
+          data-testid="organization-switcher"
         >
           {isSwitching ? (
             <Loader2 className="h-4 w-4 shrink-0 animate-spin" />

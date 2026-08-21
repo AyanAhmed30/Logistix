@@ -477,6 +477,22 @@ export function AccountingJournalEntryFormView({ entryId }: Props) {
                   <div className="text-[10px] text-secondary-muted">Bill</div>
                 </button>
               ) : null}
+              {detail.source_type === "vendor_refund" && detail.source_id ? (
+                <button
+                  type="button"
+                  onClick={() =>
+                    router.push(
+                      `/accounting/vendor-refunds/${detail.source_id}`
+                    )
+                  }
+                  className="rounded-sm border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-left hover:border-[#017e84]/40 min-w-[72px]"
+                >
+                  <div className="text-sm font-semibold text-[#017e84]">1</div>
+                  <div className="text-[10px] text-secondary-muted">
+                    Vendor Refund
+                  </div>
+                </button>
+              ) : null}
             </div>
           </div>
 

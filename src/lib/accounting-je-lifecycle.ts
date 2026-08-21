@@ -84,7 +84,8 @@ export async function rollbackDocumentPostToDraft(
   table:
     | 'accounting_customer_invoices'
     | 'accounting_vendor_bills'
-    | 'accounting_credit_notes',
+    | 'accounting_credit_notes'
+    | 'accounting_vendor_refunds',
   id: string,
   performedBy: string
 ) {

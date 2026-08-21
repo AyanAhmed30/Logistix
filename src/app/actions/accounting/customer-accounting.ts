@@ -3,7 +3,7 @@
 import { createAdminClient } from '@/utils/supabase/server';
 import { getSession } from '@/lib/auth/session';
 import { sessionHasAccountingAccess } from '@/lib/accounting-page-access';
-import { computePaymentState } from '@/lib/accounting-payments';
+import { documentPaymentSnapshot } from '@/lib/accounting-payments';
 
 export type CustomerBalanceSummary = {
   contact_id: string;
@@ -123,7 +123,7 @@ export async function getCustomerAccountingBalance(contactId: string) {
 
     let cnQuery = supabase
       .from('accounting_credit_notes')
-      .select('id, total_amount, amount_refunded, status')
+      .select('id, total_amount, amount_refunded, status, invoice_id')
       .eq('contact_id', contactId)
       .eq('status', 'posted');
     if (scope.organizationId && !scope.isGlobalAdminView) {
@@ -187,11 +187,16 @@ export async function getCustomerAccountingBalance(contactId: string) {
     let paidCount = 0;
     let overdueCount = 0;
     for (const inv of invRows) {
-      const computed = computePaymentState({
+      const computed = documentPaymentSnapshot({
         total: Number(inv.total_amount) || 0,
         amountPaid: Number(inv.amount_paid) || 0,
         dueDate: inv.due_date ? String(inv.due_date) : null,
         workflowStatus: String(inv.status || ''),
+        amountResidual:
+          inv.amount_residual != null ? Number(inv.amount_residual) : null,
+        storedPaymentState: inv.payment_state
+          ? String(inv.payment_state)
+          : null,
       });
       if (computed.outstanding > 0.004) {
         outstanding += computed.outstanding;
@@ -206,8 +211,17 @@ export async function getCustomerAccountingBalance(contactId: string) {
     const unappliedCredit = round2(
       Math.max(
         0,
-        creditNoteTotal -
-          cnRows.reduce((acc, c) => acc + (Number(c.amount_refunded) || 0), 0)
+        cnRows
+          .filter((c) => !c.invoice_id)
+          .reduce(
+            (acc, c) =>
+              acc +
+              Math.max(
+                0,
+                (Number(c.total_amount) || 0) - (Number(c.amount_refunded) || 0)
+              ),
+            0
+          )
       )
     );
 
@@ -487,11 +501,14 @@ export async function getCustomerAccountingInvoices(
     if (error) return { error: error.message };
 
     const rows = (data || []).map((r) => {
-      const computed = computePaymentState({
+      const computed = documentPaymentSnapshot({
         total: Number(r.total_amount) || 0,
         amountPaid: Number(r.amount_paid) || 0,
         dueDate: r.due_date ? String(r.due_date) : null,
         workflowStatus: String(r.status || ''),
+        amountResidual:
+          r.amount_residual != null ? Number(r.amount_residual) : null,
+        storedPaymentState: r.payment_state ? String(r.payment_state) : null,
       });
       return {
         id: String(r.id),

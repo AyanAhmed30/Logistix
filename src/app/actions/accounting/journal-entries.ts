@@ -13,6 +13,7 @@ import {
   buildCustomerPaymentLines,
   buildVendorBillLines,
   buildVendorPaymentLines,
+  buildVendorRefundLines,
   type AutoPostingLine,
 } from '@/lib/accounting-journal-posting';
 
@@ -25,6 +26,7 @@ export type AccountingJournalEntrySourceType =
   | 'credit_note'
   | 'vendor_bill'
   | 'vendor_payment'
+  | 'vendor_refund'
   | 'asset_purchase'
   | 'asset_depreciation'
   | 'asset_disposal'
@@ -1107,6 +1109,16 @@ export async function createAndPostAutomaticJournalEntry(args: {
         return { journalEntryId: String(again.id), alreadyExists: true as const };
       }
     }
+    if (
+      args.sourceType === 'vendor_refund' &&
+      error &&
+      /source_type|check constraint/i.test(error.message)
+    ) {
+      return {
+        error:
+          'Vendor refund journal entries are not enabled yet. Run supabase/migrations/fix_accounting_vendor_refund_journal_entries.sql in the SQL editor, then post the refund again.',
+      };
+    }
     return { error: error?.message || 'Failed to create automatic journal entry' };
   }
 
@@ -1532,6 +1544,88 @@ export async function postJournalEntryForVendorBill(billId: string) {
   } catch (err) {
     return {
       error: err instanceof Error ? err.message : 'Failed to create bill journal entry',
+    };
+  }
+}
+
+export async function postJournalEntryForVendorRefund(refundId: string) {
+  try {
+    const supabase = await createAdminClient();
+    const { data: row, error } = await supabase
+      .from('accounting_vendor_refunds')
+      .select('*')
+      .eq('id', refundId)
+      .maybeSingle();
+    if (error || !row) return { error: error?.message || 'Vendor refund not found' };
+    if (String(row.status) !== 'posted') {
+      return { error: 'Vendor refund must be posted before creating a journal entry' };
+    }
+
+    if (row.journal_entry_id) {
+      const { data: linked } = await supabase
+        .from('accounting_journal_entries')
+        .select('id, status')
+        .eq('id', row.journal_entry_id)
+        .maybeSingle();
+      if (linked && String(linked.status) !== 'cancelled') {
+        return {
+          journalEntryId: String(linked.id),
+          alreadyExists: true as const,
+        };
+      }
+      await supabase
+        .from('accounting_vendor_refunds')
+        .update({
+          journal_entry_id: null,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', refundId);
+    }
+
+    const built = await buildVendorRefundLines({
+      total: Number(row.total_amount) || 0,
+      untaxed: Number(row.untaxed_amount) || 0,
+      tax: Number(row.tax_amount) || 0,
+      partnerName: String(row.vendor_name || 'Vendor'),
+      contactId: row.contact_id ? String(row.contact_id) : null,
+      refundNumber: String(row.refund_number),
+      organizationId: String(row.organization_id),
+      refundId,
+    });
+
+    const res = await createAndPostAutomaticJournalEntry({
+      organizationId: String(row.organization_id),
+      journalId: built.journalId,
+      entryDate: String(row.refund_date || row.created_at).slice(0, 10),
+      reference: String(row.refund_number),
+      partnerName: String(row.vendor_name || ''),
+      contactId: row.contact_id ? String(row.contact_id) : null,
+      sourceType: 'vendor_refund',
+      sourceId: refundId,
+      sourceNumber: String(row.refund_number),
+      lines: built.lines,
+      performedBy: String(row.updated_by || row.created_by || 'system'),
+    });
+
+    if ('journalEntryId' in res && res.journalEntryId) {
+      const linked = await supabase
+        .from('accounting_vendor_refunds')
+        .update({
+          journal_entry_id: res.journalEntryId,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', refundId);
+      if (linked.error && /journal_entry_id|column/i.test(linked.error.message)) {
+        // Column missing until SQL migration — JE still exists via source_type.
+      }
+    }
+    return res;
+  } catch (err) {
+    return {
+      error:
+        err instanceof Error
+          ? err.message
+          : 'Failed to create vendor refund journal entry',
     };
   }
 }

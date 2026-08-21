@@ -49,7 +49,11 @@ export function sessionAccountingLevel(session: {
   });
 }
 
-export async function requireAccountingPageAccess(): Promise<DashboardAccessState> {
+export async function requireAccountingPageAccess(opts?: {
+  reports?: boolean;
+  config?: boolean;
+  lockDates?: boolean;
+}): Promise<DashboardAccessState> {
   const access = await buildCrmAccess();
   if (!access) redirect('/login');
   if (access.isSuperAdmin) return access;
@@ -59,7 +63,28 @@ export async function requireAccountingPageAccess(): Promise<DashboardAccessStat
     permissions: access.permissions,
   });
   if (!allowed) redirect('/access-denied');
+  const level = sessionAccountingLevel({
+    role: access.sessionRole || 'user',
+    permissions: access.permissions,
+  });
+  if (opts?.reports && !accountingCanAccessReports(level)) {
+    redirect('/access-denied');
+  }
+  if (opts?.config && !accountingCanManageConfig(level)) {
+    redirect('/access-denied');
+  }
+  if (opts?.lockDates && !accountingCanManageLockDates(level)) {
+    redirect('/access-denied');
+  }
   return access;
+}
+
+export async function requireAccountingConfigPageAccess(): Promise<DashboardAccessState> {
+  return requireAccountingPageAccess({ config: true });
+}
+
+export async function requireAccountingReportsPageAccess(): Promise<DashboardAccessState> {
+  return requireAccountingPageAccess({ reports: true });
 }
 
 export async function requireAccountingActionAccess(opts?: {

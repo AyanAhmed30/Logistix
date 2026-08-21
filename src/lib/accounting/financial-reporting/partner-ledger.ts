@@ -1,4 +1,5 @@
 import {
+  dayBefore,
   loadChartAccounts,
   loadPostedLedgerFacts,
   rawDebitCreditBalance,
@@ -42,7 +43,7 @@ export async function buildPartnerLedger(opts: {
     contactId: opts.contactId || null,
   });
 
-  const relevant = periodFacts.filter((f) => {
+  const isTradePartner = (f: (typeof periodFacts)[number]) => {
     const meta = accountIndex.get(f.account_id);
     if (!meta) return false;
     const isTrade =
@@ -50,37 +51,104 @@ export async function buildPartnerLedger(opts: {
       tradeAccountIds.includes(f.account_id);
     const hasPartner = Boolean(f.contact_id || f.partner_name);
     return isTrade && hasPartner;
-  });
+  };
+
+  const beforeFrom = dayBefore(opts.dateFrom);
+  const openingFacts = beforeFrom
+    ? (
+        await loadPostedLedgerFacts({
+          organizationId: opts.organizationId,
+          dateTo: beforeFrom,
+          contactId: opts.contactId || null,
+        })
+      ).filter(isTradePartner)
+    : [];
+
+  const relevant = periodFacts.filter(isTradePartner);
 
   const search = String(opts.search || '')
     .trim()
     .toLowerCase();
 
+  const partnerKey = (f: (typeof relevant)[number]) =>
+    f.contact_id || `name:${(f.partner_name || 'Unknown').toLowerCase()}`;
+
   const byPartner = new Map<string, typeof relevant>();
   for (const f of relevant) {
-    const key = f.contact_id || `name:${(f.partner_name || 'Unknown').toLowerCase()}`;
+    const key = partnerKey(f);
     const list = byPartner.get(key) || [];
     list.push(f);
     byPartner.set(key, list);
+  }
+
+  const openingByPartner = new Map<string, typeof openingFacts>();
+  for (const f of openingFacts) {
+    const key = partnerKey(f);
+    const list = openingByPartner.get(key) || [];
+    list.push(f);
+    openingByPartner.set(key, list);
+    if (!byPartner.has(key)) byPartner.set(key, []);
   }
 
   const partners: PartnerLedgerPartner[] = [];
   let totalDebit = 0;
   let totalCredit = 0;
 
-  for (const [partnerKey, facts] of [...byPartner.entries()].sort((a, b) => {
-    const na = a[1][0]?.partner_name || '';
-    const nb = b[1][0]?.partner_name || '';
+  for (const [key, facts] of [...byPartner.entries()].sort((a, b) => {
+    const na =
+      a[1][0]?.partner_name ||
+      openingByPartner.get(a[0])?.[0]?.partner_name ||
+      '';
+    const nb =
+      b[1][0]?.partner_name ||
+      openingByPartner.get(b[0])?.[0]?.partner_name ||
+      '';
     return na.localeCompare(nb);
   })) {
-    const partnerName = facts[0]?.partner_name || 'Unknown Partner';
-    const contactId = facts[0]?.contact_id || null;
+    const partnerName =
+      facts[0]?.partner_name ||
+      openingByPartner.get(key)?.[0]?.partner_name ||
+      'Unknown Partner';
+    const contactId =
+      facts[0]?.contact_id ||
+      openingByPartner.get(key)?.[0]?.contact_id ||
+      null;
 
     if (search) {
       const hay = partnerName.toLowerCase();
-      if (!hay.includes(search) && !partnerKey.toLowerCase().includes(search)) {
+      if (!hay.includes(search) && !key.toLowerCase().includes(search)) {
         continue;
       }
+    }
+
+    let openingDebit = 0;
+    let openingCredit = 0;
+    for (const f of openingByPartner.get(key) || []) {
+      openingDebit = round2(openingDebit + f.debit);
+      openingCredit = round2(openingCredit + f.credit);
+    }
+    const openingBalance = rawDebitCreditBalance(openingDebit, openingCredit);
+
+    let running = openingBalance;
+    let periodDebit = 0;
+    let periodCredit = 0;
+    const lines: PartnerLedgerLine[] = [];
+
+    if (Math.abs(openingBalance) > 0.004) {
+      lines.push({
+        line_id: `opening:${key}`,
+        entry_id: '',
+        reference: 'Initial Balance',
+        journal_code: null,
+        account_code: '',
+        account_name: '',
+        entry_date: opts.dateFrom,
+        due_date: opts.dateFrom,
+        matching: null,
+        debit: openingDebit > openingCredit ? openingBalance : 0,
+        credit: openingCredit > openingDebit ? round2(-openingBalance) : 0,
+        balance: openingBalance,
+      });
     }
 
     const sorted = facts.slice().sort((a, b) => {
@@ -88,11 +156,6 @@ export async function buildPartnerLedger(opts: {
       if (d !== 0) return d;
       return a.line_id.localeCompare(b.line_id);
     });
-
-    let running = 0;
-    let periodDebit = 0;
-    let periodCredit = 0;
-    const lines: PartnerLedgerLine[] = [];
 
     for (const f of sorted) {
       const meta = accountIndex.get(f.account_id);
@@ -127,12 +190,12 @@ export async function buildPartnerLedger(opts: {
     totalCredit = round2(totalCredit + periodCredit);
 
     partners.push({
-      partner_key: partnerKey,
+      partner_key: key,
       contact_id: contactId,
       partner_name: partnerName,
       period_debit: periodDebit,
       period_credit: periodCredit,
-      balance: rawDebitCreditBalance(periodDebit, periodCredit),
+      balance: running,
       lines,
     });
   }

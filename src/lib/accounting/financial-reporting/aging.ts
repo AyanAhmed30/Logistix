@@ -7,37 +7,25 @@
  */
 
 import { createAdminClient } from '@/utils/supabase/server';
+import { appliedPaymentAmount } from '@/lib/accounting-payments';
 import { round2 } from '@/lib/accounting/financial-reporting/types';
+import {
+  DEFAULT_AGING_BUCKETS,
+  resolveAgingBucket,
+  type AgingBucketDef,
+  type AgingBucketId,
+} from '@/lib/accounting/financial-reporting/aging-buckets';
 
 export type AgingSide = 'receivable' | 'payable';
-
-export type AgingBucketId =
-  | 'not_due'
-  | 'd1_30'
-  | 'd31_60'
-  | 'd61_90'
-  | 'd91_120'
-  | 'older';
-
-export type AgingBucketDef = {
-  id: AgingBucketId;
-  /** Odoo column label */
-  label: string;
-  /** Inclusive min days overdue; null = not due */
-  minDays: number | null;
-  /** Inclusive max days overdue; null = unbounded */
-  maxDays: number | null;
-};
-
-/** Default 30-day buckets matching Odoo Aged Receivable / Payable. */
-export const DEFAULT_AGING_BUCKETS: AgingBucketDef[] = [
-  { id: 'not_due', label: 'At Date', minDays: null, maxDays: null },
-  { id: 'd1_30', label: '1-30', minDays: 1, maxDays: 30 },
-  { id: 'd31_60', label: '31-60', minDays: 31, maxDays: 60 },
-  { id: 'd61_90', label: '61-90', minDays: 61, maxDays: 90 },
-  { id: 'd91_120', label: '91-120', minDays: 91, maxDays: 120 },
-  { id: 'older', label: 'Older', minDays: 121, maxDays: null },
-];
+export type {
+  AgingBucketId,
+  AgingBucketDef,
+} from '@/lib/accounting/financial-reporting/aging-buckets';
+export {
+  DEFAULT_AGING_BUCKETS,
+  daysBetween,
+  resolveAgingBucket,
+} from '@/lib/accounting/financial-reporting/aging-buckets';
 
 export type AgingLine = {
   key: string;
@@ -84,31 +72,6 @@ function emptyAmounts(buckets: AgingBucketDef[]): Record<AgingBucketId, number> 
   return o;
 }
 
-export function daysBetween(fromIso: string, toIso: string): number {
-  const a = new Date(`${fromIso}T00:00:00Z`);
-  const b = new Date(`${toIso}T00:00:00Z`);
-  if (Number.isNaN(a.getTime()) || Number.isNaN(b.getTime())) return 0;
-  return Math.floor((b.getTime() - a.getTime()) / 86400000);
-}
-
-export function resolveAgingBucket(
-  dueDate: string,
-  asOf: string,
-  buckets: AgingBucketDef[] = DEFAULT_AGING_BUCKETS
-): { bucket: AgingBucketId; daysOverdue: number } {
-  const daysOverdue = daysBetween(dueDate, asOf);
-  if (daysOverdue <= 0) {
-    return { bucket: 'not_due', daysOverdue: 0 };
-  }
-  for (const b of buckets) {
-    if (b.id === 'not_due') continue;
-    const minOk = b.minDays == null || daysOverdue >= b.minDays;
-    const maxOk = b.maxDays == null || daysOverdue <= b.maxDays;
-    if (minOk && maxOk) return { bucket: b.id, daysOverdue };
-  }
-  return { bucket: 'older', daysOverdue };
-}
-
 type DocRow = {
   id: string;
   number: string;
@@ -126,6 +89,8 @@ type PayRow = {
   document_id: string;
   amount: number;
   payment_date: string;
+  reconcile_status?: string | null;
+  amount_reconciled?: number | null;
 };
 
 async function loadPostedSourceIds(
@@ -185,15 +150,32 @@ async function loadReceivableDocuments(
   const ids = docs.map((d) => d.id);
   for (let i = 0; i < ids.length; i += 200) {
     const chunk = ids.slice(i, i + 200);
-    const { data: pays } = await supabase
+    const { data: pays, error: payErr } = await supabase
       .from('accounting_invoice_payments')
-      .select('invoice_id, amount, payment_date')
+      .select('invoice_id, amount, payment_date, reconcile_status, amount_reconciled')
       .in('invoice_id', chunk);
-    for (const p of pays || []) {
+    const payRows =
+      payErr && /reconcile_status|amount_reconciled|column/i.test(payErr.message)
+        ? (
+            await supabase
+              .from('accounting_invoice_payments')
+              .select('invoice_id, amount, payment_date')
+              .in('invoice_id', chunk)
+          ).data
+        : pays;
+    for (const p of payRows || []) {
       payments.push({
         document_id: String(p.invoice_id),
         amount: Number(p.amount) || 0,
         payment_date: String(p.payment_date || '').slice(0, 10),
+        reconcile_status:
+          'reconcile_status' in p && p.reconcile_status
+            ? String(p.reconcile_status)
+            : null,
+        amount_reconciled:
+          'amount_reconciled' in p && p.amount_reconciled != null
+            ? Number(p.amount_reconciled)
+            : null,
       });
     }
   }
@@ -247,6 +229,43 @@ async function loadPayableDocuments(
   return { docs, payments };
 }
 
+async function loadDocumentAdjustments(opts: {
+  table: 'accounting_credit_notes' | 'accounting_vendor_refunds';
+  documentColumn: 'invoice_id' | 'bill_id';
+  dateColumn: 'credit_note_date' | 'refund_date';
+  documentIds: string[];
+  organizationId: string | null;
+  asOf: string;
+}): Promise<Map<string, number>> {
+  const map = new Map<string, number>();
+  if (!opts.documentIds.length) return map;
+  const supabase = await createAdminClient();
+  for (let i = 0; i < opts.documentIds.length; i += 200) {
+    const chunk = opts.documentIds.slice(i, i + 200);
+    let q = supabase
+      .from(opts.table)
+      .select(`${opts.documentColumn}, total_amount, ${opts.dateColumn}, status`)
+      .eq('status', 'posted')
+      .in(opts.documentColumn, chunk)
+      .lte(opts.dateColumn, opts.asOf);
+    if (opts.organizationId) q = q.eq('organization_id', opts.organizationId);
+    const { data, error } = await q;
+    if (error) {
+      if (/relation|schema cache|column/i.test(error.message)) continue;
+      throw new Error(error.message);
+    }
+    for (const r of data || []) {
+      const row = r as Record<string, unknown>;
+      const id = row[opts.documentColumn]
+        ? String(row[opts.documentColumn])
+        : '';
+      if (!id) continue;
+      map.set(id, round2((map.get(id) || 0) + (Number(row.total_amount) || 0)));
+    }
+  }
+  return map;
+}
+
 /**
  * Build Aged Receivable or Aged Payable as of a date.
  */
@@ -280,9 +299,35 @@ export async function buildAgingReport(opts: {
     if (!p.payment_date || p.payment_date > asOf) continue;
     paidByDoc.set(
       p.document_id,
-      round2((paidByDoc.get(p.document_id) || 0) + p.amount)
+      round2(
+        (paidByDoc.get(p.document_id) || 0) +
+          appliedPaymentAmount({
+            amount: p.amount,
+            reconcile_status: p.reconcile_status,
+            amount_reconciled: p.amount_reconciled,
+          })
+      )
     );
   }
+
+  const adjustments =
+    opts.side === 'receivable'
+      ? await loadDocumentAdjustments({
+          table: 'accounting_credit_notes',
+          documentColumn: 'invoice_id',
+          dateColumn: 'credit_note_date',
+          documentIds: docs.map((d) => d.id),
+          organizationId: opts.organizationId,
+          asOf,
+        })
+      : await loadDocumentAdjustments({
+          table: 'accounting_vendor_refunds',
+          documentColumn: 'bill_id',
+          dateColumn: 'refund_date',
+          documentIds: docs.map((d) => d.id),
+          organizationId: opts.organizationId,
+          asOf,
+        });
 
   const search = String(opts.search || '')
     .trim()
@@ -295,7 +340,8 @@ export async function buildAgingReport(opts: {
     if (!postedIds.has(doc.id)) continue;
 
     const paid = paidByDoc.get(doc.id) || 0;
-    const outstanding = round2(Math.max(0, doc.total_amount - paid));
+    const adjusted = adjustments.get(doc.id) || 0;
+    const outstanding = round2(Math.max(0, doc.total_amount - paid - adjusted));
     if (outstanding <= 0.004) continue;
 
     const dueDate = (doc.due_date || doc.document_date).slice(0, 10);

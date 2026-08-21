@@ -126,6 +126,20 @@ export function AccountingVendorRefundFormView({ refundId }: Props) {
                 Cancel
               </Button>
             ) : null}
+            {detail.journal_entry_id ? (
+              <Button
+                size="sm"
+                variant="outline"
+                className="h-8 rounded-sm"
+                onClick={() =>
+                  router.push(
+                    `/accounting/journal-entries/${detail.journal_entry_id}`
+                  )
+                }
+              >
+                Journal Entry
+              </Button>
+            ) : null}
           </div>
         </div>
 

@@ -1044,9 +1044,19 @@ export function AccountingInvoiceFormView({ invoiceId }: Props) {
               <button
                 type="button"
                 className="inline-flex min-w-[88px] flex-col items-center justify-center rounded-sm border border-slate-200 bg-white px-3 py-2 text-center hover:bg-slate-50"
-                onClick={() => setActiveTab("other")}
+                onClick={() => {
+                  if (detail.journal_entry_id) {
+                    router.push(
+                      `/accounting/journal-entries/${detail.journal_entry_id}`
+                    );
+                    return;
+                  }
+                  setActiveTab("other");
+                }}
               >
-                <span className="text-base font-semibold text-primary-dark">—</span>
+                <span className="text-base font-semibold text-primary-dark">
+                  {detail.journal_entry_id ? "1" : "—"}
+                </span>
                 <span className="text-[11px] text-secondary-muted">
                   Journal Items
                 </span>

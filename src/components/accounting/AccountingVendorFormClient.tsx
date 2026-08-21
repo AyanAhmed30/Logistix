@@ -16,9 +16,12 @@ export function AccountingVendorFormClient({
       contactId={contactId}
       readOnly={false}
       backLabel="Vendors"
+      defaultVendor
       onBack={() => router.push("/accounting/vendors")}
       onSaved={(id) => {
-        router.push(`/accounting/vendors/${id}`);
+        window.setTimeout(() => {
+          router.replace(`/accounting/vendors/${id}`);
+        }, 0);
       }}
     />
   );

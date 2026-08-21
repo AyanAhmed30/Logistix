@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState, useTransition } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import Link from "next/link";
 import { toast } from "sonner";
 import {
   Table,
@@ -78,9 +79,9 @@ export function AccountingCustomersView() {
           <Button
             size="sm"
             className="h-8 rounded-sm bg-[#017e84] hover:bg-[#016970] text-white font-medium"
-            onClick={() => router.push("/accounting/customers/new")}
+            asChild
           >
-            New
+            <Link href="/accounting/customers/new">New</Link>
           </Button>
           <p className="text-sm text-secondary-muted">
             Shared with Contacts — no duplicate customer records.
@@ -101,9 +102,9 @@ export function AccountingCustomersView() {
               <Button
                 size="sm"
                 className="h-8 rounded-sm bg-[#017e84] hover:bg-[#016970] text-white"
-                onClick={() => router.push("/accounting/customers/new")}
+                asChild
               >
-                New Customer
+                <Link href="/accounting/customers/new">New Customer</Link>
               </Button>
             </div>
           ) : (

@@ -3,7 +3,8 @@
 import { createAdminClient } from '@/utils/supabase/server';
 import { getSession } from '@/lib/auth/session';
 import { sessionHasAccountingAccess } from '@/lib/accounting-page-access';
-import { computePaymentState } from '@/lib/accounting-payments';
+import { computePaymentState, outstandingFromComponents } from '@/lib/accounting-payments';
+import { sumPostedCreditNotesForInvoice } from '@/lib/accounting-document-outstanding';
 
 export type ReconciliationDocumentType =
   | 'customer_invoice'
@@ -941,6 +942,16 @@ export async function reconcileAccountingEntries(input: {
     }
     if (!organizationId) return { error: 'Organization is required' };
 
+    const { getAccountingDocumentLockError } = await import(
+      '@/lib/accounting-lock-dates'
+    );
+    const reconLock = await getAccountingDocumentLockError(
+      organizationId,
+      reconDate,
+      'general'
+    );
+    if (reconLock) return { error: reconLock };
+
     // Apply invoice / payment updates first
     for (const d of debits) {
       if (d.document_type !== 'customer_invoice') continue;
@@ -964,12 +975,19 @@ export async function reconcileAccountingEntries(input: {
       const prevPaid = round2(Number(inv.amount_paid) || 0);
       const total = round2(Number(inv.total_amount) || 0);
       const nextPaid = round2(prevPaid + applied);
+      const notes = await sumPostedCreditNotesForInvoice(supabase, d.document_id);
+      const residualDue = outstandingFromComponents({
+        total,
+        amountPaid: nextPaid,
+        adjustments: notes,
+      });
       const computed = computePaymentState({
         total,
         amountPaid: nextPaid,
         dueDate: inv.due_date ? String(inv.due_date) : null,
         workflowStatus: String(inv.status || 'posted'),
         preferInPayment: false,
+        amountResidual: residualDue,
       });
 
       let nextStatus = String(inv.status);
@@ -1268,6 +1286,18 @@ export async function unreconcileAccountingReconciliation(reconciliationId: stri
       return { error: 'Reconciliation not in the selected organization' };
     }
 
+    const { getAccountingDocumentLockError } = await import(
+      '@/lib/accounting-lock-dates'
+    );
+    const unreconLock = await getAccountingDocumentLockError(
+      String(recon.organization_id),
+      recon.reconciliation_date
+        ? String(recon.reconciliation_date)
+        : null,
+      'general'
+    );
+    if (unreconLock) return { error: unreconLock };
+
     const { data: lines } = await supabase
       .from('accounting_reconciliation_lines')
       .select('*')
@@ -1302,20 +1332,26 @@ export async function unreconcileAccountingReconciliation(reconciliationId: stri
             (p.journal == null && String(p.payment_method) !== 'cash')
         );
 
+        const notes = await sumPostedCreditNotesForInvoice(supabase, docId);
+        const residualDue = outstandingFromComponents({
+          total,
+          amountPaid: nextPaid,
+          adjustments: notes,
+        });
         let paymentState = computePaymentState({
           total,
           amountPaid: nextPaid,
           dueDate: inv.due_date ? String(inv.due_date) : null,
           workflowStatus: 'posted',
           preferInPayment: false,
+          amountResidual: residualDue,
         });
 
         // If payments still exist but unpaid amount restored → in_payment for bank
         if (hasBankPay && (openPays || []).length > 0 && nextPaid <= 0.004) {
-          const residual = round2(Math.max(0, total - nextPaid));
           paymentState = {
             paymentState: 'in_payment',
-            outstanding: residual,
+            outstanding: residualDue,
             amountPaid: nextPaid,
           };
         }

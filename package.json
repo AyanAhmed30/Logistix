@@ -10,6 +10,8 @@
     "type-check": "tsc --noEmit",
     "test:accounting": "node --test ./.next-test/journalEngine.test.js",
     "test:accounting:architecture": "node --test ./.next-test/accountingArchitecture.test.js",
+    "test:accounting:review": "npx tsx --test src/lib/accounting/review-integration.test.ts",
+    "test:accounting:e2e": "npx playwright test",
     "audit:accounting": "node ./scripts/accounting_audit_suite.mjs"
   },
   "dependencies": {
@@ -48,6 +50,7 @@
     "zod": "^4.3.6"
   },
   "devDependencies": {
+    "@playwright/test": "^1.62.1",
     "@tailwindcss/postcss": "^4",
     "@types/node": "^20",
     "@types/qrcode": "^1.5.5",

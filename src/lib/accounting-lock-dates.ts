@@ -8,6 +8,10 @@
  */
 
 import { createAdminClient } from '@/utils/supabase/server';
+import {
+  dateOnly,
+  isAccountingDateOnOrBeforeLock,
+} from '@/lib/accounting-lock-date-math';
 
 export type AccountingLockDomain = 'sale' | 'purchase' | 'tax' | 'general';
 
@@ -17,14 +21,10 @@ export type AccountingLockCheckOptions = {
   journalId?: string | null;
 };
 
-function dateOnly(v: string | null | undefined): string {
-  return String(v || '').slice(0, 10);
-}
+export { dateOnly, isAccountingDateOnOrBeforeLock };
 
 function isOnOrBefore(docDate: string, lockDate: string | null | undefined): boolean {
-  const lock = dateOnly(lockDate);
-  if (!lock) return false;
-  return docDate <= lock;
+  return isAccountingDateOnOrBeforeLock(docDate, lockDate);
 }
 
 /**

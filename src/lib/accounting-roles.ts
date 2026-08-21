@@ -93,6 +93,16 @@ export function accountingCanAccessReports(level: AccountingAccessLevel) {
   return level === 'accountant' || level === 'admin';
 }
 
+/** Review workspace — any accounting user can inspect journal items. */
+export function accountingCanAccessReview(level: AccountingAccessLevel) {
+  return level !== 'no';
+}
+
+/** Journal Audit + Audit Trail — accountant and above. */
+export function accountingCanAccessReviewAudit(level: AccountingAccessLevel) {
+  return accountingCanAccessReports(level);
+}
+
 export function accountingCanManageCreditNotes(level: AccountingAccessLevel) {
   return level === 'accountant' || level === 'admin';
 }

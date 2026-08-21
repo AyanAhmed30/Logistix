@@ -1,7 +1,7 @@
 'use server';
 
 import { createAdminClient } from '@/utils/supabase/server';
-import { computePaymentState } from '@/lib/accounting-payments';
+import { documentPaymentSnapshot } from '@/lib/accounting-payments';
 import { resolveVendorAccountingScope } from '@/lib/accounting-vendor-scope';
 
 export type VendorBalanceSummary = {
@@ -67,7 +67,7 @@ export async function getVendorAccountingBalance(contactId: string) {
       .from('accounting_vendor_bills')
       .select('*')
       .eq('contact_id', contactId)
-      .neq('status', 'cancelled');
+      .in('status', ['posted', 'paid']);
     if (scope.organizationId && !scope.isGlobalAdminView) {
       billQ = billQ.eq('organization_id', scope.organizationId);
     }
@@ -117,7 +117,7 @@ export async function getVendorAccountingBalance(contactId: string) {
 
     let refundQ = supabase
       .from('accounting_vendor_refunds')
-      .select('total_amount, amount_refunded, status')
+      .select('total_amount, amount_refunded, status, bill_id')
       .eq('contact_id', contactId)
       .eq('status', 'posted');
     if (scope.organizationId && !scope.isGlobalAdminView) {
@@ -129,6 +129,19 @@ export async function getVendorAccountingBalance(contactId: string) {
         (s, r) => s + (Number(r.amount_refunded || r.total_amount) || 0),
         0
       )
+    );
+    const unappliedRefund = round2(
+      (refunds || [])
+        .filter((r) => !r.bill_id)
+        .reduce(
+          (s, r) =>
+            s +
+            Math.max(
+              0,
+              (Number(r.total_amount) || 0) - (Number(r.amount_refunded) || 0)
+            ),
+          0
+        )
     );
 
     let billTotal = 0;
@@ -143,11 +156,14 @@ export async function getVendorAccountingBalance(contactId: string) {
       billTotal += total;
       const paid = Number(b.amount_paid) || 0;
       paidAmount += paid;
-      const state = computePaymentState({
+      const state = documentPaymentSnapshot({
         total,
         amountPaid: paid,
         dueDate: b.due_date ? String(b.due_date) : null,
         workflowStatus: String(b.status || ''),
+        amountResidual:
+          b.amount_residual != null ? Number(b.amount_residual) : null,
+        storedPaymentState: b.payment_state ? String(b.payment_state) : null,
       });
       outstanding += state.outstanding;
       if (state.paymentState === 'paid' || b.status === 'paid') paidCount += 1;
@@ -183,10 +199,10 @@ export async function getVendorAccountingBalance(contactId: string) {
         ? String(contact.organization_id)
         : null,
       organization_name,
-      current_balance: round2(outstanding - refundTotal),
+      current_balance: round2(outstanding - unappliedRefund),
       outstanding_balance: outstanding,
       paid_amount: paidAmount || paymentTotal,
-      credit_balance: refundTotal,
+      credit_balance: unappliedRefund,
       bill_total: billTotal,
       payment_total: paymentTotal,
       refund_total: refundTotal,
@@ -213,7 +229,7 @@ export async function getVendorLedger(contactId: string) {
       .from('accounting_vendor_bills')
       .select('id, bill_number, bill_date, total_amount, status, amount_paid')
       .eq('contact_id', contactId)
-      .neq('status', 'cancelled');
+      .in('status', ['posted', 'paid']);
     if (scope.organizationId && !scope.isGlobalAdminView) {
       billQ = billQ.eq('organization_id', scope.organizationId);
     }

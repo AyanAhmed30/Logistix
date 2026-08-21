@@ -40,6 +40,66 @@ function round2(n: number) {
   return Math.round(n * 100) / 100;
 }
 
+/**
+ * Open amount from document total, payments applied to the document,
+ * and posted credit notes / vendor refunds. Single formula for write-back.
+ */
+export function outstandingFromComponents(opts: {
+  total: number;
+  amountPaid: number;
+  adjustments?: number;
+}): number {
+  return round2(
+    Math.max(
+      0,
+      (Number(opts.total) || 0) -
+        (Number(opts.amountPaid) || 0) -
+        (Number(opts.adjustments) || 0)
+    )
+  );
+}
+
+/**
+ * Amount of a payment that actually reduces document residual.
+ * Unreconciled bank (outstanding receipts) does not reduce Amount Due.
+ */
+export function appliedPaymentAmount(opts: {
+  amount: number;
+  reconcile_status?: string | null;
+  amount_reconciled?: number | null;
+}): number {
+  const amount = round2(Math.max(0, Number(opts.amount) || 0));
+  const status = String(opts.reconcile_status || '')
+    .trim()
+    .toLowerCase();
+  if (status === 'outstanding' || status === 'unreconciled') return 0;
+  if (status === 'partial') {
+    return round2(Math.max(0, Number(opts.amount_reconciled) || 0));
+  }
+  return amount;
+}
+
+/** Read-path snapshot: stored residual wins; preserve In Payment. */
+export function documentPaymentSnapshot(opts: {
+  total: number;
+  amountPaid: number;
+  dueDate: string | null | undefined;
+  workflowStatus: string;
+  amountResidual?: number | null;
+  storedPaymentState?: string | null;
+  journal?: AccountingPaymentJournal | null;
+}) {
+  return computePaymentState({
+    total: opts.total,
+    amountPaid: opts.amountPaid,
+    dueDate: opts.dueDate,
+    workflowStatus: opts.workflowStatus,
+    amountResidual: opts.amountResidual,
+    journal: opts.journal,
+    preferInPayment: opts.storedPaymentState === 'in_payment',
+  });
+}
+
 export function computePaymentState(opts: {
   total: number;
   amountPaid: number;
@@ -48,6 +108,11 @@ export function computePaymentState(opts: {
   /** Bank payments stay In Payment until treated as reconciled (cash → Paid). */
   journal?: AccountingPaymentJournal | null;
   preferInPayment?: boolean;
+  /**
+   * Posted residual from the invoice/bill (payments + credit notes / refunds).
+   * Prefer this over total − paid so Review/Reporting/dashboard share one outstanding.
+   */
+  amountResidual?: number | null;
 }): {
   paymentState: AccountingPaymentState;
   outstanding: number;
@@ -55,7 +120,10 @@ export function computePaymentState(opts: {
 } {
   const total = round2(Math.max(0, opts.total));
   const amountPaid = round2(Math.max(0, opts.amountPaid));
-  const outstanding = round2(Math.max(0, total - amountPaid));
+  const outstanding =
+    opts.amountResidual != null && Number.isFinite(Number(opts.amountResidual))
+      ? round2(Math.max(0, Number(opts.amountResidual)))
+      : round2(Math.max(0, total - amountPaid));
 
   if (opts.workflowStatus === 'cancelled') {
     return {

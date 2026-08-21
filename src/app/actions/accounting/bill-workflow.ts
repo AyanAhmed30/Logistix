@@ -422,7 +422,7 @@ export async function postAccountingBill(billId: string) {
     };
   }
 
-  return posted;
+  return getAccountingBillDetail(billId);
 }
 
 export async function cancelAccountingBill(billId: string) {

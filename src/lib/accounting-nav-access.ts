@@ -4,10 +4,10 @@
 import type { AccountingAccessLevel } from '@/lib/accounting-roles';
 import {
   accountingCanAccessReports,
-  accountingCanManageAutomation,
+  accountingCanAccessReview,
+  accountingCanAccessReviewAudit,
   accountingCanManageConfig,
   accountingCanManageCreditNotes,
-  accountingCanManageRefunds,
   accountingCanManageLockDates,
 } from '@/lib/accounting-roles';
 import {
@@ -23,7 +23,6 @@ function childAllowed(
 ): boolean {
   if (id === 'accounting-credit-notes') return accountingCanManageCreditNotes(level);
   if (id === 'accounting-vendor-refunds') return accountingCanManageCreditNotes(level);
-  if (id === 'accounting-refunds') return accountingCanManageRefunds(level);
   if (id === 'accounting-lock-dates') return accountingCanManageLockDates(level);
   if (id === 'accounting-chart-of-accounts') return accountingCanManageConfig(level);
   if (id === 'accounting-journals') return accountingCanManageConfig(level);
@@ -44,6 +43,24 @@ function childAllowed(
   ) {
     return accountingCanAccessReports(level);
   }
+  if (
+    id === 'accounting-review-journal-audit' ||
+    id === 'accounting-review-audit-trail' ||
+    id === 'accounting-review-annual-report'
+  ) {
+    return accountingCanAccessReviewAudit(level);
+  }
+  if (
+    id === 'accounting-review-journal-items' ||
+    id === 'accounting-review-loans-analysis' ||
+    id === 'accounting-review-invoices-to-be-issued' ||
+    id === 'accounting-review-working-files' ||
+    id === 'accounting-review-deferred-revenues' ||
+    id === 'accounting-review-deferred-expenses' ||
+    id === 'accounting-review-menu'
+  ) {
+    return accountingCanAccessReview(level);
+  }
   return true;
 }
 
@@ -52,15 +69,6 @@ export function getAccountingNavStructureForLevel(
 ): AccountingNavEntry[] {
   return ACCOUNTING_NAV_STRUCTURE.map((entry) => {
     if (entry.type === 'link') {
-      if (
-        entry.item.id === 'accounting-automation' &&
-        !accountingCanManageAutomation(level)
-      ) {
-        return null;
-      }
-      if (entry.item.id === 'accounting-refunds' && !accountingCanManageRefunds(level)) {
-        return null;
-      }
       return entry;
     }
     if (
@@ -71,6 +79,9 @@ export function getAccountingNavStructureForLevel(
       return null;
     }
     if (entry.id === 'accounting-reports-menu' && !accountingCanAccessReports(level)) {
+      return null;
+    }
+    if (entry.id === 'accounting-review-menu' && !accountingCanAccessReview(level)) {
       return null;
     }
     const children = entry.children.filter((c) => childAllowed(c.id, level));
@@ -98,9 +109,24 @@ export function getAccountingNavItemsForLevel(
     ) {
       return accountingCanAccessReports(level);
     }
-    if (item.id === 'accounting-automation') return accountingCanManageAutomation(level);
+    if (
+      item.id === 'accounting-review-journal-audit' ||
+      item.id === 'accounting-review-audit-trail' ||
+      item.id === 'accounting-review-annual-report'
+    ) {
+      return accountingCanAccessReviewAudit(level);
+    }
+    if (
+      item.id === 'accounting-review-journal-items' ||
+      item.id === 'accounting-review-loans-analysis' ||
+      item.id === 'accounting-review-invoices-to-be-issued' ||
+      item.id === 'accounting-review-working-files' ||
+      item.id === 'accounting-review-deferred-revenues' ||
+      item.id === 'accounting-review-deferred-expenses'
+    ) {
+      return accountingCanAccessReview(level);
+    }
     if (item.id === 'accounting-credit-notes') return accountingCanManageCreditNotes(level);
-    if (item.id === 'accounting-refunds') return accountingCanManageRefunds(level);
     if (item.id === 'accounting-chart-of-accounts') return accountingCanManageConfig(level);
     if (item.id === 'accounting-journals') return accountingCanManageConfig(level);
     if (item.id === 'accounting-taxes') return accountingCanManageConfig(level);

@@ -51,6 +51,7 @@ export type AccountingVendorRefundDetail = {
   tax_amount: number;
   total_amount: number;
   amount_refunded: number;
+  journal_entry_id: string | null;
   organization_id: string | null;
   organization_name: string | null;
   lines: AccountingVendorRefundLine[];
@@ -359,6 +360,9 @@ export async function getAccountingVendorRefundDetail(refundId: string) {
       tax_amount: Number(row.tax_amount) || 0,
       total_amount: Number(row.total_amount) || 0,
       amount_refunded: Number(row.amount_refunded) || 0,
+      journal_entry_id: row.journal_entry_id
+        ? String(row.journal_entry_id)
+        : null,
       organization_id: row.organization_id ? String(row.organization_id) : null,
       organization_name,
       lines: (lineRows || []).map((l) => ({
@@ -399,6 +403,22 @@ export async function postAccountingVendorRefund(refundId: string) {
     if (String(row.status) !== 'draft') {
       return { error: 'Only draft refunds can be posted' };
     }
+    if (!(Number(row.total_amount) > 0)) {
+      return { error: 'Refund total must be greater than zero before posting' };
+    }
+
+    const orgId = row.organization_id
+      ? String(row.organization_id)
+      : scope.organizationId;
+    const { getAccountingDocumentLockError } = await import(
+      '@/lib/accounting-lock-dates'
+    );
+    const lockErr = await getAccountingDocumentLockError(
+      orgId,
+      row.refund_date ? String(row.refund_date) : null,
+      'purchase'
+    );
+    if (lockErr) return { error: lockErr };
 
     const { error } = await supabase
       .from('accounting_vendor_refunds')
@@ -414,10 +434,24 @@ export async function postAccountingVendorRefund(refundId: string) {
     if (error) return { error: error.message };
 
     if (row.bill_id) {
+      const { refreshBillPaymentState } = await import(
+        '@/app/actions/accounting/vendor-payments'
+      );
+      const refreshed = await refreshBillPaymentState(
+        supabase,
+        String(row.bill_id),
+        scope.session!.username
+      );
+      const outstanding =
+        'outstanding' in refreshed ? Number(refreshed.outstanding) : null;
+      const isFull = String(row.refund_type) === 'full';
       await supabase
         .from('accounting_vendor_bills')
         .update({
-          refund_status: 'refunded',
+          refund_status:
+            isFull || (outstanding != null && outstanding <= 0.004)
+              ? 'refunded'
+              : 'partial',
           updated_by: scope.session!.username,
           updated_at: new Date().toISOString(),
         })
@@ -433,12 +467,69 @@ export async function postAccountingVendorRefund(refundId: string) {
               refund_id: refundId,
               refund_number: row.refund_number,
               amount: row.total_amount,
+              amount_residual: outstanding,
             },
           },
         ]);
       } catch {
         // optional
       }
+    }
+
+    try {
+      const { postJournalEntryForVendorRefund } = await import(
+        '@/app/actions/accounting/journal-entries'
+      );
+      const je = await postJournalEntryForVendorRefund(refundId);
+      if ('error' in je && je.error) {
+        const { rollbackDocumentPostToDraft } = await import(
+          '@/lib/accounting-je-lifecycle'
+        );
+        await rollbackDocumentPostToDraft(
+          supabase,
+          'accounting_vendor_refunds',
+          refundId,
+          scope.session!.username
+        );
+        if (row.bill_id) {
+          const { refreshBillPaymentState } = await import(
+            '@/app/actions/accounting/vendor-payments'
+          );
+          await refreshBillPaymentState(
+            supabase,
+            String(row.bill_id),
+            scope.session!.username
+          );
+        }
+        return {
+          error: `Refund not posted — journal entry failed: ${je.error}`,
+        };
+      }
+    } catch (err) {
+      const { rollbackDocumentPostToDraft } = await import(
+        '@/lib/accounting-je-lifecycle'
+      );
+      await rollbackDocumentPostToDraft(
+        supabase,
+        'accounting_vendor_refunds',
+        refundId,
+        scope.session!.username
+      );
+      if (row.bill_id) {
+        const { refreshBillPaymentState } = await import(
+          '@/app/actions/accounting/vendor-payments'
+        );
+        await refreshBillPaymentState(
+          supabase,
+          String(row.bill_id),
+          scope.session!.username
+        );
+      }
+      return {
+        error: `Refund not posted — journal entry failed: ${
+          err instanceof Error ? err.message : 'unknown error'
+        }`,
+      };
     }
 
     return getAccountingVendorRefundDetail(refundId);
@@ -457,12 +548,45 @@ export async function cancelAccountingVendorRefund(refundId: string) {
     const supabase = await createAdminClient();
     const { data: row } = await supabase
       .from('accounting_vendor_refunds')
-      .select('status')
+      .select(
+        'id, status, organization_id, refund_date, journal_entry_id, bill_id, total_amount'
+      )
       .eq('id', refundId)
       .maybeSingle();
     if (!row) return { error: 'Refund not found' };
+    if (String(row.status) === 'cancelled') {
+      return getAccountingVendorRefundDetail(refundId);
+    }
     if (!['draft', 'posted'].includes(String(row.status))) {
       return { error: 'Cannot cancel this refund' };
+    }
+
+    const { getAccountingDocumentLockError } = await import(
+      '@/lib/accounting-lock-dates'
+    );
+    const lockErr = await getAccountingDocumentLockError(
+      row.organization_id ? String(row.organization_id) : scope.organizationId,
+      row.refund_date ? String(row.refund_date) : null,
+      'purchase'
+    );
+    if (lockErr) return { error: lockErr };
+
+    if (String(row.status) === 'posted') {
+      const { cancelLinkedAccountingJournalEntry } = await import(
+        '@/lib/accounting-je-lifecycle'
+      );
+      await cancelLinkedAccountingJournalEntry(supabase, {
+        journalEntryId: row.journal_entry_id
+          ? String(row.journal_entry_id)
+          : null,
+        sourceType: 'vendor_refund',
+        sourceId: refundId,
+        organizationId: row.organization_id
+          ? String(row.organization_id)
+          : null,
+        performedBy: scope.session!.username,
+        reason: 'vendor_refund_cancelled',
+      });
     }
 
     const { error } = await supabase
@@ -476,6 +600,40 @@ export async function cancelAccountingVendorRefund(refundId: string) {
       .eq('id', refundId);
 
     if (error) return { error: error.message };
+
+    if (row.bill_id) {
+      const { refreshBillPaymentState } = await import(
+        '@/app/actions/accounting/vendor-payments'
+      );
+      const { sumPostedVendorRefundsForBill } = await import(
+        '@/lib/accounting-document-outstanding'
+      );
+      const refreshed = await refreshBillPaymentState(
+        supabase,
+        String(row.bill_id),
+        scope.session!.username
+      );
+      const outstanding =
+        'outstanding' in refreshed ? Number(refreshed.outstanding) : null;
+      const remainingRefunds = await sumPostedVendorRefundsForBill(
+        supabase,
+        String(row.bill_id)
+      );
+      await supabase
+        .from('accounting_vendor_bills')
+        .update({
+          refund_status:
+            outstanding != null && outstanding <= 0.004
+              ? 'refunded'
+              : remainingRefunds > 0.004
+                ? 'partial'
+                : 'none',
+          updated_by: scope.session!.username,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', row.bill_id);
+    }
+
     return getAccountingVendorRefundDetail(refundId);
   } catch (err) {
     return {

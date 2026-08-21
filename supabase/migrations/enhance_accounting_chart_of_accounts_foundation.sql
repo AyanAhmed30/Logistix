@@ -40,6 +40,7 @@ ALTER TABLE public.chart_of_accounts
       'fixed_assets',
       'non_current_assets',
       'prepayments',
+      'deferred_revenue',
       'payable',
       'credit_card',
       'current_liabilities',

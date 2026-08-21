@@ -117,6 +117,12 @@ export function AccountingControlPanel({
                                                   ? "Search payment terms…"
                                                   : meta.searchMode === "currencies"
                                                     ? "Search currencies…"
+                                                    : meta.searchMode === "review-journal-items"
+                                                      ? "Search journal items…"
+                                                      : meta.searchMode === "review-journal-audit"
+                                                        ? "Search journal audit…"
+                                                        : meta.searchMode === "review-audit-trail"
+                                                          ? "Search audit trail…"
                                             : "Search invoices…"
             }
             className="h-8 max-w-sm rounded-sm text-sm"

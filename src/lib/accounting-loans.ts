@@ -130,6 +130,16 @@ export function buildLoanAmortizationSchedule(opts: {
   return lines;
 }
 
+/** Outstanding principal must equal original principal minus principal paid. */
+export function outstandingPrincipal(principal: number, principalPaid: number) {
+  return round2(Math.max(0, (Number(principal) || 0) - (Number(principalPaid) || 0)));
+}
+
+/** Outstanding interest must equal scheduled interest minus interest paid. */
+export function outstandingInterest(totalInterest: number, interestPaid: number) {
+  return round2(Math.max(0, (Number(totalInterest) || 0) - (Number(interestPaid) || 0)));
+}
+
 export function summarizeLoanSchedule(lines: LoanScheduleLine[]) {
   const totalInterest = round2(
     lines.reduce((s, l) => s + (Number(l.interest_amount) || 0), 0)

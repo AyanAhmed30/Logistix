@@ -70,6 +70,23 @@ export function formatPeriodRange(dateFrom: string, dateTo: string) {
   return a === b ? a : `${a} - ${b}`;
 }
 
+/** Inclusive YYYY-MM keys from dateFrom through dateTo. */
+export function monthKeysBetween(dateFrom: string, dateTo: string): string[] {
+  const keys: string[] = [];
+  const start = new Date(dateFrom.slice(0, 10) + 'T12:00:00');
+  const end = new Date(dateTo.slice(0, 10) + 'T12:00:00');
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return keys;
+  const cur = new Date(Date.UTC(start.getFullYear(), start.getMonth(), 1));
+  const last = new Date(Date.UTC(end.getFullYear(), end.getMonth(), 1));
+  while (cur <= last) {
+    keys.push(
+      `${cur.getUTCFullYear()}-${String(cur.getUTCMonth() + 1).padStart(2, '0')}`
+    );
+    cur.setUTCMonth(cur.getUTCMonth() + 1);
+  }
+  return keys;
+}
+
 export function resolveDatePeriod(
   preset: DatePeriodPreset,
   custom?: { dateFrom?: string; dateTo?: string },

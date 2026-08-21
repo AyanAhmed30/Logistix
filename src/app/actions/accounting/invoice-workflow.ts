@@ -617,7 +617,7 @@ export async function postAccountingInvoice(invoiceId: string) {
     };
   }
 
-  return posted;
+  return getAccountingInvoiceDetail(invoiceId);
 }
 
 export async function cancelAccountingInvoice(invoiceId: string) {

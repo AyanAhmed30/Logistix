@@ -684,6 +684,160 @@ export async function buildVendorBillLines(args: {
   return { journalId: journal.id, lines };
 }
 
+/**
+ * Vendor refund / credit: reverse of the vendor bill.
+ * Dr Payable / Cr Expense (+ recoverable tax).
+ */
+export async function buildVendorRefundLines(args: {
+  total: number;
+  untaxed?: number;
+  tax?: number;
+  partnerName: string;
+  contactId?: string | null;
+  refundNumber: string;
+  organizationId?: string | null;
+  taxAccountId?: string | null;
+  refundId?: string | null;
+}): Promise<{ journalId: string; lines: AutoPostingLine[] }> {
+  const total = round2(args.total);
+  if (total <= 0) throw new Error('Vendor refund total must be greater than zero');
+
+  const journal = await getJournalIdByType('purchase', args.organizationId);
+  const expense = await resolveAccount('5100', 'expense', args.organizationId);
+  const payable = await resolveAccount('2100', 'liability', args.organizationId);
+  const untaxed = round2(
+    args.untaxed != null ? args.untaxed : Math.max(total - (args.tax || 0), 0)
+  );
+  const tax = round2(args.tax != null ? args.tax : Math.max(total - untaxed, 0));
+
+  let expenseSplits: Array<{ accountId: string; amount: number }> = [
+    { accountId: expense.id, amount: untaxed > 0 ? untaxed : total },
+  ];
+  if (args.refundId) {
+    const supabase = await createAdminClient();
+    const { data: refundLines } = await supabase
+      .from('accounting_vendor_refund_lines')
+      .select('bill_line_id, quantity, unit_price, discount, line_total')
+      .eq('refund_id', args.refundId);
+    const billLineIds = [
+      ...new Set(
+        (refundLines || [])
+          .map((l) => (l.bill_line_id ? String(l.bill_line_id) : ''))
+          .filter(Boolean)
+      ),
+    ];
+    const productByBillLine = new Map<string, string>();
+    if (billLineIds.length) {
+      const { data: billLines } = await supabase
+        .from('accounting_vendor_bill_lines')
+        .select('id, product_id')
+        .in('id', billLineIds);
+      for (const bl of billLines || []) {
+        if (bl.product_id) {
+          productByBillLine.set(String(bl.id), String(bl.product_id));
+        }
+      }
+    }
+    const loaded = await loadProductAccountSplits({
+      lines: (refundLines || []).map((l) => ({
+        product_id: l.bill_line_id
+          ? productByBillLine.get(String(l.bill_line_id)) || null
+          : null,
+        quantity: l.quantity,
+        unit_price: l.unit_price,
+        discount: l.discount,
+      })),
+      side: 'expense',
+      fallbackAccountId: expense.id,
+    });
+    if (loaded.some((s) => s.amount > 0)) {
+      expenseSplits = scaleSplitsToTarget(
+        loaded,
+        untaxed > 0 ? untaxed : total
+      ).map((s) => ({
+        accountId: s.accountId || expense.id,
+        amount: s.amount,
+      }));
+    }
+  }
+
+  const lines: AutoPostingLine[] = [
+    {
+      account_id: payable.id,
+      label: `Vendor refund ${args.refundNumber}`,
+      partner_name: args.partnerName,
+      contact_id: args.contactId || null,
+      debit: total,
+      credit: 0,
+    },
+  ];
+
+  if (tax > 0 && untaxed > 0) {
+    for (const split of expenseSplits) {
+      if (split.amount <= 0) continue;
+      lines.push({
+        account_id: split.accountId,
+        label: `Vendor refund ${args.refundNumber}`,
+        partner_name: args.partnerName,
+        contact_id: args.contactId || null,
+        debit: 0,
+        credit: split.amount,
+      });
+    }
+
+    let taxAccountId = args.taxAccountId || null;
+    let taxDisplayLabel: string | null = null;
+    if (!taxAccountId) {
+      try {
+        const { resolveDefaultTaxAccount } = await import(
+          '@/app/actions/accounting/taxes'
+        );
+        const resolved = await resolveDefaultTaxAccount({
+          organizationId: args.organizationId,
+          kind: 'purchase',
+        });
+        taxAccountId = resolved.accountId;
+        taxDisplayLabel = formatTaxReportLabel(
+          resolved.label,
+          resolved.rateValue
+        );
+      } catch {
+        taxAccountId = null;
+      }
+    }
+    const taxAccount = taxAccountId
+      ? { id: taxAccountId }
+      : await resolveAccount('1400', 'asset', args.organizationId).catch(() =>
+          resolveAccount('1300', 'asset', args.organizationId).catch(() => expense)
+        );
+
+    lines.push({
+      account_id: taxAccount.id,
+      label: `Tax credit ${args.refundNumber}`,
+      tax_label: taxDisplayLabel || `Tax credit ${args.refundNumber}`,
+      partner_name: args.partnerName,
+      contact_id: args.contactId || null,
+      debit: 0,
+      credit: tax,
+    });
+  } else {
+    for (const split of expenseSplits) {
+      const amt = untaxed > 0 ? split.amount : total;
+      if (amt <= 0) continue;
+      lines.push({
+        account_id: split.accountId,
+        label: `Vendor refund ${args.refundNumber}`,
+        partner_name: args.partnerName,
+        contact_id: args.contactId || null,
+        debit: 0,
+        credit: amt,
+      });
+    }
+  }
+
+  return { journalId: journal.id, lines };
+}
+
 /** Vendor payment: Dr Payable / Cr Bank/Cash. */
 export async function buildVendorPaymentLines(args: {
   amount: number;

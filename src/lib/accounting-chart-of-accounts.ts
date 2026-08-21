@@ -19,6 +19,7 @@ export type CoaAccountType =
   | 'fixed_assets'
   | 'non_current_assets'
   | 'prepayments'
+  | 'deferred_revenue'
   | 'payable'
   | 'credit_card'
   | 'current_liabilities'
@@ -51,6 +52,7 @@ export const COA_ACCOUNT_TYPES_BY_CLASSIFICATION: Record<
     { value: 'payable', label: 'Payable' },
     { value: 'credit_card', label: 'Credit Card' },
     { value: 'current_liabilities', label: 'Current Liabilities' },
+    { value: 'deferred_revenue', label: 'Deferred Revenue' },
     { value: 'non_current_liabilities', label: 'Non-current Liabilities' },
   ],
   equity: [

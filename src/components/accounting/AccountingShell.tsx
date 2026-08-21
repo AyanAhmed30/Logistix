@@ -172,10 +172,25 @@ export function AccountingShell({ access, children }: Props) {
     setMobileNavOpen(false);
   }, [pathname]);
 
+  const isReviewOdooView =
+    pathname.startsWith("/accounting/review/journal-items") ||
+    pathname.startsWith("/accounting/review/journal-audit") ||
+    pathname.startsWith("/accounting/review/audit-trail") ||
+    pathname.startsWith("/accounting/review/loans-analysis") ||
+    pathname.startsWith("/accounting/review/invoices-to-be-issued") ||
+    pathname.startsWith("/accounting/review/working-files") ||
+    pathname.startsWith("/accounting/review/deferred-revenues") ||
+    pathname.startsWith("/accounting/review/deferred-expenses") ||
+    pathname.startsWith("/accounting/review/annual-report");
+
   useEffect(() => {
     setSearchQuery("");
     if (pathname.startsWith("/accounting/reconcile")) {
       setActiveFilterId("with_residual");
+    } else if (pathname.startsWith("/accounting/review/journal-items")) {
+      setActiveFilterId("posted");
+    } else if (pathname.startsWith("/accounting/review/journal-audit")) {
+      setActiveFilterId("posted");
     } else if (
       pathname.startsWith("/accounting/configuration/chart-of-accounts") ||
       pathname.startsWith("/accounting/configuration/journals") ||
@@ -229,6 +244,15 @@ export function AccountingShell({ access, children }: Props) {
   });
 
   const controlMeta = useMemo(() => {
+    if (isReviewOdooView) {
+      return {
+        ...pageMeta,
+        searchMode: "none" as const,
+        showFilters: false,
+        showFavorites: false,
+        breadcrumbs: [],
+      };
+    }
     if (!isFormLike) return pageMeta;
     return {
       ...pageMeta,
@@ -236,7 +260,10 @@ export function AccountingShell({ access, children }: Props) {
       showFilters: false,
       showFavorites: false,
     };
-  }, [isFormLike, pageMeta]);
+  }, [isReviewOdooView, isFormLike, pageMeta]);
+
+  const showControlPanel =
+    !isReviewOdooView && (controlMeta.searchMode !== "none" || controlMeta.breadcrumbs.length > 0);
 
   return (
     <AccountingShellContext.Provider value={shellContext}>
@@ -259,18 +286,20 @@ export function AccountingShell({ access, children }: Props) {
         </header>
 
         <div className="flex-1 flex flex-col min-w-0" key={switchVersion}>
-          <AccountingControlPanel
-            meta={controlMeta}
-            searchValue={searchQuery}
-            onSearchChange={setSearchQuery}
-            onSearchSubmit={handleSearchSubmit}
-            activeFilterId={activeFilterId}
-            onFilterChange={setActiveFilterId}
-          />
+          {showControlPanel ? (
+            <AccountingControlPanel
+              meta={controlMeta}
+              searchValue={searchQuery}
+              onSearchChange={setSearchQuery}
+              onSearchSubmit={handleSearchSubmit}
+              activeFilterId={activeFilterId}
+              onFilterChange={setActiveFilterId}
+            />
+          ) : null}
 
           <main
             className={`flex-1 overflow-auto motion-safe:animate-in motion-safe:fade-in motion-safe:duration-200 ${
-              isFormLike ? "p-0 sm:p-2 md:p-3" : "p-3 sm:p-4 md:p-5"
+              isFormLike || isReviewOdooView ? "p-0 sm:p-2 md:p-3" : "p-3 sm:p-4 md:p-5"
             }`}
           >
             {children}

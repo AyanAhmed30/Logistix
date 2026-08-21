@@ -63,6 +63,9 @@ type Props = {
   initialRelatedPanel?: "documents" | null;
   /** Base path for sales customer documents navigation. */
   documentsBasePath?: string;
+  /** New-record defaults when opened from Accounting Customers / Vendors. */
+  defaultCustomer?: boolean;
+  defaultVendor?: boolean;
 };
 
 type FormState = {
@@ -271,8 +274,14 @@ export function ContactFormView({
   backLabel = "Contacts",
   initialRelatedPanel = null,
   documentsBasePath,
+  defaultCustomer = false,
+  defaultVendor = false,
 }: Props) {
-  const [form, setForm] = useState<FormState>(EMPTY_FORM);
+  const [form, setForm] = useState<FormState>(() => ({
+    ...EMPTY_FORM,
+    customer_rank: defaultCustomer ? 1 : 0,
+    vendor_rank: defaultVendor ? 1 : 0,
+  }));
   const [loadedContact, setLoadedContact] = useState<ContactWithRelations | null>(null);
   const [activity, setActivity] = useState<ContactActivityLog[]>([]);
   const [allTags, setAllTags] = useState<ContactTag[]>([]);

@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { toast } from "sonner";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -14,7 +15,6 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import {
-  createManualAccountingBill,
   getAccountingVendorBills,
   type AccountingBillListItem,
   type AccountingBillStatus,
@@ -34,7 +34,7 @@ function statusLabel(status: string) {
 
 export function AccountingBillsView() {
   const router = useRouter();
-  const { switchVersion, isAdminContext } = useAdminOrganization();
+  const { switchVersion } = useAdminOrganization();
   const { searchQuery, activeFilterId } = useAccountingShell();
   const debouncedSearch = useDebouncedValue(searchQuery, 280);
   const [bills, setBills] = useState<AccountingBillListItem[]>([]);
@@ -74,21 +74,6 @@ export function AccountingBillsView() {
     load();
   }, [load, switchVersion]);
 
-  function handleNew() {
-    if (isAdminContext) {
-      toast.info("Select a specific organization to create bills.");
-      return;
-    }
-    startTransition(async () => {
-      const res = await createManualAccountingBill();
-      if ("error" in res && res.error) {
-        toast.error(res.error);
-        return;
-      }
-      if (res.billId) router.push(`/accounting/bills/${res.billId}`);
-    });
-  }
-
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
 
   return (
@@ -98,10 +83,9 @@ export function AccountingBillsView() {
           <Button
             size="sm"
             className="h-8 rounded-sm bg-[#017e84] hover:bg-[#016970] text-white font-medium"
-            onClick={handleNew}
-            disabled={isPending}
+            asChild
           >
-            New
+            <Link href="/accounting/bills/new">New</Link>
           </Button>
           <p className="text-sm text-secondary-muted">Vendor bills (AP).</p>
         </div>
@@ -120,9 +104,9 @@ export function AccountingBillsView() {
               <Button
                 size="sm"
                 className="h-8 rounded-sm bg-[#017e84] hover:bg-[#016970] text-white"
-                onClick={handleNew}
+                asChild
               >
-                New Bill
+                <Link href="/accounting/bills/new">New Bill</Link>
               </Button>
             </div>
           ) : (

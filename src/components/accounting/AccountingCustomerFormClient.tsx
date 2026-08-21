@@ -16,9 +16,12 @@ export function AccountingCustomerFormClient({
       contactId={contactId}
       readOnly={false}
       backLabel="Customers"
+      defaultCustomer
       onBack={() => router.push("/accounting/customers")}
       onSaved={(id) => {
-        router.push(`/accounting/customers/${id}`);
+        window.setTimeout(() => {
+          router.replace(`/accounting/customers/${id}`);
+        }, 0);
       }}
     />
   );

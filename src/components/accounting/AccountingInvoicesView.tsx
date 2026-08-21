@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { toast } from "sonner";
 import {
   Table,
@@ -231,9 +232,9 @@ export function AccountingInvoicesView() {
           <Button
             size="sm"
             className="h-8 rounded-sm bg-[#017e84] hover:bg-[#016970] text-white font-medium"
-            onClick={() => router.push("/accounting/invoices/new")}
+            asChild
           >
-            New
+            <Link href="/accounting/invoices/new">New</Link>
           </Button>
           <p className="text-sm text-secondary-muted">
             Customer Invoices
@@ -254,9 +255,9 @@ export function AccountingInvoicesView() {
               <Button
                 size="sm"
                 className="h-8 rounded-sm bg-[#017e84] hover:bg-[#016970] text-white"
-                onClick={() => router.push("/accounting/invoices/new")}
+                asChild
               >
-                New Invoice
+                <Link href="/accounting/invoices/new">New Invoice</Link>
               </Button>
             </div>
           ) : (

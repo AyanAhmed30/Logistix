@@ -18,6 +18,7 @@ export {
   resolveDatePeriod,
   formatPeriodRange,
   formatMonthYear,
+  monthKeysBetween,
   todayIso,
   DATE_PERIOD_PRESETS,
   type DatePeriod,
@@ -42,10 +43,21 @@ export {
   type AgingBucketDef,
   type AgingSide,
 } from '@/lib/accounting/financial-reporting/aging';
-export {
-  buildTaxReport,
+export { buildTaxReport,
   type TaxReport,
   type TaxReportSection,
   type TaxReportLine,
 } from '@/lib/accounting/financial-reporting/tax-report';
 export { formatTaxReportLabel } from '@/lib/accounting/financial-reporting/tax-label';
+export {
+  buildDeferredReviewReport,
+  type DeferredReviewReport,
+  type DeferredScheduleRow,
+  type DeferredAccountReportRow,
+} from '@/lib/accounting/financial-reporting/deferred-report';
+export {
+  buildAnnualReport,
+  loadFiscalYearsForOrg,
+  type AnnualReport,
+  type AnnualReportFiscalYear,
+} from '@/lib/accounting/financial-reporting/annual-report';

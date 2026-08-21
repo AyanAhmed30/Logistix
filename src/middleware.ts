@@ -64,6 +64,7 @@ export async function middleware(request: NextRequest) {
     pathname.startsWith('/admin') ||
     pathname.startsWith('/crm') ||
     pathname.startsWith('/sales') ||
+    pathname.startsWith('/hr') ||
     pathname.startsWith('/user') ||
     pathname.startsWith('/sales-agent') ||
     pathname.startsWith('/operations') ||
@@ -89,6 +90,13 @@ export async function middleware(request: NextRequest) {
 
   // Sales module — Super Admin and portal accounts with Sales access
   if (pathname.startsWith('/sales') && !pathname.startsWith('/sales-agent')) {
+    if (!session || !canAccessAdminDashboard(session)) {
+      return hadInvalidToken ? redirectToSessionExpired(request) : redirectAccessDenied(request);
+    }
+  }
+
+  // HR module — Super Admin / portal accounts (page-level permission checks apply)
+  if (pathname.startsWith('/hr')) {
     if (!session || !canAccessAdminDashboard(session)) {
       return hadInvalidToken ? redirectToSessionExpired(request) : redirectAccessDenied(request);
     }

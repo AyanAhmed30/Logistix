@@ -4,6 +4,7 @@ import { PortalUserDashboardWithOrganization } from '@/components/user/PortalUse
 import { hasModulePermission, parsePermissionKeys } from '@/lib/module-permissions';
 import { getAdminOrganizationState, getPortalOrganizationProfile } from '@/app/actions/organization-context';
 import type { Organization } from '@/app/actions/organizations';
+import { UserDashboardShell } from "@/components/user/UserDashboardShell";
 
 export default async function UserDashboard() {
   const session = await getSession();

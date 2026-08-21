@@ -138,6 +138,7 @@ export function UsersManagementPanel({
     crm: true,
     operations: true,
     warehouse: true,
+    hr: true,
   });
 
   async function fetchData() {
@@ -548,7 +549,7 @@ export function UsersManagementPanel({
         )
       );
     if (role === "user" && !hasModule) {
-      toast.error("Assign at least one module under Sales, CRM, Operations, and/or Warehouse");
+      toast.error("Assign at least one module under Sales, CRM, Operations, Warehouse, and/or HR");
       return;
     }
 

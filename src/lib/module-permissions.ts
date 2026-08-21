@@ -5,7 +5,7 @@
  * CRM, Operations, Warehouse keep child-module checkboxes.
  */
 
-export type ModuleDepartment = 'sales' | 'operations' | 'warehouse' | 'crm';
+export type ModuleDepartment = 'sales' | 'operations' | 'warehouse' | 'crm' | 'hr';
 
 export type ModulePermissionDef = {
   key: string;
@@ -55,6 +55,7 @@ export const DEPARTMENT_ACCESS: Array<{ key: ModuleDepartment; label: string }> 
   { key: 'crm', label: 'CRM' },
   { key: 'operations', label: 'Operations' },
   { key: 'warehouse', label: 'Warehouse' },
+  { key: 'hr', label: 'HR' },
 ];
 
 /** Operations child modules. */
@@ -85,12 +86,45 @@ export const WAREHOUSE_MODULE_PERMISSIONS: ModulePermissionDef[] = [
   { key: 'warehouse-loading-instruction', label: 'Loading Instruction', department: 'warehouse' },
 ];
 
+/** HR child modules. */
+export const HR_MODULE_PERMISSIONS: ModulePermissionDef[] = [
+  {
+    key: 'employee_profile_management',
+    label: 'Employee Profile Management',
+    department: 'hr',
+  },
+  {
+    key: 'attendance_leave_tracking',
+    label: 'Attendance and Leave Tracking',
+    department: 'hr',
+  },
+  {
+    key: 'document_management',
+    label: 'Document Management',
+    department: 'hr',
+  },
+  {
+    key: 'payroll_management',
+    label: 'Payroll Management',
+    department: 'hr',
+  },
+  {
+    key: 'report_generation',
+    label: 'Report Generation',
+    department: 'hr',
+  },
+];
+
+/** Legacy single-key HR access (pre child-module model). */
+export const LEGACY_HR_MODULE_KEY = 'hr_module';
+
 /** Hierarchical groups for the User form (Sales has no child checkboxes). */
 export const MODULE_PERMISSION_GROUPS = [
   { department: 'sales' as const, label: 'Sales', modules: SALES_MODULE_PERMISSIONS },
   { department: 'crm' as const, label: 'CRM', modules: CRM_MODULE_PERMISSIONS },
   { department: 'operations' as const, label: 'Operations', modules: OPERATIONS_MODULE_PERMISSIONS },
   { department: 'warehouse' as const, label: 'Warehouse', modules: WAREHOUSE_MODULE_PERMISSIONS },
+  { department: 'hr' as const, label: 'HR', modules: HR_MODULE_PERMISSIONS },
 ];
 
 const LEGACY_SALES_KEYS = new Set<string>(LEGACY_SALES_MODULE_KEYS);
@@ -98,6 +132,7 @@ const SALES_LEVEL_KEYS = new Set<string>(Object.values(SALES_ACCESS_LEVEL_KEYS))
 const CRM_KEYS = new Set(CRM_MODULE_PERMISSIONS.map((m) => m.key));
 const OPS_KEYS = new Set(OPERATIONS_MODULE_PERMISSIONS.map((m) => m.key));
 const WAREHOUSE_KEYS = new Set(WAREHOUSE_MODULE_PERMISSIONS.map((m) => m.key));
+const HR_KEYS = new Set(HR_MODULE_PERMISSIONS.map((m) => m.key));
 
 /** Contacts sidebar uses the `customers` permission key. */
 export const CONTACTS_PERMISSION_KEY = 'customers';
@@ -167,7 +202,7 @@ export function applySalesAccessLevel(
 }
 
 /**
- * Resolve effective child module keys for CRM / Ops / Warehouse.
+ * Resolve effective child module keys for CRM / Ops / Warehouse / HR.
  * Sales is represented only via access level keys (not child modules).
  */
 export function resolveGrantedChildKeys(permissions: string[] | null | undefined): string[] {
@@ -177,9 +212,11 @@ export function resolveGrantedChildKeys(permissions: string[] | null | undefined
   const hasCrmParent = permissions.includes('crm');
   const hasOpsParent = permissions.includes('operations');
   const hasWarehouseParent = permissions.includes('warehouse');
+  const hasHrParent = permissions.includes('hr') || permissions.includes(LEGACY_HR_MODULE_KEY);
   const crmChildren = permissions.filter((k) => CRM_KEYS.has(k));
   const opsChildren = permissions.filter((k) => OPS_KEYS.has(k));
   const warehouseChildren = permissions.filter((k) => WAREHOUSE_KEYS.has(k));
+  const hrChildren = permissions.filter((k) => HR_KEYS.has(k));
 
   // Sales access ⇒ Contacts (`customers`) for sidebar
   if (getSalesAccessLevel(permissions) !== 'no') {
@@ -209,6 +246,12 @@ export function resolveGrantedChildKeys(permissions: string[] | null | undefined
     for (const m of WAREHOUSE_MODULE_PERMISSIONS) out.add(m.key);
   } else {
     for (const k of warehouseChildren) out.add(k);
+  }
+
+  if (hasHrParent && hrChildren.length === 0) {
+    for (const m of HR_MODULE_PERMISSIONS) out.add(m.key);
+  } else {
+    for (const k of hrChildren) out.add(k);
   }
 
   return [...out];
@@ -275,6 +318,18 @@ export function normalizeStoredPermissions(raw: string[]): string[] {
     }
   }
 
+  // HR
+  if (
+    (selected.includes('hr') || selected.includes(LEGACY_HR_MODULE_KEY)) &&
+    !selected.some((k) => HR_KEYS.has(k))
+  ) {
+    for (const m of HR_MODULE_PERMISSIONS) children.add(m.key);
+  } else {
+    for (const k of selected) {
+      if (HR_KEYS.has(k)) children.add(k);
+    }
+  }
+
   // Standalone Contacts without Sales
   if (
     level === 'no' &&
@@ -303,6 +358,12 @@ export function normalizeStoredPermissions(raw: string[]): string[] {
   ) {
     out.push('warehouse');
   }
+  if (
+    HR_MODULE_PERMISSIONS.length > 0 &&
+    HR_MODULE_PERMISSIONS.every((m) => children.has(m.key))
+  ) {
+    out.push('hr');
+  }
 
   // Apply Sales level last so CRM/Contacts deps are enforced
   out = applySalesAccessLevel(out, level);
@@ -330,6 +391,13 @@ export function toDepartmentAccess(permissions: string[]): ModuleDepartment[] {
   if (permissions.includes('warehouse') || children.some((k) => WAREHOUSE_KEYS.has(k))) {
     result.push('warehouse');
   }
+  if (
+    permissions.includes('hr') ||
+    permissions.includes(LEGACY_HR_MODULE_KEY) ||
+    children.some((k) => HR_KEYS.has(k))
+  ) {
+    result.push('hr');
+  }
   return result;
 }
 
@@ -353,6 +421,10 @@ export function filterCrmPermissions(permissions: string[]): string[] {
   return resolveGrantedChildKeys(permissions).filter((key) => CRM_KEYS.has(key));
 }
 
+export function filterHrPermissions(permissions: string[]): string[] {
+  return resolveGrantedChildKeys(permissions).filter((key) => HR_KEYS.has(key));
+}
+
 export function hasSalesAccess(permissions: string[] | null | undefined): boolean {
   return getSalesAccessLevel(permissions) !== 'no';
 }
@@ -372,6 +444,11 @@ export function hasCrmAccess(permissions: string[] | null | undefined): boolean 
   return toDepartmentAccess(permissions).includes('crm');
 }
 
+export function hasHrAccess(permissions: string[] | null | undefined): boolean {
+  if (!permissions || permissions.length === 0) return false;
+  return toDepartmentAccess(permissions).includes('hr');
+}
+
 export function hasDepartmentAccess(
   permissions: string[] | null | undefined,
   department: ModuleDepartment
@@ -379,7 +456,8 @@ export function hasDepartmentAccess(
   if (department === 'sales') return hasSalesAccess(permissions);
   if (department === 'crm') return hasCrmAccess(permissions);
   if (department === 'operations') return hasOperationsAccess(permissions);
-  return hasWarehouseAccess(permissions);
+  if (department === 'warehouse') return hasWarehouseAccess(permissions);
+  return hasHrAccess(permissions);
 }
 
 export function hasModulePermission(
@@ -391,6 +469,7 @@ export function hasModulePermission(
   if (key === 'crm') return hasCrmAccess(permissions);
   if (key === 'operations') return hasOperationsAccess(permissions);
   if (key === 'warehouse') return hasWarehouseAccess(permissions);
+  if (key === 'hr' || key === LEGACY_HR_MODULE_KEY) return hasHrAccess(permissions);
 
   // Legacy Sales submodule keys → any Sales access level grants them
   if (LEGACY_SALES_KEYS.has(key) || SALES_LEVEL_KEYS.has(key)) {

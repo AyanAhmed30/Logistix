@@ -3,7 +3,13 @@
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { ADMIN_MODULES, type AdminModule } from "@/lib/admin-navigation";
 import { ChevronRight } from "lucide-react";
-import { visibleModulesForAccess, defaultCrmRouteForAccess, defaultSalesRouteForAccess, type DashboardAccessState } from "@/lib/dashboard-access";
+import {
+  visibleModulesForAccess,
+  defaultCrmRouteForAccess,
+  defaultSalesRouteForAccess,
+  defaultHrRouteForAccess,
+  type DashboardAccessState,
+} from "@/lib/dashboard-access";
 import { useRouter } from "next/navigation";
 
 type Props = {
@@ -24,6 +30,10 @@ export function AdminModuleCards({ onModuleSelect, access }: Props) {
     }
     if (module === "sales") {
       router.push(defaultSalesRouteForAccess(access));
+      return;
+    }
+    if (module === "hr") {
+      router.push(defaultHrRouteForAccess(access));
       return;
     }
     onModuleSelect(module);

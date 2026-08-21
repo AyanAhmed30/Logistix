@@ -22,7 +22,7 @@ export function isPortalDashboardAccess(access: DashboardAccessState): boolean {
 
 export function visibleModulesForAccess(access: DashboardAccessState): AdminModule[] {
   if (access.isSuperAdmin) {
-    return ['contacts', 'crm', 'sales', 'operations', 'warehouse', 'analytics', 'settings'];
+    return ['contacts', 'crm', 'sales', 'operations', 'warehouse', 'hr', 'analytics', 'settings'];
   }
 
   const modules: AdminModule[] = [];
@@ -37,6 +37,7 @@ export function visibleModulesForAccess(access: DashboardAccessState): AdminModu
   if (hasDepartmentAccess(access.permissions, 'sales')) modules.push('sales');
   if (hasDepartmentAccess(access.permissions, 'operations')) modules.push('operations');
   if (hasDepartmentAccess(access.permissions, 'warehouse')) modules.push('warehouse');
+  if (hasDepartmentAccess(access.permissions, 'hr')) modules.push('hr');
   const hasSalesOrOps =
     hasDepartmentAccess(access.permissions, 'sales') ||
     hasDepartmentAccess(access.permissions, 'operations');
@@ -82,6 +83,7 @@ export function canAccessAdminTab(
     if (module === 'sales') return hasDepartmentAccess(access.permissions, 'sales');
     if (module === 'operations') return hasDepartmentAccess(access.permissions, 'operations');
     if (module === 'warehouse') return hasDepartmentAccess(access.permissions, 'warehouse');
+    if (module === 'hr') return hasDepartmentAccess(access.permissions, 'hr');
     return false;
   }
 
@@ -169,4 +171,43 @@ export function defaultSalesRouteForAccess(access: DashboardAccessState): string
   if (hasModulePermission(access.permissions, 'customers')) return '/sales/customers';
   if (hasDepartmentAccess(access.permissions, 'sales')) return '/sales/quotations';
   return '/sales/quotations';
+}
+
+/** HR module sidebar tabs (permission key → route). */
+export const HR_MODULE_TABS = [
+  'employee_profile_management',
+  'attendance_leave_tracking',
+  'document_management',
+  'payroll_management',
+  'report_generation',
+] as const;
+
+export type HrModuleTab = (typeof HR_MODULE_TABS)[number];
+
+export const HR_TAB_ROUTES: Record<HrModuleTab, string> = {
+  employee_profile_management: '/hr/employees',
+  attendance_leave_tracking: '/hr/attendance',
+  document_management: '/hr/documents',
+  payroll_management: '/hr/payroll',
+  report_generation: '/hr/reports',
+};
+
+export function visibleHrModuleTabs(permissions: string[]): HrModuleTab[] {
+  return HR_MODULE_TABS.filter((key) => hasModulePermission(permissions, key));
+}
+
+export function canAccessHrRoute(
+  access: DashboardAccessState,
+  permissionKey: HrModuleTab
+): boolean {
+  if (access.isSuperAdmin) return true;
+  return hasModulePermission(access.permissions, permissionKey);
+}
+
+export function defaultHrRouteForAccess(access?: DashboardAccessState): string {
+  if (!access || access.isSuperAdmin) return '/hr';
+  const tabs = visibleHrModuleTabs(access.permissions);
+  if (tabs.length === 0) return '/hr';
+  if (tabs.length === HR_MODULE_TABS.length) return '/hr';
+  return HR_TAB_ROUTES[tabs[0]] || '/hr';
 }

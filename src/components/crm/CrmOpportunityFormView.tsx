@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState, useTransition } from "react";
+import { useCallback, useEffect, useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -364,7 +364,7 @@ export function CrmOpportunityFormView({ opportunityId, initialStageId }: Props)
     });
   }, [form.contact_id]);
 
-  function validate(): string | null {
+  const validate = useCallback((): string | null => {
     if (!form.name.trim()) return "Opportunity name is required.";
     if (!form.contact_id) return "Contact is required.";
     if (!form.salesperson_id) return "Salesperson is required.";
@@ -373,40 +373,43 @@ export function CrmOpportunityFormView({ opportunityId, initialStageId }: Props)
       return "Expected revenue cannot be negative.";
     }
     return null;
-  }
+  }, [form]);
 
-  function buildPayload(stageOverride?: string) {
-    const stageId = stageOverride || form.stage_id || undefined;
-    const stageName = stages.find((s) => s.id === stageId)?.name || currentStage?.name;
-    return {
-      id: opportunityId || undefined,
-      name: form.name.trim(),
-      contact_id: form.contact_id!,
-      contact_person_id: form.contact_person_id,
-      stage_id: stageId,
-      stage_name: stageName,
-      expected_revenue: Number(form.expected_revenue) || 0,
-      probability: Number(form.probability) || 0,
-      priority: form.priority,
-      salesperson_id: form.salesperson_id,
-      sales_team: form.sales_team || null,
-      tags: form.tags
-        .split(",")
-        .map((t) => t.trim())
-        .filter(Boolean),
-      campaign: form.campaign || null,
-      medium: form.medium || null,
-      source: form.source || null,
-      email: form.email || null,
-      phone: form.phone || null,
-      mobile: form.mobile || null,
-      website: form.website || null,
-      expected_closing_date: form.expected_closing_date || null,
-      internal_notes: form.internal_notes || null,
-    };
-  }
+  const buildPayload = useCallback(
+    (stageOverride?: string) => {
+      const stageId = stageOverride || form.stage_id || undefined;
+      const stageName = stages.find((s) => s.id === stageId)?.name || currentStage?.name;
+      return {
+        id: opportunityId || undefined,
+        name: form.name.trim(),
+        contact_id: form.contact_id!,
+        contact_person_id: form.contact_person_id,
+        stage_id: stageId,
+        stage_name: stageName,
+        expected_revenue: Number(form.expected_revenue) || 0,
+        probability: Number(form.probability) || 0,
+        priority: form.priority,
+        salesperson_id: form.salesperson_id,
+        sales_team: form.sales_team || null,
+        tags: form.tags
+          .split(",")
+          .map((t) => t.trim())
+          .filter(Boolean),
+        campaign: form.campaign || null,
+        medium: form.medium || null,
+        source: form.source || null,
+        email: form.email || null,
+        phone: form.phone || null,
+        mobile: form.mobile || null,
+        website: form.website || null,
+        expected_closing_date: form.expected_closing_date || null,
+        internal_notes: form.internal_notes || null,
+      };
+    },
+    [form, opportunityId, stages, currentStage]
+  );
 
-  function handleSubmit() {
+  const handleSubmit = useCallback(() => {
     const err = validate();
     if (err) {
       toast.error(err);
@@ -433,7 +436,7 @@ export function CrmOpportunityFormView({ opportunityId, initialStageId }: Props)
         setChatterKey((k) => k + 1);
       }
     });
-  }
+  }, [buildPayload, isEdit, router, validate]);
 
   useEffect(() => {
     function onShortcutSave() {
@@ -442,7 +445,7 @@ export function CrmOpportunityFormView({ opportunityId, initialStageId }: Props)
     }
     window.addEventListener("crm:shortcut-save", onShortcutSave);
     return () => window.removeEventListener("crm:shortcut-save", onShortcutSave);
-  }, [isPending, form, isEdit, opportunityId]);
+  }, [isPending, handleSubmit]);
 
   function applyStageLocally(stageId: string, probability?: number) {
     update("stage_id", stageId);

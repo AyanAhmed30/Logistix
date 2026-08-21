@@ -3,7 +3,6 @@ import {
   applyAccountingAccessLevel,
   getAccountingAccessLevel,
   hasAccountingAccess,
-  type AccountingAccessLevel,
 } from '@/lib/accounting-roles';
 
 export type {

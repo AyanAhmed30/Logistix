@@ -3,12 +3,13 @@
  * payments + posted credit notes / vendor refunds.
  */
 
+import type { SupabaseClient } from '@supabase/supabase-js';
 import {
   appliedPaymentAmount,
   outstandingFromComponents,
 } from '@/lib/accounting-payments';
 
-type Db = { from: (table: string) => any };
+type Db = Pick<SupabaseClient, 'from'>;
 
 function round2(n: number) {
   return Math.round(n * 100) / 100;

@@ -70,7 +70,7 @@ function emptyBranch(): OrganizationBranch {
 }
 
 export function OrganizationCompanyForm({
-  mode,
+  mode: _mode,
   organization,
   status,
   onStatusChange,

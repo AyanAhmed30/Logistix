@@ -68,7 +68,7 @@ export function AccountingJournalItemsReviewView() {
       }
       setLoading(false);
     });
-  }, [page, debouncedSearch, activeFilterId, isAdminContext, switchVersion]);
+  }, [page, debouncedSearch, activeFilterId, isAdminContext]);
 
   useEffect(() => {
     setPage(1);

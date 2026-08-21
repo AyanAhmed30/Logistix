@@ -5,7 +5,6 @@ import { getSession } from '@/lib/auth/session';
 import { sessionHasAccountingAccess } from '@/lib/accounting-page-access';
 import {
   getAccountingInvoiceDetail,
-  type AccountingInvoiceDetail,
   type AccountingInvoiceStatus,
 } from '@/app/actions/accounting/invoices';
 

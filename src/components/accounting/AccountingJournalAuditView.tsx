@@ -48,11 +48,11 @@ export function AccountingJournalAuditView() {
       }
       setLoading(false);
     });
-  }, [year, activeFilterId, postedOnly, isAdminContext, switchVersion]);
+  }, [year, activeFilterId, postedOnly, isAdminContext]);
 
   useEffect(() => {
     load();
-  }, [load]);
+  }, [load, switchVersion]);
 
   const currencyLabel =
     report?.currency === "PKR" || !report?.currency

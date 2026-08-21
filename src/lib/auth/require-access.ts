@@ -5,16 +5,13 @@ import {
   type ModuleDepartment,
 } from '@/lib/module-permissions';
 import {
-  canManageGlobalSettings,
   canManageOrganizationUsers,
-  isOrganizationAdministratorSession,
-  isPortalAccountSession,
 } from '@/lib/auth/portal-access';
 import { isSuperAdminSession } from '@/lib/auth/super-admin';
 
 export type AccessDenied = { error: 'Access Denied'; status: 403 };
 
-export function accessDenied(message = 'Access Denied'): AccessDenied {
+export function accessDenied(_message = 'Access Denied'): AccessDenied {
   return { error: 'Access Denied', status: 403 };
 }
 

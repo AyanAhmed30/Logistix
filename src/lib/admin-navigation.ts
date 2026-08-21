@@ -1,6 +1,5 @@
 import type { LucideIcon } from "lucide-react";
 import {
-  PlusCircle,
   UsersRound,
   Truck,
   Package,
@@ -17,7 +16,6 @@ import {
   BarChart3,
   Cog,
   TrendingUp,
-  UserCog,
   Warehouse,
   Target,
 } from "lucide-react";

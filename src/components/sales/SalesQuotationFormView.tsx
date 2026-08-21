@@ -10,7 +10,6 @@ import {
   History,
   Loader2,
   MoreHorizontal,
-  Plus,
   Printer,
   Trash2,
   UserRound,
@@ -176,7 +175,7 @@ export function SalesQuotationFormView({
   const [internalNotes, setInternalNotes] = useState("");
   const [customerNotes, setCustomerNotes] = useState("");
   const [opportunityId, setOpportunityId] = useState<string | null>(null);
-  const [opportunityName, setOpportunityName] = useState<string | null>(null);
+  const [, setOpportunityName] = useState<string | null>(null);
   const [lines, setLines] = useState<QuotationLineDraft[]>([newLineDraft()]);
   const [childOptions, setChildOptions] = useState<ChildOption[]>([]);
   const [activeTab, setActiveTab] = useState<"lines" | "other">("lines");
@@ -534,10 +533,6 @@ export function SalesQuotationFormView({
         display_type: line.display_type || inferLineDisplayType(line),
       })),
     };
-  }
-
-  function save() {
-    void ensureSaved();
   }
 
   /** Save (create/update) and return quotation id — used by Send / Confirm like Odoo. */

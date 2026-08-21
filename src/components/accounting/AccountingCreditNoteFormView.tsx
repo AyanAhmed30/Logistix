@@ -293,10 +293,6 @@ export function AccountingCreditNoteFormView({ creditNoteId }: Props) {
   const isCancelled = status === "cancelled";
   const isInPayment = paymentState === "in_payment";
   const readOnly = !isDraft || isAdminContext;
-  const remaining = Math.max(
-    0,
-    (detail?.total_amount || 0) - Math.max(detail?.amount_refunded || 0, paymentsSum)
-  );
   const canPay =
     isPosted &&
     !isCancelled &&

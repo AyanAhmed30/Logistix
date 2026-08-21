@@ -1407,7 +1407,7 @@ export async function getAccountingInvoicesToBeIssuedForReview(opts?: {
 
     const asOf = opts?.asOf || new Date().toISOString().slice(0, 10);
     let dateFrom = opts?.dateFrom;
-    let dateTo = opts?.dateTo || asOf;
+    const dateTo = opts?.dateTo || asOf;
     if (!dateFrom) {
       const d = new Date(asOf);
       d.setDate(d.getDate() - 365);

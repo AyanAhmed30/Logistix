@@ -43,7 +43,7 @@ export function AdminOrganizationProvider({
   const [organizationId, setOrganizationId] = useState(initial.organizationId);
   const [organizationName, setOrganizationName] = useState(initial.organizationName);
   const [organizations, setOrganizations] = useState(initial.organizations);
-  const [isSuperAdmin, setIsSuperAdmin] = useState(initial.isSuperAdmin);
+  const [isSuperAdmin] = useState(initial.isSuperAdmin);
   const [isAdminContext, setIsAdminContext] = useState(initial.isAdminContext);
   const [switchVersion, setSwitchVersion] = useState(0);
   const [isSwitching, setIsSwitching] = useState(false);

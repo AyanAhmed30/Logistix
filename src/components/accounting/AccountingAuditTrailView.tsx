@@ -85,7 +85,7 @@ export function AccountingAuditTrailView() {
       }
       setLoading(false);
     });
-  }, [page, debouncedSearch, isAdminContext, switchVersion]);
+  }, [page, debouncedSearch, isAdminContext]);
 
   useEffect(() => {
     setPage(1);

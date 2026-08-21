@@ -1,11 +1,10 @@
 "use client";
 
-import { useMemo, useState, useTransition, useEffect, useRef } from "react";
+import { useState, useTransition, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { deleteUser, updateUser } from "@/app/actions/user";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -17,21 +16,9 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
-import {
   ArrowLeft,
   Settings,
-  UserCog,
-  Wrench,
   ClipboardList,
-  FileText,
-  PlusCircle,
 } from "lucide-react";
 import {
   type AdminModule,
@@ -119,17 +106,17 @@ type Props = {
 };
 
 export function AdminUserManager({
-  users,
-  userCount,
+  users: _users,
+  userCount: _userCount,
   activeTab,
   activeModule,
   onTabChange,
   onModuleSelect,
   onBackToModules,
-  quotationPayload,
+  quotationPayload: _quotationPayload,
   contactPayload,
   invoicePayload,
-  portalOrganization = null,
+  portalOrganization: _portalOrganization = null,
 }: Props) {
   const access = useDashboardAccess();
   const { switchVersion } = useAdminOrganization();
@@ -180,12 +167,6 @@ export function AdminUserManager({
     router.push("/accounting/invoices");
   }, [invoicePayload?.token, router]);
 
-  const sortedUsers = useMemo(() => {
-    return [...users].sort(
-      (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
-    );
-  }, [users]);
-
   function handleEditSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!editUser) return;
@@ -216,11 +197,6 @@ export function AdminUserManager({
     });
   }
 
-  function handleDelete(user: AppUser) {
-    setDeleteUserTarget(user);
-    setDeleteOpen(true);
-  }
-
   function confirmDelete() {
     if (!deleteUserTarget) return;
     startTransition(async () => {
@@ -240,11 +216,6 @@ export function AdminUserManager({
       setDeleteUserTarget(null);
       router.refresh();
     });
-  }
-
-  function openEdit(user: AppUser) {
-    setEditUser(user);
-    setEditOpen(true);
   }
 
   function handleTabSelect(tab: AdminTab) {

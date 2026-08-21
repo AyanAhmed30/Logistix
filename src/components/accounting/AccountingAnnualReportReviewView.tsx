@@ -17,7 +17,6 @@ import { useAdminOrganization } from "@/contexts/AdminOrganizationContext";
 import { AccountingTableSkeleton } from "@/components/accounting/AccountingSkeleton";
 import {
   REVIEW_TEAL,
-  ReviewEmptyState,
   ReviewReportCard,
   formatReviewMoney,
 } from "@/components/accounting/AccountingReviewOdooPanels";
@@ -87,11 +86,11 @@ export function AccountingAnnualReportReviewView() {
       }
       setLoading(false);
     });
-  }, [fiscalYearId, isAdminContext, switchVersion]);
+  }, [fiscalYearId, isAdminContext]);
 
   useEffect(() => {
     load();
-  }, [load]);
+  }, [load, switchVersion]);
 
   async function handleNew() {
     if (!report) return;

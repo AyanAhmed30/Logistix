@@ -126,7 +126,7 @@ export function AccountingLoansAnalysisReviewView() {
       }
       setLoading(false);
     });
-  }, [page, debouncedSearch, statusFilter, isAdminContext, switchVersion]);
+  }, [page, debouncedSearch, statusFilter, isAdminContext]);
 
   useEffect(() => {
     setPage(1);

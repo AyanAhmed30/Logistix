@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState, useTransition } from "react";
+import { useCallback, useEffect, useMemo, useState, useTransition } from "react";
 import { toast } from "sonner";
 import {
   createPortalUser,
@@ -145,7 +145,7 @@ export function UsersManagementPanel({
     warehouse: true,
   });
 
-  async function fetchData() {
+  const fetchData = useCallback(async () => {
     setIsLoading(true);
     if (organizationScoped) {
       const usersResult = await getOrganizationPortalUsers();
@@ -173,11 +173,11 @@ export function UsersManagementPanel({
       setOrganizations(orgsResult.organizations ?? []);
     }
     setIsLoading(false);
-  }
+  }, [organizationScoped]);
 
   useEffect(() => {
     void fetchData();
-  }, [organizationScoped, switchVersion]);
+  }, [fetchData, switchVersion]);
 
   /** Organizations the org admin may assign (from session switcher — not derived from existing users). */
   const assignableCompanies = useMemo(() => {

@@ -92,7 +92,7 @@ export function AccountingWorkingFilesReviewView() {
       }
       setLoading(false);
     });
-  }, [page, debouncedSearch, statusFilter, documentType, isAdminContext, switchVersion]);
+  }, [page, debouncedSearch, statusFilter, documentType, isAdminContext]);
 
   useEffect(() => {
     setPage(1);

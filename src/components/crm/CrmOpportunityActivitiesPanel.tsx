@@ -81,7 +81,7 @@ export function CrmOpportunityActivitiesPanel({
     });
   }, []);
 
-  function handleSaved(activity: CrmScheduledActivity) {
+  function handleSaved(_activity: CrmScheduledActivity) {
     void load();
   }
 

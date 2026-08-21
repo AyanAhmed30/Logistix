@@ -211,7 +211,7 @@ function AdminDashboardContent({
     return () => {
       isMounted = false;
     };
-  }, [switchVersion]);
+  }, [switchVersion, access.isPortalAccount]);
 
   useEffect(() => {
     if (activeTab !== "notifications") return;

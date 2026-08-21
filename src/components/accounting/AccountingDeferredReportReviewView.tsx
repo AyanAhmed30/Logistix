@@ -61,11 +61,11 @@ export function AccountingDeferredReportReviewView({ kind }: Props) {
       }
       setLoading(false);
     });
-  }, [kind, month, isAdminContext, switchVersion]);
+  }, [kind, month, isAdminContext]);
 
   useEffect(() => {
     load();
-  }, [load]);
+  }, [load, switchVersion]);
 
   const hasData = useMemo(() => {
     if (!report) return false;

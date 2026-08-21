@@ -14,7 +14,6 @@ import { useAdminOrganization } from "@/contexts/AdminOrganizationContext";
 import { useDebouncedValue } from "@/hooks/useDebouncedValue";
 import { AccountingTableSkeleton } from "@/components/accounting/AccountingSkeleton";
 import {
-  REVIEW_TEAL,
   ReviewCalendarIcon,
   ReviewFilterChip,
   ReviewListToolbar,
@@ -112,7 +111,7 @@ export function AccountingInvoicesToBeIssuedReviewView() {
       }
       setLoading(false);
     });
-  }, [page, debouncedSearch, invoiceStatus, asOf, isAdminContext, switchVersion]);
+  }, [page, debouncedSearch, invoiceStatus, asOf, isAdminContext]);
 
   useEffect(() => {
     setPage(1);

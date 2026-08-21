@@ -89,7 +89,7 @@ export async function buildDeferredReviewReport(opts: {
   const supabase = await createAdminClient();
 
   if (opts.organizationId) {
-    let schedQ = supabase
+    const schedQ = supabase
       .from('accounting_deferral_schedules')
       .select('*')
       .eq('organization_id', opts.organizationId)

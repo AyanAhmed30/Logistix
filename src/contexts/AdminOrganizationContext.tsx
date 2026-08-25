@@ -137,3 +137,8 @@ export function useAdminOrganization() {
   }
   return ctx;
 }
+
+/** Safe during SSR of a client page that may render before the layout provider. */
+export function useAdminOrganizationOptional() {
+  return useContext(AdminOrganizationContext);
+}

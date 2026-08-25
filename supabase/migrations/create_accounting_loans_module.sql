@@ -1,30 +1,11 @@
 -- =====================================================
 -- Accounting Phase 4 — Loan Management (Odoo-style)
 -- Idempotent. Integrates with accounting_journal_entries.
+--
+-- Do not drop accounting_journal_entries_source_type_check here.
+-- Later migrations already allow loan_disbursement / loan_repayment
+-- (plus vendor_refund, tax_return, year_closing, year_opening).
 -- =====================================================
-
--- Extend JE source_type for loan events (preserve all prior types)
-ALTER TABLE public.accounting_journal_entries
-  DROP CONSTRAINT IF EXISTS accounting_journal_entries_source_type_check;
-
-ALTER TABLE public.accounting_journal_entries
-  ADD CONSTRAINT accounting_journal_entries_source_type_check
-  CHECK (
-    source_type IS NULL
-    OR source_type IN (
-      'manual',
-      'customer_invoice',
-      'customer_payment',
-      'credit_note',
-      'vendor_bill',
-      'vendor_payment',
-      'asset_purchase',
-      'asset_depreciation',
-      'asset_disposal',
-      'loan_disbursement',
-      'loan_repayment'
-    )
-  );
 
 -- Sequences
 CREATE TABLE IF NOT EXISTS public.accounting_loan_sequences (

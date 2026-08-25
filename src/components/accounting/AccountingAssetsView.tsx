@@ -49,7 +49,7 @@ function statusLabel(status: string) {
 
 export function AccountingAssetsView() {
   const router = useRouter();
-  const { switchVersion, isAdminContext } = useAdminOrganization();
+  const { switchVersion } = useAdminOrganization();
   const { searchQuery, activeFilterId } = useAccountingShell();
   const debouncedSearch = useDebouncedValue(searchQuery, 280);
   const [assets, setAssets] = useState<AccountingAssetListItem[]>([]);
@@ -91,10 +91,6 @@ export function AccountingAssetsView() {
   }, [load, switchVersion]);
 
   function handleNew() {
-    if (isAdminContext) {
-      toast.info("Select a specific organization to create an asset.");
-      return;
-    }
     startTransition(async () => {
       const res = await createAccountingAsset();
       if ("error" in res && res.error) {

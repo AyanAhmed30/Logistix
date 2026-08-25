@@ -563,6 +563,7 @@ export function AccountingBillFormView({ billId }: Props) {
               {isDraft ? (
                 <Input
                   type="date"
+                  data-testid="bill-date"
                   value={billDate}
                   onChange={(e) => {
                     const next = e.target.value;
@@ -789,6 +790,7 @@ export function AccountingBillFormView({ billId }: Props) {
                       <Input
                         type="number"
                         value={l.taxes}
+                        title="Tax %"
                         onChange={(e) =>
                           updateLine(l._key, {
                             taxes: parseFloat(e.target.value) || 0,

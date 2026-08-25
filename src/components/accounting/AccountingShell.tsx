@@ -177,7 +177,9 @@ export function AccountingShell({ access, children }: Props) {
     pathname.startsWith("/accounting/review/journal-audit") ||
     pathname.startsWith("/accounting/review/audit-trail") ||
     pathname.startsWith("/accounting/review/loans-analysis") ||
+    pathname.startsWith("/accounting/review/depreciation-schedule") ||
     pathname.startsWith("/accounting/review/invoices-to-be-issued") ||
+    pathname.startsWith("/accounting/review/invoiced-not-delivered") ||
     pathname.startsWith("/accounting/review/working-files") ||
     pathname.startsWith("/accounting/review/deferred-revenues") ||
     pathname.startsWith("/accounting/review/deferred-expenses") ||

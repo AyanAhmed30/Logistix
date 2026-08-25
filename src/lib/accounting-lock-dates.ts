@@ -1,19 +1,32 @@
 /**
  * Unified accounting lock-date checks (Odoo-style).
- * Layers: hard lock → soft lock → domain lock (sale/purchase/tax) →
- * journal lock → closed fiscal year → tax period lock.
  *
- * Soft lock: blocks non-administrators; Accounting Admins may bypass
- * when allowSoftLockBypass is true (default for admin callers).
+ * Precedence (first match blocks):
+ *   organization + posting date
+ *   → fiscal (hard) lock
+ *   → period lock
+ *   → soft lock (Accounting Administrators may bypass)
+ *   → domain lock (sale / purchase / tax)
+ *   → journal lock
+ *   → closed fiscal year
+ *   → locked tax period
+ *
+ * Inclusive rule: dates ON OR BEFORE the lock date are closed.
+ * Fail-closed: if locks cannot be evaluated, posting is blocked.
  */
 
 import { createAdminClient } from '@/utils/supabase/server';
 import {
   dateOnly,
+  evaluateAccountingLockSettings,
   isAccountingDateOnOrBeforeLock,
+  lockDomainFromJournalSource,
+  type AccountingLockDomain,
+  type AccountingLockSettingsInput,
 } from '@/lib/accounting-lock-date-math';
 
-export type AccountingLockDomain = 'sale' | 'purchase' | 'tax' | 'general';
+export type { AccountingLockDomain };
+export { evaluateAccountingLockSettings };
 
 export type AccountingLockCheckOptions = {
   /** When true, soft_lock_date does not block (Odoo advisor exception). */
@@ -21,11 +34,16 @@ export type AccountingLockCheckOptions = {
   journalId?: string | null;
 };
 
-export { dateOnly, isAccountingDateOnOrBeforeLock };
+export { dateOnly, isAccountingDateOnOrBeforeLock, lockDomainFromJournalSource };
 
 function isOnOrBefore(docDate: string, lockDate: string | null | undefined): boolean {
   return isAccountingDateOnOrBeforeLock(docDate, lockDate);
 }
+
+type LockSettingsRow = AccountingLockSettingsInput;
+
+const SETTINGS_COLS =
+  'hard_lock_date, period_lock_date, soft_lock_date, sale_lock_date, purchase_lock_date, tax_lock_date';
 
 /**
  * Returns an error message if posting/editing/cancelling is blocked for the date.
@@ -38,7 +56,12 @@ export async function getAccountingDocumentLockError(
 ): Promise<string | null> {
   const orgId = String(organizationId || '').trim();
   const date = dateOnly(documentDate);
-  if (!orgId || !date) return null;
+  if (!orgId) {
+    return 'Posting is not allowed because the document has no organization.';
+  }
+  if (!date) {
+    return 'Posting is not allowed because the accounting date is missing.';
+  }
 
   const opts: AccountingLockCheckOptions =
     journalIdOrOpts && typeof journalIdOrOpts === 'object'
@@ -48,33 +71,99 @@ export async function getAccountingDocumentLockError(
   try {
     const supabase = await createAdminClient();
 
-    // 1) Org lock settings
     const { data: settings, error: settingsError } = await supabase
       .from('accounting_lock_settings')
-      .select(
-        'hard_lock_date, soft_lock_date, sale_lock_date, purchase_lock_date, tax_lock_date'
-      )
+      .select(SETTINGS_COLS)
       .eq('organization_id', orgId)
       .maybeSingle();
 
     if (settingsError) {
-      if (!/accounting_lock_settings|relation|soft_lock/i.test(settingsError.message)) {
-        console.warn('[lock-dates]', settingsError.message);
+      if (/period_lock_date|column/i.test(settingsError.message)) {
+        const { data: withoutPeriod, error: retryErr } = await supabase
+          .from('accounting_lock_settings')
+          .select(
+            'hard_lock_date, soft_lock_date, sale_lock_date, purchase_lock_date, tax_lock_date'
+          )
+          .eq('organization_id', orgId)
+          .maybeSingle();
+        if (retryErr && /soft_lock/i.test(retryErr.message)) {
+          const { data: legacy, error: legacyErr } = await supabase
+            .from('accounting_lock_settings')
+            .select('hard_lock_date, sale_lock_date, purchase_lock_date, tax_lock_date')
+            .eq('organization_id', orgId)
+            .maybeSingle();
+          if (legacyErr && /accounting_lock_settings|relation/i.test(legacyErr.message)) {
+            return evaluatePeriodLocks(supabase, orgId, date, opts.journalId);
+          }
+          if (legacyErr) {
+            return `Unable to verify accounting lock dates (${legacyErr.message}). Posting was blocked for safety.`;
+          }
+          if (legacy) {
+            return evaluateLocks(
+              legacy as LockSettingsRow,
+              date,
+              domain,
+              opts,
+              supabase,
+              orgId
+            );
+          }
+          return evaluatePeriodLocks(supabase, orgId, date, opts.journalId);
+        }
+        if (retryErr && /accounting_lock_settings|relation/i.test(retryErr.message)) {
+          return evaluatePeriodLocks(supabase, orgId, date, opts.journalId);
+        }
+        if (retryErr) {
+          return `Unable to verify accounting lock dates (${retryErr.message}). Posting was blocked for safety.`;
+        }
+        if (withoutPeriod) {
+          return evaluateLocks(
+            withoutPeriod as LockSettingsRow,
+            date,
+            domain,
+            opts,
+            supabase,
+            orgId
+          );
+        }
+        return evaluatePeriodLocks(supabase, orgId, date, opts.journalId);
       }
-      // Retry without soft_lock_date if column missing
+
       if (/soft_lock/i.test(settingsError.message)) {
-        const { data: legacy } = await supabase
+        const { data: legacy, error: legacyErr } = await supabase
           .from('accounting_lock_settings')
           .select('hard_lock_date, sale_lock_date, purchase_lock_date, tax_lock_date')
           .eq('organization_id', orgId)
           .maybeSingle();
-        if (legacy) {
-          return evaluateLocks(legacy as Record<string, unknown>, date, domain, opts, supabase, orgId);
+        if (legacyErr && /accounting_lock_settings|relation/i.test(legacyErr.message)) {
+          return evaluatePeriodLocks(supabase, orgId, date, opts.journalId);
         }
+        if (legacyErr) {
+          return `Unable to verify accounting lock dates (${legacyErr.message}). Posting was blocked for safety.`;
+        }
+        if (legacy) {
+          return evaluateLocks(
+            legacy as LockSettingsRow,
+            date,
+            domain,
+            opts,
+            supabase,
+            orgId
+          );
+        }
+        return evaluatePeriodLocks(supabase, orgId, date, opts.journalId);
       }
-    } else if (settings) {
+
+      if (/accounting_lock_settings|relation/i.test(settingsError.message)) {
+        return evaluatePeriodLocks(supabase, orgId, date, opts.journalId);
+      }
+
+      return `Unable to verify accounting lock dates (${settingsError.message}). Posting was blocked for safety.`;
+    }
+
+    if (settings) {
       return evaluateLocks(
-        settings as Record<string, unknown>,
+        settings as LockSettingsRow,
         date,
         domain,
         opts,
@@ -83,24 +172,39 @@ export async function getAccountingDocumentLockError(
       );
     }
 
-    return await evaluatePeriodLocks(supabase, orgId, date, opts.journalId);
-  } catch {
-    return null;
+    return evaluatePeriodLocks(supabase, orgId, date, opts.journalId);
+  } catch (err) {
+    const detail = err instanceof Error ? err.message : 'unknown error';
+    return `Unable to verify accounting lock dates (${detail}). Posting was blocked for safety.`;
   }
 }
 
+export async function readLatestLoggedPeriodLock(
+  supabase: Awaited<ReturnType<typeof createAdminClient>>,
+  orgId: string
+): Promise<string | null> {
+  const { data, error } = await supabase
+    .from('accounting_lock_logs')
+    .select('details')
+    .eq('organization_id', orgId)
+    .eq('action', 'lock_dates_updated')
+    .order('performed_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (error || !data) return null;
+  const next = (data.details as { next?: { period_lock_date?: string | null } } | null)
+    ?.next?.period_lock_date;
+  return dateOnly(next) || null;
+}
+
 async function evaluateLocks(
-  settings: Record<string, unknown>,
+  settings: LockSettingsRow,
   date: string,
   domain: AccountingLockDomain,
   opts: AccountingLockCheckOptions,
   supabase: Awaited<ReturnType<typeof createAdminClient>>,
   orgId: string
 ): Promise<string | null> {
-  if (isOnOrBefore(date, settings.hard_lock_date as string | null)) {
-    return `Fiscal lock date is set to ${String(settings.hard_lock_date).slice(0, 10)}. Documents on or before this date cannot be modified.`;
-  }
-
   let softBypass = opts.allowSoftLockBypass;
   if (softBypass === undefined) {
     try {
@@ -119,32 +223,18 @@ async function evaluateLocks(
     }
   }
 
-  if (!softBypass && isOnOrBefore(date, settings.soft_lock_date as string | null)) {
-    return `Soft lock date is ${String(settings.soft_lock_date).slice(0, 10)}. Only Accounting Administrators can modify documents on or before this date.`;
+  let periodLock = settings.period_lock_date;
+  if (periodLock === undefined) {
+    periodLock = await readLatestLoggedPeriodLock(supabase, orgId);
   }
 
-  if (
-    (domain === 'sale' || domain === 'general') &&
-    isOnOrBefore(date, settings.sale_lock_date as string | null)
-  ) {
-    return `Sales lock date is ${String(settings.sale_lock_date).slice(0, 10)}. Sales documents on or before this date are locked.`;
-  }
-  if (
-    (domain === 'purchase' || domain === 'general') &&
-    isOnOrBefore(date, settings.purchase_lock_date as string | null)
-  ) {
-    return `Purchase lock date is ${String(settings.purchase_lock_date).slice(0, 10)}. Purchase documents on or before this date are locked.`;
-  }
-  // Tax lock also protects sale/purchase docs that feed tax reports (Odoo-aligned)
-  if (
-    (domain === 'tax' ||
-      domain === 'general' ||
-      domain === 'sale' ||
-      domain === 'purchase') &&
-    isOnOrBefore(date, settings.tax_lock_date as string | null)
-  ) {
-    return `Tax lock date is ${String(settings.tax_lock_date).slice(0, 10)}. Tax-related entries on or before this date are locked.`;
-  }
+  const settingsError = evaluateAccountingLockSettings({
+    date,
+    domain,
+    settings: { ...settings, period_lock_date: periodLock ?? null },
+    allowSoftLockBypass: softBypass,
+  });
+  if (settingsError) return settingsError;
 
   return evaluatePeriodLocks(supabase, orgId, date, opts.journalId);
 }
@@ -156,14 +246,17 @@ async function evaluatePeriodLocks(
   journalId?: string | null
 ): Promise<string | null> {
   if (journalId) {
-    const { data: jLock } = await supabase
+    const { data: jLock, error: jErr } = await supabase
       .from('accounting_journal_locks')
       .select('lock_date')
       .eq('organization_id', orgId)
       .eq('journal_id', journalId)
       .maybeSingle();
+    if (jErr && !/accounting_journal_locks|relation/i.test(jErr.message)) {
+      return `Unable to verify journal lock (${jErr.message}). Posting was blocked for safety.`;
+    }
     if (jLock && isOnOrBefore(date, jLock.lock_date)) {
-      return `This journal is locked through ${String(jLock.lock_date).slice(0, 10)}.`;
+      return `This journal is locked for posting on or before ${dateOnly(String(jLock.lock_date))}.`;
     }
   }
 
@@ -179,10 +272,10 @@ async function evaluatePeriodLocks(
 
   if (yearError) {
     if (!/accounting_fiscal_years|relation/i.test(yearError.message)) {
-      console.warn('[lock-dates] fiscal year:', yearError.message);
+      return `Unable to verify fiscal year lock (${yearError.message}). Posting was blocked for safety.`;
     }
   } else if (closedYear?.id) {
-    return `Fiscal year "${closedYear.name}" is closed. Re-open it to modify documents in this period.`;
+    return `Posting is not allowed because this accounting period is locked (fiscal year "${closedYear.name}" is closed).`;
   }
 
   const { data: taxPeriod, error: taxError } = await supabase
@@ -197,13 +290,13 @@ async function evaluatePeriodLocks(
 
   if (taxError) {
     if (!/accounting_tax_periods|relation/i.test(taxError.message)) {
-      console.warn('[lock-dates] tax period:', taxError.message);
+      return `Unable to verify tax period lock (${taxError.message}). Posting was blocked for safety.`;
     }
   } else if (taxPeriod?.id) {
     const name = String(
       taxPeriod.name || `${taxPeriod.date_from} – ${taxPeriod.date_to}`
     );
-    return `Tax period "${name}" is locked. Unlock the period to modify accounting documents.`;
+    return `Posting is not allowed because tax period "${name}" is locked.`;
   }
 
   return null;

@@ -37,12 +37,11 @@ export function journalEntrySourceHref(args: {
       case 'asset_disposal':
         return `/accounting/assets/${sourceId}`;
       case 'asset_depreciation':
-        return `/accounting/journal-entries/${entryId}`;
+        return `/accounting/review/depreciation-schedule?line=${sourceId}`;
       case 'loan_disbursement':
         return `/accounting/loans/${sourceId}`;
       case 'loan_repayment':
-        // source_id is installment id — open JE form; loan linked via reference
-        return `/accounting/journal-entries/${entryId}`;
+        return `/accounting/loans/installment/${sourceId}`;
       case 'tax_return':
         return `/accounting/tax-returns/${sourceId}`;
       case 'year_closing':

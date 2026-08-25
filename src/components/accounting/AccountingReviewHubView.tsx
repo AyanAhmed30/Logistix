@@ -6,12 +6,16 @@
 
 import { useRouter } from "next/navigation";
 import {
+  BookOpen,
+  Building2,
+  CalendarClock,
   ClipboardCheck,
   FileOutput,
   FileSearch,
   FolderOpen,
   History,
   Landmark,
+  PackageMinus,
   Rows3,
   ScrollText,
   TrendingDown,
@@ -32,6 +36,13 @@ const SECTIONS = [
         icon: Rows3,
       },
       {
+        id: "journal-entries",
+        title: "Journal Entries",
+        description: "Posted and draft journal entries — source documents for the ledger",
+        href: "/accounting/journal-entries",
+        icon: BookOpen,
+      },
+      {
         id: "journal-audit",
         title: "Journal Audit",
         description: "Journal entry lifecycle — created, posted, modified, reset",
@@ -45,9 +56,31 @@ const SECTIONS = [
     heading: "Analysis",
     items: [
       {
+        id: "assets",
+        title: "Assets",
+        description: "Fixed assets that post purchase, depreciation, and disposal journals",
+        href: "/accounting/assets",
+        icon: Building2,
+      },
+      {
+        id: "depreciation-schedule",
+        title: "Depreciation Schedule",
+        description: "Depreciation board from posted and draft asset journal entries",
+        href: "/accounting/review/depreciation-schedule",
+        icon: CalendarClock,
+      },
+      {
+        id: "loans",
+        title: "Loans",
+        description: "Loan accounts that post disbursement, principal, and interest journals",
+        href: "/accounting/loans",
+        icon: Landmark,
+      },
+      {
         id: "loans-analysis",
         title: "Loans Analysis",
-        description: "Accounting overview of loans — principal, interest, and payments",
+        description:
+          "Principal, interest, and payments from loan records and their posted journal entries",
         href: "/accounting/review/loans-analysis",
         icon: Landmark,
       },
@@ -58,6 +91,14 @@ const SECTIONS = [
         href: "/accounting/review/invoices-to-be-issued",
         icon: FileOutput,
       },
+      {
+        id: "invoiced-not-delivered",
+        title: "Invoiced Not Delivered",
+        description:
+          "Posted invoice lines whose sales-order quantity is not yet fully delivered",
+        href: "/accounting/review/invoiced-not-delivered",
+        icon: PackageMinus,
+      },
     ],
   },
   {
@@ -66,14 +107,16 @@ const SECTIONS = [
       {
         id: "deferred-revenues",
         title: "Deferred Revenues",
-        description: "Deferred revenue balances and recognition schedules from journal entries",
+        description:
+          "Not yet supported — invoices do not create recognition schedules. Posted journal items on deferred-revenue accounts are shown if any exist.",
         href: "/accounting/review/deferred-revenues",
         icon: TrendingUp,
       },
       {
         id: "deferred-expenses",
         title: "Deferred Expenses",
-        description: "Prepaid and deferred expense activity from posted journal items",
+        description:
+          "Not yet supported — bills do not create prepaid schedules. Posted journal items on prepayment accounts are shown if any exist.",
         href: "/accounting/review/deferred-expenses",
         icon: TrendingDown,
       },

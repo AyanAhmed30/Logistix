@@ -118,6 +118,24 @@ export function AccountingPaymentDetailView({ paymentId }: Props) {
               Invoice
             </div>
           </button>
+          {payment.journal_entry_id ? (
+            <button
+              type="button"
+              onClick={() =>
+                router.push(
+                  `/accounting/journal-entries/${payment.journal_entry_id}`
+                )
+              }
+              className="rounded-sm border border-slate-200 bg-white px-2.5 py-1.5 text-left hover:border-[#017e84]/40 min-w-[84px]"
+            >
+              <div className="text-sm font-semibold tabular-nums text-[#017e84] leading-none">
+                1
+              </div>
+              <div className="text-[10px] text-secondary-muted mt-0.5">
+                Journal Entry
+              </div>
+            </button>
+          ) : null}
         </div>
 
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 p-4">

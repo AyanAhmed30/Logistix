@@ -3,7 +3,7 @@
 import { createAdminClient } from '@/utils/supabase/server';
 import { getSession } from '@/lib/auth/session';
 import { sessionHasAccountingAccess } from '@/lib/accounting-page-access';
-import { computePaymentState, outstandingFromComponents } from '@/lib/accounting-payments';
+import { computePaymentState, outstandingFromComponents, invoicePaidDeltaFromReconcileCredits } from '@/lib/accounting-payments';
 import { sumPostedCreditNotesForInvoice } from '@/lib/accounting-document-outstanding';
 
 export type ReconciliationDocumentType =
@@ -324,6 +324,47 @@ function round2(n: number) {
   return Math.round(n * 100) / 100;
 }
 
+async function applyJournalLineResidual(
+  supabase: Awaited<ReturnType<typeof createAdminClient>>,
+  journalEntryId: string | null,
+  side: 'debit' | 'credit',
+  amount: number
+) {
+  if (!journalEntryId || amount <= 0.004) return;
+  const { data: lines } = await supabase
+    .from('accounting_journal_entry_lines')
+    .select('id, debit, credit, amount_residual, amount_reconciled')
+    .eq('journal_entry_id', journalEntryId);
+  if (!lines?.length) return;
+
+  const candidates = lines.filter((l) =>
+    side === 'debit' ? Number(l.debit) > 0.004 : Number(l.credit) > 0.004
+  );
+  const line =
+    candidates.find((l) => {
+      const total = round2(Math.max(Number(l.debit) || 0, Number(l.credit) || 0));
+      const residual =
+        l.amount_residual != null
+          ? round2(Number(l.amount_residual))
+          : round2(total - (Number(l.amount_reconciled) || 0));
+      return residual > 0.004;
+    }) || candidates[0];
+  if (!line) return;
+
+  const total = round2(Math.max(Number(line.debit) || 0, Number(line.credit) || 0));
+  const prevRec = round2(Number(line.amount_reconciled) || 0);
+  const nextRec = round2(Math.min(total, prevRec + amount));
+  const residual = round2(Math.max(0, total - nextRec));
+  await supabase
+    .from('accounting_journal_entry_lines')
+    .update({
+      amount_reconciled: nextRec,
+      amount_residual: residual,
+      is_reconciled: residual <= 0.004,
+    })
+    .eq('id', line.id);
+}
+
 async function resolveScope() {
   const { requireAdminOrganizationScope, sessionUsesOrganizationScope } = await import(
     '@/lib/admin-organization-context'
@@ -356,11 +397,7 @@ async function resolveScope() {
 
   const { isSuperAdminInAdminContext } = await import('@/lib/auth/super-admin');
   if (!scope.organizationId && isSuperAdminInAdminContext(scope.session)) {
-    return {
-      session: scope.session,
-      organizationId: null as string | null,
-      isGlobalAdminView: true,
-    };
+    return { error: 'Select an organization from the header switcher.' };
   }
 
   if (!scope.organizationId) {
@@ -440,7 +477,7 @@ export async function getAccountingOutstandingEntries(filters?: {
 
     const supabase = await createAdminClient();
     const page = Math.max(1, filters?.page || 1);
-    const pageSize = Math.min(100, Math.max(1, filters?.pageSize || 40));
+    const pageSize = Math.min(2000, Math.max(1, filters?.pageSize || 40));
     const search = String(filters?.search || '').trim().toLowerCase();
     const statusFilter = String(filters?.status || 'all').trim();
     const typeFilter = String(filters?.documentType || 'all').trim();
@@ -780,65 +817,205 @@ export async function getAccountingOutstandingEntries(filters?: {
 /** Ranked auto-match suggestions (invoice ↔ payment). */
 export async function getAccountingReconciliationSuggestions() {
   try {
-    const res = await getAccountingOutstandingEntries({
-      page: 1,
-      pageSize: 200,
-      status: 'all',
-    });
-    if ('error' in res && res.error) return { error: res.error };
-    const entries = res.entries || [];
+    const scope = await resolveScope();
+    if ('error' in scope && scope.error) return { error: scope.error };
+    if ('empty' in scope && scope.empty) return { suggestions: [] as ReconciliationSuggestion[] };
+    if (!scope.session) return { error: 'Unauthorized' };
 
-    const invoices = entries.filter((e) => e.document_type === 'customer_invoice');
-    const payments = entries.filter((e) => e.document_type === 'customer_payment');
-    const suggestions: ReconciliationSuggestion[] = [];
-    const usedPay = new Set<string>();
+    const supabase = await createAdminClient();
+    let invQ = supabase
+      .from('accounting_customer_invoices')
+      .select(
+        'id, invoice_number, invoice_date, customer_name, contact_id, organization_id, status, payment_state, total_amount, amount_paid, amount_residual, journal_entry_id'
+      )
+      .in('status', ['posted', 'paid'])
+      .order('invoice_date', { ascending: false })
+      .limit(800);
+    if (scope.organizationId && !scope.isGlobalAdminView) {
+      invQ = invQ.eq('organization_id', scope.organizationId);
+    }
+    const { data: invoices, error: invErr } = await invQ;
+    if (invErr) return { error: invErr.message };
 
-    for (const inv of invoices) {
-      const candidates = payments.filter((p) => {
-        if (usedPay.has(p.document_id)) return false;
-        // Prefer payments already linked to this invoice
-        if (p.related_invoice_id && p.related_invoice_id === inv.document_id) {
-          return true;
-        }
-        const samePartner =
-          inv.contact_id && p.contact_id
-            ? inv.contact_id === p.contact_id
-            : String(inv.partner_name || '').toLowerCase() ===
-              String(p.partner_name || '').toLowerCase();
-        if (!samePartner) return false;
-        return Math.abs(p.residual - inv.residual) < 0.05 || p.residual <= inv.residual + 0.05;
+    let payQ = supabase
+      .from('accounting_invoice_payments')
+      .select('*')
+      .order('payment_date', { ascending: false })
+      .limit(800);
+    if (scope.organizationId && !scope.isGlobalAdminView) {
+      payQ = payQ.eq('organization_id', scope.organizationId);
+    }
+    const { data: payRows, error: payErr } = await payQ;
+    if (payErr) return { error: payErr.message };
+
+    const invById = new Map((invoices || []).map((i) => [String(i.id), i]));
+    const payments: OutstandingEntry[] = [];
+    for (const p of payRows || []) {
+      const amount = round2(Number(p.amount) || 0);
+      const hasReconcileCols =
+        p.reconcile_status != null || p.amount_reconciled != null;
+      const reconciled = hasReconcileCols
+        ? round2(Number(p.amount_reconciled) || 0)
+        : 0;
+      const residual = round2(Math.max(0, amount - reconciled));
+      const status = hasReconcileCols
+        ? String(p.reconcile_status || 'outstanding')
+        : residual <= 0.004
+          ? 'reconciled'
+          : 'outstanding';
+      if (status === 'reconciled' || residual <= 0.004) continue;
+      const inv = invById.get(String(p.invoice_id));
+      const payNum = p.payment_number
+        ? String(p.payment_number)
+        : `PAY-${String(p.id).slice(0, 8).toUpperCase()}`;
+      payments.push({
+        id: `pay:${p.id}`,
+        document_type: 'customer_payment',
+        document_id: String(p.id),
+        document_number: payNum,
+        entry_date: String(p.payment_date || '').slice(0, 10),
+        journal_entry_id: p.journal_entry_id ? String(p.journal_entry_id) : null,
+        journal_entry_number: null,
+        reference: String(p.reference || inv?.invoice_number || ''),
+        partner_name: inv?.customer_name ? String(inv.customer_name) : null,
+        contact_id: inv?.contact_id ? String(inv.contact_id) : null,
+        organization_id: String(p.organization_id),
+        organization_name: null,
+        debit: 0,
+        credit: residual,
+        residual,
+        amount_paid: reconciled,
+        total_amount: amount,
+        match_status: reconciled > 0.004 ? 'partial' : 'outstanding',
+        payment_state: status,
+        related_invoice_id: p.invoice_id ? String(p.invoice_id) : null,
       });
+    }
 
-      if (!candidates.length) continue;
+    const creditNotes: OutstandingEntry[] = [];
+    let cnQ = supabase
+      .from('accounting_credit_notes')
+      .select(
+        'id, credit_note_number, credit_note_date, customer_name, contact_id, organization_id, status, payment_state, total_amount, amount_refunded, journal_entry_id, invoice_id'
+      )
+      .eq('status', 'posted')
+      .order('credit_note_date', { ascending: false })
+      .limit(800);
+    if (scope.organizationId && !scope.isGlobalAdminView) {
+      cnQ = cnQ.eq('organization_id', scope.organizationId);
+    }
+    const { data: cnRows } = await cnQ;
+    for (const cn of cnRows || []) {
+      const total = round2(Number(cn.total_amount) || 0);
+      const refunded = round2(Number(cn.amount_refunded) || 0);
+      const residual = round2(Math.max(0, total - refunded));
+      if (residual <= 0.004) continue;
+      if (String(cn.payment_state || '') === 'paid') continue;
+      creditNotes.push({
+        id: `cn:${cn.id}`,
+        document_type: 'credit_note',
+        document_id: String(cn.id),
+        document_number: String(cn.credit_note_number || ''),
+        entry_date: String(cn.credit_note_date || '').slice(0, 10),
+        journal_entry_id: cn.journal_entry_id ? String(cn.journal_entry_id) : null,
+        journal_entry_number: null,
+        reference: String(cn.credit_note_number || ''),
+        partner_name: cn.customer_name ? String(cn.customer_name) : null,
+        contact_id: cn.contact_id ? String(cn.contact_id) : null,
+        organization_id: String(cn.organization_id),
+        organization_name: null,
+        debit: 0,
+        credit: residual,
+        residual,
+        amount_paid: refunded,
+        total_amount: total,
+        match_status: refunded > 0.004 ? 'partial' : 'outstanding',
+        payment_state: String(cn.payment_state || 'not_paid'),
+        related_invoice_id: cn.invoice_id ? String(cn.invoice_id) : null,
+      });
+    }
 
-      // Exact amount + linked invoice = highest confidence
-      const exact = candidates.find(
-        (p) =>
-          p.related_invoice_id === inv.document_id &&
-          Math.abs(p.residual - inv.residual) < 0.05
+    const invoiceEntries: OutstandingEntry[] = [];
+    for (const inv of invoices || []) {
+      const total = round2(Number(inv.total_amount) || 0);
+      const paid = round2(Number(inv.amount_paid) || 0);
+      const residual = round2(
+        Number.isFinite(Number(inv.amount_residual))
+          ? Math.max(0, Number(inv.amount_residual))
+          : Math.max(0, total - paid)
       );
-      const linked = candidates.filter((p) => p.related_invoice_id === inv.document_id);
-      const pick = exact
-        ? [exact]
-        : linked.length
-          ? linked
-          : candidates
-              .filter((p) => Math.abs(p.residual - inv.residual) < 0.05)
-              .slice(0, 1);
+      const payState = String(inv.payment_state || 'not_paid');
+      if (payState === 'paid' && residual <= 0.004) continue;
+      if (residual <= 0.004 && payState !== 'in_payment') continue;
+      const open =
+        residual > 0.004
+          ? residual
+          : round2(Math.max(0, total - paid));
+      if (open <= 0.004) continue;
+      invoiceEntries.push({
+        id: `inv:${inv.id}`,
+        document_type: 'customer_invoice',
+        document_id: String(inv.id),
+        document_number: String(inv.invoice_number || ''),
+        entry_date: String(inv.invoice_date || '').slice(0, 10),
+        journal_entry_id: inv.journal_entry_id ? String(inv.journal_entry_id) : null,
+        journal_entry_number: null,
+        reference: String(inv.invoice_number || ''),
+        partner_name: inv.customer_name ? String(inv.customer_name) : null,
+        contact_id: inv.contact_id ? String(inv.contact_id) : null,
+        organization_id: String(inv.organization_id),
+        organization_name: null,
+        debit: open,
+        credit: 0,
+        residual: open,
+        amount_paid: paid,
+        total_amount: total,
+        match_status:
+          payState === 'in_payment'
+            ? 'in_payment'
+            : paid > 0.004
+              ? 'partial'
+              : 'outstanding',
+        payment_state: payState,
+        related_invoice_id: null,
+      });
+    }
 
-      if (!pick.length) continue;
+    const suggestions: ReconciliationSuggestion[] = [];
+    const usedCredit = new Set<string>();
+    const creditPool = [...payments, ...creditNotes];
 
-      // One-to-many: accumulate linked payments until residual covered
+    for (const inv of invoiceEntries) {
+      const linked = creditPool.filter(
+        (p) =>
+          !usedCredit.has(p.document_id) && p.related_invoice_id === inv.document_id
+      );
+      const pool = (linked.length
+        ? linked
+        : creditPool.filter((p) => {
+            if (usedCredit.has(p.document_id)) return false;
+            const samePartner =
+              inv.contact_id && p.contact_id
+                ? inv.contact_id === p.contact_id
+                : String(inv.partner_name || '').toLowerCase() ===
+                  String(p.partner_name || '').toLowerCase();
+            return (
+              samePartner &&
+              (Math.abs(p.residual - inv.residual) < 0.05 ||
+                p.residual <= inv.residual + 0.05)
+            );
+          })
+      ).sort((a, b) => b.residual - a.residual);
+
+      if (!pool.length) continue;
+
       let remaining = inv.residual;
       const credits: OutstandingEntry[] = [];
-      const pool = (linked.length ? linked : pick).sort(
-        (a, b) => b.residual - a.residual
-      );
       for (const p of pool) {
         if (remaining <= 0.004) break;
-        if (usedPay.has(p.document_id)) continue;
+        if (usedCredit.has(p.document_id)) continue;
         credits.push(p);
-        usedPay.add(p.document_id);
+        usedCredit.add(p.document_id);
         remaining = round2(remaining - p.residual);
       }
       if (!credits.length) continue;
@@ -849,22 +1026,19 @@ export async function getAccountingReconciliationSuggestions() {
           credits.reduce((s, c) => s + c.residual, 0)
         )
       );
-      const confidence =
-        exact || (linked.length && Math.abs(remaining) < 0.05)
-          ? 0.98
-          : Math.abs(remaining) < 0.05
-            ? 0.85
-            : 0.65;
-
+      const exact =
+        credits.length === 1 &&
+        credits[0].related_invoice_id === inv.document_id &&
+        Math.abs(credits[0].residual - inv.residual) < 0.05;
       suggestions.push({
         id: `sug:${inv.document_id}:${credits.map((c) => c.document_id).join(',')}`,
-        confidence,
+        confidence: exact || Math.abs(remaining) < 0.05 ? 0.98 : 0.85,
         reason:
-          confidence >= 0.95
+          exact || (linked.length && Math.abs(remaining) < 0.05)
             ? 'Exact match — same invoice & amount'
-            : confidence >= 0.8
-              ? 'Same partner & matching amounts'
-              : 'Same partner — partial coverage',
+            : linked.length
+              ? 'Same invoice — partial coverage'
+              : 'Same partner — matching amounts',
         debit: inv,
         credits,
         amount,
@@ -953,6 +1127,36 @@ export async function reconcileAccountingEntries(input: {
     if (reconLock) return { error: reconLock };
 
     // Apply invoice / payment updates first
+    let remainingPayCredits = round2(
+      credits
+        .filter((c) => c.document_type === 'customer_payment')
+        .reduce((s, c) => s + round2(Number(c.amount) || 0), 0)
+    );
+
+    // Link standalone credit notes to the invoice they are matching so residual
+    // uses posted CN adjustments instead of double-counting amount_paid.
+    const invoiceDebits = debits.filter((d) => d.document_type === 'customer_invoice');
+    if (invoiceDebits.length === 1) {
+      for (const c of credits) {
+        if (c.document_type !== 'credit_note') continue;
+        const { data: cn } = await supabase
+          .from('accounting_credit_notes')
+          .select('id, invoice_id')
+          .eq('id', c.document_id)
+          .maybeSingle();
+        if (cn && !cn.invoice_id) {
+          await supabase
+            .from('accounting_credit_notes')
+            .update({
+              invoice_id: invoiceDebits[0].document_id,
+              updated_by: username,
+              updated_at: new Date().toISOString(),
+            })
+            .eq('id', c.document_id);
+        }
+      }
+    }
+
     for (const d of debits) {
       if (d.document_type !== 'customer_invoice') continue;
       const applied = round2(Number(d.amount));
@@ -974,7 +1178,12 @@ export async function reconcileAccountingEntries(input: {
 
       const prevPaid = round2(Number(inv.amount_paid) || 0);
       const total = round2(Number(inv.total_amount) || 0);
-      const nextPaid = round2(prevPaid + applied);
+      const allocated = invoicePaidDeltaFromReconcileCredits({
+        invoiceDebitAmount: applied,
+        remainingPaymentCredits: remainingPayCredits,
+      });
+      remainingPayCredits = allocated.remainingPaymentCredits;
+      const nextPaid = round2(prevPaid + allocated.paidDelta);
       const notes = await sumPostedCreditNotesForInvoice(supabase, d.document_id);
       const residualDue = outstandingFromComponents({
         total,
@@ -1194,6 +1403,75 @@ export async function reconcileAccountingEntries(input: {
 
     await supabase.from('accounting_reconciliation_lines').insert(lineRows);
 
+    const { postJournalEntryForBankPaymentSettlement } = await import(
+      '@/app/actions/accounting/journal-entries'
+    );
+
+    let bankSettleAmount = 0;
+    let bankSettlePaymentId: string | null = null;
+    for (const c of credits) {
+      if (c.document_type !== 'customer_payment') continue;
+      const { data: pay } = await supabase
+        .from('accounting_invoice_payments')
+        .select('id, journal, payment_method, journal_entry_id')
+        .eq('id', c.document_id)
+        .maybeSingle();
+      if (!pay) continue;
+      const isBank =
+        String(pay.journal || '') === 'bank' ||
+        (pay.journal == null && String(pay.payment_method) !== 'cash');
+      if (!isBank) continue;
+      bankSettleAmount = round2(bankSettleAmount + Number(c.amount));
+      if (!bankSettlePaymentId) bankSettlePaymentId = String(pay.id);
+      await applyJournalLineResidual(
+        supabase,
+        pay.journal_entry_id ? String(pay.journal_entry_id) : null,
+        'credit',
+        round2(c.amount)
+      );
+    }
+
+    if (bankSettlePaymentId && bankSettleAmount > 0.004) {
+      const posted = await postJournalEntryForBankPaymentSettlement({
+        paymentId: bankSettlePaymentId,
+        reconciliationId: String(recon.id),
+        amount: bankSettleAmount,
+        performedBy: username,
+      });
+      if ('error' in posted && posted.error) {
+        return { error: `Reconcile recorded but AR settlement JE failed: ${posted.error}` };
+      }
+      if ('journalEntryId' in posted && posted.journalEntryId) {
+        await applyJournalLineResidual(
+          supabase,
+          String(posted.journalEntryId),
+          'debit',
+          bankSettleAmount
+        );
+        await applyJournalLineResidual(
+          supabase,
+          String(posted.journalEntryId),
+          'credit',
+          bankSettleAmount
+        );
+      }
+    }
+
+    for (const d of debits) {
+      if (d.document_type !== 'customer_invoice') continue;
+      const { data: inv } = await supabase
+        .from('accounting_customer_invoices')
+        .select('journal_entry_id')
+        .eq('id', d.document_id)
+        .maybeSingle();
+      await applyJournalLineResidual(
+        supabase,
+        inv?.journal_entry_id ? String(inv.journal_entry_id) : null,
+        'debit',
+        round2(d.amount)
+      );
+    }
+
     await appendReconLog(supabase, {
       reconciliationId: String(recon.id),
       organizationId,
@@ -1304,6 +1582,35 @@ export async function unreconcileAccountingReconciliation(reconciliationId: stri
       .eq('reconciliation_id', reconciliationId);
 
     const username = scope.session.username;
+    let remainingPayCredits = round2(
+      (lines || [])
+        .filter(
+          (l) =>
+            String(l.side) === 'credit' &&
+            String(l.document_type) === 'customer_payment'
+        )
+        .reduce((s, l) => s + round2(Number(l.amount) || 0), 0)
+    );
+
+    const { cancelLinkedAccountingJournalEntry } = await import(
+      '@/lib/accounting-je-lifecycle'
+    );
+    const { data: settlementJes } = await supabase
+      .from('accounting_journal_entries')
+      .select('id')
+      .eq('source_type', 'manual')
+      .eq('source_id', reconciliationId)
+      .neq('status', 'cancelled');
+    for (const je of settlementJes || []) {
+      await cancelLinkedAccountingJournalEntry(supabase, {
+        journalEntryId: String(je.id),
+        sourceType: 'manual',
+        sourceId: reconciliationId,
+        organizationId: String(recon.organization_id),
+        performedBy: username,
+        reason: 'Bank payment unreconciled',
+      });
+    }
 
     for (const line of lines || []) {
       const amount = round2(Number(line.amount) || 0);
@@ -1319,7 +1626,14 @@ export async function unreconcileAccountingReconciliation(reconciliationId: stri
           .eq('id', docId)
           .maybeSingle();
         if (!inv) continue;
-        const nextPaid = round2(Math.max(0, (Number(inv.amount_paid) || 0) - amount));
+        const allocated = invoicePaidDeltaFromReconcileCredits({
+          invoiceDebitAmount: amount,
+          remainingPaymentCredits: remainingPayCredits,
+        });
+        remainingPayCredits = allocated.remainingPaymentCredits;
+        const nextPaid = round2(
+          Math.max(0, (Number(inv.amount_paid) || 0) - allocated.paidDelta)
+        );
         const total = round2(Number(inv.total_amount) || 0);
         // After unreconcile, bank-style invoices with remaining payments go In Payment
         const { data: openPays } = await supabase

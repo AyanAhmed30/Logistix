@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { toast } from "sonner";
 import {
   Copy,
@@ -236,7 +237,7 @@ export function AccountingInvoiceFormView({ invoiceId }: Props) {
     (isPosted || status === "paid" || isInPayment) &&
     !isCancelled &&
     !isAdminContext &&
-    (detail ? paymentsSum + 0.004 < (detail.total_amount || 0) : outstanding > 0.004);
+    outstanding > 0.004;
   const canCreateCreditNote =
     (isPosted || isPaid || isInPayment) &&
     !isCancelled &&
@@ -1023,24 +1024,34 @@ export function AccountingInvoiceFormView({ invoiceId }: Props) {
 
           {showPostedActions ? (
             <div className="flex flex-wrap items-stretch gap-2">
-              <button
-                type="button"
-                className="inline-flex min-w-[88px] flex-col items-center justify-center rounded-sm border border-slate-200 bg-white px-3 py-2 text-center hover:bg-slate-50 disabled:opacity-50"
-                disabled={paymentsCount < 1}
-                onClick={() => {
-                  // Odoo: Payments smart button → open payment form when linked.
-                  if (primaryPaymentId) {
-                    router.push(`/accounting/payments/${primaryPaymentId}`);
-                    return;
+              {paymentsCount < 1 ? (
+                <button
+                  type="button"
+                  className="inline-flex min-w-[88px] flex-col items-center justify-center rounded-sm border border-slate-200 bg-white px-3 py-2 text-center opacity-50"
+                  data-testid="invoice-payments-button"
+                  disabled
+                >
+                  <span className="text-base font-semibold tabular-nums text-primary-dark">
+                    {paymentsCount}
+                  </span>
+                  <span className="text-[11px] text-secondary-muted">Payments</span>
+                </button>
+              ) : (
+                <Link
+                  href={
+                    primaryPaymentId
+                      ? `/accounting/payments/${primaryPaymentId}`
+                      : "/accounting/payments"
                   }
-                  router.push("/accounting/payments");
-                }}
-              >
-                <span className="text-base font-semibold tabular-nums text-primary-dark">
-                  {paymentsCount}
-                </span>
-                <span className="text-[11px] text-secondary-muted">Payments</span>
-              </button>
+                  data-testid="invoice-payments-button"
+                  className="inline-flex min-w-[88px] flex-col items-center justify-center rounded-sm border border-slate-200 bg-white px-3 py-2 text-center hover:bg-slate-50"
+                >
+                  <span className="text-base font-semibold tabular-nums text-primary-dark">
+                    {paymentsCount}
+                  </span>
+                  <span className="text-[11px] text-secondary-muted">Payments</span>
+                </Link>
+              )}
               <button
                 type="button"
                 className="inline-flex min-w-[88px] flex-col items-center justify-center rounded-sm border border-slate-200 bg-white px-3 py-2 text-center hover:bg-slate-50"
@@ -1080,7 +1091,10 @@ export function AccountingInvoiceFormView({ invoiceId }: Props) {
                   <>
                     {" "}
                     · Amount Due{" "}
-                    <span className="font-semibold text-primary-dark">
+                    <span
+                      data-testid="invoice-amount-due"
+                      className="font-semibold text-primary-dark"
+                    >
                       {formatMoney(outstanding)}
                     </span>
                   </>
@@ -1158,6 +1172,7 @@ export function AccountingInvoiceFormView({ invoiceId }: Props) {
                   </Label>
                   <Input
                     type="date"
+                    data-testid="invoice-date"
                     value={invoiceDate}
                     onChange={(e) => {
                       const next = e.target.value;
@@ -2246,6 +2261,7 @@ export function AccountingInvoiceFormView({ invoiceId }: Props) {
                 </Label>
                 <Input
                   type="date"
+                  data-testid="payment-date"
                   value={paymentDate}
                   onChange={(e) => setPaymentDate(e.target.value)}
                   className="h-8 rounded-sm"

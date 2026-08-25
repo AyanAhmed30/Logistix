@@ -100,11 +100,7 @@ async function resolveCurrencyScope(opts?: { config?: boolean }) {
 
   const { isSuperAdminInAdminContext } = await import('@/lib/auth/super-admin');
   if (!scope.organizationId && isSuperAdminInAdminContext(scope.session)) {
-    return {
-      session: scope.session,
-      organizationId: null as string | null,
-      isGlobalAdminView: true,
-    };
+    return { error: 'Select an organization from the header switcher.' };
   }
 
   return {

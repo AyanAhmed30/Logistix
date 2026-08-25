@@ -45,6 +45,7 @@ export type AccountingCreditNoteDetail = {
   tax_amount: number;
   total_amount: number;
   amount_refunded: number;
+  journal_entry_id: string | null;
   organization_id: string | null;
   organization_name: string | null;
   company_address: string | null;
@@ -102,7 +103,7 @@ async function resolveScope(opts?: { creditNotes?: boolean; refunds?: boolean })
 
   const { isSuperAdminInAdminContext } = await import('@/lib/auth/super-admin');
   if (!scope.organizationId && isSuperAdminInAdminContext(scope.session)) {
-    return { session: scope.session, organizationId: null, isGlobalAdminView: true };
+    return { error: 'Select an organization from the header switcher.' };
   }
 
   if (!scope.organizationId) {
@@ -118,6 +119,76 @@ async function resolveScope(opts?: { creditNotes?: boolean; refunds?: boolean })
 
 function round2(n: number) {
   return Math.round(n * 100) / 100;
+}
+
+async function syncInvoiceOutstandingAfterCreditNote(
+  supabase: Awaited<ReturnType<typeof createAdminClient>>,
+  invoiceId: string,
+  username: string
+) {
+  const { data: inv } = await supabase
+    .from('accounting_customer_invoices')
+    .select('id, total_amount, due_date, status, payment_state')
+    .eq('id', invoiceId)
+    .maybeSingle();
+  if (!inv) return { error: 'Invoice not found' as const };
+
+  const {
+    invoiceOpenAmount,
+    sumPostedCreditNotesForInvoice,
+  } = await import('@/lib/accounting-document-outstanding');
+  const { computePaymentState } = await import('@/lib/accounting-payments');
+
+  const total = Number(inv.total_amount) || 0;
+  const residualDue = await invoiceOpenAmount(supabase, {
+    invoiceId,
+    total,
+  });
+  const notes = await sumPostedCreditNotesForInvoice(supabase, invoiceId);
+  const appliedPaid = round2(Math.max(0, total - residualDue - notes));
+  const previousPaymentState = String(inv.payment_state || 'not_paid');
+  const keepInPayment =
+    residualDue > 0.004 && previousPaymentState === 'in_payment';
+  const computed = computePaymentState({
+    total,
+    amountPaid: appliedPaid,
+    dueDate: inv.due_date ? String(inv.due_date) : null,
+    workflowStatus: String(inv.status || ''),
+    preferInPayment: keepInPayment,
+    amountResidual: residualDue,
+  });
+
+  let nextStatus = String(inv.status);
+  if (nextStatus === 'posted' || nextStatus === 'paid') {
+    nextStatus = computed.paymentState === 'paid' ? 'paid' : 'posted';
+  }
+
+  const patch: Record<string, unknown> = {
+    amount_paid: computed.amountPaid,
+    amount_residual: computed.outstanding,
+    payment_state: computed.paymentState,
+    status: nextStatus,
+    refund_status:
+      notes <= 0.004 ? 'none' : computed.outstanding <= 0.004 ? 'refunded' : 'partial',
+    updated_by: username,
+    updated_at: new Date().toISOString(),
+  };
+  const { error } = await supabase
+    .from('accounting_customer_invoices')
+    .update(patch)
+    .eq('id', invoiceId);
+  if (error && /refund_status|column/i.test(error.message)) {
+    delete patch.refund_status;
+    await supabase
+      .from('accounting_customer_invoices')
+      .update(patch)
+      .eq('id', invoiceId);
+  }
+
+  return {
+    outstanding: computed.outstanding,
+    paymentState: computed.paymentState,
+  };
 }
 
 async function allocateCreditNoteNumber(
@@ -202,6 +273,7 @@ function mapCreditNoteDetail(
     tax_amount: Number(cn.tax_amount) || 0,
     total_amount: Number(cn.total_amount) || 0,
     amount_refunded: Number(cn.amount_refunded) || 0,
+    journal_entry_id: cn.journal_entry_id ? String(cn.journal_entry_id) : null,
     organization_id: cn.organization_id ? String(cn.organization_id) : null,
     organization_name: org.organization_name || null,
     company_address: org.company_address || null,
@@ -394,6 +466,7 @@ export type UpdateAccountingCreditNoteInput = {
     id?: string;
     sequence: number;
     invoice_line_id?: string | null;
+    product_id?: string | null;
     product_name: string;
     description?: string | null;
     quantity: number;
@@ -551,6 +624,7 @@ export async function updateAccountingCreditNote(
               credit_note_id: creditNoteId,
               sequence: l.sequence || (idx + 1) * 10,
               invoice_line_id: l.invoice_line_id || null,
+              product_id: l.product_id || null,
               product_name: l.product_name || '',
               description: l.description || null,
               quantity: qty,
@@ -637,12 +711,19 @@ export async function resetAccountingCreditNoteToDraft(creditNoteId: string) {
         posted_at: null,
         cancelled_at: null,
         journal_entry_id: null,
+        amount_refunded: 0,
+        payment_state: 'not_paid',
         updated_by: scope.session!.username,
         updated_at: new Date().toISOString(),
       })
       .eq('id', creditNoteId);
 
     if (cn.invoice_id) {
+      await syncInvoiceOutstandingAfterCreditNote(
+        supabase,
+        String(cn.invoice_id),
+        scope.session!.username
+      );
       await supabase.from('accounting_invoice_logs').insert([
         {
           invoice_id: cn.invoice_id,
@@ -1023,6 +1104,28 @@ export async function postAccountingCreditNote(
       return { error: 'Add at least one line with an amount before posting' };
     }
 
+    if (cn.invoice_id) {
+      const { data: inv } = await supabase
+        .from('accounting_customer_invoices')
+        .select('id, total_amount')
+        .eq('id', cn.invoice_id)
+        .maybeSingle();
+      const invTotal = round2(Number(inv?.total_amount) || 0);
+      const { sumPostedCreditNotesForInvoice } = await import(
+        '@/lib/accounting-document-outstanding'
+      );
+      const already = await sumPostedCreditNotesForInvoice(
+        supabase,
+        String(cn.invoice_id)
+      );
+      const thisTotal = round2(Number(cn.total_amount) || 0);
+      if (invTotal > 0 && already + thisTotal - invTotal > 0.004) {
+        return {
+          error: `Credit notes cannot exceed invoice total (${invTotal.toFixed(2)}). Remaining creditable is ${Math.max(0, invTotal - already).toFixed(2)}.`,
+        };
+      }
+    }
+
     await supabase
       .from('accounting_credit_notes')
       .update({
@@ -1032,62 +1135,6 @@ export async function postAccountingCreditNote(
         updated_at: new Date().toISOString(),
       })
       .eq('id', creditNoteId);
-
-    if (cn.invoice_id) {
-      const isFull = String(cn.refund_type) === 'full';
-      const cnTotal = Math.round((Number(cn.total_amount) || 0) * 100) / 100;
-      const { data: inv } = await supabase
-        .from('accounting_customer_invoices')
-        .select('id, total_amount, amount_paid, amount_residual')
-        .eq('id', cn.invoice_id)
-        .maybeSingle();
-
-      const invTotal = Number(inv?.total_amount) || 0;
-      const amountPaid = Number(inv?.amount_paid) || 0;
-      const priorResidual =
-        inv?.amount_residual != null
-          ? Number(inv.amount_residual)
-          : Math.max(0, invTotal - amountPaid);
-      const nextResidual =
-        Math.round(Math.max(0, priorResidual - cnTotal) * 100) / 100;
-      const paymentState =
-        nextResidual <= 0.004
-          ? 'paid'
-          : amountPaid > 0.004 || cnTotal > 0.004
-            ? 'partial'
-            : 'not_paid';
-
-      const invPatch: Record<string, unknown> = {
-        refund_status:
-          isFull || nextResidual <= 0.004 ? 'refunded' : 'partial',
-        amount_residual: nextResidual,
-        payment_state: paymentState,
-        updated_by: scope.session!.username,
-        updated_at: new Date().toISOString(),
-      };
-      if (nextResidual <= 0.004) {
-        invPatch.status = 'paid';
-      }
-
-      await supabase
-        .from('accounting_customer_invoices')
-        .update(invPatch)
-        .eq('id', cn.invoice_id);
-
-      await supabase.from('accounting_invoice_logs').insert([
-        {
-          invoice_id: cn.invoice_id,
-          action: 'credit_note_posted',
-          performed_by: scope.session!.username,
-          details: {
-            credit_note_id: creditNoteId,
-            credit_note_number: cn.credit_note_number,
-            amount: cn.total_amount,
-            amount_residual: nextResidual,
-          },
-        },
-      ]);
-    }
 
     try {
       const { postJournalEntryForCreditNote } = await import(
@@ -1125,6 +1172,71 @@ export async function postAccountingCreditNote(
           err instanceof Error ? err.message : 'unknown error'
         }`,
       };
+    }
+
+    if (cn.invoice_id) {
+      const {
+        sumPostedCreditNotesForInvoice,
+        sumAppliedInvoicePayments,
+      } = await import('@/lib/accounting-document-outstanding');
+      const { creditNoteAppliedToOpenInvoice, outstandingFromComponents } =
+        await import('@/lib/accounting-payments');
+      const { data: inv } = await supabase
+        .from('accounting_customer_invoices')
+        .select('id, total_amount')
+        .eq('id', cn.invoice_id)
+        .maybeSingle();
+      const invTotal = round2(Number(inv?.total_amount) || 0);
+      const cnTotal = round2(Number(cn.total_amount) || 0);
+      const [notes, paid] = await Promise.all([
+        sumPostedCreditNotesForInvoice(supabase, String(cn.invoice_id)),
+        sumAppliedInvoicePayments(supabase, String(cn.invoice_id)),
+      ]);
+      const openBefore = outstandingFromComponents({
+        total: invTotal,
+        amountPaid: paid,
+        adjustments: round2(Math.max(0, notes - cnTotal)),
+      });
+      const appliedToInvoice = creditNoteAppliedToOpenInvoice({
+        creditNoteTotal: cnTotal,
+        invoiceOpenBeforeNote: openBefore,
+      });
+      if (appliedToInvoice > 0.004) {
+        const nextRefunded = round2(
+          Math.max(Number(cn.amount_refunded) || 0, appliedToInvoice)
+        );
+        await supabase
+          .from('accounting_credit_notes')
+          .update({
+            amount_refunded: nextRefunded,
+            payment_state:
+              nextRefunded >= cnTotal - 0.004 ? 'paid' : 'partial',
+            updated_by: scope.session!.username,
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', creditNoteId);
+      }
+
+      const synced = await syncInvoiceOutstandingAfterCreditNote(
+        supabase,
+        String(cn.invoice_id),
+        scope.session!.username
+      );
+
+      await supabase.from('accounting_invoice_logs').insert([
+        {
+          invoice_id: cn.invoice_id,
+          action: 'credit_note_posted',
+          performed_by: scope.session!.username,
+          details: {
+            credit_note_id: creditNoteId,
+            credit_note_number: cn.credit_note_number,
+            amount: cn.total_amount,
+            amount_residual:
+              'outstanding' in synced ? synced.outstanding : null,
+          },
+        },
+      ]);
     }
 
     return getAccountingCreditNoteDetail(creditNoteId);
@@ -1179,42 +1291,6 @@ export async function cancelAccountingCreditNote(creditNoteId: string) {
         performedBy: scope.session!.username,
         reason: 'credit_note_cancelled',
       });
-
-      if (cn.invoice_id) {
-        const cnTotal = Math.round((Number(cn.total_amount) || 0) * 100) / 100;
-        const { data: inv } = await supabase
-          .from('accounting_customer_invoices')
-          .select('id, total_amount, amount_paid, amount_residual, refund_status')
-          .eq('id', cn.invoice_id)
-          .maybeSingle();
-        if (inv) {
-          const invTotal = Number(inv.total_amount) || 0;
-          const amountPaid = Number(inv.amount_paid) || 0;
-          const priorResidual =
-            inv.amount_residual != null
-              ? Number(inv.amount_residual)
-              : Math.max(0, invTotal - amountPaid);
-          const restored =
-            Math.round((priorResidual + cnTotal) * 100) / 100;
-          const capped = Math.min(restored, Math.max(0, invTotal - amountPaid));
-          await supabase
-            .from('accounting_customer_invoices')
-            .update({
-              amount_residual: capped,
-              refund_status: capped >= invTotal - amountPaid - 0.004 ? 'none' : 'partial',
-              payment_state:
-                capped <= 0.004
-                  ? 'paid'
-                  : amountPaid > 0.004
-                    ? 'partial'
-                    : 'not_paid',
-              status: capped <= 0.004 ? 'paid' : 'posted',
-              updated_by: scope.session!.username,
-              updated_at: new Date().toISOString(),
-            })
-            .eq('id', cn.invoice_id);
-        }
-      }
     }
 
     await supabase
@@ -1227,6 +1303,14 @@ export async function cancelAccountingCreditNote(creditNoteId: string) {
         updated_at: new Date().toISOString(),
       })
       .eq('id', creditNoteId);
+
+    if (cn.invoice_id && String(cn.status) === 'posted') {
+      await syncInvoiceOutstandingAfterCreditNote(
+        supabase,
+        String(cn.invoice_id),
+        scope.session!.username
+      );
+    }
 
     return getAccountingCreditNoteDetail(creditNoteId);
   } catch (err) {

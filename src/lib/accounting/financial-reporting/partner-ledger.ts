@@ -1,8 +1,8 @@
 import {
-  dayBefore,
   loadChartAccounts,
   loadPostedLedgerFacts,
   rawDebitCreditBalance,
+  splitFactsByPeriod,
 } from '@/lib/accounting/financial-reporting/ledger';
 import {
   round2,
@@ -35,34 +35,35 @@ export async function buildPartnerLedger(opts: {
     .filter((a) => TRADE_ACCOUNT_TYPES.has(String(a.account_type || '')))
     .map((a) => a.id);
 
-  // Load period facts; prefer trade accounts, but also any lines with contact
-  const periodFacts = await loadPostedLedgerFacts({
+  const throughTo = await loadPostedLedgerFacts({
     organizationId: opts.organizationId,
-    dateFrom: opts.dateFrom,
     dateTo: opts.dateTo,
     contactId: opts.contactId || null,
   });
+  const { opening: openingFactsRaw, period: periodFacts } = splitFactsByPeriod(
+    throughTo,
+    opts.dateFrom,
+    opts.dateTo
+  );
 
   const isTradePartner = (f: (typeof periodFacts)[number]) => {
     const meta = accountIndex.get(f.account_id);
-    if (!meta) return false;
-    const isTrade =
+    if (!meta) return tradeAccountIds.includes(f.account_id);
+    return (
       TRADE_ACCOUNT_TYPES.has(String(meta.account_type || '')) ||
-      tradeAccountIds.includes(f.account_id);
-    const hasPartner = Boolean(f.contact_id || f.partner_name);
-    return isTrade && hasPartner;
+      tradeAccountIds.includes(f.account_id)
+    );
   };
 
-  const beforeFrom = dayBefore(opts.dateFrom);
-  const openingFacts = beforeFrom
-    ? (
-        await loadPostedLedgerFacts({
-          organizationId: opts.organizationId,
-          dateTo: beforeFrom,
-          contactId: opts.contactId || null,
-        })
-      ).filter(isTradePartner)
-    : [];
+  const sideOf = (accountId: string): 'receivable' | 'payable' | null => {
+    const meta = accountIndex.get(accountId);
+    const at = String(meta?.account_type || '');
+    if (at === 'receivable') return 'receivable';
+    if (at === 'payable') return 'payable';
+    return null;
+  };
+
+  const openingFacts = openingFactsRaw.filter(isTradePartner);
 
   const relevant = periodFacts.filter(isTradePartner);
 
@@ -123,9 +124,21 @@ export async function buildPartnerLedger(opts: {
 
     let openingDebit = 0;
     let openingCredit = 0;
+    let recD = 0;
+    let recC = 0;
+    let payD = 0;
+    let payC = 0;
     for (const f of openingByPartner.get(key) || []) {
       openingDebit = round2(openingDebit + f.debit);
       openingCredit = round2(openingCredit + f.credit);
+      const side = sideOf(f.account_id);
+      if (side === 'receivable') {
+        recD = round2(recD + f.debit);
+        recC = round2(recC + f.credit);
+      } else if (side === 'payable') {
+        payD = round2(payD + f.debit);
+        payC = round2(payC + f.credit);
+      }
     }
     const openingBalance = rawDebitCreditBalance(openingDebit, openingCredit);
 
@@ -162,6 +175,14 @@ export async function buildPartnerLedger(opts: {
       periodDebit = round2(periodDebit + f.debit);
       periodCredit = round2(periodCredit + f.credit);
       running = round2(running + f.debit - f.credit);
+      const side = sideOf(f.account_id);
+      if (side === 'receivable') {
+        recD = round2(recD + f.debit);
+        recC = round2(recC + f.credit);
+      } else if (side === 'payable') {
+        payD = round2(payD + f.debit);
+        payC = round2(payC + f.credit);
+      }
       const matching =
         f.is_reconciled === true
           ? 'Matched'
@@ -196,6 +217,8 @@ export async function buildPartnerLedger(opts: {
       period_debit: periodDebit,
       period_credit: periodCredit,
       balance: running,
+      receivable_outstanding: round2(recD - recC),
+      payable_outstanding: round2(payC - payD),
       lines,
     });
   }

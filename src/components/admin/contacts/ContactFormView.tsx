@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState, useTransition } from "react";
+import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -298,6 +298,7 @@ export function ContactFormView({
   const [documentsPanelOpen, setDocumentsPanelOpen] = useState(initialRelatedPanel === "documents");
   const [contactDocuments, setContactDocuments] = useState<ContactDocumentItem[]>([]);
   const [documentsLoading, setDocumentsLoading] = useState(false);
+  const prevContactIdRef = useRef<string | null | undefined>(undefined);
 
   // Load tags + salespersons
   useEffect(() => {
@@ -345,28 +346,29 @@ export function ContactFormView({
     };
   }, [documentsPanelOpen, savedId]);
 
-  // Load contact when opening existing
+  // Load contact when opening existing. Do not asynchronously wipe a new form —
+  // that race cleared typed names (and Accounting defaultCustomer/defaultVendor flags).
   useEffect(() => {
     let cancelled = false;
+    const previousId = prevContactIdRef.current;
+    prevContactIdRef.current = contactId;
 
     if (!contactId) {
-      Promise.resolve().then(() => {
-        if (cancelled) return;
+      if (previousId) {
         setLoadedContact(null);
-        setForm(EMPTY_FORM);
+        setForm({
+          ...EMPTY_FORM,
+          customer_rank: defaultCustomer ? 1 : 0,
+          vendor_rank: defaultVendor ? 1 : 0,
+        });
         setSelectedTagIds([]);
         setActivity([]);
         setSavedId(null);
-      });
-      return () => {
-        cancelled = true;
-      };
+      }
+      return;
     }
 
-    Promise.resolve().then(() => {
-      if (cancelled) return;
-      setLoading(true);
-    });
+    setLoading(true);
     Promise.all([getContactById(contactId), getContactActivity(contactId)]).then(
       ([cRes, aRes]) => {
         if (cancelled) return;
@@ -422,7 +424,7 @@ export function ContactFormView({
     return () => {
       cancelled = true;
     };
-  }, [contactId]);
+  }, [contactId, defaultCustomer, defaultVendor]);
 
   function update<K extends keyof FormState>(key: K, value: FormState[K]) {
     setForm((prev) => ({ ...prev, [key]: value }));
@@ -606,6 +608,7 @@ export function ContactFormView({
             onClick={handleSave}
             disabled={isPending}
             title="Save"
+            aria-label="Save"
             className="h-7 w-7 rounded-md border border-slate-200 flex items-center justify-center text-secondary-muted hover:text-violet-600 hover:bg-slate-50 disabled:opacity-60"
           >
             {isPending ? (
@@ -761,6 +764,7 @@ export function ContactFormView({
 
                   {/* Name input - large */}
                   <Input
+                    data-testid="contact-name-input"
                     value={form.name}
                     onChange={(e) => update("name", e.target.value)}
                     placeholder="Name (company or person)"

@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState, useTransition } from "react";
+import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import {
   getAccountingJournalAuditReport,
@@ -19,6 +20,7 @@ import {
 } from "@/components/accounting/AccountingReviewOdooPanels";
 
 export function AccountingJournalAuditView() {
+  const router = useRouter();
   const { switchVersion, isAdminContext } = useAdminOrganization();
   const { activeFilterId } = useAccountingShell();
   const [report, setReport] = useState<JournalAuditReport | null>(null);
@@ -153,7 +155,16 @@ export function AccountingJournalAuditView() {
                 {(report?.rows || []).map((row) => (
                   <tr
                     key={row.journal_id}
-                    className="border-b border-slate-100 hover:bg-slate-50/80"
+                    className="border-b border-slate-100 hover:bg-slate-50/80 cursor-pointer"
+                    onClick={() => {
+                      const params = new URLSearchParams();
+                      params.set("journal", row.journal_id);
+                      if (row.journal_code) params.set("code", row.journal_code);
+                      params.set("year", String(year));
+                      router.push(
+                        `/accounting/review/journal-items?${params.toString()}`
+                      );
+                    }}
                   >
                     <td className="py-2 px-4 pl-8 text-slate-700">
                       {row.journal_code

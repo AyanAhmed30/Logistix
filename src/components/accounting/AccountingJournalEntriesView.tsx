@@ -122,6 +122,7 @@ export function AccountingJournalEntriesView() {
             size="sm"
             className="h-8 rounded-sm bg-[#017e84] hover:bg-[#016970] text-white"
             disabled={isPending}
+            data-testid="journal-entry-new"
             onClick={handleNew}
           >
             <Plus className="h-3.5 w-3.5 mr-1" />

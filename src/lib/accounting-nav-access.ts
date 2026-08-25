@@ -53,7 +53,12 @@ function childAllowed(
   if (
     id === 'accounting-review-journal-items' ||
     id === 'accounting-review-loans-analysis' ||
+    id === 'accounting-review-depreciation-schedule' ||
+    id === 'accounting-review-assets' ||
+    id === 'accounting-review-loans' ||
+    id === 'accounting-review-journal-entries' ||
     id === 'accounting-review-invoices-to-be-issued' ||
+    id === 'accounting-review-invoiced-not-delivered' ||
     id === 'accounting-review-working-files' ||
     id === 'accounting-review-deferred-revenues' ||
     id === 'accounting-review-deferred-expenses' ||
@@ -119,7 +124,12 @@ export function getAccountingNavItemsForLevel(
     if (
       item.id === 'accounting-review-journal-items' ||
       item.id === 'accounting-review-loans-analysis' ||
+      item.id === 'accounting-review-depreciation-schedule' ||
+      item.id === 'accounting-review-assets' ||
+      item.id === 'accounting-review-loans' ||
+      item.id === 'accounting-review-journal-entries' ||
       item.id === 'accounting-review-invoices-to-be-issued' ||
+      item.id === 'accounting-review-invoiced-not-delivered' ||
       item.id === 'accounting-review-working-files' ||
       item.id === 'accounting-review-deferred-revenues' ||
       item.id === 'accounting-review-deferred-expenses'

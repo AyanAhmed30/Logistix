@@ -11,6 +11,7 @@ import {
   Loader2,
   MoreHorizontal,
   Printer,
+  Smartphone,
   Trash2,
   UserRound,
 } from "lucide-react";
@@ -57,6 +58,7 @@ import { SalesProductLinePicker } from "@/components/sales/SalesProductLinePicke
 import { ContactInfoSummary, type ContactInfoSummaryData } from "@/components/shared/ContactInfoSummary";
 import { SalesPageSkeleton } from "@/components/sales/SalesSkeleton";
 import { getSalesQuotationPdfPayload } from "@/app/actions/sales/quotation-pdf";
+import { sendSalesQuotationToCustomer } from "@/app/actions/sales/quotation-customer-send";
 import { generateSalesQuotationPdf } from "@/lib/sales-quotation-pdf";
 import {
   cancelSalesQuotation,
@@ -837,6 +839,66 @@ export function SalesQuotationFormView({
     void runPdf("download");
   }
 
+  async function handleSendToCustomer() {
+    startTransition(async () => {
+      const id = recordId || (await ensureSaved());
+      if (!id) return;
+
+      if (!contactId) {
+        toast.error(
+          "Select a customer contact before sending this quotation to the customer app."
+        );
+        return;
+      }
+
+      setPdfBusy(true);
+      try {
+        const payloadRes = await getSalesQuotationPdfPayload(id);
+        if ("error" in payloadRes && payloadRes.error) {
+          toast.error(payloadRes.error);
+          return;
+        }
+        if (!("payload" in payloadRes) || !payloadRes.payload) {
+          toast.error("Failed to build quotation PDF");
+          return;
+        }
+
+        // Same PDF generator as Download PDF — store that artifact for the customer
+        const generated = await generateSalesQuotationPdf(payloadRes.payload, {
+          silent: true,
+        });
+        if (!generated?.dataUrl) {
+          toast.error("PDF generation failed");
+          return;
+        }
+
+        const result = await sendSalesQuotationToCustomer(id, generated.dataUrl);
+        if ("error" in result) {
+          toast.error(result.error);
+          return;
+        }
+
+        hydrateFromDetail(result.quotation);
+        setChatterKey((k) => k + 1);
+        toast.success(
+          result.resent
+            ? "Quotation PDF resent to customer app"
+            : "Quotation PDF sent to customer app"
+        );
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : "Failed to send quotation");
+      } finally {
+        setPdfBusy(false);
+      }
+    });
+  }
+
+  const canSendToCustomer =
+    !isSalesOrderDoc &&
+    Boolean(recordId || detail?.id || contactId) &&
+    status !== "cancelled";
+  const alreadySentToCustomer = Boolean(detail?.sent_to_customer_at);
+
   async function handlePreview() {
     const id = recordId || detail?.id;
     if (!id) {
@@ -946,6 +1008,34 @@ export function SalesQuotationFormView({
               >
                 Download
               </Button>
+
+              {canSendToCustomer ? (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className={btnSecondary}
+                  disabled={pdfBusy || isPending || isAdminContext || !contactId}
+                  title={
+                    !contactId
+                      ? "Select a customer contact first"
+                      : alreadySentToCustomer
+                        ? "Resend the same quotation PDF to the customer app"
+                        : "Send quotation PDF to the customer mobile app"
+                  }
+                  onClick={() => void handleSendToCustomer()}
+                >
+                  {pdfBusy && isPending ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <>
+                      <Smartphone className="h-3.5 w-3.5 mr-1.5" />
+                      {alreadySentToCustomer
+                        ? "Resend to Customer"
+                        : "Send Quotation to Customer"}
+                    </>
+                  )}
+                </Button>
+              ) : null}
 
               {canConfirm ? (
                 <Button
@@ -1074,6 +1164,17 @@ export function SalesQuotationFormView({
               ) : null}
               {!isSalesOrderDoc ? (
                 <DropdownMenuItem
+                  disabled={pdfBusy || !contactId}
+                  onClick={() => void handleSendToCustomer()}
+                >
+                  <Smartphone className="h-3.5 w-3.5 mr-2" />
+                  {alreadySentToCustomer
+                    ? "Resend Quotation to Customer"
+                    : "Send Quotation to Customer"}
+                </DropdownMenuItem>
+              ) : null}
+              {!isSalesOrderDoc ? (
+                <DropdownMenuItem
                   disabled={pdfBusy}
                   onClick={() => void handleDownload()}
                 >
@@ -1111,6 +1212,15 @@ export function SalesQuotationFormView({
           mode={isSalesOrderDoc ? "order" : "quotation"}
           deliveryStatus={detail?.delivery_status || "waiting"}
         />
+        {alreadySentToCustomer ? (
+          <div className="mt-2 rounded-sm border border-cyan-200 bg-cyan-50 px-3 py-2 text-xs text-cyan-900">
+            Sent to customer app
+            {detail?.sent_to_customer_at
+              ? ` on ${new Date(detail.sent_to_customer_at).toLocaleString()}`
+              : ""}
+            . Resend refreshes the same quotation PDF without creating a duplicate quotation.
+          </div>
+        ) : null}
       </div>
 
       {/* Title + compact smart buttons (Odoo sheet header) */}

@@ -17,6 +17,7 @@ import {
   Activity,
   Clock,
   Loader2,
+  Smartphone,
 } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -76,8 +77,12 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 
-export type LeadInquiryWorkspaceTab = "create" | "view" | "status";
+export type LeadInquiryWorkspaceTab = "create" | "view" | "customer" | "status";
 type MainTab = LeadInquiryWorkspaceTab;
+
+function isCustomerAppInquiry(inq: LeadInquiry | null | undefined): boolean {
+  return Boolean(inq?.customer_submitted);
+}
 
 const HIDDEN_INQUIRY_LOG_KEYS = new Set(["version_number", "inquiry_version", "sent_to_accounting"]);
 
@@ -296,9 +301,19 @@ const WORKFLOW_TABS = [
     label: "View Inquiries",
     shortLabel: "View",
     icon: List,
-    description: "Browse and manage existing inquiries",
+    description: "Browse and manage Sales-created inquiries",
     activeClass: "bg-violet-600 text-white border-violet-600 shadow-md",
     iconClass: "bg-violet-100 text-violet-700",
+    iconActiveClass: "bg-white/20 text-white",
+  },
+  {
+    id: "customer" as const,
+    label: "Customer App Inquiries",
+    shortLabel: "Customer App",
+    icon: Smartphone,
+    description: "Inquiries submitted by customers from the mobile app",
+    activeClass: "bg-cyan-600 text-white border-cyan-600 shadow-md",
+    iconClass: "bg-cyan-100 text-cyan-700",
     iconActiveClass: "bg-white/20 text-white",
   },
   {
@@ -466,6 +481,15 @@ export function LeadInquiryWorkspace({
     }
     return initialMainTab ?? (allowInquiry ? "create" : "view");
   });
+
+  const staffViewInquiries = useMemo(
+    () => leadInquiries.filter((inq) => !isCustomerAppInquiry(inq)),
+    [leadInquiries]
+  );
+  const customerAppInquiries = useMemo(
+    () => leadInquiries.filter((inq) => isCustomerAppInquiry(inq)),
+    [leadInquiries]
+  );
   const [approvedDetailOpen, setApprovedDetailOpen] = useState(false);
   const [approvedDetailLoading, setApprovedDetailLoading] = useState(false);
   const [approvedDetailText, setApprovedDetailText] = useState("");
@@ -630,10 +654,18 @@ export function LeadInquiryWorkspace({
         if (!skipFormHydration) {
           const selectedId = selectedInquiryIdRef.current;
           const selected = selectedId ? list.find((x) => x.id === selectedId) || null : null;
-          const current = selected || list[0] || null;
+          const staffList = list.filter((x) => !isCustomerAppInquiry(x));
+          const customerList = list.filter((x) => isCustomerAppInquiry(x));
+          const pool =
+            mainTab === "customer"
+              ? customerList
+              : mainTab === "view"
+                ? staffList
+                : list;
+          const current = selected || pool[0] || null;
           hydrateFormFromInquiry(current);
 
-          if (mainTab === "view" && current?.id) {
+          if ((mainTab === "view" || mainTab === "customer") && current?.id) {
             void recordInquiryViewed(current.id);
             void fetchLogsForInquiry(current.id);
           } else if (!current?.id) {
@@ -665,13 +697,20 @@ export function LeadInquiryWorkspace({
 
     const skipFormHydration = (layout === "page" || layout === "crm") && mainTab === "create";
     if (!skipFormHydration && initialInquiryBootstrap.inquiries.length > 0) {
+      const list = initialInquiryBootstrap.inquiries;
       const selectedId = selectedInquiryIdRef.current;
-      const selected = selectedId
-        ? initialInquiryBootstrap.inquiries.find((x) => x.id === selectedId) || null
-        : null;
-      const current = selected || initialInquiryBootstrap.inquiries[0] || null;
+      const selected = selectedId ? list.find((x) => x.id === selectedId) || null : null;
+      const staffList = list.filter((x) => !isCustomerAppInquiry(x));
+      const customerList = list.filter((x) => isCustomerAppInquiry(x));
+      const pool =
+        mainTab === "customer"
+          ? customerList
+          : mainTab === "view"
+            ? staffList
+            : list;
+      const current = selected || pool[0] || null;
       hydrateFormFromInquiry(current);
-      if (mainTab === "view" && current?.id) {
+      if ((mainTab === "view" || mainTab === "customer") && current?.id) {
         void recordInquiryViewed(current.id);
         void fetchLogsForInquiry(current.id);
       }
@@ -1027,7 +1066,7 @@ export function LeadInquiryWorkspace({
   );
 
   useEffect(() => {
-    if (!inquiry?.id || !lead?.id || mainTab !== "view") return;
+    if (!inquiry?.id || !lead?.id || (mainTab !== "view" && mainTab !== "customer")) return;
     void fetchChatForInquiry(lead.id, inquiry.id);
     const timer = setInterval(() => {
       void fetchChatForInquiry(lead.id, inquiry.id);
@@ -1107,11 +1146,29 @@ export function LeadInquiryWorkspace({
   );
 
   useEffect(() => {
-    if (layout !== "page" || mode !== "view" || mainTab !== "view") return;
-    if (leadInquiries.length === 0) return;
-    if (selectedInquiryId && leadInquiries.some((x) => x.id === selectedInquiryId)) return;
-    handleSelectInquiry(leadInquiries[0]);
-  }, [layout, mode, mainTab, leadInquiries, selectedInquiryId, handleSelectInquiry]);
+    if (!initialInquiryId || leadInquiries.length === 0) return;
+    const found = leadInquiries.find((x) => x.id === initialInquiryId);
+    if (found && isCustomerAppInquiry(found)) {
+      setMainTab("customer");
+    }
+  }, [initialInquiryId, leadInquiries]);
+
+  useEffect(() => {
+    if (!(layout === "page" || layout === "crm") || mode !== "view") return;
+    if (mainTab !== "view" && mainTab !== "customer") return;
+    const pool = mainTab === "customer" ? customerAppInquiries : staffViewInquiries;
+    if (pool.length === 0) return;
+    if (selectedInquiryId && pool.some((x) => x.id === selectedInquiryId)) return;
+    handleSelectInquiry(pool[0]);
+  }, [
+    layout,
+    mode,
+    mainTab,
+    staffViewInquiries,
+    customerAppInquiries,
+    selectedInquiryId,
+    handleSelectInquiry,
+  ]);
 
   function handleSaveInquiry() {
     if (!lead || isUploadingAttachments || isSavingDraft || isSendingInquiry) {
@@ -1494,7 +1551,7 @@ export function LeadInquiryWorkspace({
 
   const renderFormColumn = (opts: { showInquiryList: boolean }) => (
     <div className="space-y-6">
-      {opts.showInquiryList && mode === "view" && leadInquiries.length > 0 && (
+      {opts.showInquiryList && mode === "view" && staffViewInquiries.length > 0 && (
         <Card className="bg-white shadow-sm border border-gray-200 rounded-xl overflow-hidden">
           <div className="bg-gradient-to-r from-purple-50 to-blue-50 px-4 py-3 border-b border-gray-200">
             <h3 className="text-sm font-semibold text-gray-900">Available Inquiries</h3>
@@ -1502,7 +1559,7 @@ export function LeadInquiryWorkspace({
           </div>
           <div className="p-4">
             <div className="flex flex-wrap gap-2">
-              {leadInquiries.map((inq) => {
+              {staffViewInquiries.map((inq) => {
                 const isApproved = salesInquiryIsApproved(inq, approvedInquiryId);
                 return (
                   <Button
@@ -1524,7 +1581,8 @@ export function LeadInquiryWorkspace({
       )}
 
       {inquiry &&
-        ((mode === "view" && !tabbedPage) || (tabbedPage && mainTab === "view")) && (
+        ((mode === "view" && !tabbedPage) ||
+          (tabbedPage && (mainTab === "view" || mainTab === "customer"))) && (
         <div className="flex justify-end gap-3">
           {isViewEditing ? (
             <>
@@ -1557,6 +1615,23 @@ export function LeadInquiryWorkspace({
             <div>
               <p className="text-sm font-semibold text-emerald-900">Inquiry Approved</p>
               <p className="text-xs text-emerald-700 mt-1">This inquiry has been approved by the admin. You may proceed with next steps.</p>
+            </div>
+          </div>
+        </Card>
+      )}
+
+      {inquiry?.customer_submitted && !inquiry.sent_to_accounting && (
+        <Card className="bg-gradient-to-r from-cyan-50 to-sky-50 border-cyan-200 rounded-xl overflow-hidden">
+          <div className="p-4 flex items-start gap-3">
+            <div className="w-10 h-10 bg-cyan-100 rounded-full flex items-center justify-center shrink-0">
+              <Smartphone className="h-5 w-5 text-cyan-700" />
+            </div>
+            <div>
+              <p className="text-sm font-semibold text-cyan-950">Submitted by customer (mobile app)</p>
+              <p className="text-xs text-cyan-800 mt-1">
+                Review the cargo details below. When ready, use <span className="font-semibold">Submit Inquiry</span> to
+                forward this to Operations — the same send path as CRM inquiries you create yourself.
+              </p>
             </div>
           </div>
         </Card>
@@ -2013,6 +2088,44 @@ export function LeadInquiryWorkspace({
           </div>
         </Card>
       )}
+
+      {!isCreateFlow &&
+        inquiry &&
+        !inquiry.sent_to_accounting &&
+        (mainTab === "customer" || isCustomerAppInquiry(inquiry)) && (
+        <Card className="bg-gradient-to-r from-cyan-50 to-white shadow-sm border border-cyan-200 rounded-xl overflow-hidden">
+          <div className="p-4">
+            <div className="flex flex-col sm:flex-row gap-3">
+              <Button
+                type="button"
+                onClick={handleSendInquiry}
+                disabled={isSendingInquiry || isSavingDraft || isUploadingAttachments || !isSendFormValid}
+                className="flex-1 h-12 rounded-lg bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-700 hover:to-blue-700 text-white font-semibold shadow-lg disabled:opacity-60"
+              >
+                {isSendingInquiry ? (
+                  <>
+                    <Loader2 className="h-5 w-5 mr-2 animate-spin" />
+                    Submitting Inquiry...
+                  </>
+                ) : (
+                  <>
+                    <Send className="h-5 w-5 mr-2" />
+                    {isUploadingAttachments ? "Uploading..." : "Submit Inquiry"}
+                  </>
+                )}
+              </Button>
+            </div>
+            <p className="text-xs text-cyan-800 mt-2 text-center">
+              Forwards this customer app inquiry to Operations using the same send path as CRM inquiries.
+            </p>
+            {showSendValidation && !isSendFormValid && (
+              <p className="text-xs text-red-500 mt-2 text-center">
+                Complete all required product information fields before submitting.
+              </p>
+            )}
+          </div>
+        </Card>
+      )}
     </div>
   );
 
@@ -2071,9 +2184,20 @@ export function LeadInquiryWorkspace({
                     <Icon className="h-4 w-4" />
                   </div>
                   <div className="min-w-0">
-                    <div className="font-semibold text-sm leading-tight">
+                    <div className="font-semibold text-sm leading-tight flex items-center gap-2">
                       <span className="lg:hidden">{t.shortLabel}</span>
                       <span className="hidden lg:inline">{t.label}</span>
+                      {t.id === "customer" && customerAppInquiries.length > 0 ? (
+                        <Badge
+                          className={`text-[10px] px-1.5 py-0 h-5 font-semibold border-0 ${
+                            activeTab && !isDisabled
+                              ? "bg-white/25 text-white"
+                              : "bg-cyan-100 text-cyan-800"
+                          }`}
+                        >
+                          {customerAppInquiries.length}
+                        </Badge>
+                      ) : null}
                     </div>
                     <div
                       className={`text-xs mt-1 leading-relaxed hidden lg:block ${
@@ -2244,7 +2368,7 @@ export function LeadInquiryWorkspace({
                       <div className="bg-gradient-to-r from-purple-50 to-blue-50 px-4 py-3 border-b border-gray-200">
                         <h3 className="text-sm font-semibold text-gray-900 flex items-center gap-2">
                           <List className="h-4 w-4" />
-                          All Inquiries
+                          Sales Inquiries
                         </h3>
                         <p className="text-xs text-gray-600 mt-1">Select an inquiry to view details</p>
                       </div>
@@ -2269,7 +2393,7 @@ export function LeadInquiryWorkspace({
                           </div>
                         )}
                         
-                        {leadInquiries.length === 0 ? (
+                        {staffViewInquiries.length === 0 ? (
                           <div className="text-center py-8">
                             <div className="w-12 h-12 mx-auto mb-3 bg-gray-100 rounded-full flex items-center justify-center">
                               <Inbox className="h-6 w-6 text-gray-400" />
@@ -2284,7 +2408,7 @@ export function LeadInquiryWorkspace({
                           </div>
                         ) : (
                           <div className="space-y-2">
-                            {leadInquiries.map((inq) => {
+                            {staffViewInquiries.map((inq) => {
                               const isApproved = salesInquiryIsApproved(inq, approvedInquiryId);
                               return (
                                 <button
@@ -2330,12 +2454,12 @@ export function LeadInquiryWorkspace({
 
                   {/* Inquiry Details */}
                   <div className="lg:col-span-2 space-y-4">
-                    {leadInquiries.length > 0 && inquiry ? (
+                    {staffViewInquiries.length > 0 && inquiry ? (
                       <>
                         {renderFormColumn({ showInquiryList: false })}
                         {renderInquiryLogsPanel(true)}
                       </>
-                    ) : leadInquiries.length > 0 ? (
+                    ) : staffViewInquiries.length > 0 ? (
                       <Card className="bg-white shadow-sm border border-gray-200 rounded-xl overflow-hidden">
                         <div className="p-8 text-center">
                           <div className="w-16 h-16 mx-auto mb-4 bg-gray-100 rounded-full flex items-center justify-center">
@@ -2344,6 +2468,103 @@ export function LeadInquiryWorkspace({
                           <h3 className="text-lg font-semibold text-gray-900 mb-2">Select an Inquiry</h3>
                           <p className="text-sm text-gray-600">
                             Choose an inquiry from the sidebar to view its details and make edits.
+                          </p>
+                        </div>
+                      </Card>
+                    ) : null}
+                  </div>
+                </div>
+              )}
+              {mainTab === "customer" && (
+                <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                  <div className="lg:col-span-1 space-y-4">
+                    <Card className="bg-white shadow-sm border border-gray-200 rounded-xl overflow-hidden">
+                      <div className="bg-gradient-to-r from-cyan-50 to-blue-50 px-4 py-3 border-b border-gray-200">
+                        <h3 className="text-sm font-semibold text-gray-900 flex items-center gap-2">
+                          <Smartphone className="h-4 w-4" />
+                          Customer App Inquiries
+                        </h3>
+                        <p className="text-xs text-gray-600 mt-1">
+                          Submitted from the customer mobile app
+                        </p>
+                      </div>
+                      <div className="p-2">
+                        {customerAppInquiries.length === 0 ? (
+                          <div className="text-center py-8">
+                            <div className="w-12 h-12 mx-auto mb-3 bg-gray-100 rounded-full flex items-center justify-center">
+                              <Inbox className="h-6 w-6 text-gray-400" />
+                            </div>
+                            <p className="text-sm font-semibold text-gray-700 mb-1">No Customer App Inquiries</p>
+                            <p className="text-xs text-gray-500 leading-relaxed">
+                              Inquiries submitted from the customer app will appear here.
+                            </p>
+                          </div>
+                        ) : (
+                          <div className="space-y-2">
+                            {customerAppInquiries.map((inq) => {
+                              const isApproved = salesInquiryIsApproved(inq, approvedInquiryId);
+                              return (
+                                <button
+                                  key={inq.id}
+                                  type="button"
+                                  onClick={() => handleSelectInquiry(inq)}
+                                  className={`w-full text-left p-3 rounded-lg border transition-all duration-200 ${
+                                    selectedInquiryId === inq.id
+                                      ? "bg-gradient-to-r from-cyan-50 to-blue-50 border-cyan-200 shadow-sm"
+                                      : "bg-white border-gray-200 hover:border-gray-300 hover:shadow-sm"
+                                  }`}
+                                >
+                                  <div className="flex items-start justify-between gap-2">
+                                    <div className="flex-1 min-w-0">
+                                      <p className="font-semibold text-sm text-gray-900 truncate mb-1">
+                                        {inq.product_name?.trim() || "Unnamed Inquiry"}
+                                      </p>
+                                      <p className="text-xs text-gray-500 mb-2">
+                                        {inq.created_at && new Date(inq.created_at).toLocaleDateString()}
+                                      </p>
+                                      <div className="flex flex-wrap gap-1.5">
+                                        <Badge className="text-xs px-2 py-1 rounded-full border-0 font-semibold bg-cyan-100 text-cyan-800">
+                                          Customer App
+                                        </Badge>
+                                        <Badge
+                                          className={`text-xs px-2 py-1 rounded-full border-0 font-semibold ${
+                                            isApproved
+                                              ? "bg-emerald-100 text-emerald-800"
+                                              : "bg-amber-100 text-amber-800"
+                                          }`}
+                                        >
+                                          {isApproved ? "Approved" : "Pending"}
+                                        </Badge>
+                                      </div>
+                                    </div>
+                                    {selectedInquiryId === inq.id && (
+                                      <div className="w-2 h-2 bg-cyan-500 rounded-full flex-shrink-0 mt-1"></div>
+                                    )}
+                                  </div>
+                                </button>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </div>
+                    </Card>
+                  </div>
+
+                  <div className="lg:col-span-2 space-y-4">
+                    {customerAppInquiries.length > 0 && inquiry ? (
+                      <>
+                        {renderFormColumn({ showInquiryList: false })}
+                        {renderInquiryLogsPanel(true)}
+                      </>
+                    ) : customerAppInquiries.length > 0 ? (
+                      <Card className="bg-white shadow-sm border border-gray-200 rounded-xl overflow-hidden">
+                        <div className="p-8 text-center">
+                          <div className="w-16 h-16 mx-auto mb-4 bg-gray-100 rounded-full flex items-center justify-center">
+                            <FileText className="h-8 w-8 text-gray-400" />
+                          </div>
+                          <h3 className="text-lg font-semibold text-gray-900 mb-2">Select an Inquiry</h3>
+                          <p className="text-sm text-gray-600">
+                            Choose a customer app inquiry from the sidebar to review and send to Operations.
                           </p>
                         </div>
                       </Card>

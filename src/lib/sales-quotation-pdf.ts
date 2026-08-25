@@ -21,6 +21,8 @@ import {
 export type GenerateSalesQuotationPdfOptions = {
   download?: boolean;
   openPrintDialog?: boolean;
+  /** When true, only return dataUrl — do not download, print, or open a tab. */
+  silent?: boolean;
 };
 
 /**
@@ -216,6 +218,10 @@ export async function generateSalesQuotationPdf(
   const dataUrl = (doc as unknown as { output: (t: string) => string }).output(
     'datauristring'
   );
+
+  if (options.silent) {
+    return { dataUrl };
+  }
 
   if (options.download) {
     (doc as unknown as { save: (n: string) => void }).save(

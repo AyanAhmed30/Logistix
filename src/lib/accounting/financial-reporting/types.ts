@@ -35,7 +35,9 @@ export type LedgerFact = {
   credit: number;
   label: string | null;
   source_type: string | null;
+  source_id: string | null;
   source_number: string | null;
+  tax_label: string | null;
   journal_id: string | null;
   journal_code: string | null;
   journal_name: string | null;
@@ -339,6 +341,10 @@ export type PartnerLedgerPartner = {
   period_debit: number;
   period_credit: number;
   balance: number;
+  /** Closing AR residual (debit − credit) from receivable accounts only. */
+  receivable_outstanding: number;
+  /** Closing AP residual (credit − debit) from payable accounts only. */
+  payable_outstanding: number;
   lines: PartnerLedgerLine[];
 };
 

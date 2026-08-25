@@ -1,8 +1,8 @@
 import {
   aggregateAccountBalances,
-  dayBefore,
   loadChartAccounts,
   loadPostedLedgerFacts,
+  splitFactsByPeriod,
 } from '@/lib/accounting/financial-reporting/ledger';
 import {
   isLiquidityAccount,
@@ -99,32 +99,22 @@ export async function buildCashFlow(opts: {
     accounts.filter((a) => isLiquidityAccount(a)).map((a) => a.id)
   );
 
-  const beforeFrom = dayBefore(opts.dateFrom);
-  const openingFacts = beforeFrom
-    ? await loadPostedLedgerFacts({
-        organizationId: opts.organizationId,
-        dateTo: beforeFrom,
-      })
-    : [];
+  const throughTo = await loadPostedLedgerFacts({
+    organizationId: opts.organizationId,
+    dateTo: opts.dateTo,
+  });
+  const { opening: openingFacts, period: periodFacts } = splitFactsByPeriod(
+    throughTo,
+    opts.dateFrom,
+    opts.dateTo
+  );
   const openingCash = sumLiquidity(
     aggregateAccountBalances(openingFacts, accounts)
   );
 
   const closingCash = sumLiquidity(
-    aggregateAccountBalances(
-      await loadPostedLedgerFacts({
-        organizationId: opts.organizationId,
-        dateTo: opts.dateTo,
-      }),
-      accounts
-    )
+    aggregateAccountBalances(throughTo, accounts)
   );
-
-  const periodFacts = await loadPostedLedgerFacts({
-    organizationId: opts.organizationId,
-    dateFrom: opts.dateFrom,
-    dateTo: opts.dateTo,
-  });
 
   const byEntry = new Map<string, LedgerFact[]>();
   for (const f of periodFacts) {

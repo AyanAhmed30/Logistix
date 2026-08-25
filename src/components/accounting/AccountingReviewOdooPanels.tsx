@@ -376,6 +376,21 @@ export function ReviewEmptyState({
   );
 }
 
+export function ReviewUnsupportedBanner({
+  title,
+  body,
+}: {
+  title: string;
+  body: string;
+}) {
+  return (
+    <div className="mx-auto max-w-5xl mt-4 rounded-md border border-amber-200 bg-amber-50 px-4 py-3">
+      <p className="text-sm font-semibold text-amber-950">{title}</p>
+      <p className="text-sm text-amber-900/80 mt-1 leading-relaxed">{body}</p>
+    </div>
+  );
+}
+
 export function ReviewMeasuresBar({
   measures,
 }: {

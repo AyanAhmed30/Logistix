@@ -1,14 +1,22 @@
 /**
- * Shared AR/AP aging engine (Phase 3).
+ * Shared AR/AP aging engine.
  *
- * Outstanding as-of is derived from posted source documents + payments
- * through the as-of date, and only includes documents with a posted journal entry.
- * Aging uses canonical document due_date (payment terms).
+ * Outstanding as-of is the posted receivable/payable ledger residual
+ * (same source of truth as Partner Ledger / Trial Balance).
+ * Invoice and bill documents supply due dates for bucket allocation only.
  */
 
 import { createAdminClient } from '@/utils/supabase/server';
 import { appliedPaymentAmount } from '@/lib/accounting-payments';
 import { round2 } from '@/lib/accounting/financial-reporting/types';
+import {
+  loadChartAccounts,
+  loadPostedLedgerFacts,
+} from '@/lib/accounting/financial-reporting/ledger';
+import {
+  allocateOutstandingToDocuments,
+  partnerOutstandingFromFacts,
+} from '@/lib/accounting/financial-reporting/aging-allocate';
 import {
   DEFAULT_AGING_BUCKETS,
   resolveAgingBucket,
@@ -266,6 +274,89 @@ async function loadDocumentAdjustments(opts: {
   return map;
 }
 
+async function loadUnappliedCreditNoteLines(opts: {
+  organizationId: string | null;
+  asOf: string;
+  currency: string;
+  search: string;
+  buckets: AgingBucketDef[];
+}): Promise<AgingLine[]> {
+  const supabase = await createAdminClient();
+  let q = supabase
+    .from('accounting_credit_notes')
+    .select(
+      'id, credit_note_number, customer_name, contact_id, credit_note_date, total_amount, amount_refunded, status, journal_entry_id, payment_state'
+    )
+    .eq('status', 'posted')
+    .lte('credit_note_date', opts.asOf);
+  if (opts.organizationId) q = q.eq('organization_id', opts.organizationId);
+  const { data, error } = await q.limit(4000);
+  if (error) {
+    if (/relation|schema cache|column/i.test(error.message)) return [];
+    throw new Error(error.message);
+  }
+
+  const ids = (data || []).map((r) => String(r.id));
+  const postedIds = await loadPostedSourceIds(
+    opts.organizationId,
+    'credit_note',
+    ids
+  );
+
+  const lines: AgingLine[] = [];
+  for (const cn of data || []) {
+    const id = String(cn.id);
+    if (!postedIds.has(id)) continue;
+    const residual = round2(
+      Math.max(
+        0,
+        (Number(cn.total_amount) || 0) - (Number(cn.amount_refunded) || 0)
+      )
+    );
+    if (residual <= 0.004) continue;
+    if (String(cn.payment_state || '') === 'paid') continue;
+
+    const documentDate = String(cn.credit_note_date || '').slice(0, 10);
+    if (!documentDate || documentDate > opts.asOf) continue;
+
+    const partnerName = String(cn.customer_name || 'Unknown');
+    const number = String(cn.credit_note_number || '');
+    if (opts.search) {
+      const hay = `${partnerName} ${number}`.toLowerCase();
+      if (!hay.includes(opts.search)) continue;
+    }
+
+    const { bucket, daysOverdue } = resolveAgingBucket(
+      documentDate,
+      opts.asOf,
+      opts.buckets
+    );
+    const amounts = emptyAmounts(opts.buckets);
+    amounts[bucket] = round2(-residual);
+    const contactId = cn.contact_id ? String(cn.contact_id) : null;
+
+    lines.push({
+      key: `receivable:cn:${id}`,
+      document_id: id,
+      reference: number,
+      partner_key: contactId || `name:${partnerName.toLowerCase()}`,
+      contact_id: contactId,
+      partner_name: partnerName,
+      document_date: documentDate,
+      due_date: documentDate,
+      outstanding: round2(-residual),
+      days_overdue: daysOverdue,
+      bucket,
+      amounts,
+      currency: opts.currency,
+      journal_entry_id: cn.journal_entry_id
+        ? String(cn.journal_entry_id)
+        : null,
+    });
+  }
+  return lines;
+}
+
 /**
  * Build Aged Receivable or Aged Payable as of a date.
  */
@@ -332,47 +423,116 @@ export async function buildAgingReport(opts: {
   const search = String(opts.search || '')
     .trim()
     .toLowerCase();
-  const lines: AgingLine[] = [];
 
+  const accounts = await loadChartAccounts(opts.organizationId);
+  const tradeType = opts.side === 'receivable' ? 'receivable' : 'payable';
+  const tradeIds = new Set(
+    accounts
+      .filter((a) => String(a.account_type || '') === tradeType)
+      .map((a) => a.id)
+  );
+
+  const facts = await loadPostedLedgerFacts({
+    organizationId: opts.organizationId,
+    dateTo: asOf,
+  });
+
+  const partnerGl = new Map<
+    string,
+    { debit: number; credit: number; contact_id: string | null; partner_name: string }
+  >();
+  for (const f of facts) {
+    if (!tradeIds.has(f.account_id)) continue;
+    const key =
+      f.contact_id || `name:${(f.partner_name || 'Unknown').toLowerCase()}`;
+    const cur = partnerGl.get(key) || {
+      debit: 0,
+      credit: 0,
+      contact_id: f.contact_id,
+      partner_name: f.partner_name || 'Unknown',
+    };
+    cur.debit = round2(cur.debit + f.debit);
+    cur.credit = round2(cur.credit + f.credit);
+    if (!cur.contact_id && f.contact_id) cur.contact_id = f.contact_id;
+    if (f.partner_name) cur.partner_name = f.partner_name;
+    partnerGl.set(key, cur);
+  }
+
+  const docsByPartner = new Map<string, typeof docs>();
   for (const doc of docs) {
     if (!doc.document_date || doc.document_date > asOf) continue;
-    // Must have a posted journal entry for this document
     if (!postedIds.has(doc.id)) continue;
-
-    const paid = paidByDoc.get(doc.id) || 0;
-    const adjusted = adjustments.get(doc.id) || 0;
-    const outstanding = round2(Math.max(0, doc.total_amount - paid - adjusted));
-    if (outstanding <= 0.004) continue;
-
-    const dueDate = (doc.due_date || doc.document_date).slice(0, 10);
-    const { bucket, daysOverdue } = resolveAgingBucket(dueDate, asOf, buckets);
-
     const partnerKey =
       doc.contact_id || `name:${doc.partner_name.toLowerCase()}`;
+    const list = docsByPartner.get(partnerKey) || [];
+    list.push(doc);
+    docsByPartner.set(partnerKey, list);
+  }
+
+  const lines: AgingLine[] = [];
+
+  const partnerKeys = new Set([...partnerGl.keys(), ...docsByPartner.keys()]);
+  for (const partnerKey of partnerKeys) {
+    const gl = partnerGl.get(partnerKey);
+    const outstanding = gl
+      ? partnerOutstandingFromFacts(opts.side, gl.debit, gl.credit)
+      : 0;
+    if (Math.abs(outstanding) < 0.004) continue;
+
+    const partnerName = gl?.partner_name || docsByPartner.get(partnerKey)?.[0]?.partner_name || 'Unknown';
+    const contactId = gl?.contact_id || docsByPartner.get(partnerKey)?.[0]?.contact_id || null;
     if (search) {
-      const hay = `${doc.partner_name} ${doc.number}`.toLowerCase();
-      if (!hay.includes(search)) continue;
+      const hay = partnerName.toLowerCase();
+      if (!hay.includes(search) && !partnerKey.toLowerCase().includes(search)) {
+        continue;
+      }
     }
 
-    const amounts = emptyAmounts(buckets);
-    amounts[bucket] = outstanding;
-
-    lines.push({
-      key: `${opts.side}:${doc.id}`,
-      document_id: doc.id,
-      reference: doc.number,
-      partner_key: partnerKey,
-      contact_id: doc.contact_id,
-      partner_name: doc.partner_name,
-      document_date: doc.document_date,
-      due_date: dueDate,
-      outstanding,
-      days_overdue: daysOverdue,
-      bucket,
-      amounts,
-      currency: doc.currency || opts.currency || 'PKR',
-      journal_entry_id: doc.journal_entry_id,
+    const allocDocs = (docsByPartner.get(partnerKey) || []).map((doc) => {
+      const paid = paidByDoc.get(doc.id) || 0;
+      const adjusted = adjustments.get(doc.id) || 0;
+      return {
+        id: doc.id,
+        reference: doc.number,
+        due_date: (doc.due_date || doc.document_date).slice(0, 10),
+        document_date: doc.document_date,
+        journal_entry_id: doc.journal_entry_id,
+        cap: round2(Math.max(0, doc.total_amount - paid - adjusted)),
+      };
     });
+
+    const allocated = allocateOutstandingToDocuments({
+      outstanding,
+      documents: allocDocs,
+      leftoverReference: 'Posted journal items',
+      asOf,
+    });
+
+    for (const row of allocated) {
+      const { bucket, daysOverdue } = resolveAgingBucket(
+        row.due_date,
+        asOf,
+        buckets
+      );
+      const amounts = emptyAmounts(buckets);
+      amounts[bucket] = row.amount;
+      lines.push({
+        key: `${opts.side}:${partnerKey}:${row.document_id}`,
+        document_id: row.document_id,
+        reference: row.reference,
+        partner_key: partnerKey,
+        contact_id: contactId,
+        partner_name: partnerName,
+        document_date: row.document_date,
+        due_date: row.due_date,
+        outstanding: row.amount,
+        days_overdue: daysOverdue,
+        bucket,
+        amounts,
+        currency: opts.currency || 'PKR',
+        journal_entry_id: row.journal_entry_id,
+      });
+    }
   }
 
   const byPartner = new Map<string, AgingLine[]>();

@@ -5,29 +5,36 @@ import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { createManualAccountingCreditNote } from "@/app/actions/accounting/credit-notes";
 import { AccountingFormSkeleton } from "@/components/accounting/AccountingSkeleton";
-import { useAdminOrganization } from "@/contexts/AdminOrganizationContext";
+import { useAdminOrganizationOptional } from "@/contexts/AdminOrganizationContext";
 
 /**
  * Odoo-style New Credit Note: create a Draft, then open the credit note form.
  */
 export default function NewAccountingCreditNotePage() {
   const router = useRouter();
-  const { isAdminContext } = useAdminOrganization();
+  const org = useAdminOrganizationOptional();
+  const isAdminContext = org?.isAdminContext ?? false;
+  const isSwitching = org?.isSwitching ?? true;
+  const organizationId = org?.organizationId ?? null;
   const [error, setError] = useState<string | null>(null);
   const started = useRef(false);
 
   useEffect(() => {
+    if (isSwitching) return;
+    if (isAdminContext || !organizationId) {
+      if (!isSwitching && isAdminContext) {
+        toast.info("Select a specific organization to create credit notes.");
+        router.replace("/accounting/credit-notes");
+      }
+      return;
+    }
     if (started.current) return;
     started.current = true;
 
     void (async () => {
-      if (isAdminContext) {
-        toast.info("Select a specific organization to create credit notes.");
-        router.replace("/accounting/credit-notes");
-        return;
-      }
       const res = await createManualAccountingCreditNote();
       if ("error" in res && res.error) {
+        started.current = false;
         setError(res.error);
         toast.error(res.error);
         return;
@@ -36,7 +43,7 @@ export default function NewAccountingCreditNotePage() {
         router.replace(`/accounting/credit-notes/${res.creditNoteId}`);
       }
     })();
-  }, [isAdminContext, router]);
+  }, [isAdminContext, isSwitching, organizationId, router]);
 
   if (error) {
     return (

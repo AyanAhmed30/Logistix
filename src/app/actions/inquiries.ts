@@ -159,6 +159,7 @@ const SALES_AGENT_LEAD_INQUIRIES_SELECT = `
   sent_at,
   approval_status,
   approved_at,
+  customer_submitted,
   created_at,
   updated_at,
   inquiry_confirmations (
@@ -244,12 +245,13 @@ export type LeadInquiry = {
   sent_to_accounting: boolean;
   sent_to_operations: boolean;
   sent_at: string | null;
-  approval_status?: 'sent' | 'approved' | 'rejected';
+  approval_status?: 'draft' | 'sent' | 'approved' | 'rejected';
   approved_at?: string | null;
   calculator_values: Record<string, string> | Record<string, unknown> | null;
   organization_id?: string | null;
   crm_opportunity_id?: string | null;
   created_by?: string | null;
+  customer_submitted?: boolean | null;
   created_at: string;
   updated_at: string;
   inquiry_confirmations?: {

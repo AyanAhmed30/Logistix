@@ -60,6 +60,36 @@ export function outstandingFromComponents(opts: {
 }
 
 /**
+ * Posted credit notes already reduce invoice residual via adjustments.
+ * Only customer payments may increase amount_paid during a match.
+ */
+export function invoicePaidDeltaFromReconcileCredits(opts: {
+  invoiceDebitAmount: number;
+  remainingPaymentCredits: number;
+}): { paidDelta: number; remainingPaymentCredits: number } {
+  const debit = round2(Math.max(0, Number(opts.invoiceDebitAmount) || 0));
+  const remaining = round2(Math.max(0, Number(opts.remainingPaymentCredits) || 0));
+  const paidDelta = round2(Math.min(debit, remaining));
+  return {
+    paidDelta,
+    remainingPaymentCredits: round2(Math.max(0, remaining - paidDelta)),
+  };
+}
+
+/** Portion of a credit note that absorbs open invoice residual (Odoo auto-reconcile). */
+export function creditNoteAppliedToOpenInvoice(opts: {
+  creditNoteTotal: number;
+  invoiceOpenBeforeNote: number;
+}): number {
+  return round2(
+    Math.min(
+      Math.max(0, Number(opts.creditNoteTotal) || 0),
+      Math.max(0, Number(opts.invoiceOpenBeforeNote) || 0)
+    )
+  );
+}
+
+/**
  * Amount of a payment that actually reduces document residual.
  * Unreconciled bank (outstanding receipts) does not reduce Amount Due.
  */
@@ -150,7 +180,7 @@ export function computePaymentState(opts: {
     }
     return { paymentState: 'paid', outstanding: 0, amountPaid };
   }
-  if (amountPaid > 0.004) {
+  if (amountPaid > 0.004 || (bankStyle && opts.preferInPayment)) {
     if (bankStyle) {
       return { paymentState: 'in_payment', outstanding, amountPaid };
     }

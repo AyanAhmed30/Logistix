@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState, useTransition } from "react";
+import { useCallback, useEffect, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { useAdminOrganization } from "@/contexts/AdminOrganizationContext";
@@ -12,7 +12,7 @@ import {
   ReviewFilterChip,
   ReviewReportCard,
   ReviewReportToolbar,
-  ReviewSlidersIcon,
+  ReviewUnsupportedBanner,
   formatReviewMoney,
 } from "@/components/accounting/AccountingReviewOdooPanels";
 import {
@@ -67,15 +67,7 @@ export function AccountingDeferredReportReviewView({ kind }: Props) {
     load();
   }, [load, switchVersion]);
 
-  const hasData = useMemo(() => {
-    if (!report) return false;
-    return (
-      report.has_journal_activity ||
-      report.has_schedules ||
-      report.account_rows.length > 0
-    );
-  }, [report]);
-
+  const hasPostedActivity = Boolean(report?.has_journal_activity);
   const currencyLabel =
     report?.currency === "PKR" || !report?.currency
       ? "In .Rs."
@@ -114,13 +106,17 @@ export function AccountingDeferredReportReviewView({ kind }: Props) {
                 </div>
               ) : null}
             </div>
-            <ReviewFilterChip>Comparison</ReviewFilterChip>
-            <ReviewFilterChip icon={<ReviewSlidersIcon />}>
-              Group by Account
-            </ReviewFilterChip>
-            <ReviewFilterChip>Options</ReviewFilterChip>
             <ReviewFilterChip>{currencyLabel}</ReviewFilterChip>
           </>
+        }
+      />
+
+      <ReviewUnsupportedBanner
+        title="Recognition engine is not implemented"
+        body={
+          kind === "deferred_revenue"
+            ? "Invoices do not create deferral schedules, and nothing posts monthly recognition journal entries. This screen never invents recognition amounts. If a deferred-revenue account has posted journal items, those ledger facts are shown below."
+            : "Vendor bills do not create prepaid/expense schedules, and nothing posts monthly recognition journal entries. This screen never invents recognition amounts. If a prepayments account has posted journal items, those ledger facts are shown below."
         }
       />
 
@@ -128,15 +124,27 @@ export function AccountingDeferredReportReviewView({ kind }: Props) {
         <div className="mx-auto max-w-5xl mt-4">
           <AccountingTableSkeleton rows={8} cols={6} />
         </div>
-      ) : !hasData ? (
+      ) : !hasPostedActivity ? (
         <ReviewEmptyState
-          title="No data to display!"
-          subtitle="There is no data to display for the given filters."
+          title="No posted deferral activity"
+          subtitle="There are no posted journal items on deferral accounts for this period. Automatic schedules are not supported yet."
         />
       ) : (
         <div className="space-y-4 mx-auto max-w-5xl mt-4 mb-8">
           {report && report.account_rows.length > 0 ? (
             <ReviewReportCard>
+              <div className="px-4 py-3 border-b border-slate-100">
+                <h2 className="text-sm font-semibold text-slate-800">
+                  Posted journal activity
+                </h2>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  Net posted debit/credit on{" "}
+                  {kind === "deferred_revenue"
+                    ? "Deferred Revenue"
+                    : "Prepayments"}{" "}
+                  accounts — not a recognition schedule
+                </p>
+              </div>
               <div className="overflow-x-auto">
                 <table className="w-full min-w-[640px] text-sm border-collapse">
                   <thead>
@@ -161,11 +169,16 @@ export function AccountingDeferredReportReviewView({ kind }: Props) {
                     {report.account_rows.map((row) => (
                       <tr
                         key={row.account_id}
-                        className="border-b border-slate-100 hover:bg-slate-50/60"
+                        className="border-b border-slate-100 hover:bg-slate-50/60 cursor-pointer"
+                        onClick={() =>
+                          router.push("/accounting/review/journal-items")
+                        }
                       >
                         <td className="py-2 px-4 text-slate-800">
                           <span className="font-medium">{row.account_code}</span>
-                          <span className="text-slate-500 ml-2">{row.account_name}</span>
+                          <span className="text-slate-500 ml-2">
+                            {row.account_name}
+                          </span>
                         </td>
                         {row.months.map((m) => (
                           <td
@@ -184,83 +197,6 @@ export function AccountingDeferredReportReviewView({ kind }: Props) {
                 </table>
               </div>
             </ReviewReportCard>
-          ) : null}
-
-          {report && report.schedules.length > 0 ? (
-            <ReviewReportCard>
-              <div className="px-4 py-3 border-b border-slate-100">
-                <h2 className="text-sm font-semibold text-slate-800">
-                  Recognition Schedules
-                </h2>
-                <p className="text-xs text-slate-500 mt-0.5">
-                  Traceable deferral schedules linked to source documents
-                </p>
-              </div>
-              <div className="overflow-x-auto">
-                <table className="w-full min-w-[900px] text-sm border-collapse">
-                  <thead>
-                    <tr className="border-b border-slate-200 bg-slate-50 text-[11px] uppercase tracking-wide text-slate-500">
-                      <th className="text-left py-2 px-3">Source</th>
-                      <th className="text-left py-2 px-3">Partner</th>
-                      <th className="text-left py-2 px-3">Product</th>
-                      <th className="text-right py-2 px-3">Original</th>
-                      <th className="text-right py-2 px-3">Recognized</th>
-                      <th className="text-right py-2 px-3">Remaining</th>
-                      <th className="text-left py-2 px-3">Next Date</th>
-                      <th className="text-left py-2 px-3">Status</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {report.schedules.map((s) => (
-                      <tr
-                        key={s.id}
-                        className="border-b border-slate-100 hover:bg-slate-50/60 cursor-pointer"
-                        onClick={() => {
-                          if (s.initial_journal_entry_id) {
-                            router.push(
-                              `/accounting/journal-entries/${s.initial_journal_entry_id}`
-                            );
-                          }
-                        }}
-                      >
-                        <td className="py-2 px-3 font-medium text-slate-800">
-                          {s.source_number || "—"}
-                        </td>
-                        <td className="py-2 px-3 text-slate-600">
-                          {s.partner_name || "—"}
-                        </td>
-                        <td className="py-2 px-3 text-slate-600">
-                          {s.product_name || "—"}
-                        </td>
-                        <td className="py-2 px-3 text-right tabular-nums">
-                          {formatReviewMoney(s.original_amount)}
-                        </td>
-                        <td className="py-2 px-3 text-right tabular-nums">
-                          {formatReviewMoney(s.recognized_amount)}
-                        </td>
-                        <td className="py-2 px-3 text-right tabular-nums font-medium">
-                          {formatReviewMoney(s.remaining_amount)}
-                        </td>
-                        <td className="py-2 px-3 text-slate-600">
-                          {s.next_recognition_date || "—"}
-                        </td>
-                        <td className="py-2 px-3 capitalize text-slate-600">
-                          {s.status.replace(/_/g, " ")}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </ReviewReportCard>
-          ) : null}
-
-          {report && !report.has_deferral_accounts ? (
-            <p className="text-xs text-center text-slate-500 px-4">
-              Configure accounts with type{" "}
-              {kind === "deferred_revenue" ? "Deferred Revenue" : "Prepayments"}{" "}
-              in Chart of Accounts to track deferral balances from journal entries.
-            </p>
           ) : null}
         </div>
       )}

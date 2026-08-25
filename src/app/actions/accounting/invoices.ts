@@ -140,7 +140,7 @@ async function resolveAccountingOrgScope(opts?: { allowSalesCreate?: boolean }) 
 
   const { isSuperAdminInAdminContext } = await import('@/lib/auth/super-admin');
   if (!scope.organizationId && isSuperAdminInAdminContext(scope.session)) {
-    return { session: scope.session, organizationId: null, isGlobalAdminView: true };
+    return { error: 'Select an organization from the header switcher.' };
   }
 
   if (!scope.organizationId) {
@@ -944,22 +944,17 @@ export async function getAccountingInvoiceDetail(invoiceId: string) {
     }
 
     const totalAmount = Number(inv.total_amount) || 0;
-    let amountPaid = Number(inv.amount_paid);
-    if (!Number.isFinite(amountPaid)) amountPaid = 0;
-    // Prefer live sum when payments table exists
-    try {
-      const { data: payRows } = await supabase
-        .from('accounting_invoice_payments')
-        .select('amount')
-        .eq('invoice_id', invoiceId);
-      if (payRows) {
-        amountPaid = Math.round(
-          payRows.reduce((acc, r) => acc + (Number(r.amount) || 0), 0) * 100
-        ) / 100;
-      }
-    } catch {
-      // payments table optional until phase4 migration
-    }
+    const { invoiceOpenAmount, sumPostedCreditNotesForInvoice } = await import(
+      '@/lib/accounting-document-outstanding'
+    );
+    const residualDue = await invoiceOpenAmount(supabase, {
+      invoiceId,
+      total: totalAmount,
+    });
+    const notes = await sumPostedCreditNotesForInvoice(supabase, invoiceId);
+    const amountPaid = Math.round(
+      Math.max(0, totalAmount - residualDue - notes) * 100
+    ) / 100;
 
     const { computePaymentState } = await import('@/lib/accounting-payments');
     const storedState = String(inv.payment_state || 'not_paid');
@@ -968,9 +963,8 @@ export async function getAccountingInvoiceDetail(invoiceId: string) {
       amountPaid,
       dueDate: inv.due_date ? String(inv.due_date) : null,
       workflowStatus: String(inv.status || ''),
-      amountResidual:
-        inv.amount_residual != null ? Number(inv.amount_residual) : null,
-      preferInPayment: storedState === 'in_payment',
+      amountResidual: residualDue,
+      preferInPayment: storedState === 'in_payment' && residualDue > 0.004,
     });
 
     const detail: AccountingInvoiceDetail = {

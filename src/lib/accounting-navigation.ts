@@ -37,6 +37,7 @@ import {
   Rows3,
   FolderOpen,
   FileOutput,
+  PackageMinus,
 } from 'lucide-react';
 
 export type AccountingNavId =
@@ -84,7 +85,12 @@ export type AccountingNavId =
   | 'accounting-review-journal-audit'
   | 'accounting-review-audit-trail'
   | 'accounting-review-loans-analysis'
+  | 'accounting-review-depreciation-schedule'
+  | 'accounting-review-assets'
+  | 'accounting-review-loans'
+  | 'accounting-review-journal-entries'
   | 'accounting-review-invoices-to-be-issued'
+  | 'accounting-review-invoiced-not-delivered'
   | 'accounting-review-working-files'
   | 'accounting-review-deferred-revenues'
   | 'accounting-review-deferred-expenses'
@@ -166,6 +172,12 @@ export const ACCOUNTING_REVIEW_MENU: AccountingNavChild[] = [
     icon: Rows3,
   },
   {
+    id: 'accounting-review-journal-entries',
+    label: 'Journal Entries',
+    href: '/accounting/journal-entries',
+    icon: BookOpen,
+  },
+  {
     id: 'accounting-review-journal-audit',
     label: 'Journal Audit',
     href: '/accounting/review/journal-audit',
@@ -178,6 +190,24 @@ export const ACCOUNTING_REVIEW_MENU: AccountingNavChild[] = [
     icon: History,
   },
   {
+    id: 'accounting-review-assets',
+    label: 'Assets',
+    href: '/accounting/assets',
+    icon: Building2,
+  },
+  {
+    id: 'accounting-review-depreciation-schedule',
+    label: 'Depreciation Schedule',
+    href: '/accounting/review/depreciation-schedule',
+    icon: CalendarClock,
+  },
+  {
+    id: 'accounting-review-loans',
+    label: 'Loans',
+    href: '/accounting/loans',
+    icon: Landmark,
+  },
+  {
     id: 'accounting-review-loans-analysis',
     label: 'Loans Analysis',
     href: '/accounting/review/loans-analysis',
@@ -188,6 +218,12 @@ export const ACCOUNTING_REVIEW_MENU: AccountingNavChild[] = [
     label: 'Invoices To Be Issued',
     href: '/accounting/review/invoices-to-be-issued',
     icon: FileOutput,
+  },
+  {
+    id: 'accounting-review-invoiced-not-delivered',
+    label: 'Invoiced Not Delivered',
+    href: '/accounting/review/invoiced-not-delivered',
+    icon: PackageMinus,
   },
   {
     id: 'accounting-review-working-files',
@@ -569,9 +605,31 @@ export function getAccountingPageMeta(pathname: string): AccountingPageMeta {
     };
   }
 
+  if (pathname.startsWith('/accounting/review/depreciation-schedule')) {
+    return {
+      title: 'Depreciation Schedule',
+      breadcrumbs: [],
+      searchMode: 'none',
+      showCreate: false,
+      showFilters: false,
+      showFavorites: false,
+    };
+  }
+
   if (pathname.startsWith('/accounting/review/invoices-to-be-issued')) {
     return {
       title: 'Invoices To Be Issued',
+      breadcrumbs: [],
+      searchMode: 'none',
+      showCreate: false,
+      showFilters: false,
+      showFavorites: false,
+    };
+  }
+
+  if (pathname.startsWith('/accounting/review/invoiced-not-delivered')) {
+    return {
+      title: 'Invoiced Not Delivered',
       breadcrumbs: [],
       searchMode: 'none',
       showCreate: false,

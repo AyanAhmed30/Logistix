@@ -8,6 +8,7 @@ import {
   sessionUsesOrganizationScope,
 } from '@/lib/admin-organization-context';
 import {
+  buildBankPaymentSettlementLines,
   buildCreditNoteLines,
   buildCustomerInvoiceLines,
   buildCustomerPaymentLines,
@@ -136,15 +137,14 @@ async function resolveScope() {
     return { error: orgScope.error };
   }
 
-  const isGlobalAdminView = !orgScope.organizationId;
-  if (!orgScope.organizationId && !isGlobalAdminView) {
+  if (!orgScope.organizationId) {
     return { error: 'Select an organization from the header switcher.' };
   }
 
   return {
     session: orgScope.session,
     organizationId: orgScope.organizationId,
-    isGlobalAdminView,
+    isGlobalAdminView: false,
   };
 }
 
@@ -623,9 +623,30 @@ export async function createManualAccountingJournalEntry(input?: {
         .select('id')
         .eq('type', 'general')
         .eq('is_active', true)
+        .eq('organization_id', scope.organizationId)
         .limit(1)
         .maybeSingle();
       journalId = gen?.id;
+    }
+    if (!journalId) {
+      const { data: anyOrg } = await supabase
+        .from('journals')
+        .select('id')
+        .eq('is_active', true)
+        .eq('organization_id', scope.organizationId)
+        .limit(1)
+        .maybeSingle();
+      journalId = anyOrg?.id;
+    }
+    if (!journalId) {
+      const { data: anyJ } = await supabase
+        .from('journals')
+        .select('id')
+        .eq('type', 'general')
+        .eq('is_active', true)
+        .limit(1)
+        .maybeSingle();
+      journalId = anyJ?.id;
     }
     if (!journalId) return { error: 'No active journal found. Seed journals first.' };
 
@@ -863,6 +884,18 @@ export async function cancelAccountingJournalEntry(id: string) {
     if (String(existing.status) === 'cancelled') {
       return { error: 'Entry is already cancelled' };
     }
+    if (String(existing.status) === 'posted') {
+      if (!existing.is_manual && existing.source_type && existing.source_type !== 'manual') {
+        return {
+          error:
+            'Posted automatic journal entries cannot be cancelled. Cancel or reverse the source document so a reversing entry is created.',
+        };
+      }
+      return {
+        error:
+          'Posted journal entries cannot be cancelled. Create a reversing journal entry so ledgers stay auditable.',
+      };
+    }
 
     const { getAccountingDocumentLockError } = await import(
       '@/lib/accounting-lock-dates'
@@ -915,14 +948,20 @@ export async function resetAccountingJournalEntryToDraft(id: string) {
       .eq('id', id)
       .maybeSingle();
     if (!existing) return { error: 'Journal entry not found' };
+    if (String(existing.status) === 'posted') {
+      return {
+        error:
+          'Posted journal entries cannot be reset to draft. Create a reversing journal entry so ledgers stay auditable.',
+      };
+    }
     if (!existing.is_manual && existing.source_type && existing.source_type !== 'manual') {
       return {
         error:
           'Automatically generated journal entries cannot be reset to draft. Cancel the source document instead.',
       };
     }
-    if (!['posted', 'cancelled'].includes(String(existing.status))) {
-      return { error: 'Only posted or cancelled entries can be reset to draft' };
+    if (String(existing.status) !== 'cancelled') {
+      return { error: 'Only cancelled draft-reset is allowed for manual entries' };
     }
 
     const { getAccountingDocumentLockError } = await import(
@@ -1031,6 +1070,8 @@ export async function createAndPostAutomaticJournalEntry(args: {
   sourceNumber?: string | null;
   lines: AutoPostingLine[];
   performedBy: string;
+  /** When omitted, derived from sourceType so sale locks do not block purchase JEs. */
+  lockDomain?: import('@/lib/accounting-lock-dates').AccountingLockDomain;
 }) {
   const supabase = await createAdminClient();
 
@@ -1046,11 +1087,11 @@ export async function createAndPostAutomaticJournalEntry(args: {
     return { journalEntryId: String(existing.id), alreadyExists: true as const };
   }
 
-  const { getAccountingDocumentLockError } = await import('@/lib/accounting-lock-dates');
+  const { getAccountingDocumentLockError, lockDomainFromJournalSource } = await import('@/lib/accounting-lock-dates');
   const autoLockErr = await getAccountingDocumentLockError(
     args.organizationId,
     args.entryDate,
-    'general',
+    args.lockDomain || lockDomainFromJournalSource(args.sourceType),
     args.journalId
   );
   if (autoLockErr) return { error: autoLockErr };
@@ -1334,6 +1375,70 @@ export async function postJournalEntryForCustomerPayment(paymentId: string) {
     return {
       error:
         err instanceof Error ? err.message : 'Failed to create payment journal entry',
+    };
+  }
+}
+
+/** Dr Outstanding Receipts / Cr AR when a bank payment is matched to an invoice. */
+export async function postJournalEntryForBankPaymentSettlement(opts: {
+  paymentId: string;
+  reconciliationId: string;
+  amount: number;
+  performedBy: string;
+}) {
+  try {
+    const supabase = await createAdminClient();
+    const { data: pay, error } = await supabase
+      .from('accounting_invoice_payments')
+      .select('*')
+      .eq('id', opts.paymentId)
+      .maybeSingle();
+    if (error || !pay) return { error: error?.message || 'Payment not found' };
+
+    const journalKind =
+      String(pay.journal) === 'cash' || String(pay.payment_method) === 'cash'
+        ? ('cash' as const)
+        : ('bank' as const);
+    if (journalKind !== 'bank') {
+      return { skipped: true as const };
+    }
+
+    const { data: inv } = await supabase
+      .from('accounting_customer_invoices')
+      .select('id, organization_id, customer_name, contact_id, invoice_number')
+      .eq('id', pay.invoice_id)
+      .maybeSingle();
+    if (!inv) return { error: 'Related invoice not found' };
+
+    const built = await buildBankPaymentSettlementLines({
+      amount: opts.amount,
+      partnerName: String(inv.customer_name || 'Customer'),
+      contactId: inv.contact_id ? String(inv.contact_id) : null,
+      paymentNumber: pay.payment_number ? String(pay.payment_number) : undefined,
+      organizationId: String(inv.organization_id),
+    });
+
+    return createAndPostAutomaticJournalEntry({
+      organizationId: String(inv.organization_id),
+      journalId: built.journalId,
+      entryDate: String(pay.payment_date).slice(0, 10),
+      reference: String(
+        pay.reference || pay.payment_number || inv.invoice_number || opts.reconciliationId
+      ),
+      partnerName: String(inv.customer_name || ''),
+      contactId: inv.contact_id ? String(inv.contact_id) : null,
+      sourceType: 'manual',
+      sourceId: opts.reconciliationId,
+      sourceNumber: pay.payment_number ? String(pay.payment_number) : null,
+      lines: built.lines,
+      performedBy: opts.performedBy,
+    });
+  } catch (err) {
+    return {
+      error:
+        err instanceof Error
+          ? err.message
+          : 'Failed to create bank settlement journal entry',
     };
   }
 }

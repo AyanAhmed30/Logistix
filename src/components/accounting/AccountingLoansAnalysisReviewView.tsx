@@ -16,6 +16,7 @@ import {
   ReviewListToolbar,
   ReviewMeasuresBar,
   ReviewPagination,
+  ReviewUnsupportedBanner,
   formatReviewDate,
   formatReviewMoney,
 } from "@/components/accounting/AccountingReviewOdooPanels";
@@ -77,6 +78,7 @@ export function AccountingLoansAnalysisReviewView() {
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(true);
+  const [schemaMissing, setSchemaMissing] = useState(false);
   const [, startTransition] = useTransition();
 
   const filterPills = useMemo(() => {
@@ -110,7 +112,21 @@ export function AccountingLoansAnalysisReviewView() {
         toast.error(res.error);
         setLoans([]);
         setTotal(0);
+        setSchemaMissing(false);
+      } else if ("migrationRequired" in res && res.migrationRequired) {
+        setLoans([]);
+        setTotal(0);
+        setSchemaMissing(true);
+        setTotals({
+          principal: 0,
+          principal_paid: 0,
+          interest: 0,
+          interest_paid: 0,
+          payment: 0,
+          outstanding: 0,
+        });
       } else {
+        setSchemaMissing(false);
         setLoans(res.loans ?? []);
         setTotal(res.total ?? 0);
         setTotals(
@@ -278,29 +294,40 @@ export function AccountingLoansAnalysisReviewView() {
         }
       />
 
-      <ReviewMeasuresBar
-        measures={[
-          { label: "Principal", value: formatReviewMoney(totals.principal) },
-          {
-            label: "Principal Paid",
-            value: formatReviewMoney(totals.principal_paid),
-          },
-          { label: "Interest", value: formatReviewMoney(totals.interest) },
-          {
-            label: "Interest Paid",
-            value: formatReviewMoney(totals.interest_paid),
-          },
-          { label: "Payment", value: formatReviewMoney(totals.payment) },
-          {
-            label: "Outstanding",
-            value: formatReviewMoney(totals.outstanding),
-          },
-        ]}
-      />
+      {schemaMissing ? (
+        <ReviewUnsupportedBanner
+          title="Loans schema is not installed"
+          body="This screen does not invent principal or interest totals. Run create_accounting_loans_module.sql, then confirm loans so disbursement and repayment journal entries exist."
+        />
+      ) : (
+        <ReviewMeasuresBar
+          measures={[
+            { label: "Principal", value: formatReviewMoney(totals.principal) },
+            {
+              label: "Principal Paid",
+              value: formatReviewMoney(totals.principal_paid),
+            },
+            { label: "Interest", value: formatReviewMoney(totals.interest) },
+            {
+              label: "Interest Paid",
+              value: formatReviewMoney(totals.interest_paid),
+            },
+            { label: "Payment", value: formatReviewMoney(totals.payment) },
+            {
+              label: "Outstanding",
+              value: formatReviewMoney(totals.outstanding),
+            },
+          ]}
+        />
+      )}
 
       <div className="flex-1 overflow-auto">
         {loading ? (
           <AccountingTableSkeleton rows={8} cols={12} />
+        ) : schemaMissing ? (
+          <div className="py-16 text-center text-sm text-slate-500 px-6">
+            No loan records are available until the loans tables exist.
+          </div>
         ) : loans.length === 0 ? (
           <div className="py-16 text-center text-sm text-slate-500">
             No loans match the current filters.

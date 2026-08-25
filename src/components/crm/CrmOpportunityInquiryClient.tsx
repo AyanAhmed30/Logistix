@@ -17,7 +17,7 @@ import { ModuleLoadingOverlay } from "@/components/ui/ModuleLoadingOverlay";
 
 function tabFromSearchParams(searchParams: URLSearchParams): LeadInquiryWorkspaceTab | undefined {
   const raw = searchParams.get("tab");
-  if (raw === "create" || raw === "view" || raw === "status") return raw;
+  if (raw === "create" || raw === "view" || raw === "customer" || raw === "status") return raw;
   return undefined;
 }
 

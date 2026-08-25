@@ -71,7 +71,7 @@ export default function LoginPage() {
                         Use your assigned credentials to continue.
                     </p>
                 </CardHeader>
-                <form onSubmit={handleSubmit}>
+                <form method="post" onSubmit={handleSubmit}>
                     <CardContent className="space-y-6 pt-2">
                         <div className="space-y-2">
                             <Label htmlFor="username" className="text-primary-dark font-semibold">Username</Label>

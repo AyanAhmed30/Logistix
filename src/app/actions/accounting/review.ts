@@ -123,7 +123,12 @@ export type JournalAuditEvent = {
 
 export type AuditTrailEntry = {
   id: string;
-  source: 'journal_entry_log' | 'audit_log' | 'reconciliation_log';
+  source:
+    | 'journal_entry_log'
+    | 'audit_log'
+    | 'reconciliation_log'
+    | 'asset_log'
+    | 'loan_log';
   performed_at: string;
   performed_by: string | null;
   organization_id: string | null;
@@ -166,18 +171,14 @@ async function resolveReviewScope(requireAudit = false) {
     return { error: orgScope.error };
   }
 
-  const { isSuperAdminInAdminContext } = await import('@/lib/auth/super-admin');
-  const isGlobalAdminView =
-    !orgScope.organizationId && isSuperAdminInAdminContext(orgScope.session);
-
-  if (!orgScope.organizationId && !isGlobalAdminView) {
+  if (!orgScope.organizationId) {
     return { error: 'Select an organization from the header switcher.' };
   }
 
   return {
     session: orgScope.session,
     organizationId: orgScope.organizationId,
-    isGlobalAdminView,
+    isGlobalAdminView: false,
   };
 }
 
@@ -810,6 +811,58 @@ export async function getAccountingReviewAuditTrail(filters?: {
       return { error: auditErr.message };
     }
 
+    const skipAssetLoan =
+      moduleFilter &&
+      moduleFilter !== 'all' &&
+      moduleFilter !== 'asset' &&
+      moduleFilter !== 'loan';
+
+    let assetLogs: Record<string, unknown>[] = [];
+    let loanLogs: Record<string, unknown>[] = [];
+    if (!skipAssetLoan && (!moduleFilter || moduleFilter === 'all' || moduleFilter === 'asset' || moduleFilter === 'loan')) {
+      let assetQ = supabase
+        .from('accounting_asset_logs')
+        .select('*')
+        .order('performed_at', { ascending: false })
+        .limit(fetchLimit);
+      let loanQ = supabase
+        .from('accounting_loan_logs')
+        .select('*')
+        .order('performed_at', { ascending: false })
+        .limit(fetchLimit);
+      if (orgFilter) {
+        assetQ = assetQ.eq('organization_id', scope.organizationId);
+        loanQ = loanQ.eq('organization_id', scope.organizationId);
+      }
+      if (filters?.dateFrom) {
+        assetQ = assetQ.gte('performed_at', `${filters.dateFrom}T00:00:00`);
+        loanQ = loanQ.gte('performed_at', `${filters.dateFrom}T00:00:00`);
+      }
+      if (filters?.dateTo) {
+        assetQ = assetQ.lte('performed_at', `${filters.dateTo}T23:59:59`);
+        loanQ = loanQ.lte('performed_at', `${filters.dateTo}T23:59:59`);
+      }
+      if (search) {
+        const like = `%${search.replace(/[%_,]/g, ' ')}%`;
+        assetQ = assetQ.or(`action.ilike.${like},performed_by.ilike.${like}`);
+        loanQ = loanQ.or(`action.ilike.${like},performed_by.ilike.${like}`);
+      }
+      if (!moduleFilter || moduleFilter === 'all' || moduleFilter === 'asset') {
+        const { data, error } = await assetQ;
+        if (error && !/relation|does not exist/i.test(error.message)) {
+          return { error: error.message };
+        }
+        assetLogs = (data || []) as Record<string, unknown>[];
+      }
+      if (!moduleFilter || moduleFilter === 'all' || moduleFilter === 'loan') {
+        const { data, error } = await loanQ;
+        if (error && !/relation|does not exist/i.test(error.message)) {
+          return { error: error.message };
+        }
+        loanLogs = (data || []) as Record<string, unknown>[];
+      }
+    }
+
     const entryIds = [
       ...new Set(
         (jeLogs || [])
@@ -832,6 +885,12 @@ export async function getAccountingReviewAuditTrail(filters?: {
     for (const r of auditLogs || []) {
       if (r.organization_id) orgIds.add(String(r.organization_id));
     }
+    for (const r of assetLogs) {
+      if (r.organization_id) orgIds.add(String(r.organization_id));
+    }
+    for (const r of loanLogs) {
+      if (r.organization_id) orgIds.add(String(r.organization_id));
+    }
     const { data: orgs } = orgIds.size
       ? await supabase
           .from('organizations')
@@ -839,6 +898,29 @@ export async function getAccountingReviewAuditTrail(filters?: {
           .in('id', [...orgIds])
       : { data: [] };
     const oMap = new Map((orgs || []).map((o) => [String(o.id), o]));
+
+    const assetIds = [
+      ...new Set(assetLogs.map((r) => String(r.asset_id || '')).filter(Boolean)),
+    ];
+    const loanIds = [
+      ...new Set(loanLogs.map((r) => String(r.loan_id || '')).filter(Boolean)),
+    ];
+    const [{ data: assetRows }, { data: loanRows }] = await Promise.all([
+      assetIds.length
+        ? supabase
+            .from('accounting_assets')
+            .select('id, asset_number, name')
+            .in('id', assetIds)
+        : Promise.resolve({ data: [] as { id: string; asset_number?: string; name?: string }[] }),
+      loanIds.length
+        ? supabase
+            .from('accounting_loans')
+            .select('id, loan_number, name')
+            .in('id', loanIds)
+        : Promise.resolve({ data: [] as { id: string; loan_number?: string; name?: string }[] }),
+    ]);
+    const assetMap = new Map((assetRows || []).map((a) => [String(a.id), a]));
+    const loanMap = new Map((loanRows || []).map((l) => [String(l.id), l]));
 
     const merged: AuditTrailEntry[] = [];
 
@@ -892,6 +974,62 @@ export async function getAccountingReviewAuditTrail(filters?: {
           String(r.action || ''),
           r.previous_value,
           r.new_value
+        ),
+      });
+    }
+
+    for (const r of assetLogs) {
+      const orgId = r.organization_id ? String(r.organization_id) : null;
+      const org = orgId ? oMap.get(orgId) : null;
+      const asset = assetMap.get(String(r.asset_id || ''));
+      merged.push({
+        id: `asset:${r.id}`,
+        source: 'asset_log',
+        performed_at: String(r.performed_at || ''),
+        performed_by: r.performed_by ? String(r.performed_by) : null,
+        organization_id: orgId,
+        organization_name: org?.name ? String(org.name) : null,
+        module: 'Assets',
+        record_label: asset
+          ? String(asset.asset_number || asset.name || r.asset_id)
+          : String(r.asset_id || '—'),
+        entity_type: 'asset',
+        entity_id: r.asset_id ? String(r.asset_id) : null,
+        action: String(r.action || ''),
+        previous_value: r.previous_status,
+        new_value: r.new_status,
+        description: describeAuditAction(
+          String(r.action || ''),
+          r.previous_status,
+          r.new_status
+        ),
+      });
+    }
+
+    for (const r of loanLogs) {
+      const orgId = r.organization_id ? String(r.organization_id) : null;
+      const org = orgId ? oMap.get(orgId) : null;
+      const loan = loanMap.get(String(r.loan_id || ''));
+      merged.push({
+        id: `loan:${r.id}`,
+        source: 'loan_log',
+        performed_at: String(r.performed_at || ''),
+        performed_by: r.performed_by ? String(r.performed_by) : null,
+        organization_id: orgId,
+        organization_name: org?.name ? String(org.name) : null,
+        module: 'Loans',
+        record_label: loan
+          ? String(loan.loan_number || loan.name || r.loan_id)
+          : String(r.loan_id || '—'),
+        entity_type: 'loan',
+        entity_id: r.loan_id ? String(r.loan_id) : null,
+        action: String(r.action || ''),
+        previous_value: r.previous_status,
+        new_value: r.new_status,
+        description: describeAuditAction(
+          String(r.action || ''),
+          r.previous_status,
+          r.new_status
         ),
       });
     }
@@ -1150,6 +1288,23 @@ export type ReviewInvoiceToIssueLine = {
   invoice_status: string;
 };
 
+export type ReviewInvoicedNotDeliveredLine = {
+  line_id: string;
+  invoice_id: string;
+  invoice_number: string;
+  sales_order_id: string | null;
+  order_reference: string | null;
+  customer_name: string;
+  description: string;
+  qty_invoiced: number;
+  qty_delivered: number;
+  qty_not_delivered: number;
+  unit_price: number;
+  amount: number;
+  invoice_date: string;
+  journal_entry_id: string | null;
+};
+
 export type ReviewWorkingFileDetail = {
   id: string;
   file_number: string;
@@ -1182,6 +1337,199 @@ export type ReviewWorkingFileItem = {
   period_to: string;
   cycles: string[];
 };
+
+export type ReviewDepreciationLine = {
+  id: string;
+  asset_id: string;
+  asset_number: string;
+  asset_name: string;
+  sequence: number;
+  period_label: string;
+  depreciation_date: string;
+  amount: number;
+  remaining_value: number;
+  status: string;
+  journal_entry_id: string | null;
+  organization_id: string;
+  organization_name: string | null;
+};
+
+export type ReviewDepreciationTotals = {
+  amount: number;
+  posted_amount: number;
+  draft_amount: number;
+  posted_count: number;
+  draft_count: number;
+};
+
+/** Depreciation Schedule — posted/draft board from accounting_asset_depreciations. */
+export async function getAccountingDepreciationScheduleForReview(opts?: {
+  search?: string;
+  status?: string;
+  dateFrom?: string;
+  dateTo?: string;
+  page?: number;
+  pageSize?: number;
+}) {
+  try {
+    const scope = await resolveReviewScope(false);
+    if ('error' in scope && scope.error) return { error: scope.error };
+    if ('empty' in scope && scope.empty) {
+      return {
+        lines: [] as ReviewDepreciationLine[],
+        total: 0,
+        page: 1,
+        pageSize: 40,
+        totals: {
+          amount: 0,
+          posted_amount: 0,
+          draft_amount: 0,
+          posted_count: 0,
+          draft_count: 0,
+        } satisfies ReviewDepreciationTotals,
+      };
+    }
+
+    const page = Math.max(1, opts?.page || 1);
+    const pageSize = Math.min(100, Math.max(1, opts?.pageSize || 40));
+    const from = (page - 1) * pageSize;
+    const to = from + pageSize - 1;
+
+    const supabase = await createAdminClient();
+    let q = supabase
+      .from('accounting_asset_depreciations')
+      .select('*', { count: 'exact' })
+      .order('depreciation_date', { ascending: false })
+      .order('sequence', { ascending: true })
+      .range(from, to);
+
+    if (scope.organizationId && !scope.isGlobalAdminView) {
+      q = q.eq('organization_id', scope.organizationId);
+    }
+
+    const status = (opts?.status || 'all').toLowerCase();
+    if (status && status !== 'all') {
+      q = q.eq('status', status);
+    } else {
+      q = q.neq('status', 'cancelled');
+    }
+
+    if (opts?.dateFrom) q = q.gte('depreciation_date', opts.dateFrom);
+    if (opts?.dateTo) q = q.lte('depreciation_date', opts.dateTo);
+
+    const { data, error, count } = await q;
+    if (error) {
+      if (/accounting_asset_depreciations|relation/i.test(error.message)) {
+        return {
+          lines: [] as ReviewDepreciationLine[],
+          total: 0,
+          page,
+          pageSize,
+          totals: {
+            amount: 0,
+            posted_amount: 0,
+            draft_amount: 0,
+            posted_count: 0,
+            draft_count: 0,
+          },
+          migrationRequired: true as const,
+        };
+      }
+      return { error: error.message };
+    }
+
+    const rows = data || [];
+    const assetIds = [...new Set(rows.map((r) => String(r.asset_id)).filter(Boolean))];
+    const { data: assets } = assetIds.length
+      ? await supabase
+          .from('accounting_assets')
+          .select('id, asset_number, name, organization_id')
+          .in('id', assetIds)
+      : { data: [] as { id: string; asset_number?: string; name?: string; organization_id?: string }[] };
+    const aMap = new Map((assets || []).map((a) => [String(a.id), a]));
+
+    const orgIds = [
+      ...new Set(
+        [
+          ...rows.map((r) => String(r.organization_id || '')),
+          ...(assets || []).map((a) => String(a.organization_id || '')),
+        ].filter(Boolean)
+      ),
+    ];
+    const { data: orgs } = orgIds.length
+      ? await supabase.from('organizations').select('id, name').in('id', orgIds)
+      : { data: [] as { id: string; name: string }[] };
+    const oMap = new Map((orgs || []).map((o) => [String(o.id), String(o.name || '')]));
+
+    const search = String(opts?.search || '').trim().toLowerCase();
+    let lines: ReviewDepreciationLine[] = rows.map((r) => {
+      const asset = aMap.get(String(r.asset_id));
+      const orgId = String(r.organization_id || asset?.organization_id || '');
+      return {
+        id: String(r.id),
+        asset_id: String(r.asset_id),
+        asset_number: asset?.asset_number ? String(asset.asset_number) : '—',
+        asset_name: asset?.name ? String(asset.name) : '—',
+        sequence: Number(r.sequence) || 0,
+        period_label: String(r.period_label || ''),
+        depreciation_date: String(r.depreciation_date || '').slice(0, 10),
+        amount: Number(r.amount) || 0,
+        remaining_value: Number(r.remaining_value) || 0,
+        status: String(r.status || 'draft'),
+        journal_entry_id: r.journal_entry_id ? String(r.journal_entry_id) : null,
+        organization_id: orgId,
+        organization_name: oMap.get(orgId) || null,
+      };
+    });
+
+    if (search) {
+      lines = lines.filter(
+        (l) =>
+          l.asset_number.toLowerCase().includes(search) ||
+          l.asset_name.toLowerCase().includes(search) ||
+          l.period_label.toLowerCase().includes(search)
+      );
+    }
+
+    let totalsQ = supabase
+      .from('accounting_asset_depreciations')
+      .select('amount, status');
+    if (scope.organizationId && !scope.isGlobalAdminView) {
+      totalsQ = totalsQ.eq('organization_id', scope.organizationId);
+    }
+    if (status && status !== 'all') {
+      totalsQ = totalsQ.eq('status', status);
+    } else {
+      totalsQ = totalsQ.neq('status', 'cancelled');
+    }
+    const { data: totalRows } = await totalsQ;
+    const all = totalRows || [];
+    const posted = all.filter((r) => String(r.status) === 'posted');
+    const draft = all.filter((r) => String(r.status) === 'draft');
+    const totals: ReviewDepreciationTotals = {
+      amount: round2(all.reduce((s, r) => s + (Number(r.amount) || 0), 0)),
+      posted_amount: round2(posted.reduce((s, r) => s + (Number(r.amount) || 0), 0)),
+      draft_amount: round2(draft.reduce((s, r) => s + (Number(r.amount) || 0), 0)),
+      posted_count: posted.length,
+      draft_count: draft.length,
+    };
+
+    return {
+      lines,
+      total: search ? lines.length : count || 0,
+      page,
+      pageSize,
+      totals,
+    };
+  } catch (err) {
+    return {
+      error:
+        err instanceof Error
+          ? err.message
+          : 'Failed to load depreciation schedule',
+    };
+  }
+}
 
 /** Loans Analysis — accounting overview from existing loan records. */
 export async function getAccountingLoansAnalysisForReview(opts?: {
@@ -1546,6 +1894,219 @@ export async function getAccountingInvoicesToBeIssuedForReview(opts?: {
     return {
       error:
         err instanceof Error ? err.message : 'Failed to load invoices to be issued',
+    };
+  }
+}
+
+async function finishInvoicedNotDelivered(
+  invoiceRows: Record<string, unknown>[],
+  supabase: Awaited<ReturnType<typeof createAdminClient>>,
+  invoicedNotDeliveredQty: (qtyInvoiced: number, qtyDelivered: number) => number,
+  page: number,
+  pageSize: number
+) {
+  if (!invoiceRows.length) {
+    return { lines: [] as ReviewInvoicedNotDeliveredLine[], total: 0, page, pageSize };
+  }
+
+  const invoiceIds = invoiceRows.map((r) => String(r.id));
+  const orderIds = [
+    ...new Set(
+      invoiceRows
+        .map((r) => (r.sales_order_id ? String(r.sales_order_id) : ''))
+        .filter(Boolean)
+    ),
+  ];
+
+  const [linesRes, soLinesRes] = await Promise.all([
+    supabase
+      .from('accounting_customer_invoice_lines')
+      .select(
+        'id, invoice_id, product_name, description, quantity, unit_price, line_total, sales_order_line_id'
+      )
+      .in('invoice_id', invoiceIds),
+    orderIds.length
+      ? supabase
+          .from('quotation_lines')
+          .select('id, qty_delivered')
+          .in('quotation_id', orderIds)
+      : Promise.resolve({ data: [] as { id: string; qty_delivered?: number }[] }),
+  ]);
+
+  if (linesRes.error) {
+    if (/sales_order_line_id/i.test(linesRes.error.message)) {
+      return { lines: [] as ReviewInvoicedNotDeliveredLine[], total: 0, page, pageSize };
+    }
+    return { error: linesRes.error.message };
+  }
+
+  const deliveredMap = new Map(
+    (soLinesRes.data || []).map((l) => [
+      String(l.id),
+      Number(l.qty_delivered) || 0,
+    ])
+  );
+  const invoiceMap = new Map(
+    invoiceRows.map((r) => [String(r.id), r])
+  );
+
+  type Acc = {
+    soLineId: string;
+    qtyInvoiced: number;
+    qtyDelivered: number;
+    unitPrice: number;
+    description: string;
+    invoiceId: string;
+  };
+  const bySoLine = new Map<string, Acc>();
+  for (const line of linesRes.data || []) {
+    const soLineId = line.sales_order_line_id
+      ? String(line.sales_order_line_id)
+      : '';
+    if (!soLineId || !deliveredMap.has(soLineId)) continue;
+    const prev = bySoLine.get(soLineId);
+    const qty = Number(line.quantity) || 0;
+    if (prev) {
+      prev.qtyInvoiced = round2(prev.qtyInvoiced + qty);
+      prev.invoiceId = String(line.invoice_id);
+    } else {
+      bySoLine.set(soLineId, {
+        soLineId,
+        qtyInvoiced: qty,
+        qtyDelivered: deliveredMap.get(soLineId) || 0,
+        unitPrice: Number(line.unit_price) || 0,
+        description: String(line.description || line.product_name || '—'),
+        invoiceId: String(line.invoice_id),
+      });
+    }
+  }
+
+  const all: ReviewInvoicedNotDeliveredLine[] = [];
+  for (const acc of bySoLine.values()) {
+    const gap = invoicedNotDeliveredQty(acc.qtyInvoiced, acc.qtyDelivered);
+    if (!gap) continue;
+    const inv = invoiceMap.get(acc.invoiceId);
+    if (!inv) continue;
+    all.push({
+      line_id: acc.soLineId,
+      invoice_id: acc.invoiceId,
+      invoice_number: String(inv.invoice_number || ''),
+      sales_order_id: inv.sales_order_id ? String(inv.sales_order_id) : null,
+      order_reference: inv.sales_order_number
+        ? String(inv.sales_order_number)
+        : null,
+      customer_name: String(inv.customer_name || '—'),
+      description: acc.description,
+      qty_invoiced: acc.qtyInvoiced,
+      qty_delivered: acc.qtyDelivered,
+      qty_not_delivered: gap,
+      unit_price: acc.unitPrice,
+      amount: round2(gap * acc.unitPrice),
+      invoice_date: String(inv.invoice_date || '').slice(0, 10),
+      journal_entry_id: inv.journal_entry_id
+        ? String(inv.journal_entry_id)
+        : null,
+    });
+  }
+
+  const total = all.length;
+  const from = (page - 1) * pageSize;
+  const lines = all.slice(from, from + pageSize);
+  return { lines, total, page, pageSize };
+}
+
+/** Invoiced Not Delivered — posted invoice lines whose SO qty_delivered is behind. */
+export async function getAccountingInvoicedNotDeliveredForReview(opts?: {
+  search?: string;
+  page?: number;
+  pageSize?: number;
+}) {
+  try {
+    const { invoicedNotDeliveredQty } = await import(
+      '@/lib/accounting/invoiced-not-delivered'
+    );
+    const scope = await resolveReviewScope(false);
+    if ('error' in scope && scope.error) return { error: scope.error };
+    if ('empty' in scope && scope.empty) {
+      return {
+        lines: [] as ReviewInvoicedNotDeliveredLine[],
+        total: 0,
+        page: 1,
+        pageSize: 40,
+      };
+    }
+
+    const page = Math.max(1, opts?.page || 1);
+    const pageSize = Math.min(100, Math.max(1, opts?.pageSize || 40));
+    const supabase = await createAdminClient();
+
+    let invQ = supabase
+      .from('accounting_customer_invoices')
+      .select(
+        'id, invoice_number, customer_name, invoice_date, sales_order_id, sales_order_number, journal_entry_id, organization_id, status'
+      )
+      .in('status', ['posted', 'paid'])
+      .not('sales_order_id', 'is', null)
+      .order('invoice_date', { ascending: false })
+      .limit(2000);
+
+    if (scope.organizationId && !scope.isGlobalAdminView) {
+      invQ = invQ.eq('organization_id', scope.organizationId);
+    }
+    const search = String(opts?.search || '').trim();
+    if (search) {
+      const like = `%${search}%`;
+      invQ = invQ.or(
+        `invoice_number.ilike.${like},customer_name.ilike.${like},sales_order_number.ilike.${like}`
+      );
+    }
+
+    const { data: invoices, error: invErr } = await invQ;
+    if (invErr) {
+      if (/journal_entry_id/i.test(invErr.message)) {
+        let retry = supabase
+          .from('accounting_customer_invoices')
+          .select(
+            'id, invoice_number, customer_name, invoice_date, sales_order_id, sales_order_number, organization_id, status'
+          )
+          .in('status', ['posted', 'paid'])
+          .not('sales_order_id', 'is', null)
+          .order('invoice_date', { ascending: false })
+          .limit(2000);
+        if (scope.organizationId && !scope.isGlobalAdminView) {
+          retry = retry.eq('organization_id', scope.organizationId);
+        }
+        if (search) {
+          const like = `%${search}%`;
+          retry = retry.or(
+            `invoice_number.ilike.${like},customer_name.ilike.${like},sales_order_number.ilike.${like}`
+          );
+        }
+        const retryRes = await retry;
+        if (retryRes.error) return { error: retryRes.error.message };
+        return finishInvoicedNotDelivered(
+          (retryRes.data || []) as Record<string, unknown>[],
+          supabase,
+          invoicedNotDeliveredQty,
+          page,
+          pageSize
+        );
+      }
+      return { error: invErr.message };
+    }
+    return finishInvoicedNotDelivered(
+      (invoices || []) as Record<string, unknown>[],
+      supabase,
+      invoicedNotDeliveredQty,
+      page,
+      pageSize
+    );
+  } catch (err) {
+    return {
+      error:
+        err instanceof Error
+          ? err.message
+          : 'Failed to load invoiced not delivered',
     };
   }
 }

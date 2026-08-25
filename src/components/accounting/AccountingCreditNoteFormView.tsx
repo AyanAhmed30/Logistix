@@ -76,7 +76,7 @@ function linesFromDetail(detail: AccountingCreditNoteDetail): QuotationLineDraft
   return detail.lines.map((l) => ({
     key: l.id || `line-${l.sequence}`,
     id: l.id,
-    product_id: null,
+    product_id: l.product_id || null,
     product_name: l.product_name || "",
     description: l.description || "",
     quantity: String(l.quantity ?? 1),
@@ -366,6 +366,8 @@ export function AccountingCreditNoteFormView({ creditNoteId }: Props) {
         return {
           id: line.id ?? undefined,
           sequence: (idx + 1) * 10,
+          invoice_line_id: line.id && detail?.lines.find((l) => l.id === line.id)?.invoice_line_id || null,
+          product_id: line.product_id || null,
           product_name: line.product_name,
           description: line.description || null,
           quantity: parseFloat(line.quantity) || 0,
@@ -699,8 +701,25 @@ export function AccountingCreditNoteFormView({ creditNoteId }: Props) {
                   href={`/accounting/invoices/${detail.invoice_id}`}
                   className="inline-flex min-w-[88px] flex-col items-center justify-center rounded-sm border border-slate-200 bg-white px-3 py-2 text-center hover:bg-slate-50"
                 >
+                  <span className="text-sm font-semibold tabular-nums text-[#017e84] leading-none">
+                    1
+                  </span>
                   <span className="text-[11px] text-secondary-muted">
                     Related Invoice
+                  </span>
+                </Link>
+              ) : null}
+              {detail.journal_entry_id ? (
+                <Link
+                  href={`/accounting/journal-entries/${detail.journal_entry_id}`}
+                  data-testid="credit-note-journal-entry"
+                  className="inline-flex min-w-[88px] flex-col items-center justify-center rounded-sm border border-slate-200 bg-white px-3 py-2 text-center hover:bg-slate-50"
+                >
+                  <span className="text-sm font-semibold tabular-nums text-[#017e84] leading-none">
+                    1
+                  </span>
+                  <span className="text-[11px] text-secondary-muted">
+                    Journal Entry
                   </span>
                 </Link>
               ) : null}
@@ -1017,7 +1036,10 @@ export function AccountingCreditNoteFormView({ creditNoteId }: Props) {
                   </div>
                   <div className="flex justify-between text-sm">
                     <span className="text-secondary-muted">Amount Due</span>
-                    <span className="tabular-nums font-medium">
+                    <span
+                      className="tabular-nums font-medium"
+                      data-testid="credit-note-amount-due"
+                    >
                       {formatMoney(amountDueDisplay)}
                     </span>
                   </div>

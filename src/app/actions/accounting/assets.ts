@@ -135,11 +135,7 @@ async function resolveScope() {
 
   const { isSuperAdminInAdminContext } = await import('@/lib/auth/super-admin');
   if (!scope.organizationId && isSuperAdminInAdminContext(scope.session)) {
-    return {
-      session: scope.session,
-      organizationId: null as string | null,
-      isGlobalAdminView: true,
-    };
+    return { error: 'Select an organization from the header switcher.' };
   }
 
   if (!scope.organizationId) {
@@ -959,77 +955,89 @@ export async function confirmAccountingAsset(assetId: string) {
         : String(asset.acquisition_date).slice(0, 10),
     });
 
-    // Purchase JE (best-effort)
     let purchaseJeId: string | null = asset.purchase_journal_entry_id
       ? String(asset.purchase_journal_entry_id)
       : null;
 
-    try {
-      const { getJournalIdByType } = await import('@/lib/accounting-journal-posting');
-      const { createAndPostAutomaticJournalEntry } = await import(
-        '@/app/actions/accounting/journal-entries'
-      );
+    const { getJournalIdByType } = await import('@/lib/accounting-journal-posting');
+    const { createAndPostAutomaticJournalEntry } = await import(
+      '@/app/actions/accounting/journal-entries'
+    );
 
-      let journalId = asset.journal_id ? String(asset.journal_id) : null;
-      if (!journalId) {
-        const j = await getJournalIdByType('general', String(asset.organization_id));
-        journalId = String(j.id);
-      }
-
-      const assetAccountId = await resolveAccountId(
-        supabase,
-        asset.asset_account_id ? String(asset.asset_account_id) : null,
-        ['1500', '1600', '1510', '1400'],
-        'asset'
-      );
-      const creditAccountId = await resolveAccountId(
-        supabase,
-        null,
-        ['1000', '1010', '2100', '2000'],
-        'asset'
-      );
-
-      if (assetAccountId && creditAccountId && journalId) {
-        const amount = round2(Number(asset.original_value) || 0);
-        const lines: AutoPostingLine[] = [
-          {
-            account_id: assetAccountId,
-            label: `Asset ${asset.asset_number} — ${asset.name}`,
-            partner_name: asset.vendor_name ? String(asset.vendor_name) : null,
-            contact_id: asset.contact_id ? String(asset.contact_id) : null,
-            debit: amount,
-            credit: 0,
-          },
-          {
-            account_id: creditAccountId,
-            label: `Asset acquisition ${asset.asset_number}`,
-            partner_name: asset.vendor_name ? String(asset.vendor_name) : null,
-            contact_id: asset.contact_id ? String(asset.contact_id) : null,
-            debit: 0,
-            credit: amount,
-          },
-        ];
-
-        const je = await createAndPostAutomaticJournalEntry({
-          organizationId: String(asset.organization_id),
-          journalId,
-          entryDate: String(asset.acquisition_date || asset.purchase_date).slice(0, 10),
-          reference: String(asset.asset_number),
-          partnerName: asset.vendor_name ? String(asset.vendor_name) : null,
-          contactId: asset.contact_id ? String(asset.contact_id) : null,
-          sourceType: 'asset_purchase' as never,
-          sourceId: assetId,
-          sourceNumber: String(asset.asset_number),
-          lines,
-          performedBy: scope.session.username,
-        });
-        if ('journalEntryId' in je && je.journalEntryId) {
-          purchaseJeId = je.journalEntryId ?? null;
-        }
-      }
-    } catch (err) {
-      console.warn('[assets] purchase JE:', err);
+    let journalId = asset.journal_id ? String(asset.journal_id) : null;
+    if (!journalId) {
+      const j = await getJournalIdByType('general', String(asset.organization_id));
+      journalId = String(j.id);
     }
+
+    const assetAccountId = await resolveAccountId(
+      supabase,
+      asset.asset_account_id ? String(asset.asset_account_id) : null,
+      ['1500', '1600', '1510', '1400'],
+      'asset'
+    );
+    const creditAccountId = await resolveAccountId(
+      supabase,
+      null,
+      ['1000', '1010', '2100', '2000'],
+      'asset'
+    );
+
+    if (!assetAccountId || !creditAccountId || !journalId) {
+      return {
+        error:
+          'Asset not confirmed — configure the fixed asset account and a cash/payable account, and ensure a general journal exists.',
+      };
+    }
+    if (assetAccountId === creditAccountId) {
+      return {
+        error:
+          'Asset not confirmed — the asset account and the acquisition credit account must be different.',
+      };
+    }
+
+    const amount = round2(Number(asset.original_value) || 0);
+    const lines: AutoPostingLine[] = [
+      {
+        account_id: assetAccountId,
+        label: `Asset ${asset.asset_number} — ${asset.name}`,
+        partner_name: asset.vendor_name ? String(asset.vendor_name) : null,
+        contact_id: asset.contact_id ? String(asset.contact_id) : null,
+        debit: amount,
+        credit: 0,
+      },
+      {
+        account_id: creditAccountId,
+        label: `Asset acquisition ${asset.asset_number}`,
+        partner_name: asset.vendor_name ? String(asset.vendor_name) : null,
+        contact_id: asset.contact_id ? String(asset.contact_id) : null,
+        debit: 0,
+        credit: amount,
+      },
+    ];
+
+    const je = await createAndPostAutomaticJournalEntry({
+      organizationId: String(asset.organization_id),
+      journalId,
+      entryDate: String(asset.acquisition_date || asset.purchase_date).slice(0, 10),
+      reference: String(asset.asset_number),
+      partnerName: asset.vendor_name ? String(asset.vendor_name) : null,
+      contactId: asset.contact_id ? String(asset.contact_id) : null,
+      sourceType: 'asset_purchase' as never,
+      sourceId: assetId,
+      sourceNumber: String(asset.asset_number),
+      lines,
+      performedBy: scope.session.username,
+    });
+    if ('error' in je && je.error) {
+      return { error: je.error };
+    }
+    if (!('journalEntryId' in je) || !je.journalEntryId) {
+      return {
+        error: 'Asset not confirmed — purchase journal entry was not created.',
+      };
+    }
+    purchaseJeId = je.journalEntryId;
 
     await supabase
       .from('accounting_assets')
@@ -1159,6 +1167,12 @@ export async function postAccountingAssetDepreciation(depreciationId: string) {
       };
     }
 
+    if (!journalEntryId) {
+      return {
+        error: 'Depreciation not posted — journal entry was not created.',
+      };
+    }
+
     await supabase
       .from('accounting_asset_depreciations')
       .update({
@@ -1284,123 +1298,130 @@ export async function disposeAccountingAsset(
     const accum = round2(Number(asset.accumulated_depreciation) || 0);
 
     let disposalJeId: string | null = null;
-    try {
-      const { getJournalIdByType } = await import('@/lib/accounting-journal-posting');
-      const { createAndPostAutomaticJournalEntry } = await import(
-        '@/app/actions/accounting/journal-entries'
-      );
+    const { getJournalIdByType } = await import('@/lib/accounting-journal-posting');
+    const { createAndPostAutomaticJournalEntry } = await import(
+      '@/app/actions/accounting/journal-entries'
+    );
 
-      let journalId = asset.journal_id ? String(asset.journal_id) : null;
-      if (!journalId) {
-        const j = await getJournalIdByType('general', String(asset.organization_id));
-        journalId = String(j.id);
-      }
-
-      const assetAccountId = await resolveAccountId(
-        supabase,
-        asset.asset_account_id ? String(asset.asset_account_id) : null,
-        ['1500', '1600', '1510'],
-        'asset'
-      );
-      const accumId = await resolveAccountId(
-        supabase,
-        asset.depreciation_account_id ? String(asset.depreciation_account_id) : null,
-        ['1590', '1690', '1580'],
-        'asset'
-      );
-      const bankId = await resolveAccountId(
-        supabase,
-        null,
-        ['1000', '1010', '1100'],
-        'asset'
-      );
-      const gainLossId = await resolveAccountId(
-        supabase,
-        null,
-        ['6900', '7900', '6100'],
-        'expense'
-      );
-
-      if (assetAccountId && accumId && bankId && gainLossId && journalId) {
-        const lines: AutoPostingLine[] = [];
-        // Clear accum dep
-        if (accum > 0.004) {
-          lines.push({
-            account_id: accumId,
-            label: `Clear accum. dep. ${asset.asset_number}`,
-            debit: accum,
-            credit: 0,
-          });
-        }
-        if (proceeds > 0.004) {
-          lines.push({
-            account_id: bankId,
-            label: `Disposal proceeds ${asset.asset_number}`,
-            debit: proceeds,
-            credit: 0,
-          });
-        }
-        const loss = round2(book - proceeds);
-        if (loss > 0.004) {
-          lines.push({
-            account_id: gainLossId,
-            label: `Loss on disposal ${asset.asset_number}`,
-            debit: loss,
-            credit: 0,
-          });
-        } else if (loss < -0.004) {
-          lines.push({
-            account_id: gainLossId,
-            label: `Gain on disposal ${asset.asset_number}`,
-            debit: 0,
-            credit: round2(-loss),
-          });
-        }
-        lines.push({
-          account_id: assetAccountId,
-          label: `Dispose asset ${asset.asset_number}`,
-          debit: 0,
-          credit: original,
-        });
-
-        const debitSum = round2(lines.reduce((s, l) => s + l.debit, 0));
-        const creditSum = round2(lines.reduce((s, l) => s + l.credit, 0));
-        if (Math.abs(debitSum - creditSum) > 0.05) {
-          // Balance with gain/loss adjustment
-          const diff = round2(debitSum - creditSum);
-          if (diff > 0) {
-            lines.push({
-              account_id: gainLossId,
-              label: `Disposal balancing ${asset.asset_number}`,
-              debit: 0,
-              credit: diff,
-            });
-          } else {
-            lines.push({
-              account_id: gainLossId,
-              label: `Disposal balancing ${asset.asset_number}`,
-              debit: round2(-diff),
-              credit: 0,
-            });
-          }
-        }
-
-        const je = await createAndPostAutomaticJournalEntry({
-          organizationId: String(asset.organization_id),
-          journalId,
-          entryDate: disposalDate,
-          reference: `DISP/${asset.asset_number}`,
-          sourceType: 'asset_disposal' as never,
-          sourceId: assetId,
-          sourceNumber: String(asset.asset_number),
-          lines,
-          performedBy: scope.session.username,
-        });
-        if ('journalEntryId' in je) disposalJeId = je.journalEntryId ?? null;
-      }
-    } catch (err) {
-      console.warn('[assets] disposal JE:', err);
+    let journalId = asset.journal_id ? String(asset.journal_id) : null;
+    if (!journalId) {
+      const j = await getJournalIdByType('general', String(asset.organization_id));
+      journalId = String(j.id);
     }
+
+    const assetAccountId = await resolveAccountId(
+      supabase,
+      asset.asset_account_id ? String(asset.asset_account_id) : null,
+      ['1500', '1600', '1510'],
+      'asset'
+    );
+    const accumId = await resolveAccountId(
+      supabase,
+      asset.depreciation_account_id ? String(asset.depreciation_account_id) : null,
+      ['1590', '1690', '1580'],
+      'asset'
+    );
+    const bankId = await resolveAccountId(
+      supabase,
+      null,
+      ['1000', '1010', '1100'],
+      'asset'
+    );
+    const gainLossId = await resolveAccountId(
+      supabase,
+      null,
+      ['6900', '7900', '6100'],
+      'expense'
+    );
+
+    if (!assetAccountId || !accumId || !bankId || !gainLossId || !journalId) {
+      return {
+        error:
+          'Asset not disposed — configure the asset, accumulated depreciation, cash, and gain/loss accounts.',
+      };
+    }
+
+    const lines: AutoPostingLine[] = [];
+    if (accum > 0.004) {
+      lines.push({
+        account_id: accumId,
+        label: `Clear accum. dep. ${asset.asset_number}`,
+        debit: accum,
+        credit: 0,
+      });
+    }
+    if (proceeds > 0.004) {
+      lines.push({
+        account_id: bankId,
+        label: `Disposal proceeds ${asset.asset_number}`,
+        debit: proceeds,
+        credit: 0,
+      });
+    }
+    const loss = round2(book - proceeds);
+    if (loss > 0.004) {
+      lines.push({
+        account_id: gainLossId,
+        label: `Loss on disposal ${asset.asset_number}`,
+        debit: loss,
+        credit: 0,
+      });
+    } else if (loss < -0.004) {
+      lines.push({
+        account_id: gainLossId,
+        label: `Gain on disposal ${asset.asset_number}`,
+        debit: 0,
+        credit: round2(-loss),
+      });
+    }
+    lines.push({
+      account_id: assetAccountId,
+      label: `Dispose asset ${asset.asset_number}`,
+      debit: 0,
+      credit: original,
+    });
+
+    const debitSum = round2(lines.reduce((s, l) => s + l.debit, 0));
+    const creditSum = round2(lines.reduce((s, l) => s + l.credit, 0));
+    if (Math.abs(debitSum - creditSum) > 0.05) {
+      const diff = round2(debitSum - creditSum);
+      if (diff > 0) {
+        lines.push({
+          account_id: gainLossId,
+          label: `Disposal balancing ${asset.asset_number}`,
+          debit: 0,
+          credit: diff,
+        });
+      } else {
+        lines.push({
+          account_id: gainLossId,
+          label: `Disposal balancing ${asset.asset_number}`,
+          debit: round2(-diff),
+          credit: 0,
+        });
+      }
+    }
+
+    const je = await createAndPostAutomaticJournalEntry({
+      organizationId: String(asset.organization_id),
+      journalId,
+      entryDate: disposalDate,
+      reference: `DISP/${asset.asset_number}`,
+      sourceType: 'asset_disposal' as never,
+      sourceId: assetId,
+      sourceNumber: String(asset.asset_number),
+      lines,
+      performedBy: scope.session.username,
+    });
+    if ('error' in je && je.error) {
+      return { error: je.error };
+    }
+    if (!('journalEntryId' in je) || !je.journalEntryId) {
+      return {
+        error: 'Asset not disposed — disposal journal entry was not created.',
+      };
+    }
+    disposalJeId = je.journalEntryId;
 
     // Cancel remaining draft depreciations
     await supabase

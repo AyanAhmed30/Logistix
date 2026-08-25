@@ -1,7 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState, useTransition } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
+import Link from "next/link";
 import { toast } from "sonner";
 import {
   Check,
@@ -128,12 +129,18 @@ function buildGroups(items: JournalItemToReconcile[]): AccountGroup[] {
 
 export function AccountingReconcileView() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const { switchVersion } = useAdminOrganization();
   const { searchQuery, activeFilterId } = useAccountingShell();
   const debouncedSearch = useDebouncedValue(searchQuery, 280);
-  const [tab, setTab] = useState<"items" | "suggestions" | "history" | "bank">(
-    "items"
-  );
+  const tabParam = searchParams.get("tab");
+  const tab: "items" | "suggestions" | "history" | "bank" =
+    tabParam === "suggestions" ||
+    tabParam === "history" ||
+    tabParam === "bank" ||
+    tabParam === "items"
+      ? tabParam
+      : "items";
   const [items, setItems] = useState<JournalItemToReconcile[]>([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
@@ -441,19 +448,19 @@ export function AccountingReconcileView() {
                 ["bank", "Bank"],
               ] as const
             ).map(([id, label]) => (
-              <button
+              <Link
                 key={id}
-                type="button"
-                onClick={() => setTab(id)}
+                href={id === "items" ? "/accounting/reconcile" : `/accounting/reconcile?tab=${id}`}
+                data-testid={`reconcile-tab-${id}`}
                 className={cn(
-                  "h-7 px-2.5 rounded-sm text-xs font-medium border transition-colors",
+                  "h-7 px-2.5 rounded-sm text-xs font-medium border transition-colors inline-flex items-center",
                   tab === id
                     ? "border-[#017e84] bg-[#017e84]/10 text-[#017e84]"
                     : "border-transparent text-secondary-muted hover:bg-slate-50"
                 )}
               >
                 {label}
-              </button>
+              </Link>
             ))}
           </div>
         </div>
@@ -584,6 +591,7 @@ export function AccountingReconcileView() {
               {suggestions.map((s) => (
                 <div
                   key={s.id}
+                  data-testid="reconcile-suggestion"
                   className="bg-white border border-slate-200 rounded-sm p-3 flex flex-wrap items-center justify-between gap-3"
                 >
                   <div className="min-w-0 space-y-1">
@@ -602,6 +610,7 @@ export function AccountingReconcileView() {
                   </div>
                   <Button
                     size="sm"
+                    data-testid="reconcile-accept"
                     className="h-8 rounded-sm bg-[#017e84] hover:bg-[#016970] text-white"
                     disabled={isPending}
                     onClick={() => handleAcceptSuggestion(s)}

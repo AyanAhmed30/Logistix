@@ -17,8 +17,17 @@ function formatAmt(n: number) {
 }
 
 export function TaxReportTable({ report }: { report: TaxReport }) {
+  const sales = report.sections.find((s) => s.id === 'sales');
+  const purchases = report.sections.find((s) => s.id === 'purchases');
   return (
-    <div className="overflow-x-auto">
+    <div
+      className="overflow-x-auto"
+      data-testid="tax-report"
+      data-total-net={String(report.totalNet)}
+      data-total-tax={String(report.totalTax)}
+      data-sales-tax={String(sales?.totalTax || 0)}
+      data-purchase-tax={String(purchases?.totalTax || 0)}
+    >
       <table className="w-full min-w-[480px] text-sm border-collapse">
         <thead>
           <tr className="border-b border-slate-200 text-xs text-slate-500">

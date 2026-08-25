@@ -98,6 +98,10 @@ export function AccountingAuditTrailView() {
   function openRecord(entry: AuditTrailEntry) {
     if (entry.entity_type === "journal_entry" && entry.entity_id) {
       router.push(`/accounting/journal-entries/${entry.entity_id}`);
+    } else if (entry.entity_type === "asset" && entry.entity_id) {
+      router.push(`/accounting/assets/${entry.entity_id}`);
+    } else if (entry.entity_type === "loan" && entry.entity_id) {
+      router.push(`/accounting/loans/${entry.entity_id}`);
     }
   }
 
@@ -164,7 +168,9 @@ export function AccountingAuditTrailView() {
                   <tr
                     key={entry.id}
                     className={`border-b border-slate-100 hover:bg-[#017e84]/5 ${
-                      entry.entity_type === "journal_entry"
+                      entry.entity_type === "journal_entry" ||
+                      entry.entity_type === "asset" ||
+                      entry.entity_type === "loan"
                         ? "cursor-pointer"
                         : ""
                     }`}

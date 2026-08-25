@@ -11,6 +11,7 @@ export default defineConfig({
   use: {
     baseURL: process.env.PLAYWRIGHT_BASE_URL || 'http://localhost:3000',
     ...devices['Desktop Chrome'],
+    channel: 'chrome',
     viewport: { width: 1440, height: 900 },
     trace: 'off',
     screenshot: 'only-on-failure',

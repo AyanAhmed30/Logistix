@@ -141,11 +141,7 @@ async function resolveScope() {
 
   const { isSuperAdminInAdminContext } = await import('@/lib/auth/super-admin');
   if (!scope.organizationId && isSuperAdminInAdminContext(scope.session)) {
-    return {
-      session: scope.session,
-      organizationId: null as string | null,
-      isGlobalAdminView: true,
-    };
+    return { error: 'Select an organization from the header switcher.' };
   }
 
   if (!scope.organizationId) {
@@ -598,6 +594,44 @@ export async function getAccountingLoanDetail(loanId: string) {
   }
 }
 
+export async function getAccountingLoanIdByInstallment(installmentId: string) {
+  try {
+    const scope = await resolveScope();
+    if ('error' in scope && scope.error) return { error: scope.error };
+
+    const supabase = await createAdminClient();
+    const { data: inst, error } = await supabase
+      .from('accounting_loan_installments')
+      .select('id, loan_id')
+      .eq('id', installmentId)
+      .maybeSingle();
+    if (error || !inst?.loan_id) {
+      return { error: error?.message || 'Installment not found' };
+    }
+
+    const { data: loan } = await supabase
+      .from('accounting_loans')
+      .select('id, organization_id')
+      .eq('id', inst.loan_id)
+      .maybeSingle();
+    if (!loan) return { error: 'Loan not found' };
+
+    if (
+      scope.organizationId &&
+      !scope.isGlobalAdminView &&
+      String(loan.organization_id) !== scope.organizationId
+    ) {
+      return { error: 'Loan not in the selected organization' };
+    }
+
+    return { loanId: String(loan.id) };
+  } catch (err) {
+    return {
+      error: err instanceof Error ? err.message : 'Failed to resolve installment',
+    };
+  }
+}
+
 export async function createAccountingLoan() {
   try {
     const scope = await resolveScope();
@@ -638,12 +672,9 @@ export async function createAccountingLoan() {
       .single();
 
     if (error) {
-      if (/accounting_loans|relation/i.test(error.message)) {
-        return {
-          error: 'Run create_accounting_loans_module.sql in Supabase first.',
-        };
-      }
-      return { error: error.message };
+      return {
+        error: `Loan tables are missing in the database. Run create_accounting_loans_module.sql in Supabase. (${error.message})`,
+      };
     }
 
     await appendLog(supabase, {
@@ -881,94 +912,106 @@ export async function confirmAccountingLoan(loanId: string) {
       ? String(loan.disbursement_journal_entry_id)
       : null;
 
-    try {
-      const { getJournalIdByType } = await import('@/lib/accounting-journal-posting');
-      const { createAndPostAutomaticJournalEntry } = await import(
-        '@/app/actions/accounting/journal-entries'
-      );
+    const { getJournalIdByType } = await import('@/lib/accounting-journal-posting');
+    const { createAndPostAutomaticJournalEntry } = await import(
+      '@/app/actions/accounting/journal-entries'
+    );
 
-      let journalId = loan.journal_id ? String(loan.journal_id) : null;
-      if (!journalId) {
-        const j = await getJournalIdByType('general', String(loan.organization_id));
-        journalId = String(j.id);
-      }
-
-      const bankId = await resolveAccountId(
-        supabase,
-        loan.bank_account_id
-          ? String(loan.bank_account_id)
-          : loan.payment_account_id
-            ? String(loan.payment_account_id)
-            : null,
-        ['1000', '1010', '1020', '1100'],
-        'asset'
-      );
-      const liabilityId = await resolveAccountId(
-        supabase,
-        loan.liability_account_id ? String(loan.liability_account_id) : null,
-        ['2500', '2400', '2200', '2000'],
-        'liability'
-      );
-
-      if (bankId && liabilityId && journalId) {
-        const amount = round2(Number(loan.principal_amount) || 0);
-        const direction = String(loan.direction || 'borrowed');
-        // borrowed: Dr Bank / Cr Liability; issued: Dr Receivable(Liability acct) / Cr Bank
-        const lines: AutoPostingLine[] =
-          direction === 'issued'
-            ? [
-                {
-                  account_id: liabilityId,
-                  label: `Loan issued ${loan.loan_number} — ${loan.name}`,
-                  partner_name: loan.lender_name ? String(loan.lender_name) : null,
-                  debit: amount,
-                  credit: 0,
-                },
-                {
-                  account_id: bankId,
-                  label: `Loan disbursement ${loan.loan_number}`,
-                  partner_name: loan.lender_name ? String(loan.lender_name) : null,
-                  debit: 0,
-                  credit: amount,
-                },
-              ]
-            : [
-                {
-                  account_id: bankId,
-                  label: `Loan received ${loan.loan_number} — ${loan.name}`,
-                  partner_name: loan.lender_name ? String(loan.lender_name) : null,
-                  debit: amount,
-                  credit: 0,
-                },
-                {
-                  account_id: liabilityId,
-                  label: `Loan liability ${loan.loan_number}`,
-                  partner_name: loan.lender_name ? String(loan.lender_name) : null,
-                  debit: 0,
-                  credit: amount,
-                },
-              ];
-
-        const je = await createAndPostAutomaticJournalEntry({
-          organizationId: String(loan.organization_id),
-          journalId,
-          entryDate: String(loan.start_date).slice(0, 10),
-          reference: String(loan.loan_number),
-          partnerName: loan.lender_name ? String(loan.lender_name) : null,
-          contactId: loan.contact_id ? String(loan.contact_id) : null,
-          sourceType: 'loan_disbursement' as never,
-          sourceId: loanId,
-          sourceNumber: String(loan.loan_number),
-          lines,
-          performedBy: scope.session.username,
-        });
-        if ('journalEntryId' in je && je.journalEntryId) {
-          disbursementJeId = je.journalEntryId ?? null;
-        }
-      }
-    } catch (err) {
-      console.warn('[loans] disbursement JE:', err);
+    let journalId = loan.journal_id ? String(loan.journal_id) : null;
+    if (!journalId) {
+      const j = await getJournalIdByType('general', String(loan.organization_id));
+      journalId = String(j.id);
     }
+
+    const bankId = await resolveAccountId(
+      supabase,
+      loan.bank_account_id
+        ? String(loan.bank_account_id)
+        : loan.payment_account_id
+          ? String(loan.payment_account_id)
+          : null,
+      ['1000', '1010', '1020', '1100'],
+      'asset'
+    );
+    const liabilityId = await resolveAccountId(
+      supabase,
+      loan.liability_account_id ? String(loan.liability_account_id) : null,
+      ['2500', '2400', '2200', '2000'],
+      'liability'
+    );
+
+    if (!bankId || !liabilityId || !journalId) {
+      return {
+        error:
+          'Loan not confirmed — configure the bank/cash account and loan liability account, and ensure a general journal exists.',
+      };
+    }
+    if (bankId === liabilityId) {
+      return {
+        error:
+          'Loan not confirmed — the bank/cash account and the liability account must be different.',
+      };
+    }
+
+    const amount = round2(Number(loan.principal_amount) || 0);
+    const direction = String(loan.direction || 'borrowed');
+    const lines: AutoPostingLine[] =
+      direction === 'issued'
+        ? [
+            {
+              account_id: liabilityId,
+              label: `Loan issued ${loan.loan_number} — ${loan.name}`,
+              partner_name: loan.lender_name ? String(loan.lender_name) : null,
+              debit: amount,
+              credit: 0,
+            },
+            {
+              account_id: bankId,
+              label: `Loan disbursement ${loan.loan_number}`,
+              partner_name: loan.lender_name ? String(loan.lender_name) : null,
+              debit: 0,
+              credit: amount,
+            },
+          ]
+        : [
+            {
+              account_id: bankId,
+              label: `Loan received ${loan.loan_number} — ${loan.name}`,
+              partner_name: loan.lender_name ? String(loan.lender_name) : null,
+              debit: amount,
+              credit: 0,
+            },
+            {
+              account_id: liabilityId,
+              label: `Loan liability ${loan.loan_number}`,
+              partner_name: loan.lender_name ? String(loan.lender_name) : null,
+              debit: 0,
+              credit: amount,
+            },
+          ];
+
+    const je = await createAndPostAutomaticJournalEntry({
+      organizationId: String(loan.organization_id),
+      journalId,
+      entryDate: String(loan.start_date).slice(0, 10),
+      reference: String(loan.loan_number),
+      partnerName: loan.lender_name ? String(loan.lender_name) : null,
+      contactId: loan.contact_id ? String(loan.contact_id) : null,
+      sourceType: 'loan_disbursement' as never,
+      sourceId: loanId,
+      sourceNumber: String(loan.loan_number),
+      lines,
+      performedBy: scope.session.username,
+    });
+    if ('error' in je && je.error) {
+      return { error: je.error };
+    }
+    if (!('journalEntryId' in je) || !je.journalEntryId) {
+      return {
+        error: 'Loan not confirmed — disbursement journal entry was not created.',
+      };
+    }
+    disbursementJeId = je.journalEntryId;
 
     const principal = round2(Number(loan.principal_amount) || 0);
     await supabase
@@ -1053,135 +1096,143 @@ export async function payAccountingLoanInstallment(
     const interestAmt = round2(Number(inst.interest_amount) || 0);
     const totalAmt = round2(principalAmt + interestAmt);
 
+    if (totalAmt <= 0.004) {
+      return { error: 'Installment amount is zero' };
+    }
+
     let jeId: string | null = inst.journal_entry_id
       ? String(inst.journal_entry_id)
       : null;
 
-    try {
-      const { getJournalIdByType } = await import('@/lib/accounting-journal-posting');
-      const { createAndPostAutomaticJournalEntry } = await import(
-        '@/app/actions/accounting/journal-entries'
-      );
+    const { getJournalIdByType } = await import('@/lib/accounting-journal-posting');
+    const { createAndPostAutomaticJournalEntry } = await import(
+      '@/app/actions/accounting/journal-entries'
+    );
 
-      let journalId = loan.journal_id ? String(loan.journal_id) : null;
-      if (!journalId) {
-        const j = await getJournalIdByType('general', String(loan.organization_id));
-        journalId = String(j.id);
-      }
-
-      const liabilityId = await resolveAccountId(
-        supabase,
-        loan.liability_account_id ? String(loan.liability_account_id) : null,
-        ['2500', '2400', '2200', '2000'],
-        'liability'
-      );
-      const interestId = await resolveAccountId(
-        supabase,
-        loan.interest_expense_account_id
-          ? String(loan.interest_expense_account_id)
-          : null,
-        ['6100', '6000', '5200', '5000'],
-        'expense'
-      );
-      const bankId = await resolveAccountId(
-        supabase,
-        loan.payment_account_id
-          ? String(loan.payment_account_id)
-          : loan.bank_account_id
-            ? String(loan.bank_account_id)
-            : null,
-        ['1000', '1010', '1020', '1100'],
-        'asset'
-      );
-
-      if (liabilityId && bankId && journalId && totalAmt > 0) {
-        const direction = String(loan.direction || 'borrowed');
-        const label = `${loan.loan_number} installment #${inst.sequence}`;
-        const lines: AutoPostingLine[] = [];
-
-        if (direction === 'issued') {
-          // Borrower pays us: Dr Bank, Cr Loan receivable (principal), Cr Interest income
-          lines.push({
-            account_id: bankId,
-            label,
-            partner_name: loan.lender_name ? String(loan.lender_name) : null,
-            debit: totalAmt,
-            credit: 0,
-          });
-          if (principalAmt > 0) {
-            lines.push({
-              account_id: liabilityId,
-              label: `${label} — principal`,
-              partner_name: loan.lender_name ? String(loan.lender_name) : null,
-              debit: 0,
-              credit: principalAmt,
-            });
-          }
-          if (interestAmt > 0 && interestId) {
-            lines.push({
-              account_id: interestId,
-              label: `${label} — interest`,
-              partner_name: loan.lender_name ? String(loan.lender_name) : null,
-              debit: 0,
-              credit: interestAmt,
-            });
-          } else if (interestAmt > 0) {
-            // fold interest into receivable credit if no income account
-            const last = lines[lines.length - 1];
-            if (last) last.credit = round2((last.credit || 0) + interestAmt);
-          }
-        } else {
-          // We repay lender: Dr Liability, Dr Interest expense, Cr Bank
-          if (principalAmt > 0) {
-            lines.push({
-              account_id: liabilityId,
-              label: `${label} — principal`,
-              partner_name: loan.lender_name ? String(loan.lender_name) : null,
-              debit: principalAmt,
-              credit: 0,
-            });
-          }
-          if (interestAmt > 0) {
-            lines.push({
-              account_id: interestId || liabilityId,
-              label: `${label} — interest`,
-              partner_name: loan.lender_name ? String(loan.lender_name) : null,
-              debit: interestAmt,
-              credit: 0,
-            });
-          }
-          lines.push({
-            account_id: bankId,
-            label,
-            partner_name: loan.lender_name ? String(loan.lender_name) : null,
-            debit: 0,
-            credit: totalAmt,
-          });
-        }
-
-        const je = await createAndPostAutomaticJournalEntry({
-          organizationId: String(loan.organization_id),
-          journalId,
-          entryDate: paymentDate,
-          reference: `${loan.loan_number}-${inst.sequence}`,
-          partnerName: loan.lender_name ? String(loan.lender_name) : null,
-          contactId: loan.contact_id ? String(loan.contact_id) : null,
-          sourceType: 'loan_repayment' as never,
-          sourceId: installmentId,
-          sourceNumber: `${loan.loan_number}-${inst.sequence}`,
-          lines,
-          performedBy: scope.session.username,
-        });
-        if ('journalEntryId' in je && je.journalEntryId) {
-          jeId = je.journalEntryId ?? null;
-        }
-        if ('error' in je && je.error && !('alreadyExists' in je && je.alreadyExists)) {
-          return { error: je.error };
-        }
-      }
-    } catch (err) {
-      console.warn('[loans] repayment JE:', err);
+    let journalId = loan.journal_id ? String(loan.journal_id) : null;
+    if (!journalId) {
+      const j = await getJournalIdByType('general', String(loan.organization_id));
+      journalId = String(j.id);
     }
+
+    const liabilityId = await resolveAccountId(
+      supabase,
+      loan.liability_account_id ? String(loan.liability_account_id) : null,
+      ['2500', '2400', '2200', '2000'],
+      'liability'
+    );
+    const interestId = await resolveAccountId(
+      supabase,
+      loan.interest_expense_account_id
+        ? String(loan.interest_expense_account_id)
+        : null,
+      ['6100', '6000', '5200', '5000'],
+      'expense'
+    );
+    const bankId = await resolveAccountId(
+      supabase,
+      loan.payment_account_id
+        ? String(loan.payment_account_id)
+        : loan.bank_account_id
+          ? String(loan.bank_account_id)
+          : null,
+      ['1000', '1010', '1020', '1100'],
+      'asset'
+    );
+
+    if (!liabilityId || !bankId || !journalId) {
+      return {
+        error:
+          'Installment not paid — configure the loan liability and bank/cash accounts.',
+      };
+    }
+    if (interestAmt > 0.004 && !interestId) {
+      return {
+        error:
+          'Installment not paid — configure an interest expense/income account on the loan.',
+      };
+    }
+
+    const direction = String(loan.direction || 'borrowed');
+    const label = `${loan.loan_number} installment #${inst.sequence}`;
+    const lines: AutoPostingLine[] = [];
+
+    if (direction === 'issued') {
+      lines.push({
+        account_id: bankId,
+        label,
+        partner_name: loan.lender_name ? String(loan.lender_name) : null,
+        debit: totalAmt,
+        credit: 0,
+      });
+      if (principalAmt > 0) {
+        lines.push({
+          account_id: liabilityId,
+          label: `${label} — principal`,
+          partner_name: loan.lender_name ? String(loan.lender_name) : null,
+          debit: 0,
+          credit: principalAmt,
+        });
+      }
+      if (interestAmt > 0 && interestId) {
+        lines.push({
+          account_id: interestId,
+          label: `${label} — interest`,
+          partner_name: loan.lender_name ? String(loan.lender_name) : null,
+          debit: 0,
+          credit: interestAmt,
+        });
+      }
+    } else {
+      if (principalAmt > 0) {
+        lines.push({
+          account_id: liabilityId,
+          label: `${label} — principal`,
+          partner_name: loan.lender_name ? String(loan.lender_name) : null,
+          debit: principalAmt,
+          credit: 0,
+        });
+      }
+      if (interestAmt > 0 && interestId) {
+        lines.push({
+          account_id: interestId,
+          label: `${label} — interest`,
+          partner_name: loan.lender_name ? String(loan.lender_name) : null,
+          debit: interestAmt,
+          credit: 0,
+        });
+      }
+      lines.push({
+        account_id: bankId,
+        label,
+        partner_name: loan.lender_name ? String(loan.lender_name) : null,
+        debit: 0,
+        credit: totalAmt,
+      });
+    }
+
+    const je = await createAndPostAutomaticJournalEntry({
+      organizationId: String(loan.organization_id),
+      journalId,
+      entryDate: paymentDate,
+      reference: `${loan.loan_number}-${inst.sequence}`,
+      partnerName: loan.lender_name ? String(loan.lender_name) : null,
+      contactId: loan.contact_id ? String(loan.contact_id) : null,
+      sourceType: 'loan_repayment' as never,
+      sourceId: installmentId,
+      sourceNumber: `${loan.loan_number}-${inst.sequence}`,
+      lines,
+      performedBy: scope.session.username,
+    });
+    if ('error' in je && je.error) {
+      return { error: je.error };
+    }
+    if (!('journalEntryId' in je) || !je.journalEntryId) {
+      return {
+        error: 'Installment not paid — repayment journal entry was not created.',
+      };
+    }
+    jeId = je.journalEntryId;
 
     await supabase
       .from('accounting_loan_installments')

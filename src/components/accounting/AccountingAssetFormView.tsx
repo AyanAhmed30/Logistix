@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import {
   BookOpen,
+  CalendarClock,
   HelpCircle,
   Link2,
   MessageSquare,
@@ -34,6 +35,7 @@ import {
   getAccountingAssetActivity,
   getAccountingAssetCategories,
   getAccountingAssetDetail,
+  postAccountingAssetDepreciation,
   postDueAccountingAssetDepreciations,
   updateAccountingAsset,
   type AccountingAssetCategory,
@@ -196,7 +198,7 @@ export function AccountingAssetFormView({ assetId }: Props) {
   const [journals, setJournals] = useState<{ id: string; name: string; code: string }[]>([]);
   const [accounts, setAccounts] = useState<{ id: string; code: string; name: string }[]>([]);
   const [logs, setLogs] = useState<AccountingAssetLog[]>([]);
-  const [tab, setTab] = useState<"asset" | "bills">("asset");
+  const [tab, setTab] = useState<"asset" | "bills" | "board">("asset");
   const [billLines, setBillLines] = useState<BillLine[]>([]);
   const loadedAssetIdRef = useRef<string | null>(null);
   const [chatterMode, setChatterMode] = useState<"message" | "note" | "activity" | null>(null);
@@ -402,6 +404,18 @@ export function AccountingAssetFormView({ assetId }: Props) {
     });
   }
 
+  function handlePostLine(depreciationId: string) {
+    startTransition(async () => {
+      const res = await postAccountingAssetDepreciation(depreciationId);
+      if ("error" in res && res.error) {
+        toast.error(res.error);
+        return;
+      }
+      toast.success("Depreciation posted");
+      load();
+    });
+  }
+
   function handleDispose() {
     startTransition(async () => {
       const res = await disposeAccountingAsset(assetId, {
@@ -513,6 +527,19 @@ export function AccountingAssetFormView({ assetId }: Props) {
             <button
               type="button"
               className="inline-flex min-w-[100px] flex-col items-center justify-center rounded-sm border border-slate-200 bg-slate-50/80 px-3 py-2 hover:bg-slate-50"
+              onClick={() => setTab("board")}
+            >
+              <CalendarClock className="h-4 w-4 text-[#017e84] mb-0.5" />
+              <span className="text-base font-semibold tabular-nums text-primary-dark leading-none">
+                {detail.depreciations.length}
+              </span>
+              <span className="text-[11px] text-secondary-muted mt-0.5">
+                Depreciation Board
+              </span>
+            </button>
+            <button
+              type="button"
+              className="inline-flex min-w-[100px] flex-col items-center justify-center rounded-sm border border-slate-200 bg-slate-50/80 px-3 py-2 hover:bg-slate-50"
               onClick={() => setTab("bills")}
             >
               <Link2 className="h-4 w-4 text-[#017e84] mb-0.5" />
@@ -567,6 +594,7 @@ export function AccountingAssetFormView({ assetId }: Props) {
             {(
               [
                 ["asset", "Asset"],
+                ["board", "Depreciation Board"],
                 ["bills", "Bills"],
               ] as const
             ).map(([id, label]) => (
@@ -794,6 +822,99 @@ export function AccountingAssetFormView({ assetId }: Props) {
                   </select>
                 </FormRow>
               </div>
+            </div>
+          ) : null}
+
+          {tab === "board" ? (
+            <div className="border border-slate-200 rounded-sm overflow-hidden">
+              <Table>
+                <TableHeader>
+                  <TableRow className="bg-slate-50/80">
+                    <TableHead className="w-12">#</TableHead>
+                    <TableHead>Period</TableHead>
+                    <TableHead>Date</TableHead>
+                    <TableHead className="text-right">Depreciation</TableHead>
+                    <TableHead className="text-right">Remaining</TableHead>
+                    <TableHead>Status</TableHead>
+                    <TableHead className="text-right">Journal</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {detail.depreciations.length === 0 ? (
+                    <TableRow>
+                      <TableCell
+                        colSpan={7}
+                        className="text-center text-sm text-secondary-muted py-10"
+                      >
+                        No depreciation schedule yet. Confirm the asset or
+                        compute depreciation first.
+                      </TableCell>
+                    </TableRow>
+                  ) : (
+                    detail.depreciations.map((row) => (
+                      <TableRow key={row.id}>
+                        <TableCell className="text-sm tabular-nums">
+                          {row.sequence}
+                        </TableCell>
+                        <TableCell className="text-sm">
+                          {row.period_label}
+                        </TableCell>
+                        <TableCell className="text-sm whitespace-nowrap">
+                          {row.depreciation_date}
+                        </TableCell>
+                        <TableCell className="text-right tabular-nums text-sm">
+                          {formatMoney(row.amount)}
+                        </TableCell>
+                        <TableCell className="text-right tabular-nums text-sm">
+                          {formatMoney(row.remaining_value)}
+                        </TableCell>
+                        <TableCell>
+                          <span
+                            className={cn(
+                              "inline-flex rounded-sm border px-1.5 py-0.5 text-[11px] font-semibold capitalize",
+                              row.status === "posted"
+                                ? "bg-emerald-50 text-emerald-800 border-emerald-200"
+                                : row.status === "cancelled"
+                                  ? "bg-slate-100 text-slate-600 border-slate-200"
+                                  : "bg-amber-50 text-amber-800 border-amber-200"
+                            )}
+                          >
+                            {row.status}
+                          </span>
+                        </TableCell>
+                        <TableCell className="text-right">
+                          <div className="flex gap-1 justify-end">
+                            {row.journal_entry_id ? (
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                className="h-7 px-2 rounded-sm text-[#017e84]"
+                                onClick={() =>
+                                  router.push(
+                                    `/accounting/journal-entries/${row.journal_entry_id}`
+                                  )
+                                }
+                              >
+                                <BookOpen className="h-3.5 w-3.5" />
+                              </Button>
+                            ) : null}
+                            {row.status === "draft" && !isDraft && !isDisposed ? (
+                              <Button
+                                size="sm"
+                                className={cn(btnPrimary, "h-7 text-xs")}
+                                disabled={isPending}
+                                onClick={() => handlePostLine(row.id)}
+                              >
+                                Post
+                              </Button>
+                            ) : null}
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    ))
+                  )}
+                </TableBody>
+              </Table>
             </div>
           ) : null}
 

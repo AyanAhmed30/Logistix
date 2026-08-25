@@ -213,15 +213,18 @@ function FilterChip({
   icon,
   children,
   onClick,
+  testId,
 }: {
   icon?: ReactNode;
   children: ReactNode;
   onClick?: () => void;
+  testId?: string;
 }) {
   return (
     <button
       type="button"
       onClick={onClick}
+      data-testid={testId}
       className="inline-flex items-center gap-1.5 h-8 px-2.5 rounded-md border border-slate-200 bg-white text-xs sm:text-sm text-slate-700 hover:bg-slate-50 whitespace-nowrap"
     >
       {icon}
@@ -246,7 +249,7 @@ function StatementToolbar({
   showSearch?: boolean;
 }) {
   return (
-    <div className="flex flex-wrap items-center justify-between gap-2 px-1 py-2 border-b border-slate-200 bg-white sticky top-0 z-10">
+    <div className="flex flex-wrap items-center justify-between gap-2 px-1 py-2 border-b border-slate-200 bg-white sticky top-0 z-20 overflow-visible">
       <div className="flex items-center gap-2 min-w-0">
         <Button
           type="button"
@@ -397,37 +400,44 @@ function StatementRow({
 
 function StatementTable({
   lines,
-  expandKey,
-  expandChildren,
+  expansions,
 }: {
   lines: ReportLine[];
-  expandKey?: string;
-  expandChildren?: ReportLine[];
+  expansions?: { key: string; children: ReportLine[] }[];
 }) {
-  const [expanded, setExpanded] = useState(false);
+  const [open, setOpen] = useState<Record<string, boolean>>({});
+  const expansionMap = new Map(
+    (expansions || []).map((e) => [e.key, e.children])
+  );
   return (
     <div>
       <BalanceHeader />
-      {lines.map((line) => (
-        <div key={line.key}>
-          <StatementRow
-            line={line}
-            expanded={expandKey === line.key ? expanded : undefined}
-            onToggle={
-              expandKey === line.key
-                ? () => setExpanded((v) => !v)
-                : undefined
-            }
-          />
-          {expandKey === line.key &&
-          expanded &&
-          expandChildren?.length
-            ? expandChildren.map((child) => (
-                <StatementRow key={child.key} line={{ ...child, level: 1 }} />
-              ))
-            : null}
-        </div>
-      ))}
+      {lines.map((line) => {
+        const children = expansionMap.get(line.key);
+        const expanded = !!open[line.key];
+        return (
+          <div key={line.key}>
+            <StatementRow
+              line={line}
+              expanded={children ? expanded : undefined}
+              onToggle={
+                children
+                  ? () =>
+                      setOpen((prev) => ({
+                        ...prev,
+                        [line.key]: !prev[line.key],
+                      }))
+                  : undefined
+              }
+            />
+            {children && expanded
+              ? children.map((child) => (
+                  <StatementRow key={child.key} line={{ ...child, level: 1 }} />
+                ))
+              : null}
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -491,6 +501,15 @@ export function AccountingStatementReportsView() {
       return;
     }
     setError(null);
+    setBs(null);
+    setPl(null);
+    setCf(null);
+    setTb(null);
+    setGl(null);
+    setPartnerLed(null);
+    setAgedAr(null);
+    setAgedAp(null);
+    setTaxReport(null);
     startTransition(async () => {
       if (active === "balance_sheet") {
         const res = await getBalanceSheetStatement({ asOf });
@@ -697,14 +716,16 @@ export function AccountingStatementReportsView() {
       <FilterChip
         icon={<Calendar className="h-3.5 w-3.5 text-slate-500" />}
         onClick={() => setAsOfOpen((v) => !v)}
+        testId="report-as-of-chip"
       >
         {formatAsOf(asOf)}
       </FilterChip>
       {asOfOpen ? (
-        <div className="absolute right-0 top-full mt-1 z-20 rounded-md border border-slate-200 bg-white p-2 shadow-md">
-          <input
-            type="date"
-            value={asOf}
+        <div className="absolute right-0 top-full mt-1 z-50 rounded-md border border-slate-200 bg-white p-2 shadow-md">
+            <input
+              type="date"
+              data-testid="report-as-of"
+              value={asOf}
             onChange={(e) => {
               setAsOf(e.target.value);
               setAsOfOpen(false);
@@ -721,15 +742,17 @@ export function AccountingStatementReportsView() {
       <FilterChip
         icon={<Calendar className="h-3.5 w-3.5 text-slate-500" />}
         onClick={() => setPeriodOpen((v) => !v)}
+        testId="report-period-chip"
       >
         {formatPeriodLabel(dateFrom, dateTo)}
       </FilterChip>
       {periodOpen ? (
-        <div className="absolute right-0 top-full mt-1 z-20 rounded-md border border-slate-200 bg-white p-3 shadow-md flex flex-col gap-2 min-w-[200px]">
+        <div className="absolute right-0 top-full mt-1 z-50 rounded-md border border-slate-200 bg-white p-3 shadow-md flex flex-col gap-2 min-w-[200px]">
           <label className="text-xs text-slate-500">
             From
             <input
               type="date"
+              data-testid="report-date-from"
               value={dateFrom}
               onChange={(e) => setDateFrom(e.target.value)}
               className="mt-0.5 h-8 w-full rounded border border-slate-200 px-2 text-sm"
@@ -739,6 +762,7 @@ export function AccountingStatementReportsView() {
             To
             <input
               type="date"
+              data-testid="report-date-to"
               value={dateTo}
               onChange={(e) => setDateTo(e.target.value)}
               className="mt-0.5 h-8 w-full rounded border border-slate-200 px-2 text-sm"
@@ -891,7 +915,14 @@ export function AccountingStatementReportsView() {
       ) : null}
 
       {active === "balance_sheet" && bs ? (
-        <div ref={printRef}>
+        <div
+          ref={printRef}
+          data-testid="balance-sheet-report"
+          data-assets={String(bs.totalAssets)}
+          data-liabilities-equity={String(bs.totalLiabilitiesAndEquity)}
+          data-cye={String(bs.currentYearEarnings)}
+          data-balanced={bs.balanced ? "true" : "false"}
+        >
           {!bs.balanced ? (
             <div className="mx-auto max-w-3xl mt-3 text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-md px-3 py-2">
               Balance sheet is out of balance by{" "}
@@ -908,19 +939,33 @@ export function AccountingStatementReportsView() {
       ) : null}
 
       {active === "profit_loss" && pl ? (
-        <div ref={printRef}>
+        <div
+          ref={printRef}
+          data-testid="profit-loss-report"
+          data-net={String(pl.netProfit)}
+          data-income={String(pl.totalIncome)}
+          data-expenses={String(pl.totalExpenses)}
+        >
           <StatementCard>
             <StatementTable
               lines={pl.lines}
-              expandKey="pl:revenue"
-              expandChildren={pl.income}
+              expansions={[
+                { key: "pl:revenue", children: pl.income },
+                { key: "pl:opex", children: pl.expenses },
+              ]}
             />
           </StatementCard>
         </div>
       ) : null}
 
       {active === "cash_flow" && cf ? (
-        <div ref={printRef}>
+        <div
+          ref={printRef}
+          data-testid="cash-flow-report"
+          data-opening={String(cf.openingCash)}
+          data-closing={String(cf.closingCash)}
+          data-net={String(cf.actualCashMovement)}
+        >
           <StatementCard>
             <StatementTable lines={cf.lines} />
           </StatementCard>

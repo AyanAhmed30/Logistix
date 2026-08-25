@@ -95,6 +95,11 @@ export type SalesQuotationDetail = {
   created_by: string;
   created_at: string;
   updated_at: string;
+  linked_inquiry_id?: string | null;
+  customer_pdf_url?: string | null;
+  customer_pdf_path?: string | null;
+  sent_to_customer_at?: string | null;
+  sent_to_customer_by?: string | null;
   lines: SalesQuotationLine[];
   opportunity_name?: string | null;
   salesperson_name?: string | null;
@@ -325,6 +330,11 @@ function mapRowToDetail(
     created_by: String(row.created_by || ''),
     created_at: String(row.created_at || ''),
     updated_at: String(row.updated_at || ''),
+    linked_inquiry_id: row.linked_inquiry_id ? String(row.linked_inquiry_id) : null,
+    customer_pdf_url: row.customer_pdf_url ? String(row.customer_pdf_url) : null,
+    customer_pdf_path: row.customer_pdf_path ? String(row.customer_pdf_path) : null,
+    sent_to_customer_at: row.sent_to_customer_at ? String(row.sent_to_customer_at) : null,
+    sent_to_customer_by: row.sent_to_customer_by ? String(row.sent_to_customer_by) : null,
     lines,
     opportunity_name: extras?.opportunity_name ?? null,
     salesperson_name: extras?.salesperson_name ?? null,

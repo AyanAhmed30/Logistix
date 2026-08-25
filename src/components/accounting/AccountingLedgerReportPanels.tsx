@@ -189,7 +189,13 @@ export function TrialBalanceTable({ report }: { report: TrialBalanceReport }) {
           })}
         </tbody>
         <tfoot>
-          <tr className="border-t-2 border-slate-300 bg-slate-100 font-semibold">
+          <tr
+            className="border-t-2 border-slate-300 bg-slate-100 font-semibold"
+            data-testid="trial-balance-totals"
+            data-period-debit={String(report.totalPeriodDebit)}
+            data-period-credit={String(report.totalPeriodCredit)}
+            data-balanced={report.balanced ? "true" : "false"}
+          >
             <td className="py-2.5 px-3 text-slate-800">Total</td>
             <td className="py-2.5 px-3 text-right border-l border-slate-200">
               {formatAmt(report.totalInitialBalance, { dimZero: true, signedRed: true })}
@@ -309,7 +315,13 @@ export function GeneralLedgerTable({ report }: { report: GeneralLedgerReport }) 
           })}
         </tbody>
         <tfoot>
-          <tr className="border-t-2 border-slate-300 bg-slate-100 font-semibold">
+          <tr
+            className="border-t-2 border-slate-300 bg-slate-100 font-semibold"
+            data-testid="general-ledger-totals"
+            data-debit={String(report.totalDebit)}
+            data-credit={String(report.totalCredit)}
+            data-balanced={report.balanced ? "true" : "false"}
+          >
             <td className="py-2.5 px-3 text-slate-800" colSpan={3}>
               Total General Ledger
             </td>
@@ -350,15 +362,34 @@ export function PartnerLedgerTable({ report }: { report: PartnerLedgerReport }) 
 
   if (empty) {
     return (
-      <p className="text-sm text-slate-500 px-4 py-8 text-center">
+      <p
+        className="text-sm text-slate-500 px-4 py-8 text-center"
+        data-testid="partner-ledger-report"
+        data-receivable="0"
+        data-payable="0"
+      >
         No partner ledger activity for this period on receivable/payable
         accounts.
       </p>
     );
   }
 
+  const rec = report.partners.reduce(
+    (s, p) => s + (p.receivable_outstanding || 0),
+    0
+  );
+  const pay = report.partners.reduce(
+    (s, p) => s + (p.payable_outstanding || 0),
+    0
+  );
+
   return (
-    <div className="overflow-x-auto">
+    <div
+      className="overflow-x-auto"
+      data-testid="partner-ledger-report"
+      data-receivable={String(rec)}
+      data-payable={String(pay)}
+    >
       <table className="w-full min-w-[1000px] text-sm border-collapse">
         <thead>
           <tr className="border-b border-slate-200 text-xs text-slate-500">

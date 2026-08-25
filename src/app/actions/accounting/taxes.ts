@@ -102,11 +102,7 @@ async function resolveTaxScope(opts?: { config?: boolean }) {
 
   const { isSuperAdminInAdminContext } = await import('@/lib/auth/super-admin');
   if (!scope.organizationId && isSuperAdminInAdminContext(scope.session)) {
-    return {
-      session: scope.session,
-      organizationId: null as string | null,
-      isGlobalAdminView: true,
-    };
+    return { error: 'Select an organization from the header switcher.' };
   }
 
   return {
@@ -744,6 +740,13 @@ export async function ensureDefaultAccountingTaxes() {
       .eq('is_active', true)
       .limit(1)
       .maybeSingle();
+    const { data: taxRecoverable } = await supabase
+      .from('chart_of_accounts')
+      .select('id')
+      .eq('code', '1400')
+      .eq('is_active', true)
+      .limit(1)
+      .maybeSingle();
 
     const defaults = [
       {
@@ -781,6 +784,10 @@ export async function ensureDefaultAccountingTaxes() {
         .is('organization_id', null)
         .maybeSingle();
       if (existing?.id) continue;
+      const accountId =
+        d.type === 'purchase_tax'
+          ? taxRecoverable?.id || taxPayable?.id || null
+          : taxPayable?.id || null;
       const { error } = await supabase.from('taxes').insert([
         {
           name: d.name,
@@ -790,7 +797,7 @@ export async function ensureDefaultAccountingTaxes() {
           rate_value: d.rate,
           amount_type: 'percent',
           is_inclusive: false,
-          account_id: taxPayable?.id || null,
+          account_id: accountId,
           tax_group_id: gstGroup?.id || null,
           invoice_label: d.rate ? `GST ${d.rate}%` : 'GST 0%',
           scope: d.scope,
@@ -802,6 +809,14 @@ export async function ensureDefaultAccountingTaxes() {
         },
       ]);
       if (!error) created += 1;
+    }
+
+    if (taxRecoverable?.id && taxPayable?.id) {
+      await supabase
+        .from('taxes')
+        .update({ account_id: taxRecoverable.id })
+        .eq('code', 'GST_P_18')
+        .eq('account_id', taxPayable.id);
     }
 
     return { created };

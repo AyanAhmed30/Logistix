@@ -354,7 +354,7 @@ export function AccountingJournalEntryFormView({ entryId }: Props) {
               Save
             </Button>
           ) : null}
-          {status === "posted" && detail.is_manual ? (
+          {status === "cancelled" && detail.is_manual ? (
             <Button
               size="sm"
               variant="outline"
@@ -375,7 +375,7 @@ export function AccountingJournalEntryFormView({ entryId }: Props) {
               Reset to Draft
             </Button>
           ) : null}
-          {status !== "cancelled" ? (
+          {status === "draft" ? (
             <Button
               size="sm"
               variant="outline"
@@ -493,6 +493,62 @@ export function AccountingJournalEntryFormView({ entryId }: Props) {
                   </div>
                 </button>
               ) : null}
+              {(detail.source_type === "asset_purchase" ||
+                detail.source_type === "asset_disposal") &&
+              detail.source_id ? (
+                <button
+                  type="button"
+                  onClick={() =>
+                    router.push(`/accounting/assets/${detail.source_id}`)
+                  }
+                  className="rounded-sm border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-left hover:border-[#017e84]/40 min-w-[72px]"
+                >
+                  <div className="text-sm font-semibold text-[#017e84]">1</div>
+                  <div className="text-[10px] text-secondary-muted">Asset</div>
+                </button>
+              ) : null}
+              {detail.source_type === "asset_depreciation" && detail.source_id ? (
+                <button
+                  type="button"
+                  onClick={() =>
+                    router.push(
+                      `/accounting/review/depreciation-schedule?line=${detail.source_id}`
+                    )
+                  }
+                  className="rounded-sm border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-left hover:border-[#017e84]/40 min-w-[72px]"
+                >
+                  <div className="text-sm font-semibold text-[#017e84]">1</div>
+                  <div className="text-[10px] text-secondary-muted">
+                    Depreciation
+                  </div>
+                </button>
+              ) : null}
+              {detail.source_type === "loan_disbursement" && detail.source_id ? (
+                <button
+                  type="button"
+                  onClick={() =>
+                    router.push(`/accounting/loans/${detail.source_id}`)
+                  }
+                  className="rounded-sm border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-left hover:border-[#017e84]/40 min-w-[72px]"
+                >
+                  <div className="text-sm font-semibold text-[#017e84]">1</div>
+                  <div className="text-[10px] text-secondary-muted">Loan</div>
+                </button>
+              ) : null}
+              {detail.source_type === "loan_repayment" && detail.source_id ? (
+                <button
+                  type="button"
+                  onClick={() =>
+                    router.push(
+                      `/accounting/loans/installment/${detail.source_id}`
+                    )
+                  }
+                  className="rounded-sm border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-left hover:border-[#017e84]/40 min-w-[72px]"
+                >
+                  <div className="text-sm font-semibold text-[#017e84]">1</div>
+                  <div className="text-[10px] text-secondary-muted">Loan</div>
+                </button>
+              ) : null}
             </div>
           </div>
 
@@ -525,6 +581,7 @@ export function AccountingJournalEntryFormView({ entryId }: Props) {
                 </Label>
                 <Input
                   type="date"
+                  data-testid="journal-entry-date"
                   className={cn("mt-0.5", fieldUnderline)}
                   value={entryDate}
                   disabled={readOnly}

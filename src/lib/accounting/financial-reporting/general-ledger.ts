@@ -1,8 +1,8 @@
 import {
-  dayBefore,
   loadChartAccounts,
   loadPostedLedgerFacts,
   rawDebitCreditBalance,
+  splitFactsByPeriod,
 } from '@/lib/accounting/financial-reporting/ledger';
 import {
   round2,
@@ -25,18 +25,15 @@ export async function buildGeneralLedger(opts: {
   const accounts = await loadChartAccounts(opts.organizationId);
   const accountIndex = new Map(accounts.map((a) => [a.id, a]));
 
-  const beforeFrom = dayBefore(opts.dateFrom);
-  const openingFacts = beforeFrom
-    ? await loadPostedLedgerFacts({
-        organizationId: opts.organizationId,
-        dateTo: beforeFrom,
-      })
-    : [];
-  const periodFacts = await loadPostedLedgerFacts({
+  const throughTo = await loadPostedLedgerFacts({
     organizationId: opts.organizationId,
-    dateFrom: opts.dateFrom,
     dateTo: opts.dateTo,
   });
+  const { opening: openingFacts, period: periodFacts } = splitFactsByPeriod(
+    throughTo,
+    opts.dateFrom,
+    opts.dateTo
+  );
 
   const openingByAccount = new Map<string, { debit: number; credit: number }>();
   for (const f of openingFacts) {
@@ -72,11 +69,11 @@ export async function buildGeneralLedger(opts: {
     return ca.localeCompare(cb);
   })) {
     const meta = accountIndex.get(accountId);
-    if (!meta || meta.type === 'view') continue;
+    if (meta?.type === 'view') continue;
 
     if (search) {
-      const hay = `${meta.code} ${meta.name}`.toLowerCase();
-      if (!hay.includes(search)) continue;
+      const hay = `${meta?.code || ''} ${meta?.name || ''}`.toLowerCase();
+      if (!hay.includes(search) && !accountId.toLowerCase().includes(search)) continue;
     }
 
     const open = openingByAccount.get(accountId) || { debit: 0, credit: 0 };
@@ -119,9 +116,9 @@ export async function buildGeneralLedger(opts: {
 
     resultAccounts.push({
       account_id: accountId,
-      code: meta.code,
-      name: meta.name,
-      type: meta.type,
+      code: meta?.code || 'UNMAPPED',
+      name: meta?.name || `Unmapped account (${accountId.slice(0, 8)})`,
+      type: meta?.type || 'asset',
       opening_balance: openingBalance,
       period_debit: periodDebit,
       period_credit: periodCredit,

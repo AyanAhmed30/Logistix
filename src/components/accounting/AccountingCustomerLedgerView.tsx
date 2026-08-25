@@ -80,7 +80,7 @@ export function AccountingCustomerLedgerView({ contactId }: Props) {
             Back to Customer
           </Button>
           <h2 className="text-lg font-semibold text-primary-dark">Customer Ledger</h2>
-          <p className="text-sm text-secondary-muted">
+          <p className="text-sm text-secondary-muted" data-testid="ledger-closing-balance">
             Closing balance: {formatMoney(closing)}
           </p>
         </div>

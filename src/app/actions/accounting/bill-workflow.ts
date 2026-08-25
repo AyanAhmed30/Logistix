@@ -346,6 +346,14 @@ export async function postAccountingBill(billId: string) {
     if (String(row.status) !== 'draft') {
       return { error: `Cannot post from status "${row.status}"` };
     }
+    if (
+      scope.organizationId &&
+      !scope.isGlobalAdminView &&
+      row.organization_id &&
+      String(row.organization_id) !== scope.organizationId
+    ) {
+      return { error: 'Bill not in the selected organization' };
+    }
     const { getAccountingDocumentLockError } = await import('@/lib/accounting-lock-dates');
     const postLockErr = await getAccountingDocumentLockError(
       row.organization_id ? String(row.organization_id) : null,

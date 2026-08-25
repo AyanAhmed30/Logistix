@@ -11,6 +11,7 @@ import type { AutoPostingLine } from '@/lib/accounting-journal-posting';
 export type AccountingLockSettings = {
   organization_id: string;
   hard_lock_date: string | null;
+  period_lock_date: string | null;
   soft_lock_date: string | null;
   sale_lock_date: string | null;
   purchase_lock_date: string | null;
@@ -101,12 +102,7 @@ async function resolveOrgScope(): Promise<LockDatesScope> {
 
   const { isSuperAdminInAdminContext } = await import('@/lib/auth/super-admin');
   if (!scope.organizationId && isSuperAdminInAdminContext(scope.session)) {
-    return {
-      session: scope.session,
-      organizationId: null,
-      level,
-      isGlobalAdminView: true,
-    };
+    return { error: 'Select an organization from the header switcher.' };
   }
 
   if (!scope.organizationId) {
@@ -243,6 +239,12 @@ export async function getAccountingLockDatesOverview() {
           hard_lock_date: settingsRes.data.hard_lock_date
             ? String(settingsRes.data.hard_lock_date).slice(0, 10)
             : null,
+          period_lock_date: (settingsRes.data as { period_lock_date?: string | null })
+            .period_lock_date
+            ? String(
+                (settingsRes.data as { period_lock_date?: string | null }).period_lock_date
+              ).slice(0, 10)
+            : null,
           soft_lock_date: (settingsRes.data as { soft_lock_date?: string | null })
             .soft_lock_date
             ? String(
@@ -266,6 +268,20 @@ export async function getAccountingLockDatesOverview() {
             : null,
         }
       : null;
+
+    if (
+      settings &&
+      settingsRes.data &&
+      !('period_lock_date' in (settingsRes.data as Record<string, unknown>))
+    ) {
+      const { readLatestLoggedPeriodLock } = await import(
+        '@/lib/accounting-lock-dates'
+      );
+      settings.period_lock_date = await readLatestLoggedPeriodLock(
+        supabase,
+        orgId
+      );
+    }
 
     const journalLocks: AccountingJournalLock[] = (jLocksRes.data || []).map((r) => {
       const j = jMap.get(String(r.journal_id));
@@ -337,6 +353,7 @@ export async function getAccountingLockDatesOverview() {
 
 export async function updateAccountingLockSettings(payload: {
   hard_lock_date?: string | null;
+  period_lock_date?: string | null;
   soft_lock_date?: string | null;
   sale_lock_date?: string | null;
   purchase_lock_date?: string | null;
@@ -372,6 +389,9 @@ export async function updateAccountingLockSettings(payload: {
     if (payload.hard_lock_date !== undefined) {
       row.hard_lock_date = emptyDate(payload.hard_lock_date);
     }
+    if (payload.period_lock_date !== undefined) {
+      row.period_lock_date = emptyDate(payload.period_lock_date);
+    }
     if (payload.soft_lock_date !== undefined) {
       row.soft_lock_date = emptyDate(payload.soft_lock_date);
     }
@@ -392,6 +412,35 @@ export async function updateAccountingLockSettings(payload: {
       .eq('organization_id', scope.organizationId)
       .maybeSingle();
 
+    const previous = existing
+      ? {
+          hard_lock_date: existing.hard_lock_date
+            ? String(existing.hard_lock_date).slice(0, 10)
+            : null,
+          period_lock_date: (existing as { period_lock_date?: string | null })
+            .period_lock_date
+            ? String(
+                (existing as { period_lock_date?: string | null }).period_lock_date
+              ).slice(0, 10)
+            : null,
+          soft_lock_date: (existing as { soft_lock_date?: string | null } | null)
+            ?.soft_lock_date
+            ? String(
+                (existing as { soft_lock_date?: string | null }).soft_lock_date
+              ).slice(0, 10)
+            : null,
+          sale_lock_date: existing.sale_lock_date
+            ? String(existing.sale_lock_date).slice(0, 10)
+            : null,
+          purchase_lock_date: existing.purchase_lock_date
+            ? String(existing.purchase_lock_date).slice(0, 10)
+            : null,
+          tax_lock_date: existing.tax_lock_date
+            ? String(existing.tax_lock_date).slice(0, 10)
+            : null,
+        }
+      : null;
+
     const merged: Record<string, unknown> = {
       organization_id: scope.organizationId,
       hard_lock_date:
@@ -399,6 +448,14 @@ export async function updateAccountingLockSettings(payload: {
           ? row.hard_lock_date
           : existing?.hard_lock_date
             ? String(existing.hard_lock_date).slice(0, 10)
+            : null,
+      period_lock_date:
+        row.period_lock_date !== undefined
+          ? row.period_lock_date
+          : (existing as { period_lock_date?: string | null } | null)?.period_lock_date
+            ? String(
+                (existing as { period_lock_date?: string | null }).period_lock_date
+              ).slice(0, 10)
             : null,
       soft_lock_date:
         row.soft_lock_date !== undefined
@@ -434,6 +491,16 @@ export async function updateAccountingLockSettings(payload: {
       .from('accounting_lock_settings')
       .upsert([merged], { onConflict: 'organization_id' });
 
+    const intendedPeriodLock = merged.period_lock_date ?? null;
+
+    if (error && /period_lock_date|column/i.test(error.message)) {
+      delete merged.period_lock_date;
+      const retryPeriod = await supabase
+        .from('accounting_lock_settings')
+        .upsert([merged], { onConflict: 'organization_id' });
+      error = retryPeriod.error;
+    }
+
     if (error && /soft_lock_date|column/i.test(error.message)) {
       delete merged.soft_lock_date;
       const retry = await supabase
@@ -456,7 +523,17 @@ export async function updateAccountingLockSettings(payload: {
       organizationId: scope.organizationId,
       action: 'lock_dates_updated',
       performedBy: scope.session.username,
-      details: merged,
+      details: {
+        previous,
+        next: {
+          hard_lock_date: merged.hard_lock_date,
+          period_lock_date: intendedPeriodLock,
+          soft_lock_date: merged.soft_lock_date,
+          sale_lock_date: merged.sale_lock_date,
+          purchase_lock_date: merged.purchase_lock_date,
+          tax_lock_date: merged.tax_lock_date,
+        },
+      },
     });
 
     return getAccountingLockDatesOverview();

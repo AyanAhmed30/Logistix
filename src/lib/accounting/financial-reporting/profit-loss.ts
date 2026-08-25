@@ -50,10 +50,6 @@ export async function buildProfitAndLoss(opts: {
     incomeRows,
     (b) => !b.account_type || b.account_type === 'income'
   );
-  const otherIncome = sumMatching(
-    incomeRows,
-    (b) => b.account_type === 'other_income'
-  );
   const costOfRevenue = sumMatching(
     expenseRows,
     (b) => b.account_type === 'cost_of_revenue'
@@ -67,11 +63,16 @@ export async function buildProfitAndLoss(opts: {
       at === 'depreciation'
     );
   });
-  const otherExpenses = 0;
+  const totalIncomeAll = round2(incomeRows.reduce((s, b) => s + b.balance, 0));
+  const totalExpenseAll = round2(expenseRows.reduce((s, b) => s + b.balance, 0));
+  const otherIncome = round2(totalIncomeAll - revenue);
+  const otherExpenses = round2(
+    totalExpenseAll - costOfRevenue - operatingExpenses
+  );
 
   const grossProfit = round2(revenue - costOfRevenue);
   const operatingIncome = round2(grossProfit - operatingExpenses);
-  const netProfit = round2(operatingIncome + otherIncome - otherExpenses);
+  const netProfit = round2(totalIncomeAll - totalExpenseAll);
   const allocations = 0;
   const netAfterAllocations = round2(netProfit - allocations);
 
@@ -106,6 +107,7 @@ export async function buildProfitAndLoss(opts: {
     }),
     line('pl:opex', 'Operating Expenses', operatingExpenses, 0, {
       variant: 'line',
+      expandable: true,
     }),
     line('pl:opinc', 'Operating Income (or Loss)', operatingIncome, 0, {
       variant: 'summary',
@@ -138,8 +140,8 @@ export async function buildProfitAndLoss(opts: {
     lines,
     income: incomeDetail,
     expenses: expenseDetail,
-    totalIncome: round2(revenue + otherIncome),
-    totalExpenses: round2(costOfRevenue + operatingExpenses + otherExpenses),
+    totalIncome: totalIncomeAll,
+    totalExpenses: totalExpenseAll,
     netProfit,
     grossProfit,
     operatingIncome,

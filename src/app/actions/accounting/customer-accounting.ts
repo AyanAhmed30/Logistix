@@ -3,7 +3,7 @@
 import { createAdminClient } from '@/utils/supabase/server';
 import { getSession } from '@/lib/auth/session';
 import { sessionHasAccountingAccess } from '@/lib/accounting-page-access';
-import { documentPaymentSnapshot } from '@/lib/accounting-payments';
+import { documentPaymentSnapshot, appliedPaymentAmount } from '@/lib/accounting-payments';
 
 export type CustomerBalanceSummary = {
   contact_id: string;
@@ -76,7 +76,7 @@ async function resolveScope() {
 
   const { isSuperAdminInAdminContext } = await import('@/lib/auth/super-admin');
   if (!scope.organizationId && isSuperAdminInAdminContext(scope.session)) {
-    return { session: scope.session, organizationId: null, isGlobalAdminView: true };
+    return { error: 'Select an organization from the header switcher.' };
   }
 
   if (!scope.organizationId) {
@@ -163,10 +163,25 @@ export async function getCustomerAccountingBalance(contactId: string) {
     if (invIds.length) {
       const { data: pays } = await supabase
         .from('accounting_invoice_payments')
-        .select('amount, invoice_id')
+        .select('amount, invoice_id, reconcile_status, amount_reconciled')
         .in('invoice_id', invIds);
       paymentTotal = round2(
-        (pays || []).reduce((acc, p) => acc + (Number(p.amount) || 0), 0)
+        (pays || []).reduce(
+          (acc, p) =>
+            acc +
+            appliedPaymentAmount({
+              amount: Number(p.amount) || 0,
+              reconcile_status:
+                'reconcile_status' in p && p.reconcile_status
+                  ? String(p.reconcile_status)
+                  : null,
+              amount_reconciled:
+                'amount_reconciled' in p && p.amount_reconciled != null
+                  ? Number(p.amount_reconciled)
+                  : null,
+            }),
+          0
+        )
       );
     }
 
@@ -334,6 +349,17 @@ export async function getCustomerLedger(
         .in('invoice_id', invIds);
       for (const p of pays || []) {
         const inv = invMap.get(String(p.invoice_id));
+        const applied = appliedPaymentAmount({
+          amount: Number(p.amount) || 0,
+          reconcile_status:
+            'reconcile_status' in p && p.reconcile_status
+              ? String(p.reconcile_status)
+              : null,
+          amount_reconciled:
+            'amount_reconciled' in p && p.amount_reconciled != null
+              ? Number(p.amount_reconciled)
+              : null,
+        });
         raw.push({
           id: `pay-${p.id}`,
           date: String(p.payment_date || ''),
@@ -341,8 +367,8 @@ export async function getCustomerLedger(
           invoice_number: inv?.invoice_number ? String(inv.invoice_number) : null,
           payment_reference: p.reference ? String(p.reference) : String(p.id).slice(0, 8),
           debit: 0,
-          credit: Number(p.amount) || 0,
-          status: 'paid',
+          credit: applied,
+          status: String(p.reconcile_status || 'posted'),
           type: 'payment',
           document_id: String(p.id),
           sortAt: `${p.payment_date || ''}T${p.created_at || ''}`,

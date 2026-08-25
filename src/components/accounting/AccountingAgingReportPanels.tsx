@@ -101,7 +101,11 @@ export function AgingReportTable({
                 {formatAmt(report.totals[b.id])}
               </td>
             ))}
-            <td className="py-2.5 px-3 text-right bg-white/70">
+            <td
+              className="py-2.5 px-3 text-right bg-white/70"
+              data-testid="aging-grand-total"
+              data-amount={String(report.grandTotal)}
+            >
               {formatAmt(report.grandTotal)}
             </td>
           </tr>

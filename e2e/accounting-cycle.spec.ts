@@ -247,7 +247,11 @@ test.describe('Accounting live E2E cycle', () => {
         waitUntil: 'domcontentloaded',
       });
     }
-    await page.getByPlaceholder('Name (company or person)').fill(CUSTOMER);
+    const nameInput = page.getByTestId('contact-name-input');
+    await expect(nameInput).toBeVisible({ timeout: 20_000 });
+    await nameInput.click();
+    await nameInput.fill(CUSTOMER);
+    await expect(nameInput).toHaveValue(CUSTOMER);
     await page.getByPlaceholder('Email').fill('test-customer-001@example.test');
     await page.getByPlaceholder('Phone').fill('+92 300 0000001');
     await page.getByPlaceholder('Street…').fill('1 Test Street');
@@ -385,7 +389,11 @@ test.describe('Accounting live E2E cycle', () => {
     } catch {
       await page.goto('/accounting/vendors/new', { waitUntil: 'domcontentloaded' });
     }
-    await page.getByPlaceholder('Name (company or person)').fill(VENDOR);
+    const vendorName = page.getByTestId('contact-name-input');
+    await expect(vendorName).toBeVisible({ timeout: 20_000 });
+    await vendorName.click();
+    await vendorName.fill(VENDOR);
+    await expect(vendorName).toHaveValue(VENDOR);
     await page.getByPlaceholder('Email').fill('test-vendor-001@example.test');
     await page.getByPlaceholder('Phone').fill('+92 300 0000002');
     await page.getByPlaceholder('Street…').fill('2 Vendor Avenue');

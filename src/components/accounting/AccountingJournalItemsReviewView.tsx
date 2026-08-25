@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState, useTransition } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { toast } from "sonner";
 import {
   getAccountingJournalItemsForReview,
@@ -24,6 +24,10 @@ const PAGE_SIZE = 80;
 
 export function AccountingJournalItemsReviewView() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const journalId = searchParams.get("journal") || "";
+  const journalCode = searchParams.get("code") || "";
+  const yearFilter = searchParams.get("year") || "";
   const { switchVersion, isAdminContext } = useAdminOrganization();
   const { searchQuery, activeFilterId, setActiveFilterId, setSearchQuery } =
     useAccountingShell();
@@ -39,8 +43,17 @@ export function AccountingJournalItemsReviewView() {
     const pills: { id: string; label: string }[] = [];
     if (activeFilterId === "posted") pills.push({ id: "posted", label: "Posted" });
     if (activeFilterId === "draft") pills.push({ id: "draft", label: "Draft" });
+    if (journalId) {
+      pills.push({
+        id: "journal",
+        label: journalCode ? `Journal ${journalCode}` : "This journal",
+      });
+    }
+    if (yearFilter) {
+      pills.push({ id: "year", label: yearFilter });
+    }
     return pills;
-  }, [activeFilterId]);
+  }, [activeFilterId, journalId, journalCode, yearFilter]);
 
   const load = useCallback(() => {
     if (isAdminContext) {
@@ -49,11 +62,23 @@ export function AccountingJournalItemsReviewView() {
       setLoading(false);
       return;
     }
+    const yearNum = Number(yearFilter);
+    const dateFrom =
+      yearFilter && Number.isFinite(yearNum)
+        ? `${yearNum}-01-01`
+        : undefined;
+    const dateTo =
+      yearFilter && Number.isFinite(yearNum)
+        ? `${yearNum}-12-31`
+        : undefined;
     setLoading(true);
     startTransition(async () => {
       const res = await getAccountingJournalItemsForReview({
         search: debouncedSearch.trim() || undefined,
         status: activeFilterId || "posted",
+        journalId: journalId || undefined,
+        dateFrom,
+        dateTo,
         groupBy: "none",
         page,
         pageSize: PAGE_SIZE,
@@ -68,11 +93,18 @@ export function AccountingJournalItemsReviewView() {
       }
       setLoading(false);
     });
-  }, [page, debouncedSearch, activeFilterId, isAdminContext]);
+  }, [
+    page,
+    debouncedSearch,
+    activeFilterId,
+    isAdminContext,
+    journalId,
+    yearFilter,
+  ]);
 
   useEffect(() => {
     setPage(1);
-  }, [debouncedSearch, activeFilterId, switchVersion]);
+  }, [debouncedSearch, activeFilterId, switchVersion, journalId, yearFilter]);
 
   useEffect(() => {
     load();
@@ -105,6 +137,20 @@ export function AccountingJournalItemsReviewView() {
         filterPills={filterPills}
         onRemoveFilter={(id) => {
           if (id === "posted" || id === "draft") setActiveFilterId("all");
+          if (id === "journal" || id === "year") {
+            const next = new URLSearchParams(searchParams.toString());
+            if (id === "journal") {
+              next.delete("journal");
+              next.delete("code");
+            }
+            if (id === "year") next.delete("year");
+            const qs = next.toString();
+            router.replace(
+              qs
+                ? `/accounting/review/journal-items?${qs}`
+                : "/accounting/review/journal-items"
+            );
+          }
         }}
         extraFilters={
           activeFilterId === "all" ? (

@@ -1,8 +1,8 @@
 import {
-  dayBefore,
   loadChartAccounts,
   loadPostedLedgerFacts,
   rawDebitCreditBalance,
+  splitFactsByPeriod,
 } from '@/lib/accounting/financial-reporting/ledger';
 import {
   round2,
@@ -42,22 +42,12 @@ export async function buildTrialBalance(opts: {
   const accounts = await loadChartAccounts(opts.organizationId);
   const accountIndex = new Map(accounts.map((a) => [a.id, a]));
 
-  const beforeFrom = dayBefore(opts.dateFrom);
-  const openingFacts = beforeFrom
-    ? await loadPostedLedgerFacts({
-        organizationId: opts.organizationId,
-        dateTo: beforeFrom,
-      })
-    : [];
-  const periodFacts = await loadPostedLedgerFacts({
-    organizationId: opts.organizationId,
-    dateFrom: opts.dateFrom,
-    dateTo: opts.dateTo,
-  });
-  const closingFacts = await loadPostedLedgerFacts({
+  const throughTo = await loadPostedLedgerFacts({
     organizationId: opts.organizationId,
     dateTo: opts.dateTo,
   });
+  const { opening: openingFacts, period: periodFacts, closing: closingFacts } =
+    splitFactsByPeriod(throughTo, opts.dateFrom, opts.dateTo);
 
   const opening = new Map<string, { debit: number; credit: number }>();
   const period = new Map<string, { debit: number; credit: number }>();
@@ -75,9 +65,12 @@ export async function buildTrialBalance(opts: {
     map.set(accountId, cur);
   };
 
-  for (const f of openingFacts) bump(opening, f.account_id, f.debit, f.credit);
-  for (const f of periodFacts) bump(period, f.account_id, f.debit, f.credit);
-  for (const f of closingFacts) bump(closing, f.account_id, f.debit, f.credit);
+  for (const f of openingFacts)
+    bump(opening, f.account_id || '__unmapped__', f.debit, f.credit);
+  for (const f of periodFacts)
+    bump(period, f.account_id || '__unmapped__', f.debit, f.credit);
+  for (const f of closingFacts)
+    bump(closing, f.account_id || '__unmapped__', f.debit, f.credit);
 
   const accountIds = new Set([
     ...opening.keys(),
@@ -88,7 +81,8 @@ export async function buildTrialBalance(opts: {
   const rows: TrialBalanceAccountRow[] = [];
   for (const id of accountIds) {
     const meta = accountIndex.get(id);
-    if (!meta || meta.type === 'view') continue;
+    if (meta?.type === 'view') continue;
+    const type = (meta?.type || 'asset') as CoaClassification;
     const o = opening.get(id) || emptyDc();
     const p = period.get(id) || emptyDc();
     const c = closing.get(id) || emptyDc();
@@ -110,10 +104,10 @@ export async function buildTrialBalance(opts: {
     }
     rows.push({
       account_id: id,
-      code: meta.code,
-      name: meta.name,
-      type: meta.type,
-      account_type: meta.account_type,
+      code: meta?.code || 'UNMAPPED',
+      name: meta?.name || `Unmapped account (${id.slice(0, 8)})`,
+      type,
+      account_type: meta?.account_type || null,
       opening_debit: od,
       opening_credit: oc,
       initial_balance: rawDebitCreditBalance(od, oc),
@@ -128,9 +122,11 @@ export async function buildTrialBalance(opts: {
   rows.sort((a, b) => a.code.localeCompare(b.code));
 
   const groups: TrialBalanceGroup[] = [];
+  const groupedIds = new Set<string>();
   for (const g of GROUP_META) {
     const accountsInGroup = rows.filter((r) => r.type === g.type);
     if (!accountsInGroup.length) continue;
+    for (const a of accountsInGroup) groupedIds.add(a.account_id);
     groups.push({
       key: g.type,
       label: `${g.sequence} ${g.label}`,
@@ -150,13 +146,22 @@ export async function buildTrialBalance(opts: {
       accounts: accountsInGroup,
     });
   }
+  const leftover = rows.filter((r) => !groupedIds.has(r.account_id));
+  if (leftover.length) {
+    groups.push({
+      key: 'other',
+      label: '6 Other',
+      sequence: 6,
+      initial_balance: round2(leftover.reduce((s, r) => s + r.initial_balance, 0)),
+      period_debit: round2(leftover.reduce((s, r) => s + r.period_debit, 0)),
+      period_credit: round2(leftover.reduce((s, r) => s + r.period_credit, 0)),
+      end_balance: round2(leftover.reduce((s, r) => s + r.end_balance, 0)),
+      accounts: leftover,
+    });
+  }
 
-  const totalPeriodDebit = round2(
-    groups.reduce((s, g) => s + g.period_debit, 0)
-  );
-  const totalPeriodCredit = round2(
-    groups.reduce((s, g) => s + g.period_credit, 0)
-  );
+  const totalPeriodDebit = round2(rows.reduce((s, r) => s + r.period_debit, 0));
+  const totalPeriodCredit = round2(rows.reduce((s, r) => s + r.period_credit, 0));
 
   return {
     kind: 'trial_balance',
@@ -166,11 +171,11 @@ export async function buildTrialBalance(opts: {
     currency: opts.currency || 'PKR',
     groups,
     totalInitialBalance: round2(
-      groups.reduce((s, g) => s + g.initial_balance, 0)
+      rows.reduce((s, r) => s + r.initial_balance, 0)
     ),
     totalPeriodDebit,
     totalPeriodCredit,
-    totalEndBalance: round2(groups.reduce((s, g) => s + g.end_balance, 0)),
+    totalEndBalance: round2(rows.reduce((s, r) => s + r.end_balance, 0)),
     balanced: Math.abs(totalPeriodDebit - totalPeriodCredit) < 0.05,
   };
 }

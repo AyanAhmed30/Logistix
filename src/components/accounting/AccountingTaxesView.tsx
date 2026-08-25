@@ -251,6 +251,9 @@ export function AccountingTaxesView() {
                       {group.rows.map((t) => (
                         <TableRow
                           key={t.id}
+                          data-testid={`tax-row-${t.code}`}
+                          data-tax-type={t.type}
+                          data-tax-rate={String(t.rate_value)}
                           className="cursor-pointer hover:bg-[#017e84]/5"
                           onClick={() =>
                             router.push(
@@ -277,7 +280,10 @@ export function AccountingTaxesView() {
                                 ? "Included"
                                 : "Excluded"}
                           </TableCell>
-                          <TableCell className="text-sm tabular-nums">
+                          <TableCell
+                            className="text-sm tabular-nums"
+                            data-testid="tax-rate"
+                          >
                             {t.amount_type === "fixed"
                               ? t.rate_value.toFixed(2)
                               : `${t.rate_value}%`}

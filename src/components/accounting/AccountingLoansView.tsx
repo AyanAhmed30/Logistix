@@ -54,7 +54,7 @@ function typeLabel(t: string) {
 
 export function AccountingLoansView() {
   const router = useRouter();
-  const { switchVersion, isAdminContext } = useAdminOrganization();
+  const { switchVersion } = useAdminOrganization();
   const { searchQuery, activeFilterId } = useAccountingShell();
   const debouncedSearch = useDebouncedValue(searchQuery, 280);
   const [loans, setLoans] = useState<AccountingLoanListItem[]>([]);
@@ -62,6 +62,8 @@ export function AccountingLoansView() {
   const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(true);
   const [isPending, startTransition] = useTransition();
+
+  const [creating, setCreating] = useState(false);
 
   const load = useCallback(() => {
     setLoading(true);
@@ -96,20 +98,26 @@ export function AccountingLoansView() {
   }, [load, switchVersion]);
 
   function handleNew() {
-    if (isAdminContext) {
-      toast.info("Select a specific organization to create a loan.");
-      return;
-    }
-    startTransition(async () => {
-      const res = await createAccountingLoan();
-      if ("error" in res && res.error) {
-        toast.error(res.error);
-        return;
-      }
-      if (res.loanId) {
+    if (creating) return;
+    setCreating(true);
+    void (async () => {
+      try {
+        const res = await createAccountingLoan();
+        if ("error" in res && res.error) {
+          toast.error(res.error);
+          return;
+        }
+        if (!res.loanId) {
+          toast.error("Loan was not created");
+          return;
+        }
         router.push(`/accounting/loans/${res.loanId}`);
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : "Failed to create loan");
+      } finally {
+        setCreating(false);
       }
-    });
+    })();
   }
 
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
@@ -127,8 +135,9 @@ export function AccountingLoansView() {
           <Button
             size="sm"
             className="h-8 rounded-sm bg-[#017e84] hover:bg-[#016970] text-white"
-            disabled={isPending}
+            disabled={isPending || creating}
             onClick={handleNew}
+            data-testid="accounting-new-loan"
           >
             <Plus className="h-3.5 w-3.5 mr-1" />
             New
@@ -146,7 +155,9 @@ export function AccountingLoansView() {
               <Button
                 size="sm"
                 className="h-8 rounded-sm bg-[#017e84] hover:bg-[#016970] text-white"
+                disabled={creating}
                 onClick={handleNew}
+                data-testid="accounting-create-loan"
               >
                 Create Loan
               </Button>

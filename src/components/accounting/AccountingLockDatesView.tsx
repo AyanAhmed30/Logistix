@@ -65,12 +65,13 @@ function Section({
 
 export function AccountingLockDatesView() {
   const router = useRouter();
-  const { switchVersion, isAdminContext } = useAdminOrganization();
+  const { switchVersion, isAdminContext, organizationName } = useAdminOrganization();
   const [loading, setLoading] = useState(true);
   const [overview, setOverview] = useState<AccountingLockDatesOverview | null>(null);
   const [isPending, startTransition] = useTransition();
 
   const [hardLock, setHardLock] = useState("");
+  const [periodLock, setPeriodLock] = useState("");
   const [softLock, setSoftLock] = useState("");
   const [saleLock, setSaleLock] = useState("");
   const [purchaseLock, setPurchaseLock] = useState("");
@@ -95,6 +96,7 @@ export function AccountingLockDatesView() {
         setOverview(res.overview);
         const s = res.overview.settings;
         setHardLock(s?.hard_lock_date || "");
+        setPeriodLock(s?.period_lock_date || "");
         setSoftLock(s?.soft_lock_date || "");
         setSaleLock(s?.sale_lock_date || "");
         setPurchaseLock(s?.purchase_lock_date || "");
@@ -118,6 +120,7 @@ export function AccountingLockDatesView() {
       setOverview(next.overview as AccountingLockDatesOverview);
       const s = (next.overview as AccountingLockDatesOverview).settings;
       setHardLock(s?.hard_lock_date || "");
+      setPeriodLock(s?.period_lock_date || "");
       setSoftLock(s?.soft_lock_date || "");
       setSaleLock(s?.sale_lock_date || "");
       setPurchaseLock(s?.purchase_lock_date || "");
@@ -133,6 +136,7 @@ export function AccountingLockDatesView() {
     startTransition(async () => {
       const res = await updateAccountingLockSettings({
         hard_lock_date: hardLock || null,
+        period_lock_date: periodLock || null,
         soft_lock_date: softLock || null,
         sale_lock_date: saleLock || null,
         purchase_lock_date: purchaseLock || null,
@@ -199,6 +203,23 @@ export function AccountingLockDatesView() {
             Odoo-style fiscal, sales, purchase, tax, and journal locks. Year-end closing
             posts a closing journal entry and sets the hard lock date.
           </p>
+          <p className="text-xs text-secondary-muted mt-2">
+            Organization:{" "}
+            <span data-testid="lock-org-name" className="font-medium text-primary-dark">
+              {isAdminContext ? "Admin (select an organization)" : organizationName || "—"}
+            </span>
+            {overview?.settings?.updated_by || overview?.settings?.updated_at ? (
+              <>
+                {" · Last updated "}
+                <span data-testid="lock-updated-by">
+                  {overview?.settings?.updated_by || "—"}
+                </span>
+                {overview?.settings?.updated_at
+                  ? ` · ${new Date(overview.settings.updated_at).toLocaleString()}`
+                  : null}
+              </>
+            ) : null}
+          </p>
         </div>
         <div className="flex items-center gap-2 text-xs text-secondary-muted">
           <Shield className="h-3.5 w-3.5 text-[#017e84]" />
@@ -207,12 +228,17 @@ export function AccountingLockDatesView() {
       </div>
 
       {/* KPI strip */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-2.5">
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-2.5">
         {[
           {
             label: "Fiscal Lock",
             value: overview?.settings?.hard_lock_date || "—",
             icon: Lock,
+          },
+          {
+            label: "Period Lock",
+            value: overview?.settings?.period_lock_date || "—",
+            icon: Calendar,
           },
           {
             label: "Sales Lock",
@@ -258,6 +284,7 @@ export function AccountingLockDatesView() {
               size="sm"
               className={btnPrimary}
               disabled={isPending}
+              data-testid="lock-dates-save"
               onClick={handleSaveLocks}
             >
               Save
@@ -269,8 +296,19 @@ export function AccountingLockDatesView() {
               <label className="text-sm text-secondary-muted">Fiscal Lock</label>
               <Input
                 type="date"
+                data-testid="lock-fiscal-date"
                 value={hardLock}
                 onChange={(e) => setHardLock(e.target.value)}
+                className={fieldClass}
+              />
+            </div>
+            <div className="grid grid-cols-[140px_1fr] gap-3 items-center">
+              <label className="text-sm text-secondary-muted">Period Lock</label>
+              <Input
+                type="date"
+                data-testid="lock-period-date"
+                value={periodLock}
+                onChange={(e) => setPeriodLock(e.target.value)}
                 className={fieldClass}
               />
             </div>
@@ -278,6 +316,7 @@ export function AccountingLockDatesView() {
               <label className="text-sm text-secondary-muted">Soft Lock</label>
               <Input
                 type="date"
+                data-testid="lock-soft-date"
                 value={softLock}
                 onChange={(e) => setSoftLock(e.target.value)}
                 className={fieldClass}
@@ -287,6 +326,7 @@ export function AccountingLockDatesView() {
               <label className="text-sm text-secondary-muted">Sales Lock</label>
               <Input
                 type="date"
+                data-testid="lock-sale-date"
                 value={saleLock}
                 onChange={(e) => setSaleLock(e.target.value)}
                 className={fieldClass}
@@ -296,6 +336,7 @@ export function AccountingLockDatesView() {
               <label className="text-sm text-secondary-muted">Purchase Lock</label>
               <Input
                 type="date"
+                data-testid="lock-purchase-date"
                 value={purchaseLock}
                 onChange={(e) => setPurchaseLock(e.target.value)}
                 className={fieldClass}
@@ -305,15 +346,18 @@ export function AccountingLockDatesView() {
               <label className="text-sm text-secondary-muted">Tax Lock</label>
               <Input
                 type="date"
+                data-testid="lock-tax-date"
                 value={taxLock}
                 onChange={(e) => setTaxLock(e.target.value)}
                 className={fieldClass}
               />
             </div>
             <p className="text-xs text-secondary-muted pt-1">
-              Soft lock blocks non-administrators (Advisors may still post). Fiscal
-              lock blocks everyone. Documents on or before a lock date cannot be
-              posted, edited, cancelled, or reset.
+              Soft lock blocks non-administrators (Accounting Administrators may
+              still post). Period lock and fiscal lock block everyone. Dates on
+              or before a lock date cannot be posted. Fiscal lock requires
+              Accounting Administrator; period and journal locks can be set by
+              Accountant.
             </p>
           </div>
         </Section>
@@ -324,6 +368,7 @@ export function AccountingLockDatesView() {
               value={journalId}
               onChange={(e) => setJournalId(e.target.value)}
               className={cn(fieldClass, "min-w-[160px]")}
+              data-testid="lock-journal-select"
             >
               <option value="">Select journal</option>
               {(overview?.journals || []).map((j) => (
@@ -334,6 +379,7 @@ export function AccountingLockDatesView() {
             </select>
             <Input
               type="date"
+              data-testid="lock-journal-date"
               value={journalLockDate}
               onChange={(e) => setJournalLockDate(e.target.value)}
               className={cn(fieldClass, "w-auto")}
@@ -341,6 +387,7 @@ export function AccountingLockDatesView() {
             <Button
               size="sm"
               className={btnPrimary}
+              data-testid="lock-journal-add"
               disabled={isPending || !journalId || !journalLockDate}
               onClick={handleAddJournalLock}
             >

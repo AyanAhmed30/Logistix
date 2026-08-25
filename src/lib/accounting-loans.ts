@@ -23,7 +23,10 @@ function addMonths(isoDate: string, months: number): string {
   const d = new Date(isoDate + (isoDate.length <= 10 ? 'T00:00:00' : ''));
   if (Number.isNaN(d.getTime())) return isoDate;
   d.setMonth(d.getMonth() + months);
-  return d.toISOString().slice(0, 10);
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
 }
 
 export function frequencyStepMonths(freq: LoanInstallmentFrequency): number {

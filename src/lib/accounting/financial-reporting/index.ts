@@ -13,6 +13,7 @@ export {
   dayBefore,
   startOfCalendarYear,
   rawDebitCreditBalance,
+  splitFactsByPeriod,
 } from '@/lib/accounting/financial-reporting/ledger';
 export {
   resolveDatePeriod,
@@ -43,6 +44,20 @@ export {
   type AgingBucketDef,
   type AgingSide,
 } from '@/lib/accounting/financial-reporting/aging';
+export {
+  amountsEqual,
+  reconcileTrialBalanceIdentity,
+  reconcileTrialBalanceToGeneralLedger,
+  reconcileTrialBalanceToBalanceSheet,
+  reconcileTrialBalanceToProfitLoss,
+  reconcileBalanceSheetToProfitLoss,
+  reconcileCashFlowToLiquidity,
+  reconcilePartnerLedgerToAging,
+  reconcileAgingToTrialBalance,
+  summarizeRecon,
+  type ReconCheck,
+  type ReconStatus,
+} from '@/lib/accounting/financial-reporting/reconcile';
 export { buildTaxReport,
   type TaxReport,
   type TaxReportSection,
@@ -51,6 +66,7 @@ export { buildTaxReport,
 export { formatTaxReportLabel } from '@/lib/accounting/financial-reporting/tax-label';
 export {
   buildDeferredReviewReport,
+  DEFERRED_RECOGNITION_ENGINE_SUPPORTED,
   type DeferredReviewReport,
   type DeferredScheduleRow,
   type DeferredAccountReportRow,

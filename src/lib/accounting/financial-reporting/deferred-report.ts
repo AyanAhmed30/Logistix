@@ -1,7 +1,10 @@
 /**
- * Deferred Revenue / Expense Review reports.
- * Source of truth: accounting_deferral_schedules + posted journal lines on deferral accounts.
- * Does NOT fabricate recognition amounts.
+ * Deferred Revenue / Expense Review.
+ * Recognition engine is NOT implemented: invoices/bills never create schedules
+ * and nothing posts monthly recognition journal entries.
+ * This report only surfaces posted journal lines on deferral CoA types
+ * (and leftover rows in accounting_deferral_schedules if they exist).
+ * Do not invent recognition amounts.
  */
 
 import { createAdminClient } from '@/utils/supabase/server';
@@ -59,7 +62,11 @@ export type DeferredReviewReport = {
   has_deferral_accounts: boolean;
   has_schedules: boolean;
   has_journal_activity: boolean;
+  /** False until invoice/bill posting creates schedules and recognition JEs. */
+  engine_supported: boolean;
 };
+
+export const DEFERRED_RECOGNITION_ENGINE_SUPPORTED = false;
 
 function deferralAccountTypes(kind: 'deferred_revenue' | 'deferred_expense') {
   return kind === 'deferred_revenue' ? ['deferred_revenue'] : ['prepayments'];
@@ -228,5 +235,6 @@ export async function buildDeferredReviewReport(opts: {
     has_deferral_accounts: deferralAccounts.length > 0,
     has_schedules: schedules.length > 0,
     has_journal_activity: facts.length > 0,
+    engine_supported: DEFERRED_RECOGNITION_ENGINE_SUPPORTED,
   };
 }

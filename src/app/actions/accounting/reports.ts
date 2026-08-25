@@ -66,7 +66,7 @@ async function resolveScope() {
 
   const { isSuperAdminInAdminContext } = await import('@/lib/auth/super-admin');
   if (!scope.organizationId && isSuperAdminInAdminContext(scope.session)) {
-    return { session: scope.session, organizationId: null, isGlobalAdminView: true };
+    return { error: 'Select an organization from the header switcher.' };
   }
   if (!scope.organizationId) {
     return { error: 'Select an organization from the header switcher.' };

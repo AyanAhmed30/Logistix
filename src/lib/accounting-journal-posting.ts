@@ -9,6 +9,7 @@ import {
   splitAmountsByAccount,
 } from '@/lib/product-accounting';
 import { formatTaxReportLabel } from '@/lib/accounting/financial-reporting/tax-label';
+import { resolveTaxForPosting } from '@/lib/accounting-tax-posting';
 
 export type AutoPostingLine = {
   account_id: string;
@@ -93,17 +94,138 @@ async function accountByType(type: string, organizationId?: string | null) {
   return anyHit;
 }
 
+function isPostableAccount(
+  acc: { id?: string | null; type?: string | null } | null | undefined
+): acc is { id: string; type?: string | null } {
+  return Boolean(acc?.id) && String(acc?.type || '').toLowerCase() !== 'view';
+}
+
+async function accountById(id: string) {
+  const supabase = await createAdminClient();
+  const { data } = await supabase
+    .from('chart_of_accounts')
+    .select('id, code, name, type, organization_id')
+    .eq('id', id)
+    .maybeSingle();
+  return data;
+}
+
 async function resolveAccount(
   preferredCode: string,
   fallbackType: string,
   organizationId?: string | null
 ) {
   const byCode = await accountByCode(preferredCode, organizationId);
-  if (byCode?.id) return byCode;
+  if (isPostableAccount(byCode)) return byCode;
   const byType = await accountByType(fallbackType, organizationId);
-  if (byType?.id) return byType;
+  if (isPostableAccount(byType)) return byType;
   throw new Error(
     `Chart of Accounts missing account ${preferredCode} (or type ${fallbackType}). Seed CoA first.`
+  );
+}
+
+export type AccountingJournalRef = {
+  id: string;
+  code?: string | null;
+  name?: string | null;
+  type?: string | null;
+  currency?: string | null;
+  default_debit_account_id?: string | null;
+  default_credit_account_id?: string | null;
+};
+
+function asJournalRef(row: {
+  id?: string | null;
+  code?: string | null;
+  name?: string | null;
+  type?: string | null;
+  currency?: string | null;
+  default_debit_account_id?: string | null;
+  default_credit_account_id?: string | null;
+}): AccountingJournalRef {
+  return {
+    id: String(row.id),
+    code: row.code ?? null,
+    name: row.name ?? null,
+    type: row.type ?? null,
+    currency: row.currency ?? null,
+    default_debit_account_id: row.default_debit_account_id ?? null,
+    default_credit_account_id: row.default_credit_account_id ?? null,
+  };
+}
+
+async function resolveLiquidityAccount(
+  journal: AccountingJournalRef,
+  kind: 'bank' | 'cash',
+  organizationId?: string | null
+) {
+  if (journal.default_debit_account_id) {
+    const configured = await accountById(String(journal.default_debit_account_id));
+    if (isPostableAccount(configured)) return configured;
+  }
+  return resolveAccount(kind === 'cash' ? '1100' : '1200', 'asset', organizationId);
+}
+
+/**
+ * Unreconciled bank receipts live here until invoice matching.
+ * Credit on payment; debit when the payment is reconciled to AR.
+ */
+export async function resolveOutstandingReceiptsAccount(
+  organizationId?: string | null
+) {
+  const supabase = await createAdminClient();
+  const selectCols = 'id, code, name, type, organization_id';
+
+  const findNamed = async (orgId: string | null) => {
+    let q = supabase
+      .from('chart_of_accounts')
+      .select(selectCols)
+      .eq('is_active', true)
+      .ilike('name', '%outstanding receipt%')
+      .neq('type', 'view');
+    q = orgId ? q.eq('organization_id', orgId) : q.is('organization_id', null);
+    const { data } = await q.limit(1).maybeSingle();
+    return data;
+  };
+
+  const namedOrg = organizationId ? await findNamed(organizationId) : null;
+  if (isPostableAccount(namedOrg)) return namedOrg;
+  const namedShared = await findNamed(null);
+  if (isPostableAccount(namedShared)) return namedShared;
+
+  const byCode = await accountByCode('2015', organizationId);
+  if (isPostableAccount(byCode)) return byCode;
+
+  const parent = await accountByCode('2000', organizationId);
+  const insertRow: Record<string, unknown> = {
+    name: 'Outstanding Receipts',
+    code: '2015',
+    type: 'liability',
+    parent_id: parent?.id || null,
+    allow_reconciliation: true,
+    is_active: true,
+    organization_id: organizationId || null,
+  };
+  const withType = { ...insertRow, account_type: 'current_liabilities' };
+  const created = await supabase
+    .from('chart_of_accounts')
+    .insert([withType])
+    .select(selectCols)
+    .maybeSingle();
+  if (isPostableAccount(created.data)) return created.data;
+  if (created.error && /account_type|column/i.test(created.error.message)) {
+    const retry = await supabase
+      .from('chart_of_accounts')
+      .insert([insertRow])
+      .select(selectCols)
+      .maybeSingle();
+    if (isPostableAccount(retry.data)) return retry.data;
+  }
+
+  const again = await accountByCode('2015', organizationId);
+  if (isPostableAccount(again)) return again;
+  throw new Error(
+    'Outstanding Receipts account is missing. Add a liability account named Outstanding Receipts (or code 2015).'
   );
 }
 
@@ -114,7 +236,7 @@ async function resolveAccount(
 export async function getJournalIdByType(
   type: 'sales' | 'purchase' | 'bank' | 'cash' | 'general',
   organizationId?: string | null
-) {
+): Promise<AccountingJournalRef> {
   const supabase = await createAdminClient();
   const selectCols =
     'id, code, name, type, currency, default_debit_account_id, default_credit_account_id';
@@ -129,7 +251,7 @@ export async function getJournalIdByType(
       .order('created_at', { ascending: true })
       .limit(1)
       .maybeSingle();
-    if (!orgErr && orgJournal?.id) return orgJournal;
+    if (!orgErr && orgJournal?.id) return asJournalRef(orgJournal);
   }
 
   const { data: shared, error: sharedErr } = await supabase
@@ -142,7 +264,7 @@ export async function getJournalIdByType(
     .limit(1)
     .maybeSingle();
 
-  if (!sharedErr && shared?.id) return shared;
+  if (!sharedErr && shared?.id) return asJournalRef(shared);
 
   // Legacy fallback (pre-migration: no organization_id column / all rows)
   const { data: legacy, error: legacyErr } = await supabase
@@ -161,7 +283,7 @@ export async function getJournalIdByType(
         `Active ${type} journal not found. Seed journals first.`
     );
   }
-  return legacy;
+  return asJournalRef(legacy);
 }
 
 /** Load product income/expense account splits for a document's lines. */
@@ -349,22 +471,20 @@ export async function buildCustomerInvoiceLines(args: {
     }
     let taxAccountId = args.taxAccountId || null;
     let taxDisplayLabel: string | null = null;
-    if (!taxAccountId) {
+    if (!taxAccountId || !taxDisplayLabel) {
       try {
-        const { resolveDefaultTaxAccount } = await import(
-          '@/app/actions/accounting/taxes'
-        );
-        const resolved = await resolveDefaultTaxAccount({
+        const impliedRate =
+          untaxed > 0.004 ? round2((tax / untaxed) * 100) : null;
+        const resolved = await resolveTaxForPosting({
           organizationId: args.organizationId,
           kind: 'sales',
+          rateHint: impliedRate,
+          taxAccountId,
         });
         taxAccountId = resolved.accountId;
-        taxDisplayLabel = formatTaxReportLabel(
-          resolved.label,
-          resolved.rateValue
-        );
+        taxDisplayLabel = resolved.label;
       } catch {
-        taxAccountId = null;
+        taxAccountId = taxAccountId || null;
       }
     }
     const taxAccount = taxAccountId
@@ -397,7 +517,11 @@ export async function buildCustomerInvoiceLines(args: {
   return { journalId: journal.id, lines };
 }
 
-/** Customer payment: Dr Bank/Cash / Cr Receivable. */
+/**
+ * Customer payment posting.
+ * Cash: Dr Cash / Cr Receivable (settles AR immediately).
+ * Bank: Dr Bank / Cr Outstanding Receipts (AR stays open until reconcile).
+ */
 export async function buildCustomerPaymentLines(args: {
   amount: number;
   partnerName: string;
@@ -410,18 +534,85 @@ export async function buildCustomerPaymentLines(args: {
   if (amount <= 0) throw new Error('Payment amount must be greater than zero');
 
   const journal = await getJournalIdByType(args.journalKind, args.organizationId);
-  const liquidityCode = args.journalKind === 'cash' ? '1010' : '1000';
-  const liquidity = await resolveAccount(liquidityCode, 'asset', args.organizationId);
-  const receivable = await resolveAccount('1300', 'asset', args.organizationId);
+  const liquidity = await resolveLiquidityAccount(
+    journal,
+    args.journalKind,
+    args.organizationId
+  );
   const label = args.paymentNumber
     ? `Payment ${args.paymentNumber}`
     : 'Customer payment';
 
+  if (args.journalKind === 'bank') {
+    const outstanding = await resolveOutstandingReceiptsAccount(
+      args.organizationId
+    );
+    return {
+      journalId: journal.id,
+      lines: [
+        {
+          account_id: liquidity.id,
+          label,
+          debit: amount,
+          credit: 0,
+        },
+        {
+          account_id: outstanding.id,
+          label: `${label} outstanding receipts`,
+          partner_name: args.partnerName,
+          contact_id: args.contactId || null,
+          debit: 0,
+          credit: amount,
+        },
+      ],
+    };
+  }
+
+  const receivable = await resolveAccount('1300', 'asset', args.organizationId);
   return {
     journalId: journal.id,
     lines: [
       {
         account_id: liquidity.id,
+        label,
+        debit: amount,
+        credit: 0,
+      },
+      {
+        account_id: receivable.id,
+        label: `${label} settlement`,
+        partner_name: args.partnerName,
+        contact_id: args.contactId || null,
+        debit: 0,
+        credit: amount,
+      },
+    ],
+  };
+}
+
+/** Match unreconciled bank payment to invoice AR: Dr Outstanding Receipts / Cr Receivable. */
+export async function buildBankPaymentSettlementLines(args: {
+  amount: number;
+  partnerName: string;
+  contactId?: string | null;
+  paymentNumber?: string;
+  organizationId?: string | null;
+}): Promise<{ journalId: string; lines: AutoPostingLine[] }> {
+  const amount = round2(args.amount);
+  if (amount <= 0) throw new Error('Settlement amount must be greater than zero');
+
+  const journal = await getJournalIdByType('bank', args.organizationId);
+  const outstanding = await resolveOutstandingReceiptsAccount(args.organizationId);
+  const receivable = await resolveAccount('1300', 'asset', args.organizationId);
+  const label = args.paymentNumber
+    ? `Reconcile ${args.paymentNumber}`
+    : 'Bank payment reconciliation';
+
+  return {
+    journalId: journal.id,
+    lines: [
+      {
+        account_id: outstanding.id,
         label,
         partner_name: args.partnerName,
         contact_id: args.contactId || null,
@@ -430,7 +621,7 @@ export async function buildCustomerPaymentLines(args: {
       },
       {
         account_id: receivable.id,
-        label: `${label} settlement`,
+        label: `${label} AR`,
         partner_name: args.partnerName,
         contact_id: args.contactId || null,
         debit: 0,
@@ -502,23 +693,19 @@ export async function buildCreditNoteLines(args: {
     }
     let taxAccountId = args.taxAccountId || null;
     let taxDisplayLabel: string | null = null;
-    if (!taxAccountId) {
-      try {
-        const { resolveDefaultTaxAccount } = await import(
-          '@/app/actions/accounting/taxes'
-        );
-        const resolved = await resolveDefaultTaxAccount({
-          organizationId: args.organizationId,
-          kind: 'sales',
-        });
-        taxAccountId = resolved.accountId;
-        taxDisplayLabel = formatTaxReportLabel(
-          resolved.label,
-          resolved.rateValue
-        );
-      } catch {
-        taxAccountId = null;
-      }
+    try {
+      const impliedRate =
+        untaxed > 0.004 ? round2((tax / untaxed) * 100) : null;
+      const resolved = await resolveTaxForPosting({
+        organizationId: args.organizationId,
+        kind: 'sales',
+        rateHint: impliedRate,
+        taxAccountId,
+      });
+      taxAccountId = resolved.accountId;
+      taxDisplayLabel = resolved.label;
+    } catch {
+      taxAccountId = taxAccountId || null;
     }
     const taxAccount = taxAccountId
       ? { id: taxAccountId }
@@ -624,23 +811,19 @@ export async function buildVendorBillLines(args: {
 
     let taxAccountId = args.taxAccountId || null;
     let taxDisplayLabel: string | null = null;
-    if (!taxAccountId) {
-      try {
-        const { resolveDefaultTaxAccount } = await import(
-          '@/app/actions/accounting/taxes'
-        );
-        const resolved = await resolveDefaultTaxAccount({
-          organizationId: args.organizationId,
-          kind: 'purchase',
-        });
-        taxAccountId = resolved.accountId;
-        taxDisplayLabel = formatTaxReportLabel(
-          resolved.label,
-          resolved.rateValue
-        );
-      } catch {
-        taxAccountId = null;
-      }
+    try {
+      const impliedRate =
+        untaxed > 0.004 ? round2((tax / untaxed) * 100) : null;
+      const resolved = await resolveTaxForPosting({
+        organizationId: args.organizationId,
+        kind: 'purchase',
+        rateHint: impliedRate,
+        taxAccountId,
+      });
+      taxAccountId = resolved.accountId;
+      taxDisplayLabel = resolved.label;
+    } catch {
+      taxAccountId = taxAccountId || null;
     }
     const taxAccount = taxAccountId
       ? { id: taxAccountId }
@@ -787,23 +970,19 @@ export async function buildVendorRefundLines(args: {
 
     let taxAccountId = args.taxAccountId || null;
     let taxDisplayLabel: string | null = null;
-    if (!taxAccountId) {
-      try {
-        const { resolveDefaultTaxAccount } = await import(
-          '@/app/actions/accounting/taxes'
-        );
-        const resolved = await resolveDefaultTaxAccount({
-          organizationId: args.organizationId,
-          kind: 'purchase',
-        });
-        taxAccountId = resolved.accountId;
-        taxDisplayLabel = formatTaxReportLabel(
-          resolved.label,
-          resolved.rateValue
-        );
-      } catch {
-        taxAccountId = null;
-      }
+    try {
+      const impliedRate =
+        untaxed > 0.004 ? round2((tax / untaxed) * 100) : null;
+      const resolved = await resolveTaxForPosting({
+        organizationId: args.organizationId,
+        kind: 'purchase',
+        rateHint: impliedRate,
+        taxAccountId,
+      });
+      taxAccountId = resolved.accountId;
+      taxDisplayLabel = resolved.label;
+    } catch {
+      taxAccountId = taxAccountId || null;
     }
     const taxAccount = taxAccountId
       ? { id: taxAccountId }
@@ -851,8 +1030,11 @@ export async function buildVendorPaymentLines(args: {
   if (amount <= 0) throw new Error('Payment amount must be greater than zero');
 
   const journal = await getJournalIdByType(args.journalKind, args.organizationId);
-  const liquidityCode = args.journalKind === 'cash' ? '1010' : '1000';
-  const liquidity = await resolveAccount(liquidityCode, 'asset', args.organizationId);
+  const liquidity = await resolveLiquidityAccount(
+    journal,
+    args.journalKind,
+    args.organizationId
+  );
   const payable = await resolveAccount('2100', 'liability', args.organizationId);
   const label = args.paymentReference
     ? `Vendor payment ${args.paymentReference}`

@@ -71,7 +71,7 @@ async function resolveScope() {
 
   const { isSuperAdminInAdminContext } = await import('@/lib/auth/super-admin');
   if (!scope.organizationId && isSuperAdminInAdminContext(scope.session)) {
-    return { session: scope.session, organizationId: null, isGlobalAdminView: true };
+    return { error: 'Select an organization from the header switcher.' };
   }
 
   if (!scope.organizationId) {
@@ -114,7 +114,6 @@ async function applyPaymentTotals(
     .maybeSingle();
   if (!inv) return { error: 'Invoice not found' as const };
 
-  const amountPaid = await sumPayments(supabase, invoiceId);
   const total = Number(inv.total_amount) || 0;
   const journal = opts?.journal ?? null;
   const workflowStatus = String(inv.status) as AccountingInvoiceStatus;
@@ -123,39 +122,20 @@ async function applyPaymentTotals(
     invoiceId,
     total,
   });
-
-  // Bank (Odoo outstanding receipts): In Payment until reconcile.
-  // Amount Due = total − reconciled payments − posted credit notes (not unreconciled bank).
-  if (journal === 'bank' || (journal == null && previousPaymentState === 'in_payment' && amountPaid > 0.004)) {
-    await supabase
-      .from('accounting_customer_invoices')
-      .update({
-        amount_paid: round2(Number(inv.amount_paid) || 0),
-        amount_residual: residualDue,
-        payment_state: 'in_payment',
-        status: workflowStatus === 'paid' ? 'posted' : workflowStatus === 'posted' ? 'posted' : workflowStatus,
-        updated_by: username,
-        updated_at: new Date().toISOString(),
-      })
-      .eq('id', invoiceId);
-
-    return {
-      amountPaid: round2(Number(inv.amount_paid) || 0),
-      outstanding: residualDue,
-      paymentState: 'in_payment' as AccountingPaymentState,
-      previousPaymentState,
-      previousStatus: workflowStatus,
-      nextStatus: (workflowStatus === 'paid' ? 'posted' : workflowStatus) as AccountingInvoiceStatus,
-    };
-  }
+  const notes = await sumPostedCreditNotesForInvoice(supabase, invoiceId);
+  const appliedPaid = round2(Math.max(0, total - residualDue - notes));
+  const keepInPayment =
+    residualDue > 0.004 &&
+    (journal === 'bank' ||
+      (journal == null && previousPaymentState === 'in_payment'));
 
   const computed = computePaymentState({
     total,
-    amountPaid,
+    amountPaid: appliedPaid,
     dueDate: inv.due_date ? String(inv.due_date) : null,
     workflowStatus: String(inv.status || ''),
-    journal,
-    preferInPayment: false,
+    journal: keepInPayment ? 'bank' : journal === 'cash' ? 'cash' : null,
+    preferInPayment: keepInPayment,
     amountResidual: residualDue,
   });
 
@@ -907,6 +887,13 @@ export async function getAccountingCustomerPaymentDetail(paymentId: string) {
         invoice_amount_paid:
           inv?.amount_paid != null ? Number(inv.amount_paid) : null,
         invoice_status: inv?.status ? String(inv.status) : null,
+        journal: row.journal ? String(row.journal) : null,
+        reconcile_status: row.reconcile_status
+          ? String(row.reconcile_status)
+          : null,
+        journal_entry_id: row.journal_entry_id
+          ? String(row.journal_entry_id)
+          : null,
         created_by: row.created_by ? String(row.created_by) : null,
         created_at: String(row.created_at || ''),
         paid_by: row.paid_by ? String(row.paid_by) : null,

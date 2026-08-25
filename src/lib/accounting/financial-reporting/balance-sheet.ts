@@ -50,59 +50,76 @@ export async function buildBalanceSheet(opts: {
   const liabOnly = balances.filter((b) => b.type === 'liability');
   const equityOnly = balances.filter((b) => b.type === 'equity');
 
-  // --- Assets (Odoo buckets) ---
+  // Totals follow CoA classification so no account_type is dropped from the equation.
+  const totalAssets = round2(assetsOnly.reduce((s, b) => s + b.balance, 0));
+  const totalLiabilities = round2(liabOnly.reduce((s, b) => s + b.balance, 0));
+
   const bankCash = sumTypes(assetsOnly, ['bank', 'cash']);
   const receivables = sumTypes(assetsOnly, ['receivable']);
   const currentAssetsLeaf = sumTypes(assetsOnly, ['current_assets']);
   const prepayments = sumTypes(assetsOnly, ['prepayments']);
   const fixedAssets = sumTypes(assetsOnly, ['fixed_assets']);
   const nonCurrentAssets = sumTypes(assetsOnly, ['non_current_assets']);
-  // Untyped assets → current assets leaf
   const untypedAssets = round2(
     assetsOnly
       .filter((b) => !b.account_type)
       .reduce((s, b) => s + b.balance, 0)
   );
+  const classifiedAssets = round2(
+    bankCash +
+      receivables +
+      currentAssetsLeaf +
+      prepayments +
+      untypedAssets +
+      fixedAssets +
+      nonCurrentAssets
+  );
+  const otherAssets = round2(totalAssets - classifiedAssets);
   const currentAssetsTotal = round2(
     bankCash +
       receivables +
       currentAssetsLeaf +
       prepayments +
-      untypedAssets
-  );
-  const totalAssets = round2(
-    currentAssetsTotal + fixedAssets + nonCurrentAssets
+      untypedAssets +
+      otherAssets
   );
 
-  // --- Liabilities ---
   const currentLiabLeaf = sumTypes(liabOnly, ['current_liabilities']);
   const creditCard = sumTypes(liabOnly, ['credit_card']);
   const payables = sumTypes(liabOnly, ['payable']);
+  const deferredRevenue = sumTypes(liabOnly, ['deferred_revenue']);
   const nonCurrentLiab = sumTypes(liabOnly, ['non_current_liabilities']);
   const untypedLiab = round2(
     liabOnly
       .filter((b) => !b.account_type)
       .reduce((s, b) => s + b.balance, 0)
   );
-  const currentLiabTotal = round2(
-    currentLiabLeaf + creditCard + payables + untypedLiab
+  const classifiedLiab = round2(
+    currentLiabLeaf +
+      creditCard +
+      payables +
+      deferredRevenue +
+      nonCurrentLiab +
+      untypedLiab
   );
-  const totalLiabilities = round2(currentLiabTotal + nonCurrentLiab);
+  const otherLiab = round2(totalLiabilities - classifiedLiab);
+  const currentLiabTotal = round2(
+    currentLiabLeaf +
+      creditCard +
+      payables +
+      deferredRevenue +
+      untypedLiab +
+      otherLiab
+  );
 
   // --- Equity base + earnings ---
-  const equityAccounts = round2(
-    sumTypes(equityOnly, ['equity', 'retained_earnings', 'current_year_earnings']) +
-      equityOnly
-        .filter((b) => !b.account_type)
-        .reduce((s, b) => s + b.balance, 0)
-  );
+  const equityAccounts = round2(equityOnly.reduce((s, b) => s + b.balance, 0));
 
   const yearStart = startOfCalendarYear(asOf);
   const ytd = aggregateAccountBalances(
-    await loadPostedLedgerFacts({
-      organizationId: opts.organizationId,
-      dateFrom: yearStart,
-      dateTo: asOf,
+    facts.filter((f) => {
+      const d = String(f.entry_date || '').slice(0, 10);
+      return d >= yearStart && d <= asOf;
     }),
     accounts
   );
@@ -166,6 +183,9 @@ export async function buildBalanceSheet(opts: {
     ),
     line('liab:credit_card', 'Credit Card', creditCard, 2, { variant: 'line' }),
     line('liab:payables', 'Payables', payables, 2, { variant: 'line' }),
+    line('liab:deferred', 'Deferred Revenue', deferredRevenue, 2, {
+      variant: 'line',
+    }),
     line('liab:non_current', 'Non-current Liabilities', nonCurrentLiab, 1, {
       variant: 'group',
     }),

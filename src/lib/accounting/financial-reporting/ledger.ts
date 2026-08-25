@@ -275,7 +275,7 @@ export async function loadPostedLedgerFacts(
 
   for (;;) {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    let q: any = applyPostedLineFilters(
+    const q: any = applyPostedLineFilters(
       supabase.from('accounting_journal_entry_lines').select(select) as never,
       query
     );

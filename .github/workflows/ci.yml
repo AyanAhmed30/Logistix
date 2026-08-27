@@ -71,7 +71,8 @@ jobs:
           cache: 'npm'
 
       - name: Install Vercel CLI
-        run: npm install --global vercel@latest
+        # Pin a known-good CLI (avoid @latest churn). Keep recent enough for --archive=tgz.
+        run: npm install --global vercel@58.4.4
 
       - name: Validate Vercel secrets
         shell: bash
@@ -96,5 +97,23 @@ jobs:
       - name: Build Project Artifacts
         run: vercel build --prod --token="$VERCEL_TOKEN"
 
+      # Upload as a single .tgz archive to avoid Vercel per-file upload limits /
+      # transient API HTML error pages ("Unexpected token '<' ... is not valid JSON").
       - name: Deploy Project Artifacts to Vercel
-        run: vercel deploy --prebuilt --prod --token="$VERCEL_TOKEN"
+        shell: bash
+        run: |
+          set -euo pipefail
+          for i in 1 2 3; do
+            echo "🚀 Deploy attempt $i of 3..."
+            if vercel deploy --prebuilt --prod --archive=tgz --token="$VERCEL_TOKEN"; then
+              echo "✅ Deploy succeeded on attempt $i"
+              exit 0
+            fi
+            echo "⚠️ Deploy attempt $i failed"
+            if [ "$i" -lt 3 ]; then
+              echo "Retrying in 20s..."
+              sleep 20
+            fi
+          done
+          echo "❌ Deploy failed after 3 attempts"
+          exit 1

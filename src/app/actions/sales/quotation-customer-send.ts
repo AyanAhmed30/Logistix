@@ -242,6 +242,18 @@ export async function sendSalesQuotationToCustomer(
 
     const alreadySent = Boolean(quotation.sent_to_customer_at);
     const now = new Date().toISOString();
+    const totalAmount = Number(quotation.total_amount) || 0;
+
+    const { data: existingNeg } = await supabase
+      .from('quotations')
+      .select('original_offer_amount, negotiation_status')
+      .eq('id', quotation.id)
+      .maybeSingle();
+
+    const seedOriginal =
+      existingNeg == null ||
+      existingNeg.original_offer_amount == null ||
+      existingNeg.original_offer_amount === undefined;
 
     const { data: updated, error: updateError } = await supabase
       .from('quotations')
@@ -252,6 +264,12 @@ export async function sendSalesQuotationToCustomer(
         sent_to_customer_at: now,
         sent_to_customer_by: session.username,
         status: quotation.status === 'quotation' ? 'quotation_sent' : quotation.status,
+        ...(seedOriginal
+          ? {
+              original_offer_amount: totalAmount,
+              negotiation_status: 'awaiting_customer',
+            }
+          : {}),
         updated_at: now,
         updated_by: session.username,
       })
@@ -283,9 +301,57 @@ export async function sendSalesQuotationToCustomer(
           inquiry_id: link.inquiryId,
           customer_pdf_path: filePath,
           customer_pdf_url: pdfUrl,
+          total_amount: totalAmount,
         },
       },
     ]);
+
+    // Seed immutable negotiation history (same quotation number)
+    try {
+      if (!alreadySent || seedOriginal) {
+        const { count } = await supabase
+          .from('quotation_negotiation_events')
+          .select('id', { count: 'exact', head: true })
+          .eq('quotation_id', quotation.id)
+          .eq('event_type', 'original_offer');
+
+        if (!count) {
+          await supabase.from('quotation_negotiation_events').insert([
+            {
+              quotation_id: quotation.id,
+              inquiry_id: link.inquiryId,
+              event_type: 'original_offer',
+              actor_role: 'sales',
+              actor_username: session.username,
+              previous_amount: null,
+              offered_amount: totalAmount,
+              message: 'Original quotation offer sent to customer',
+              pdf_url: pdfUrl,
+              pdf_path: filePath,
+              metadata: { quotation_number: quotation.quotation_number },
+            },
+          ]);
+        }
+      } else {
+        await supabase.from('quotation_negotiation_events').insert([
+          {
+            quotation_id: quotation.id,
+            inquiry_id: link.inquiryId,
+            event_type: 'resent_offer',
+            actor_role: 'sales',
+            actor_username: session.username,
+            previous_amount: totalAmount,
+            offered_amount: totalAmount,
+            message: 'Quotation PDF resent to customer',
+            pdf_url: pdfUrl,
+            pdf_path: filePath,
+            metadata: { quotation_number: quotation.quotation_number },
+          },
+        ]);
+      }
+    } catch {
+      // negotiation table may not exist until migration 020
+    }
 
     // Optional lifecycle notification for future inbox (ignore failures / role constraints)
     try {

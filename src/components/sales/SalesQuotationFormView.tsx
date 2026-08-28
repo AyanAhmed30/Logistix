@@ -54,6 +54,7 @@ import {
 } from "@/components/admin/quotations/CustomerPicker";
 import { SalesQuotationStatusBar } from "@/components/sales/SalesQuotationStatusBar";
 import { SalesQuotationChatter } from "@/components/sales/SalesQuotationChatter";
+import { SalesQuotationNegotiationPanel } from "@/components/sales/SalesQuotationNegotiationPanel";
 import { SalesProductLinePicker } from "@/components/sales/SalesProductLinePicker";
 import { ContactInfoSummary, type ContactInfoSummaryData } from "@/components/shared/ContactInfoSummary";
 import { SalesPageSkeleton } from "@/components/sales/SalesSkeleton";
@@ -2048,7 +2049,22 @@ export function SalesQuotationFormView({
         ) : null}
         </div>
 
-        <div className="min-h-[520px] xl:min-h-0 bg-slate-50/40">
+        <div className="min-h-[520px] xl:min-h-0 bg-slate-50/40 flex flex-col">
+          <SalesQuotationNegotiationPanel
+            quotationId={recordId || detail?.id || null}
+            enabled={Boolean(detail?.sent_to_customer_at || alreadySentToCustomer)}
+            onApplied={() => {
+              setChatterKey((k) => k + 1);
+              const id = recordId || detail?.id;
+              if (id) {
+                void getSalesQuotationDetail(id).then((res) => {
+                  if ("quotation" in res && res.quotation) {
+                    hydrateFromDetail(res.quotation);
+                  }
+                });
+              }
+            }}
+          />
           <SalesQuotationChatter
             key={chatterKey}
             quotationId={recordId || detail?.id || null}

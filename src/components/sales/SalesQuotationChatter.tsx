@@ -120,6 +120,70 @@ function logBody(log: SalesQuotationLog): string[] {
     return [`${kindPreview === "print" ? "Print" : "Preview"} opened`];
   }
 
+  if (log.action === "sent_to_customer" || log.action === "resent_to_customer") {
+    const lines = [
+      log.action === "resent_to_customer"
+        ? "Updated quotation sent to customer"
+        : "Quotation sent to customer",
+    ];
+    if (details.total_amount != null || details.new_amount != null) {
+      lines.push(`Total: ${formatMoney(details.total_amount ?? details.new_amount)}`);
+    }
+    return lines;
+  }
+
+  if (log.action === "customer_negotiation_request") {
+    return [
+      "Customer negotiation request",
+      `${formatMoney(details.current_amount)} → ${formatMoney(details.requested_amount)} (Requested)`,
+      details.message ? String(details.message) : "",
+    ].filter(Boolean);
+  }
+
+  if (log.action === "sales_negotiation_counter_draft") {
+    return [
+      "Sales counter offer draft saved",
+      `Offered: ${formatMoney(details.offered_amount)}`,
+      details.message ? String(details.message) : "",
+    ].filter(Boolean);
+  }
+
+  if (log.action === "sales_negotiation_counter_sent") {
+    return [
+      "Sales counter offer sent to customer",
+      `${formatMoney(details.previous_amount)} → ${formatMoney(details.new_amount)} (Total)`,
+      details.message ? String(details.message) : "",
+    ].filter(Boolean);
+  }
+
+  if (log.action === "sales_negotiation_accepted") {
+    return [
+      "Sales accepted customer requested amount",
+      `${formatMoney(details.previous_amount)} → ${formatMoney(details.new_amount)} (Total)`,
+    ];
+  }
+
+  if (log.action === "sales_negotiation_rejected") {
+    return [
+      "Sales rejected negotiation request",
+      details.message ? String(details.message) : "",
+    ].filter(Boolean);
+  }
+
+  if (log.action === "customer_accepted_quotation") {
+    return [
+      "Customer accepted quotation",
+      `Accepted: ${formatMoney(details.accepted_amount)}`,
+    ];
+  }
+
+  if (log.action === "customer_declined_quotation") {
+    return [
+      "Customer declined quotation",
+      details.reason ? String(details.reason) : "",
+    ].filter(Boolean);
+  }
+
   if (kind === "message") {
     return [String(details.note || "")];
   }

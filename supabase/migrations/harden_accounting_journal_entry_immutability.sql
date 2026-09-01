@@ -1,6 +1,7 @@
 -- Freeze posted accounting journal items.
 -- Header may reset to draft (lock-checked in application). Posted → cancelled is blocked.
--- Lines on posted entries cannot be inserted, updated, or deleted.
+-- Lines: insert/delete blocked while posted. Debit/credit/account frozen.
+-- Residual / reconciled flags may update so payments can match AR/AP.
 
 create or replace function public.block_posted_accounting_journal_entry_mutation()
 returns trigger
@@ -59,10 +60,25 @@ begin
   from public.accounting_journal_entries
   where id = coalesce(new.journal_entry_id, old.journal_entry_id);
 
-  if parent_status = 'posted' then
+  if parent_status is distinct from 'posted' then
+    return case when tg_op = 'DELETE' then old else new end;
+  end if;
+
+  if tg_op = 'INSERT' or tg_op = 'DELETE' then
     raise exception 'Posted journal items cannot be modified.';
   end if;
-  return case when tg_op = 'DELETE' then old else new end;
+
+  -- Posted debit/credit/account are frozen. Residual fields may change on reconciliation.
+  if new.journal_entry_id is distinct from old.journal_entry_id
+     or new.account_id is distinct from old.account_id
+     or new.debit is distinct from old.debit
+     or new.credit is distinct from old.credit
+     or new.tax_label is distinct from old.tax_label
+     or new.sequence is distinct from old.sequence then
+    raise exception 'Posted journal items cannot be modified.';
+  end if;
+
+  return new;
 end
 $$;
 

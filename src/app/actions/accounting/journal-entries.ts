@@ -1122,14 +1122,14 @@ export async function createAndPostAutomaticJournalEntry(args: {
         reference: args.reference,
         partner_name: args.partnerName || null,
         contact_id: args.contactId || null,
-        status: 'posted',
+        status: 'draft',
         total_debit: validated.totalDebit,
         total_credit: validated.totalCredit,
         source_type: args.sourceType,
         source_id: args.sourceId,
         source_number: args.sourceNumber || null,
         is_manual: false,
-        posted_at: new Date().toISOString(),
+        posted_at: null,
         created_by: args.performedBy,
         updated_by: args.performedBy,
       },
@@ -1211,6 +1211,23 @@ export async function createAndPostAutomaticJournalEntry(args: {
   if (lineErr) {
     await supabase.from('accounting_journal_entries').delete().eq('id', row.id);
     return { error: lineErr.message };
+  }
+
+  const postedAt = new Date().toISOString();
+  const { error: postErr } = await supabase
+    .from('accounting_journal_entries')
+    .update({
+      status: 'posted',
+      posted_at: postedAt,
+      updated_by: args.performedBy,
+      updated_at: postedAt,
+    })
+    .eq('id', row.id)
+    .eq('status', 'draft');
+  if (postErr) {
+    await supabase.from('accounting_journal_entry_lines').delete().eq('journal_entry_id', row.id);
+    await supabase.from('accounting_journal_entries').delete().eq('id', row.id);
+    return { error: postErr.message };
   }
 
   await logEntry(supabase, {

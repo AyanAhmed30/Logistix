@@ -41,3 +41,8 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# Local / Windows-generated files
+_schema_report.txt
+app - Shortcut.lnk
+desktop.ini

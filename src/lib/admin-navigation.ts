@@ -18,6 +18,7 @@ import {
   TrendingUp,
   Warehouse,
   Target,
+  Users,
 } from "lucide-react";
 
 export type AdminTab =
@@ -46,6 +47,7 @@ export type AdminModule =
   | "accounting"
   | "operations"
   | "warehouse"
+  | "hr"
   | "analytics"
   | "settings";
 
@@ -121,6 +123,15 @@ export const ADMIN_MODULES: AdminModuleDefinition[] = [
     accentClass: "text-[#7c3aed]",
     borderClass: "border-[#7c3aed]/20 hover:border-[#7c3aed]/40",
     iconBgClass: "bg-[#7c3aed]/10 text-[#7c3aed]",
+  },
+  {
+    id: "hr",
+    label: "HR Module",
+    description: "Employees, attendance, documents, payroll, and reports",
+    icon: Users,
+    accentClass: "text-[#0f766e]",
+    borderClass: "border-[#0f766e]/20 hover:border-[#0f766e]/40",
+    iconBgClass: "bg-[#0f766e]/10 text-[#0f766e]",
   },
   {
     id: "analytics",

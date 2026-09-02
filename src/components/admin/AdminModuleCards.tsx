@@ -3,7 +3,14 @@
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { ADMIN_MODULES, type AdminModule } from "@/lib/admin-navigation";
 import { ChevronRight } from "lucide-react";
-import { visibleModulesForAccess, defaultCrmRouteForAccess, defaultSalesRouteForAccess, defaultAccountingRouteForAccess, type DashboardAccessState } from "@/lib/dashboard-access";
+import {
+  visibleModulesForAccess,
+  defaultCrmRouteForAccess,
+  defaultSalesRouteForAccess,
+  defaultAccountingRouteForAccess,
+  defaultHrRouteForAccess,
+  type DashboardAccessState,
+} from "@/lib/dashboard-access";
 import { useRouter } from "next/navigation";
 
 type Props = {
@@ -18,6 +25,7 @@ function routeForModule(
   if (module === "crm") return defaultCrmRouteForAccess(access);
   if (module === "sales") return defaultSalesRouteForAccess(access);
   if (module === "accounting") return defaultAccountingRouteForAccess(access);
+  if (module === "hr") return defaultHrRouteForAccess(access);
   return null;
 }
 

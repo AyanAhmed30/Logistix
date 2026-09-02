@@ -10,6 +10,7 @@ import { SUPER_ADMIN_USERNAME } from '@/lib/auth/super-admin';
 import type { SessionAppUserRole } from '@/lib/auth/session';
 import { fetchPortalUserOrganizationAssignments } from '@/lib/portal-user-organizations';
 import { migrateLegacyAccountToPortal } from '@/lib/legacy-user-bridge';
+import { authenticatePortalUser } from "@/lib/local-auth";
 
 const ADMIN_USERNAME = SUPER_ADMIN_USERNAME;
 const ADMIN_PASSWORD = 'admin123';
@@ -91,6 +92,19 @@ export async function login(formData: FormData) {
 
     if (!username || !password) {
       return { error: 'Username and password are required' };
+    }
+    const cookieOptions = getSessionCookieOptions();
+    const sessionBase = { lastActivity: Date.now() };
+
+    const localUser = authenticatePortalUser(username, password);
+    if (localUser) {
+      const session = await encrypt({
+        username: localUser.username,
+        role: "user",
+        ...sessionBase,
+      });
+      (await cookies()).set("session", session, cookieOptions);
+      redirect("/welcome");
     }
 
     if (username === ADMIN_USERNAME && password === ADMIN_PASSWORD) {
@@ -320,7 +334,6 @@ export async function login(formData: FormData) {
       ) {
         return { error: organizationResult.error.message };
       }
-
       if (organizationResult.data) {
         const org = organizationResult.data;
         if (org.username && org.password && verifyPassword(password, org.password)) {

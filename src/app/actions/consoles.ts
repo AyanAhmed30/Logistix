@@ -6,7 +6,7 @@ import {
   requireChildModule,
 } from "@/lib/auth/require-access";
 import { ensureConsoleOrderLoadingRows, logConsoleLoadingEvent } from "@/lib/loading-workflow-server";
-
+import { getSession } from "@/lib/auth/session";
 type ConsoleInput = {
   console_number: string;
   container_number: string;
@@ -20,6 +20,23 @@ type ConsoleInput = {
 
 export async function createConsole(console: ConsoleInput) {
   try {
+    const session = await getSession();
+    if (!session) {
+      return { error: "Unauthorized" };
+    }
+
+    // Allow admins or sales agents with "console" permission (creating requires full console access)
+    if (session.role === "admin") {
+      // Admin has access
+    } else if (session.role === "sales_agent") {
+      const { hasPermission } = await import("@/lib/auth/permissions");
+      const hasAccess = await hasPermission("console");
+      if (!hasAccess) {
+        return { error: "Unauthorized" };
+      }
+    } else {
+      return { error: "Unauthorized" };
+    }
     const auth = await requireChildModule("console");
     if ("error" in auth) {
       return { error: auth.error };
@@ -85,9 +102,17 @@ export async function createConsole(console: ConsoleInput) {
 
 export async function getAllConsoles() {
   try {
-    const auth = await requireAnyChildModule(["console", "loading-instruction", "management"]);
+    const auth = await requireAnyChildModule([
+      "console",
+      "loading-instruction",
+      "management",
+    ]);
     if ("error" in auth) {
       return { error: auth.error };
+    }
+    const session = await getSession();
+    if (!session) {
+      return { error: "Unauthorized" };
     }
 
     const {
@@ -104,7 +129,19 @@ export async function getAllConsoles() {
       if (scope.status === 403) return { consoles: [] };
       return { error: scope.error };
     }
-
+    // Allow admins or sales agents with "console" or "loading-instruction" permission
+    if (session.role === "admin") {
+      // Admin has access
+    } else if (session.role === "sales_agent") {
+      const { hasPermission } = await import("@/lib/auth/permissions");
+      const hasConsole = await hasPermission("console");
+      const hasLoadingInstruction = await hasPermission("loading-instruction");
+      if (!hasConsole && !hasLoadingInstruction) {
+        return { error: "Unauthorized" };
+      }
+    } else {
+      return { error: "Unauthorized" };
+    }
     const supabase = await createAdminClient();
 
     let query = supabase.from("consoles").select("*");
@@ -114,8 +151,16 @@ export async function getAllConsoles() {
 
     let { data, error } = await query.order("created_at", { ascending: false });
 
-    if (error && scope && !("error" in scope) && isMissingOrganizationColumnError(error)) {
-      const retry = await supabase.from("consoles").select("*").order("created_at", { ascending: false });
+    if (
+      error &&
+      scope &&
+      !("error" in scope) &&
+      isMissingOrganizationColumnError(error)
+    ) {
+      const retry = await supabase
+        .from("consoles")
+        .select("*")
+        .order("created_at", { ascending: false });
       data = retry.data;
       error = retry.error;
     }
@@ -129,7 +174,8 @@ export async function getAllConsoles() {
       (console: { status?: string; loading_phase?: string | null }) =>
         !console.status ||
         console.status === "active" ||
-        (console.status === "ready_for_loading" && console.loading_phase !== "closed")
+        (console.status === "ready_for_loading" &&
+          console.loading_phase !== "closed"),
     );
 
     return { consoles: filtered };

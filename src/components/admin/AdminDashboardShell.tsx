@@ -22,7 +22,11 @@ import type { DashboardAccessState } from "@/lib/dashboard-access";
 import { getPortalOrganizationProfile } from "@/app/actions/organization-context";
 import type { Organization } from "@/app/actions/organizations";
 import { hasModulePermission } from "@/lib/module-permissions";
-import { defaultSalesRouteForAccess, defaultAccountingRouteForAccess } from "@/lib/dashboard-access";
+import {
+  defaultSalesRouteForAccess,
+  defaultAccountingRouteForAccess,
+  defaultHrRouteForAccess,
+} from "@/lib/dashboard-access";
 import { useRouter } from "next/navigation";
 
 type AppUser = {
@@ -81,6 +85,10 @@ function AdminDashboardContent({
     }
     if (nextModule === "accounting") {
       router.push(defaultAccountingRouteForAccess(access));
+      return;
+    }
+    if (nextModule === "hr") {
+      router.push(defaultHrRouteForAccess(access));
       return;
     }
     setActiveModule(nextModule);

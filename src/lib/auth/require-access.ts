@@ -59,6 +59,11 @@ export function sessionHasCrmAccess(session: AccessSession): boolean {
   return false;
 }
 
+export function sessionHasHrAccess(session: AccessSession): boolean {
+  if (isSuperAdminSession(session as SessionPayload)) return true;
+  return hasDepartmentAccess(session.permissions, 'hr');
+}
+
 /** True when acting as a Sales person (legacy sales_agent or portal user with Sales). */
 export function isSalesPortalActor(session: AccessSession): boolean {
   return (
@@ -128,13 +133,42 @@ export async function requireCrmAccess(): Promise<SessionPayload | AccessDenied>
   return session;
 }
 
+export async function requireHrAccess(): Promise<SessionPayload | AccessDenied> {
+  const session = await requireAuth();
+  if ('error' in session) return session;
+  if (!sessionHasHrAccess(session)) return accessDenied();
+  return session;
+}
+
+export async function requireHrChildModule(
+  moduleKey: string
+): Promise<SessionPayload | AccessDenied> {
+  const session = await requireAuth();
+  if ('error' in session) return session;
+
+  if (isSuperAdminSession(session)) return session;
+
+  if (hasModulePermission(session.permissions, moduleKey)) return session;
+  return accessDenied();
+}
+
 export async function requireDepartment(
   department: ModuleDepartment
 ): Promise<SessionPayload | AccessDenied> {
   if (department === 'sales') return requireSalesAccess();
   if (department === 'crm') return requireCrmAccess();
   if (department === 'operations') return requireOperationsAccess();
-  return requireWarehouseAccess();
+  if (department === 'warehouse') return requireWarehouseAccess();
+  if (department === 'hr') return requireHrAccess();
+  if (department === 'accounting') {
+    const session = await requireAuth();
+    if ('error' in session) return session;
+    if (isSuperAdminSession(session) || hasDepartmentAccess(session.permissions, 'accounting')) {
+      return session;
+    }
+    return accessDenied();
+  }
+  return accessDenied();
 }
 
 /** Warehouse user portal action — legacy users without appUserId retain full warehouse access. */

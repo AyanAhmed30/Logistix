@@ -207,7 +207,7 @@ export function AppNotificationBell({
             <p className="text-[11px] text-slate-500 mt-0.5">
               {unreadCount > 0
                 ? `${unreadCount} unread ${unreadCount === 1 ? "item" : "items"}`
-                : "You're all caught up"}
+                : "You are all caught up"}
             </p>
           </div>
           <button
@@ -230,7 +230,7 @@ export function AppNotificationBell({
           ) : error ? (
             <div className="flex flex-col items-center justify-center gap-2 px-6 py-12 text-center">
               <AlertCircle className="h-5 w-5 text-rose-500" />
-              <p className="text-sm font-medium text-slate-800">Couldn't load notifications</p>
+              <p className="text-sm font-medium text-slate-800">Could not load notifications</p>
               <p className="text-xs text-slate-500">{error}</p>
               <button
                 type="button"

@@ -749,7 +749,7 @@ export async function getSalesQuotationPrefillFromInquiry(inquiryId: string): Pr
     let contact_person_id: string | null = null;
     let salesperson_id = lead?.sales_agent_id ? String(lead.sales_agent_id) : null;
     let sales_team: string | null = null;
-    let opportunity_id = data.crm_opportunity_id
+    const opportunity_id = data.crm_opportunity_id
       ? String(data.crm_opportunity_id)
       : lead?.crm_opportunity_id
         ? String(lead.crm_opportunity_id)

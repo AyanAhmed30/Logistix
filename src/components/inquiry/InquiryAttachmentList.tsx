@@ -15,7 +15,7 @@ type Props = {
   urls: string[];
   title?: string;
   compact?: boolean;
-  onPreviewImage?: (url: string, title: string) => void;
+  onPreviewImage?: (url: string, title: string, kind?: "image" | "pdf") => void;
 };
 
 function AttachmentCard({
@@ -27,7 +27,7 @@ function AttachmentCard({
   info: InquiryAttachmentInfo;
   label: string;
   compact?: boolean;
-  onPreviewImage?: (url: string, title: string) => void;
+  onPreviewImage?: (url: string, title: string, kind?: "image" | "pdf") => void;
 }) {
   const legacy = info.kind === "legacy_meta" ? parseLegacyAttachmentMeta(info.url) : null;
 
@@ -55,7 +55,7 @@ function AttachmentCard({
         <button
           type="button"
           className="block w-full text-left"
-          onClick={() => onPreviewImage?.(info.url, label)}
+          onClick={() => onPreviewImage?.(info.url, label, "image")}
         >
           <img
             src={info.url}
@@ -71,21 +71,45 @@ function AttachmentCard({
     return (
       <div className="border rounded-lg p-3 bg-white space-y-2">
         <p className="text-xs text-slate-500 truncate">{label}</p>
-        <div className="flex items-center gap-2 text-sm text-slate-700">
-          <FileText className="h-4 w-4 text-red-600 shrink-0" />
-          <span className="truncate font-medium">{info.filename}</span>
+        <button
+          type="button"
+          className="w-full text-left space-y-2 rounded focus:outline-none focus:ring-2 focus:ring-teal-500/40"
+          onClick={() =>
+            onPreviewImage
+              ? onPreviewImage(info.url, label, "pdf")
+              : window.open(info.url, "_blank", "noopener,noreferrer")
+          }
+        >
+          <div className="flex items-center gap-2 text-sm text-slate-700">
+            <FileText className="h-4 w-4 text-red-600 shrink-0" />
+            <span className="truncate font-medium">{info.filename}</span>
+          </div>
+          <iframe
+            src={info.url}
+            title={label}
+            className={`w-full rounded border bg-slate-50 pointer-events-none ${compact ? "h-40" : "h-56"}`}
+          />
+        </button>
+        <div className="flex gap-2">
+          <Button
+            type="button"
+            size="sm"
+            className="flex-1 bg-[#017e84] hover:bg-[#016970] text-white"
+            onClick={() =>
+              onPreviewImage
+                ? onPreviewImage(info.url, label, "pdf")
+                : window.open(info.url, "_blank", "noopener,noreferrer")
+            }
+          >
+            View full screen
+          </Button>
+          <Button asChild size="sm" variant="outline" className="flex-1">
+            <a href={info.url} target="_blank" rel="noopener noreferrer">
+              <Download className="h-3.5 w-3.5 mr-1.5" />
+              Open / Download
+            </a>
+          </Button>
         </div>
-        <iframe
-          src={info.url}
-          title={label}
-          className={`w-full rounded border bg-slate-50 ${compact ? "h-40" : "h-56"}`}
-        />
-        <Button asChild size="sm" variant="outline" className="w-full">
-          <a href={info.url} target="_blank" rel="noopener noreferrer" download={info.filename}>
-            <Download className="h-3.5 w-3.5 mr-1.5" />
-            Download PDF
-          </a>
-        </Button>
       </div>
     );
   }
@@ -144,10 +168,15 @@ export function InquiryAttachmentList({ urls, title, compact, onPreviewImage }: 
 }
 
 export function useInquiryImagePreview() {
-  const [preview, setPreview] = useState<{ url: string; title: string } | null>(null);
+  const [preview, setPreview] = useState<{
+    url: string;
+    title: string;
+    kind?: "image" | "pdf";
+  } | null>(null);
   return {
     preview,
-    openPreview: (url: string, title: string) => setPreview({ url, title }),
+    openPreview: (url: string, title: string, kind?: "image" | "pdf") =>
+      setPreview({ url, title, kind }),
     closePreview: () => setPreview(null),
   };
 }

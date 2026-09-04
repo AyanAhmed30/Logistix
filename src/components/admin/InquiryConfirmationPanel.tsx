@@ -15,7 +15,7 @@ import { InquiryAttachmentList } from "@/components/inquiry/InquiryAttachmentLis
 import { getSharedInquiryCalculatorValues } from "@/app/actions/inquiries";
 import { InquiryPricingSummary } from "@/components/admin/InquiryPricingSummary";
 import { EstimatedDutiesAndTaxesTable } from "@/components/inquiry/EstimatedDutiesAndTaxesTable";
-import { collectInquiryAttachmentUrls, collectOperationsConfirmationAttachmentUrls } from "@/lib/inquiry-attachments";
+import { collectInquiryAttachmentUrls, collectOperationsConfirmationAttachmentUrls, classifyInquiryAttachment } from "@/lib/inquiry-attachments";
 import {
   buildEstimatedDutiesDisplay,
   CALCULATOR_FIELD_LABELS,
@@ -29,7 +29,6 @@ import {
   setCachedInquiryConfirmations,
   invalidateCachedInquiryConfirmations,
 } from "@/lib/admin-inquiry-confirmations-cache";
-import { InquiryProformaInvoiceSection } from "@/components/admin/InquiryProformaInvoiceSection";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -60,6 +59,7 @@ import {
   XCircle,
   Clock,
   Loader2,
+  ExternalLink,
 } from "lucide-react";
 
 // ─── Helpers ─────────────────────────────────────────────────────────
@@ -89,6 +89,16 @@ function statusIcon(status: string) {
     case "pending": return <Clock className="h-4 w-4 text-yellow-600" />;
     default: return null;
   }
+}
+
+function resolveAttachmentPreviewKind(
+  url: string,
+  kind?: "image" | "pdf"
+): "image" | "pdf" {
+  if (kind === "pdf" || kind === "image") return kind;
+  const classified = classifyInquiryAttachment(url).kind;
+  if (classified === "pdf" || /\.pdf(\?|$)/i.test(url)) return "pdf";
+  return "image";
 }
 
 function TableSkeletonRows({ rows = 8 }: { rows?: number }) {
@@ -131,7 +141,13 @@ function DetailSkeleton() {
 
 type ViewMode = "list" | "detail";
 
-export function InquiryConfirmationPanel() {
+export function InquiryConfirmationPanel({
+  focusConfirmationId = null,
+  onFocusHandled,
+}: {
+  focusConfirmationId?: string | null;
+  onFocusHandled?: () => void;
+}) {
   const [view, setView] = useState<ViewMode>("list");
   const [confirmations, setConfirmations] = useState<InquiryConfirmationListItem[]>([]);
   const [isLoading, setIsLoading] = useState(false);
@@ -140,13 +156,18 @@ export function InquiryConfirmationPanel() {
   const [isDetailLoading, setIsDetailLoading] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [isActioning, setIsActioning] = useState(false);
-  const [imagePreview, setImagePreview] = useState<{ url: string; title: string } | null>(null);
+  const [imagePreview, setImagePreview] = useState<{
+    url: string;
+    title: string;
+    kind: "image" | "pdf";
+  } | null>(null);
   const [rejectDialogOpen, setRejectDialogOpen] = useState(false);
   const [rejectReason, setRejectReason] = useState("");
   const [pricingConfig, setPricingConfig] = useState<CalculatorPricingConfig>(() =>
     parsePricingConfig({})
   );
   const pricingConfigFetched = useRef(false);
+  const openedFocusId = useRef<string | null>(null);
 
   const fetchConfirmations = useCallback(async (opts?: { silent?: boolean }) => {
     const cached = getCachedInquiryConfirmations();
@@ -234,6 +255,36 @@ export function InquiryConfirmationPanel() {
       setIsDetailLoading(false);
     }
   }, [loadPricingConfig]);
+
+  useEffect(() => {
+    const targetId = focusConfirmationId?.trim();
+    if (!targetId || openedFocusId.current === targetId) return;
+
+    const match = confirmations.find((row) => row.id === targetId);
+    if (match) {
+      openedFocusId.current = targetId;
+      void openDetail(match);
+      onFocusHandled?.();
+      return;
+    }
+
+    if (isLoading) return;
+
+    openedFocusId.current = targetId;
+    void openDetail({
+      id: targetId,
+      lead_number: "",
+      product_name: "Inquiry",
+      total_weight: "",
+      cbm: "",
+      quantity: "",
+      status: "pending",
+      submitted_by: "",
+      created_at: new Date().toISOString(),
+      leads: null,
+    });
+    onFocusHandled?.();
+  }, [focusConfirmationId, confirmations, isLoading, openDetail, onFocusHandled]);
 
   const handleRefresh = useCallback(() => {
     invalidateCachedInquiryConfirmations();
@@ -450,6 +501,25 @@ export function InquiryConfirmationPanel() {
                     </div>
                   ) : null}
 
+                  {parsedCalculator.valuationRulingApplied ? (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div>
+                        <div className="text-xs text-slate-500 font-medium mb-1">Valuation Ruling Applied?</div>
+                        <div className="text-sm font-semibold text-slate-800">
+                          {parsedCalculator.valuationRulingApplied === "yes" ? "Yes" : "No"}
+                        </div>
+                      </div>
+                      {parsedCalculator.valuationRulingApplied === "yes" && parsedCalculator.valuationRulingNumber ? (
+                        <div>
+                          <div className="text-xs text-slate-500 font-medium mb-1">VR Number</div>
+                          <div className="text-sm font-semibold text-slate-800">
+                            {parsedCalculator.valuationRulingNumber}
+                          </div>
+                        </div>
+                      ) : null}
+                    </div>
+                  ) : null}
+
                   {parsedCalculator.calculators.length > 1 ? (
                     <div className="text-xs text-secondary-muted">
                       {parsedCalculator.calculators.length} calculator entries were submitted.
@@ -504,12 +574,40 @@ export function InquiryConfirmationPanel() {
                   c.sales_additional_image_urls
                 )}
                 title="Sales Attachments"
-                onPreviewImage={(url, title) => setImagePreview({ url, title })}
+                onPreviewImage={(url, title, kind) =>
+                  setImagePreview({
+                    url,
+                    title,
+                    kind: resolveAttachmentPreviewKind(url, kind),
+                  })
+                }
               />
+              {parsedCalculator.valuationRulingApplied === "yes" &&
+              parsedCalculator.valuationRulingAttachmentUrl ? (
+                <InquiryAttachmentList
+                  urls={[parsedCalculator.valuationRulingAttachmentUrl]}
+                  title="VR Attachment"
+                  onPreviewImage={(url, title, kind) =>
+                  setImagePreview({
+                    url,
+                    title,
+                    kind: resolveAttachmentPreviewKind(url, kind),
+                  })
+                }
+                />
+              ) : null}
               <InquiryAttachmentList
-                urls={collectOperationsConfirmationAttachmentUrls(c)}
+                urls={collectOperationsConfirmationAttachmentUrls(c).filter(
+                  (url) => url !== parsedCalculator.valuationRulingAttachmentUrl
+                )}
                 title="Operations Attachments"
-                onPreviewImage={(url, title) => setImagePreview({ url, title })}
+                onPreviewImage={(url, title, kind) =>
+                  setImagePreview({
+                    url,
+                    title,
+                    kind: resolveAttachmentPreviewKind(url, kind),
+                  })
+                }
               />
             </div>
 
@@ -572,16 +670,39 @@ export function InquiryConfirmationPanel() {
             )}
           </CardContent>
         </Card>
-        <InquiryProformaInvoiceSection />
         <Dialog open={!!imagePreview} onOpenChange={(open) => { if (!open) setImagePreview(null); }}>
-          <DialogContent className="sm:max-w-5xl w-[95vw] max-h-[95vh] p-4">
-            <DialogHeader>
-              <DialogTitle className="text-sm">{imagePreview?.title || "Image Preview"}</DialogTitle>
+          <DialogContent className="flex h-[95vh] max-h-[95vh] w-[98vw] max-w-[98vw] flex-col gap-3 overflow-hidden p-4 sm:max-w-[98vw]">
+            <DialogHeader className="pr-8">
+              <DialogTitle className="text-sm flex items-center justify-between gap-3">
+                <span className="truncate">{imagePreview?.title || "Attachment Preview"}</span>
+                {imagePreview?.url ? (
+                  <span className="flex items-center gap-2 shrink-0">
+                    <Button asChild size="sm" variant="outline" className="h-8">
+                      <a href={imagePreview.url} target="_blank" rel="noopener noreferrer">
+                        <ExternalLink className="h-3.5 w-3.5 mr-1.5" />
+                        Open in new tab
+                      </a>
+                    </Button>
+                  </span>
+                ) : null}
+              </DialogTitle>
             </DialogHeader>
             {imagePreview?.url ? (
-              <div className="overflow-auto max-h-[80vh]">
-                <img src={imagePreview.url} alt={imagePreview.title} className="w-full h-auto object-contain" />
-              </div>
+              imagePreview.kind === "pdf" ? (
+                <iframe
+                  src={imagePreview.url}
+                  title={imagePreview.title}
+                  className="w-full flex-1 min-h-0 rounded border bg-white"
+                />
+              ) : (
+                <div className="flex-1 min-h-0 overflow-auto bg-slate-950/90 rounded flex items-center justify-center p-2">
+                  <img
+                    src={imagePreview.url}
+                    alt={imagePreview.title}
+                    className="max-w-full max-h-full object-contain cursor-zoom-in"
+                  />
+                </div>
+              )
             ) : null}
           </DialogContent>
         </Dialog>

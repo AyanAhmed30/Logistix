@@ -1,9 +1,9 @@
 import type { LucideIcon } from "lucide-react";
-import { Kanban, Users, CalendarCheck, BarChart3, FileText } from "lucide-react";
+import { Kanban, Users, CalendarCheck, BarChart3, FileText, ClipboardList } from "lucide-react";
 import type { CrmModuleTab } from "@/lib/dashboard-access";
 
 export type CrmNavItem = {
-  id: CrmModuleTab | "crm-quotations";
+  id: CrmModuleTab | "crm-quotations" | "crm-inquiries";
   label: string;
   href: string;
   icon: LucideIcon;
@@ -33,6 +33,12 @@ export const CRM_NAV_ITEMS: CrmNavItem[] = [
     label: "My Quotations",
     href: "/sales/quotations",
     icon: FileText,
+  },
+  {
+    id: "crm-inquiries",
+    label: "All Inquiries",
+    href: "/crm/inquiries",
+    icon: ClipboardList,
   },
   {
     id: "crm-customers",
@@ -92,6 +98,12 @@ export const CRM_TOP_MENUS: CrmTopMenu[] = [
         description: "Open Sales quotations",
       },
       {
+        id: "all-inquiries",
+        label: "All Inquiries",
+        href: "/crm/inquiries",
+        description: "Submitted inquiries and workflow status",
+      },
+      {
         id: "customers",
         label: "Customers",
         href: "/crm/customers",
@@ -135,7 +147,7 @@ export type CrmPageMeta = {
   createLabel?: string;
   searchPlaceholder?: string;
   /** Control-panel search drives this route */
-  searchMode?: "customers" | "pipeline" | "none";
+  searchMode?: "customers" | "pipeline" | "inquiries" | "none";
   showFilters?: boolean;
   showFavorites?: boolean;
 };
@@ -265,6 +277,36 @@ export function getCrmPageMeta(
     };
   }
 
+  if (path.startsWith("/crm/inquiries/") && path !== "/crm/inquiries") {
+    return {
+      title: "Inquiry",
+      breadcrumbs: [
+        { label: "Sales", href: "/crm/pipeline" },
+        { label: "All Inquiries", href: "/crm/inquiries" },
+        { label: "Inquiry" },
+      ],
+      showCreate: false,
+      searchMode: "none",
+      showFilters: false,
+      showFavorites: false,
+    };
+  }
+
+  if (path.startsWith("/crm/inquiries")) {
+    return {
+      title: "All Inquiries",
+      breadcrumbs: [
+        { label: "Sales", href: "/crm/pipeline" },
+        { label: "All Inquiries" },
+      ],
+      showCreate: false,
+      searchPlaceholder: "Search inquiries…",
+      searchMode: "inquiries",
+      showFilters: false,
+      showFavorites: false,
+    };
+  }
+
   if (path.startsWith("/crm/quotations")) {
     return {
       title: "My Quotations",
@@ -312,7 +354,7 @@ export function getCrmNavItemForPath(pathname: string): CrmNavItem | null {
 export function getCrmPermissionForPath(pathname: string): CrmModuleTab | null {
   const item = getCrmNavItemForPath(pathname);
   if (!item) return null;
-  if (item.id === "crm-quotations") return null;
+  if (item.id === "crm-quotations" || item.id === "crm-inquiries") return null;
   return (item.permission as CrmModuleTab) || null;
 }
 

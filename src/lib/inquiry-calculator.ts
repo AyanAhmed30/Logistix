@@ -151,16 +151,68 @@ export function withDerivedInvValue(values: Record<string, string>): Record<stri
   };
 }
 
+export type ValuationRulingApplied = "" | "yes" | "no";
+
 export type StoredCalculatorPayload = {
   calculators: Record<string, string>[];
   operationsDescription: string;
+  valuationRulingApplied: ValuationRulingApplied;
+  valuationRulingNumber: string;
+  valuationRulingAttachmentUrl: string;
+};
+
+export type CalculatorPayloadExtras = Pick<
+  StoredCalculatorPayload,
+  "valuationRulingApplied" | "valuationRulingNumber" | "valuationRulingAttachmentUrl"
+>;
+
+const EMPTY_CALCULATOR_EXTRAS: CalculatorPayloadExtras = {
+  valuationRulingApplied: "",
+  valuationRulingNumber: "",
+  valuationRulingAttachmentUrl: "",
 };
 
 const CALCULATOR_PAYLOAD_METADATA_KEYS = new Set([
   "calculators",
   "operations_description",
   "operations_attachment_urls",
+  "valuation_ruling_applied",
+  "valuation_ruling_number",
+  "valuation_ruling_attachment_url",
 ]);
+
+function parseValuationRulingExtras(obj: Record<string, unknown> | null | undefined): CalculatorPayloadExtras {
+  if (!obj) return { ...EMPTY_CALCULATOR_EXTRAS };
+  const appliedRaw = String(obj.valuation_ruling_applied ?? "").trim().toLowerCase();
+  const applied: ValuationRulingApplied =
+    appliedRaw === "yes" ? "yes" : appliedRaw === "no" ? "no" : "";
+  return {
+    valuationRulingApplied: applied,
+    valuationRulingNumber: String(obj.valuation_ruling_number ?? "").trim(),
+    valuationRulingAttachmentUrl: String(obj.valuation_ruling_attachment_url ?? "").trim(),
+  };
+}
+
+function applyCalculatorExtras(
+  payload: Record<string, unknown>,
+  extras?: CalculatorPayloadExtras | null
+): Record<string, unknown> {
+  const applied = extras?.valuationRulingApplied === "yes"
+    ? "yes"
+    : extras?.valuationRulingApplied === "no"
+      ? "no"
+      : "";
+  if (!applied) return payload;
+
+  payload.valuation_ruling_applied = applied;
+  if (applied === "yes") {
+    const number = String(extras?.valuationRulingNumber ?? "").trim();
+    const url = String(extras?.valuationRulingAttachmentUrl ?? "").trim();
+    if (number) payload.valuation_ruling_number = number;
+    if (url) payload.valuation_ruling_attachment_url = url;
+  }
+  return payload;
+}
 
 const MEANINGFUL_CALCULATOR_KEYS = [
   "unit_value",
@@ -260,11 +312,13 @@ export function parseStoredCalculatorPayload(raw: unknown): StoredCalculatorPayl
     return {
       calculators: calculators.length > 0 ? calculators : [getEmptyCalculatorValues()],
       operationsDescription: "",
+      ...EMPTY_CALCULATOR_EXTRAS,
     };
   }
 
   if (coerced && typeof coerced === "object") {
     const obj = coerced as Record<string, unknown>;
+    const extras = parseValuationRulingExtras(obj);
     if (Array.isArray(obj.calculators)) {
       const calculators = obj.calculators
         .filter((item) => item && typeof item === "object")
@@ -272,6 +326,7 @@ export function parseStoredCalculatorPayload(raw: unknown): StoredCalculatorPayl
       return {
         calculators: calculators.length > 0 ? calculators : [getEmptyCalculatorValues()],
         operationsDescription: String(obj.operations_description ?? "").trim(),
+        ...extras,
       };
     }
 
@@ -281,13 +336,15 @@ export function parseStoredCalculatorPayload(raw: unknown): StoredCalculatorPayl
       return {
         calculators: [calculatorOnly],
         operationsDescription,
+        ...extras,
       };
     }
 
-    if (operationsDescription) {
+    if (operationsDescription || extras.valuationRulingApplied) {
       return {
         calculators: [getEmptyCalculatorValues()],
         operationsDescription,
+        ...extras,
       };
     }
   }
@@ -295,12 +352,14 @@ export function parseStoredCalculatorPayload(raw: unknown): StoredCalculatorPayl
   return {
     calculators: [getEmptyCalculatorValues()],
     operationsDescription: "",
+    ...EMPTY_CALCULATOR_EXTRAS,
   };
 }
 
 export function serializeCalculatorPayload(
   calculators: Record<string, string>[],
-  operationsDescription?: string
+  operationsDescription?: string,
+  extras?: CalculatorPayloadExtras | null
 ): Record<string, unknown> {
   const normalized = calculators.map((entry) =>
     sanitizeSingleCalculatorValues(entry as Record<string, unknown>)
@@ -308,19 +367,22 @@ export function serializeCalculatorPayload(
   const description = String(operationsDescription ?? "").trim();
 
   if (normalized.length === 1 && !description) {
-    return { ...normalized[0] };
+    return applyCalculatorExtras({ ...normalized[0] }, extras);
   }
   if (normalized.length === 1 && description) {
-    return {
-      ...normalized[0],
-      operations_description: description,
-    };
+    return applyCalculatorExtras(
+      {
+        ...normalized[0],
+        operations_description: description,
+      },
+      extras
+    );
   }
   const payload: Record<string, unknown> = { calculators: normalized };
   if (description) {
     payload.operations_description = description;
   }
-  return payload;
+  return applyCalculatorExtras(payload, extras);
 }
 
 export function getPrimaryCalculatorValues(raw: unknown): Record<string, string> {

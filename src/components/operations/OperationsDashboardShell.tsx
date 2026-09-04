@@ -7,7 +7,6 @@ import {
   LogOut,
   Menu,
   X,
-  Bell,
   ClipboardList,
   Package,
   Container,
@@ -27,20 +26,9 @@ import { InquiryConfirmationPanel } from "@/components/admin/InquiryConfirmation
 import { AdminCalculatorPanel } from "@/components/admin/AdminCalculatorPanel";
 import { prefetchOperationsInquiries } from "@/lib/operations-inquiries-cache";
 import { OPERATIONS_MODULE_PERMISSIONS } from "@/lib/module-permissions";
-import {
-  getMyLeadChatNotifications,
-  markLeadChatNotificationRead,
-  type LeadChatNotification,
-} from "@/app/actions/inquiries";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
 import { ClientErrorBoundary } from "@/components/error/ClientErrorBoundary";
+import { AppNotificationBell } from "@/components/notifications/AppNotificationBell";
+import { useNotificationDeepLink } from "@/hooks/useNotificationDeepLink";
 
 type Props = {
   username: string;
@@ -89,13 +77,14 @@ export function OperationsDashboardShell({
   username,
   permissions: initialPermissions = [],
 }: Props) {
+  const deepLink = useNotificationDeepLink();
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [isClientMounted, setIsClientMounted] = useState(false);
-  const [notifications, setNotifications] = useState<LeadChatNotification[]>([]);
-  const [unreadCount, setUnreadCount] = useState(0);
-  const [focusLeadId, setFocusLeadId] = useState<string | null>(null);
-  const [focusInquiryId, setFocusInquiryId] = useState<string | null>(null);
-  const [notificationsError, setNotificationsError] = useState<string | null>(null);
+  const [focusLeadId, setFocusLeadId] = useState<string | null>(deepLink.leadId);
+  const [focusInquiryId, setFocusInquiryId] = useState<string | null>(deepLink.inquiryId);
+  const [focusConfirmationId, setFocusConfirmationId] = useState<string | null>(
+    deepLink.confirmationId
+  );
 
   const allowedTabs = useMemo(() => {
     const allowed = new Set(initialPermissions);
@@ -107,6 +96,27 @@ export function OperationsDashboardShell({
   const [activeSubTab, setActiveSubTab] = useState<OpsTabKey>(
     () => allowedTabs[0] || "leads-inquiry"
   );
+
+  useEffect(() => {
+    const tab = deepLink.tab as OpsTabKey | null;
+    if (tab && allowedTabs.includes(tab)) {
+      setActiveSubTab(tab);
+    }
+    if (deepLink.leadId) setFocusLeadId(deepLink.leadId);
+    if (deepLink.inquiryId) setFocusInquiryId(deepLink.inquiryId);
+    if (deepLink.confirmationId) {
+      setFocusConfirmationId(deepLink.confirmationId);
+      if (allowedTabs.includes("inquiry-confirmation")) {
+        setActiveSubTab("inquiry-confirmation");
+      }
+    }
+  }, [
+    allowedTabs,
+    deepLink.tab,
+    deepLink.leadId,
+    deepLink.inquiryId,
+    deepLink.confirmationId,
+  ]);
 
   useEffect(() => {
     if (!allowedTabs.includes(activeSubTab)) {
@@ -127,47 +137,6 @@ export function OperationsDashboardShell({
       // Prefetch is best-effort
     });
   }, [allowedTabs]);
-
-  useEffect(() => {
-    async function fetchNotifications() {
-      try {
-        const result = await getMyLeadChatNotifications(30);
-        if ("error" in result) {
-          setNotificationsError(result.error || "Failed to load notifications");
-          setNotifications([]);
-          setUnreadCount(0);
-        } else {
-          setNotificationsError(null);
-          setNotifications(result.notifications || []);
-          setUnreadCount(result.unreadCount || 0);
-        }
-      } catch {
-        setNotificationsError("Failed to load notifications");
-      }
-    }
-    fetchNotifications();
-    const timer = setInterval(fetchNotifications, 5000);
-    return () => clearInterval(timer);
-  }, []);
-
-  async function handleNotificationClick(notification: LeadChatNotification) {
-    if (!notification.is_read) {
-      try {
-        await markLeadChatNotificationRead(notification.id);
-        setNotifications((prev) =>
-          prev.map((n) => (n.id === notification.id ? { ...n, is_read: true } : n))
-        );
-        setUnreadCount((prev) => Math.max(0, prev - 1));
-      } catch {
-        // Keep navigation flow even if read-status update fails transiently.
-      }
-    }
-    if (allowedTabs.includes("leads-inquiry")) {
-      setActiveSubTab("leads-inquiry");
-      setFocusLeadId(notification.lead_id);
-      setFocusInquiryId(notification.inquiry_id || null);
-    }
-  }
 
   return (
     <div className="min-h-screen bg-white">
@@ -191,61 +160,14 @@ export function OperationsDashboardShell({
 
           <div className="flex items-center gap-4 md:gap-6">
             {isClientMounted ? (
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <Button
-                    variant="outline"
-                    className="relative h-9 w-9 p-0 border-slate-200 bg-white hover:bg-slate-50"
-                    aria-label="Notifications"
-                  >
-                    <Bell className="h-4 w-4" />
-                    {unreadCount > 0 && (
-                      <span className="absolute -top-1 -right-1 min-w-4 h-4 px-1 rounded-full bg-red-500 text-white text-[10px] leading-4 text-center">
-                        {unreadCount > 9 ? "9+" : unreadCount}
-                      </span>
-                    )}
-                  </Button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end" className="w-[360px] z-[90]">
-                  <DropdownMenuLabel>Notifications</DropdownMenuLabel>
-                  <DropdownMenuSeparator />
-                  {notificationsError ? (
-                    <DropdownMenuItem disabled className="text-xs text-red-600">
-                      {notificationsError}
-                    </DropdownMenuItem>
-                  ) : notifications.length === 0 ? (
-                    <DropdownMenuItem disabled className="text-sm text-slate-500">
-                      No notifications
-                    </DropdownMenuItem>
-                  ) : (
-                    notifications.map((n) => (
-                      <DropdownMenuItem
-                        key={n.id}
-                        className={`items-start whitespace-normal cursor-pointer ${!n.is_read ? "bg-blue-50" : ""}`}
-                        onClick={() => handleNotificationClick(n)}
-                      >
-                        <div className="text-sm leading-snug">
-                          <div>
-                            <span className="font-semibold">{n.sender_username}</span>{" "}
-                            {n.notification_type === "lifecycle"
-                              ? n.message || "updated an inquiry status."
-                              : `sent you a message regarding Lead #${n.leads?.lead_id_formatted || "N/A"}`}
-                          </div>
-                        </div>
-                      </DropdownMenuItem>
-                    ))
-                  )}
-                </DropdownMenuContent>
-              </DropdownMenu>
+              <AppNotificationBell tone="light" />
             ) : (
               <Button
                 variant="outline"
                 className="relative h-9 w-9 p-0 border-slate-200 bg-white hover:bg-slate-50"
                 aria-label="Notifications"
                 type="button"
-              >
-                <Bell className="h-4 w-4" />
-              </Button>
+              />
             )}
             <span className="hidden md:block text-sm text-secondary-muted">
               Logged in as <span className="font-semibold text-primary-dark">{username}</span>
@@ -361,7 +283,12 @@ export function OperationsDashboardShell({
               <ImportInvoicePanel />
             )}
             {allowedTabs.includes("inquiry-confirmation") &&
-              activeSubTab === "inquiry-confirmation" && <InquiryConfirmationPanel />}
+              activeSubTab === "inquiry-confirmation" && (
+                <InquiryConfirmationPanel
+                  focusConfirmationId={focusConfirmationId}
+                  onFocusHandled={() => setFocusConfirmationId(null)}
+                />
+              )}
             {allowedTabs.includes("calculator-config") &&
               activeSubTab === "calculator-config" && <AdminCalculatorPanel />}
           </ClientErrorBoundary>

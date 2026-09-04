@@ -1,5 +1,6 @@
 import { getSession } from '@/lib/auth/session';
 import { redirect } from 'next/navigation';
+import { Suspense } from 'react';
 import { PortalUserDashboardWithOrganization } from '@/components/user/PortalUserDashboardWithOrganization';
 import { hasModulePermission, parsePermissionKeys } from '@/lib/module-permissions';
 import { getAdminOrganizationState, getPortalOrganizationProfile } from '@/app/actions/organization-context';
@@ -28,11 +29,13 @@ export default async function UserDashboard() {
   }
 
   return (
-    <PortalUserDashboardWithOrganization
-      username={session.username}
-      permissions={permissions}
-      initialOrganizationState={organizationState}
-      initialOrganization={organization}
-    />
+    <Suspense fallback={null}>
+      <PortalUserDashboardWithOrganization
+        username={session.username}
+        permissions={permissions}
+        initialOrganizationState={organizationState}
+        initialOrganization={organization}
+      />
+    </Suspense>
   );
 }

@@ -35,7 +35,7 @@ import {
 import { InquiryAttachmentList } from "@/components/inquiry/InquiryAttachmentList";
 import { InquiryCalculatorSection } from "@/components/admin/InquiryCalculatorSection";
 import { EstimatedDutiesAndTaxesBlock } from "@/components/admin/EstimatedDutiesAndTaxesBlock";
-import { collectInquiryAttachmentUrls } from "@/lib/inquiry-attachments";
+import { collectInquiryAttachmentUrls, classifyInquiryAttachment } from "@/lib/inquiry-attachments";
 import {
   formatFileSize,
   MAX_CONFIRMATION_ATTACHMENT_BYTES,
@@ -48,6 +48,7 @@ import {
   hasMeaningfulCalculatorData,
   withDerivedInvValue,
   parsePricingConfig,
+  type CalculatorPayloadExtras,
   type CalculatorPricingConfig,
 } from "@/lib/inquiry-calculator";
 import { Card, CardContent } from "@/components/ui/card";
@@ -72,6 +73,13 @@ import {
 } from "@/components/ui/dialog";
 import { Textarea } from "@/components/ui/textarea";
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
   FileText,
   ClipboardList,
   Search,
@@ -95,6 +103,31 @@ import {
 } from "lucide-react";
 
 // ─── Helpers ─────────────────────────────────────────────────────────
+
+const VR_IMAGE_EXTS = new Set(["jpg", "jpeg", "png", "gif", "webp", "bmp", "svg", "heic", "heif", "avif"]);
+
+function fileExt(file: File) {
+  return (file.name.split(".").pop() || "").toLowerCase();
+}
+
+function isVrImageOrPdfFile(file: File) {
+  const ext = fileExt(file);
+  if (file.type?.startsWith("image/") || VR_IMAGE_EXTS.has(ext)) return true;
+  if (file.type === "application/pdf" || ext === "pdf") return true;
+  return false;
+}
+
+function vrKindFromFile(file: File): "image" | "pdf" {
+  const ext = fileExt(file);
+  return file.type === "application/pdf" || ext === "pdf" ? "pdf" : "image";
+}
+
+function vrKindFromUrl(url: string | null | undefined): "image" | "pdf" | null {
+  if (!url?.trim()) return null;
+  return classifyInquiryAttachment(url).kind === "pdf" || /\.pdf(\?|$)/i.test(url)
+    ? "pdf"
+    : "image";
+}
 
 function formatStatus(status: string) {
   switch (status) {
@@ -184,8 +217,7 @@ export function OperationsLeadsInquiryPanel({
   const [searchQuery, setSearchQuery] = useState("");
   const [debouncedSearchQuery, setDebouncedSearchQuery] = useState("");
 
-  // Lead Management Form state
-  const [showForm, setShowForm] = useState(false);
+  // Lead Management Form state (inline under Description)
   const [formProductName, setFormProductName] = useState("");
   const [formWeight, setFormWeight] = useState("");
   const [formCbm, setFormCbm] = useState("");
@@ -193,10 +225,17 @@ export function OperationsLeadsInquiryPanel({
   const [operationsAttachments, setOperationsAttachments] = useState<OperationsFormAttachment[]>(() => [
     createOperationsAttachment(),
   ]);
+  const [vrApplied, setVrApplied] = useState<"yes" | "no">("no");
+  const [vrNumber, setVrNumber] = useState("");
+  const [vrAttachmentFile, setVrAttachmentFile] = useState<File | null>(null);
+  const [vrAttachmentPreview, setVrAttachmentPreview] = useState<string | null>(null);
+  const [vrAttachmentUrl, setVrAttachmentUrl] = useState<string | null>(null);
+  const [vrAttachmentKind, setVrAttachmentKind] = useState<"image" | "pdf" | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isDownloadingPdf, setIsDownloadingPdf] = useState(false);
   const [activeAttachmentId, setActiveAttachmentId] = useState<string | null>(null);
   const operationsFileInputRef = useRef<HTMLInputElement>(null);
+  const vrFileInputRef = useRef<HTMLInputElement>(null);
   const leadManagementPdfRef = useRef<HTMLDivElement>(null);
   const activeInquiryIdRef = useRef<string | null>(null);
   const syncedCalculatorInquiryIdRef = useRef<string | null>(null);
@@ -227,7 +266,11 @@ export function OperationsLeadsInquiryPanel({
   const [chatMessages, setChatMessages] = useState<LeadChatMessage[]>([]);
   const [chatInput, setChatInput] = useState("");
   const [isSendingChat, setIsSendingChat] = useState(false);
-  const [imagePreview, setImagePreview] = useState<{ url: string; title: string } | null>(null);
+  const [imagePreview, setImagePreview] = useState<{
+    url: string;
+    title: string;
+    kind?: "image" | "pdf";
+  } | null>(null);
 
   // Duty calculator state (Operations detail view)
   const [calculators, setCalculators] = useState<Record<string, string>[]>(() => [
@@ -257,6 +300,24 @@ export function OperationsLeadsInquiryPanel({
     };
   }, []);
 
+  const hydrateValuationRuling = useCallback((inquiry: LeadInquiryWithLead) => {
+    const parsed = parseStoredCalculatorPayload(inquiry.calculator_values);
+    setVrApplied(parsed.valuationRulingApplied === "yes" ? "yes" : "no");
+    setVrNumber(parsed.valuationRulingNumber);
+    setVrAttachmentUrl(parsed.valuationRulingAttachmentUrl || null);
+    setVrAttachmentPreview(parsed.valuationRulingAttachmentUrl || null);
+    setVrAttachmentFile(null);
+    setVrAttachmentKind(vrKindFromUrl(parsed.valuationRulingAttachmentUrl));
+  }, []);
+
+  const hydrateLeadManagementForm = useCallback((inquiry: LeadInquiryWithLead) => {
+    setFormProductName(inquiry.product_name || "");
+    setFormWeight(inquiry.total_weight || "");
+    setFormCbm(inquiry.cbm || "");
+    setFormQuantity(inquiry.quantity || "");
+    hydrateValuationRuling(inquiry);
+  }, [hydrateValuationRuling]);
+
   const initializeCalculatorForInquiry = useCallback(
     (inquiry: LeadInquiryWithLead) => {
       const { calculators: resolvedCalculators, operationsDescription: resolvedDescription } =
@@ -264,8 +325,9 @@ export function OperationsLeadsInquiryPanel({
       setCalculators(resolvedCalculators);
       setOperationsDescription(resolvedDescription);
       setLastCalcSnapshot(resolvedCalculators[0] ?? getEmptyCalculatorValues());
+      hydrateValuationRuling(inquiry);
     },
-    [buildCalculatorsForInquiry]
+    [buildCalculatorsForInquiry, hydrateValuationRuling]
   );
 
   const resetCalculatorState = useCallback(() => {
@@ -273,6 +335,12 @@ export function OperationsLeadsInquiryPanel({
     setCalculators([defaults]);
     setOperationsDescription("");
     setLastCalcSnapshot(defaults);
+    setVrApplied("no");
+    setVrNumber("");
+    setVrAttachmentFile(null);
+    setVrAttachmentPreview(null);
+    setVrAttachmentUrl(null);
+    setVrAttachmentKind(null);
   }, []);
 
   const updateCalculatorAt = useCallback((index: number, values: Record<string, string>) => {
@@ -283,14 +351,22 @@ export function OperationsLeadsInquiryPanel({
     });
   }, []);
 
+  const getValuationRulingExtras = useCallback((): CalculatorPayloadExtras => ({
+    valuationRulingApplied: vrApplied,
+    valuationRulingNumber: vrApplied === "yes" ? vrNumber.trim() : "",
+    valuationRulingAttachmentUrl: vrApplied === "yes" ? (vrAttachmentUrl || "") : "",
+  }), [vrApplied, vrNumber, vrAttachmentUrl]);
+
   const persistCalculatorPayload = useCallback(async (
     nextCalculators?: Record<string, string>[],
-    nextDescription?: string
+    nextDescription?: string,
+    nextExtras?: CalculatorPayloadExtras
   ) => {
     if (!selectedInquiry) return;
     const payload = serializeCalculatorPayload(
       nextCalculators ?? calculators,
-      nextDescription ?? operationsDescription
+      nextDescription ?? operationsDescription,
+      nextExtras ?? getValuationRulingExtras()
     );
     const result = await saveInquiryCalculatorPayload(selectedInquiry.id, payload);
     if ("error" in result) {
@@ -305,7 +381,7 @@ export function OperationsLeadsInquiryPanel({
           }
         : prev
     );
-  }, [selectedInquiry, calculators, operationsDescription]);
+  }, [selectedInquiry, calculators, operationsDescription, getValuationRulingExtras]);
 
   const addCalculator = useCallback(() => {
     setCalculators((prev) => {
@@ -539,8 +615,9 @@ export function OperationsLeadsInquiryPanel({
 
     setSelectedInquiry(inquiry);
     setView("detail");
-    setShowForm(false);
-    resetForm();
+    setOperationsAttachments([createOperationsAttachment()]);
+    setActiveAttachmentId(null);
+    hydrateLeadManagementForm(inquiry);
     setActiveRightTab("send_message");
     setLogNoteText("");
     setChatInput("");
@@ -563,6 +640,7 @@ export function OperationsLeadsInquiryPanel({
       const fullInquiry = detailResult.value.inquiry;
       setSelectedInquiry(fullInquiry);
       initializeCalculatorForInquiry(fullInquiry);
+      hydrateLeadManagementForm(fullInquiry);
     }
 
     if (confirmResult.status === "fulfilled") {
@@ -582,7 +660,6 @@ export function OperationsLeadsInquiryPanel({
     syncedCalculatorInquiryIdRef.current = null;
     setView("list");
     setSelectedInquiry(null);
-    setShowForm(false);
     setInquiryLogs([]);
     setActiveRightTab("send_message");
     setLogNoteText("");
@@ -611,13 +688,19 @@ export function OperationsLeadsInquiryPanel({
     }
   }
 
-  function openLeadManagementForm() {
-    if (!selectedInquiry) return;
-    setFormProductName(selectedInquiry.product_name || "");
-    setFormWeight(selectedInquiry.total_weight || "");
-    setFormCbm(selectedInquiry.cbm || "");
-    setFormQuantity(selectedInquiry.quantity || "");
-    setShowForm(true);
+  function resetForm() {
+    setFormProductName("");
+    setFormWeight("");
+    setFormCbm("");
+    setFormQuantity("");
+    setOperationsAttachments([createOperationsAttachment()]);
+    setActiveAttachmentId(null);
+    setVrApplied("no");
+    setVrNumber("");
+    setVrAttachmentFile(null);
+    setVrAttachmentPreview(null);
+    setVrAttachmentUrl(null);
+    setVrAttachmentKind(null);
   }
 
   async function handleAddInquiryLogNote() {
@@ -671,15 +754,6 @@ export function OperationsLeadsInquiryPanel({
     } finally {
       setIsAddingActivity(false);
     }
-  }
-
-  function resetForm() {
-    setFormProductName("");
-    setFormWeight("");
-    setFormCbm("");
-    setFormQuantity("");
-    setOperationsAttachments([createOperationsAttachment()]);
-    setActiveAttachmentId(null);
   }
 
   function addOperationsAttachment() {
@@ -812,7 +886,8 @@ export function OperationsLeadsInquiryPanel({
   const extractImageFileFromItems = useCallback((items: DataTransferItemList | null | undefined) => {
     if (!items) return null;
     for (let i = 0; i < items.length; i++) {
-      if (items[i].type.startsWith("image/")) {
+      const type = items[i].type || "";
+      if (type.startsWith("image/") || type === "application/pdf") {
         return items[i].getAsFile();
       }
     }
@@ -874,6 +949,37 @@ export function OperationsLeadsInquiryPanel({
     [isSupportedAttachmentFile, updateOperationsAttachment]
   );
 
+  const applyVrAttachment = useCallback(async (file: File | null) => {
+    if (!file) return;
+    if (!isVrImageOrPdfFile(file)) {
+      toast.error("VR Attachment must be an image or PDF.");
+      return;
+    }
+    if (file.size > MAX_CONFIRMATION_ATTACHMENT_BYTES) {
+      toast.error(
+        `VR Attachment is too large (${formatFileSize(file.size)}). Max ${formatFileSize(MAX_CONFIRMATION_ATTACHMENT_BYTES)}.`
+      );
+      return;
+    }
+
+    const kind = vrKindFromFile(file);
+    setVrAttachmentFile(file);
+    setVrAttachmentKind(kind);
+    setVrAttachmentPreview(URL.createObjectURL(file));
+
+    const upload = await uploadConfirmationImage(file, "valuation_ruling");
+    if ("error" in upload || !upload.url) {
+      toast.error(("error" in upload && upload.error) || "Failed to upload VR Attachment.");
+      return;
+    }
+    setVrAttachmentUrl(upload.url);
+    void persistCalculatorPayload(undefined, undefined, {
+      valuationRulingApplied: "yes",
+      valuationRulingNumber: vrNumber.trim(),
+      valuationRulingAttachmentUrl: upload.url,
+    });
+  }, [persistCalculatorPayload, vrNumber]);
+
   function handleDrop(e: React.DragEvent, attachmentId: string) {
     e.preventDefault();
     e.stopPropagation();
@@ -888,11 +994,33 @@ export function OperationsLeadsInquiryPanel({
   }
 
   useEffect(() => {
-    if (!showForm) return;
+    if (view !== "detail") return;
 
     function handleGlobalPaste(e: ClipboardEvent) {
       const file = extractImageFileFromClipboardData(e.clipboardData);
       if (!file) return;
+
+      const target = e.target as HTMLElement | null;
+      if (target?.closest?.("input, textarea, [contenteditable='true']")) return;
+
+      if (target?.closest?.("[data-vr-dropzone]")) {
+        if (!isVrImageOrPdfFile(file)) return;
+        e.preventDefault();
+        e.stopPropagation();
+        void applyVrAttachment(file);
+        return;
+      }
+
+      if (
+        vrApplied === "yes" &&
+        isVrImageOrPdfFile(file) &&
+        !vrAttachmentPreview &&
+        !vrAttachmentUrl
+      ) {
+        e.preventDefault();
+        void applyVrAttachment(file);
+        return;
+      }
 
       e.preventDefault();
 
@@ -910,7 +1038,15 @@ export function OperationsLeadsInquiryPanel({
 
     document.addEventListener("paste", handleGlobalPaste, true);
     return () => document.removeEventListener("paste", handleGlobalPaste, true);
-  }, [showForm, extractImageFileFromClipboardData, processImageUpload]);
+  }, [
+    view,
+    extractImageFileFromClipboardData,
+    processImageUpload,
+    applyVrAttachment,
+    vrApplied,
+    vrAttachmentPreview,
+    vrAttachmentUrl,
+  ]);
 
   function handleZonePaste(e: React.ClipboardEvent, attachmentId: string) {
     const file = extractImageFileFromClipboardData(e.clipboardData);
@@ -977,9 +1113,12 @@ export function OperationsLeadsInquiryPanel({
     }
   }
 
-  function openImagePreview(url: string, title: string) {
+  function openImagePreview(url: string, title: string, kind?: "image" | "pdf") {
     if (!url) return;
-    setImagePreview({ url, title });
+    const resolvedKind =
+      kind ||
+      (classifyInquiryAttachment(url).kind === "pdf" || /\.pdf(\?|$)/i.test(url) ? "pdf" : "image");
+    setImagePreview({ url, title, kind: resolvedKind });
   }
 
   // ─── Submit form ──────────────────────────────────────────────────
@@ -1036,6 +1175,31 @@ export function OperationsLeadsInquiryPanel({
         operationsImageUrls.push(upload.url);
       }
 
+      let resolvedVrUrl = vrApplied === "yes" ? (vrAttachmentUrl || "") : "";
+      if (vrApplied === "yes" && vrAttachmentFile && !resolvedVrUrl) {
+        if (vrAttachmentFile.size > MAX_CONFIRMATION_ATTACHMENT_BYTES) {
+          toast.error(
+            `VR Attachment is too large (${formatFileSize(vrAttachmentFile.size)}). Max ${formatFileSize(MAX_CONFIRMATION_ATTACHMENT_BYTES)}.`
+          );
+          return;
+        }
+        const vrUpload = await uploadConfirmationImage(vrAttachmentFile, "valuation_ruling");
+        if ("error" in vrUpload) {
+          toast.error(vrUpload.error || "Failed to upload VR Attachment.");
+          return;
+        }
+        if (!vrUpload.url || !/^https?:\/\//i.test(vrUpload.url)) {
+          toast.error("VR Attachment upload did not return a valid URL. Please try again.");
+          return;
+        }
+        resolvedVrUrl = vrUpload.url;
+        setVrAttachmentUrl(vrUpload.url);
+      }
+
+      if (resolvedVrUrl && !operationsImageUrls.includes(resolvedVrUrl)) {
+        operationsImageUrls.unshift(resolvedVrUrl);
+      }
+
       const primaryCalculator = calculators[0] ?? getEmptyCalculatorValues();
       const resolvedQuantity =
         primaryCalculator.quantity?.trim() ||
@@ -1053,7 +1217,12 @@ export function OperationsLeadsInquiryPanel({
 
       const serializedCalculatorValues = serializeCalculatorPayload(
         calculatorsForSubmit,
-        operationsDescription
+        operationsDescription,
+        {
+          valuationRulingApplied: vrApplied,
+          valuationRulingNumber: vrApplied === "yes" ? vrNumber.trim() : "",
+          valuationRulingAttachmentUrl: vrApplied === "yes" ? resolvedVrUrl : "",
+        }
       );
 
       if (!hasMeaningfulCalculatorData(serializedCalculatorValues)) {
@@ -1098,8 +1267,9 @@ export function OperationsLeadsInquiryPanel({
       }
 
       toast.success("Inquiry sent for confirmation! Status: Pending");
-      setShowForm(false);
-      resetForm();
+      setOperationsAttachments([createOperationsAttachment()]);
+      setActiveAttachmentId(null);
+      hydrateLeadManagementForm(inquirySnapshot);
 
       try {
         const confResult = await getConfirmationsForInquiry(inquirySnapshot.id);
@@ -1338,7 +1508,7 @@ export function OperationsLeadsInquiryPanel({
                 </Badge>
               );
             })()}
-            {!showForm && !isEditing && (
+            {!isEditing && (
               <>
                 <Button size="sm" variant="outline" onClick={() => startEdit(inq)} className="gap-1">
                   <Pencil className="h-3.5 w-3.5" />
@@ -1347,10 +1517,6 @@ export function OperationsLeadsInquiryPanel({
                 <Button size="sm" variant="destructive" onClick={() => openDeleteDialog(inq)} className="gap-1">
                   <Trash2 className="h-3.5 w-3.5" />
                   Delete
-                </Button>
-                <Button size="sm" onClick={openLeadManagementForm} className="gap-1">
-                  <FileText className="h-3.5 w-3.5" />
-                  Lead Management Form
                 </Button>
               </>
             )}
@@ -1438,47 +1604,73 @@ export function OperationsLeadsInquiryPanel({
             {/* Separator */}
             <div className="border-t" />
 
-            {/* Product Details Grid */}
-            <div>
-              <h3 className="text-sm font-semibold text-slate-700 mb-3">Product Details</h3>
-              {isEditing ? (
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div className="space-y-1.5">
-                    <label className="text-xs text-slate-500 font-medium">
-                      Product Name <span className="text-red-500">*</span>
-                    </label>
-                    <Input
-                      value={editProductName}
-                      onChange={(e) => setEditProductName(e.target.value)}
-                      placeholder="Product Name"
-                    />
+            {/* Product Details + Sales Attachment */}
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              <div className="space-y-4">
+                <h3 className="text-sm font-semibold text-slate-700">Product Details</h3>
+                {isEditing ? (
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div className="space-y-1.5">
+                      <label className="text-xs text-slate-500 font-medium">
+                        Product Name <span className="text-red-500">*</span>
+                      </label>
+                      <Input
+                        value={editProductName}
+                        onChange={(e) => setEditProductName(e.target.value)}
+                        placeholder="Product Name"
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <label className="text-xs text-slate-500 font-medium">Total Weight</label>
+                      <Input
+                        value={editWeight}
+                        onChange={(e) => setEditWeight(e.target.value)}
+                        placeholder="e.g. 500 kg"
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <label className="text-xs text-slate-500 font-medium">CBM (Cubic Meter)</label>
+                      <Input
+                        value={editCbm}
+                        onChange={(e) => setEditCbm(e.target.value)}
+                        placeholder="e.g. 2.5"
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <label className="text-xs text-slate-500 font-medium">Quantity</label>
+                      <Input
+                        value={editQuantity}
+                        onChange={(e) => setEditQuantity(e.target.value)}
+                        placeholder="e.g. 100"
+                      />
+                    </div>
                   </div>
-                  <div className="space-y-1.5">
-                    <label className="text-xs text-slate-500 font-medium">Total Weight</label>
-                    <Input
-                      value={editWeight}
-                      onChange={(e) => setEditWeight(e.target.value)}
-                      placeholder="e.g. 500 kg"
-                    />
+                ) : (
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-3">
+                    <div>
+                      <label className="text-xs text-slate-500 font-medium">Product Name</label>
+                      <div className="font-semibold text-slate-800 mt-0.5">
+                        {inq.product_name || "-"}
+                      </div>
+                    </div>
+                    <div>
+                      <label className="text-xs text-slate-500 font-medium">Total Weight</label>
+                      <div className="text-slate-700 mt-0.5">{inq.total_weight || "-"}</div>
+                    </div>
+                    <div>
+                      <label className="text-xs text-slate-500 font-medium">CBM (Cubic Meter)</label>
+                      <div className="text-slate-700 mt-0.5">{inq.cbm || "-"}</div>
+                    </div>
+                    <div>
+                      <label className="text-xs text-slate-500 font-medium">Quantity</label>
+                      <div className="text-slate-700 mt-0.5">{inq.quantity || "-"}</div>
+                    </div>
                   </div>
+                )}
+
+                {isEditing ? (
                   <div className="space-y-1.5">
-                    <label className="text-xs text-slate-500 font-medium">CBM (Cubic Meter)</label>
-                    <Input
-                      value={editCbm}
-                      onChange={(e) => setEditCbm(e.target.value)}
-                      placeholder="e.g. 2.5"
-                    />
-                  </div>
-                  <div className="space-y-1.5">
-                    <label className="text-xs text-slate-500 font-medium">Quantity</label>
-                    <Input
-                      value={editQuantity}
-                      onChange={(e) => setEditQuantity(e.target.value)}
-                      placeholder="e.g. 100"
-                    />
-                  </div>
-                  <div className="space-y-1.5 md:col-span-2">
-                    <label className="text-xs text-slate-500 font-medium">Other Details</label>
+                    <label className="text-xs text-slate-500 font-medium">Sales Other Details</label>
                     <Textarea
                       value={editDescription}
                       onChange={(e) => setEditDescription(e.target.value)}
@@ -1486,39 +1678,224 @@ export function OperationsLeadsInquiryPanel({
                       rows={3}
                     />
                   </div>
-                  <div className="space-y-1.5 md:col-span-2">
-                    <label className="text-xs text-slate-500 font-medium">Description</label>
-                    <Textarea
-                      value={operationsDescription}
-                      onChange={(e) => setOperationsDescription(e.target.value)}
-                      onBlur={() => void persistCalculatorPayload()}
-                      placeholder="Enter description..."
-                      rows={3}
-                    />
-                  </div>
-                </div>
-              ) : (
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-3">
+                ) : (
                   <div>
-                    <label className="text-xs text-slate-500 font-medium">Product Name</label>
-                    <div className="font-semibold text-slate-800 mt-0.5">
-                      {inq.product_name || "-"}
+                    <label className="text-xs text-slate-500 font-medium">Sales Other Details</label>
+                    <div className="mt-1 bg-slate-50 border rounded-lg p-3 text-sm whitespace-pre-wrap min-h-[40px]">
+                      {inq.description || "—"}
                     </div>
                   </div>
-                  <div>
-                    <label className="text-xs text-slate-500 font-medium">Total Weight</label>
-                    <div className="text-slate-700 mt-0.5">{inq.total_weight || "-"}</div>
+                )}
+
+                <div className="space-y-3 pt-1">
+                  <div className="space-y-1.5 max-w-xs">
+                    <label className="text-xs text-slate-500 font-medium">
+                      Valuation Ruling Applied?
+                    </label>
+                    <Select
+                      value={vrApplied}
+                      onValueChange={(value: "yes" | "no") => {
+                        setVrApplied(value);
+                        if (value === "no") {
+                          setVrNumber("");
+                          setVrAttachmentFile(null);
+                          setVrAttachmentPreview(null);
+                          setVrAttachmentUrl(null);
+                          setVrAttachmentKind(null);
+                          void persistCalculatorPayload(undefined, undefined, {
+                            valuationRulingApplied: "no",
+                            valuationRulingNumber: "",
+                            valuationRulingAttachmentUrl: "",
+                          });
+                        } else {
+                          void persistCalculatorPayload(undefined, undefined, {
+                            valuationRulingApplied: "yes",
+                            valuationRulingNumber: vrNumber.trim(),
+                            valuationRulingAttachmentUrl: vrAttachmentUrl || "",
+                          });
+                        }
+                      }}
+                    >
+                      <SelectTrigger className="h-9">
+                        <SelectValue placeholder="Select" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="yes">Yes</SelectItem>
+                        <SelectItem value="no">No</SelectItem>
+                      </SelectContent>
+                    </Select>
                   </div>
-                  <div>
-                    <label className="text-xs text-slate-500 font-medium">CBM (Cubic Meter)</label>
-                    <div className="text-slate-700 mt-0.5">{inq.cbm || "-"}</div>
-                  </div>
-                  <div>
-                    <label className="text-xs text-slate-500 font-medium">Quantity</label>
-                    <div className="text-slate-700 mt-0.5">{inq.quantity || "-"}</div>
-                  </div>
+
+                  {vrApplied === "yes" && (
+                    <div className="grid grid-cols-1 gap-3">
+                      <div className="space-y-1.5">
+                        <label className="text-xs text-slate-500 font-medium">VR Number</label>
+                        <Input
+                          value={vrNumber}
+                          onChange={(e) => setVrNumber(e.target.value)}
+                          onBlur={() => void persistCalculatorPayload()}
+                          placeholder="Enter Valuation Ruling number"
+                        />
+                      </div>
+                      <div className="space-y-1.5">
+                        <label className="text-xs text-slate-500 font-medium">VR Attachment</label>
+                        {vrAttachmentPreview ? (
+                          <div
+                            data-vr-dropzone
+                            tabIndex={0}
+                            onDrop={(e) => {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              const file = extractImageFileFromFileList(e.dataTransfer.files);
+                              void applyVrAttachment(file);
+                            }}
+                            onDragOver={handleDragOver}
+                            onPaste={(e) => {
+                              const file = extractImageFileFromClipboardData(e.clipboardData);
+                              if (!file) return;
+                              e.preventDefault();
+                              e.stopPropagation();
+                              void applyVrAttachment(file);
+                            }}
+                            className="relative border rounded-lg p-2 bg-white focus:outline-none focus:ring-2 focus:ring-teal-500/30"
+                          >
+                            {vrAttachmentKind === "pdf" ? (
+                              <div className="space-y-2">
+                                <button
+                                  type="button"
+                                  className="flex items-center gap-2 text-sm text-slate-700 hover:text-teal-700"
+                                  onClick={() =>
+                                    openImagePreview(vrAttachmentPreview, "VR Attachment", "pdf")
+                                  }
+                                >
+                                  <FileText className="h-5 w-5 text-red-600 shrink-0" />
+                                  <span className="truncate font-medium">
+                                    {vrAttachmentFile?.name ||
+                                      decodeURIComponent(
+                                        vrAttachmentPreview.split("/").pop()?.split("?")[0] ||
+                                          "VR Attachment.pdf"
+                                      )}
+                                  </span>
+                                </button>
+                                <iframe
+                                  src={vrAttachmentPreview}
+                                  title="VR Attachment PDF"
+                                  className="w-full h-40 rounded border bg-slate-50"
+                                />
+                              </div>
+                            ) : (
+                              <img
+                                src={vrAttachmentPreview}
+                                alt="VR Attachment"
+                                className="w-full max-h-40 object-contain rounded cursor-zoom-in"
+                                onClick={() =>
+                                  openImagePreview(vrAttachmentPreview, "VR Attachment", "image")
+                                }
+                              />
+                            )}
+                            <button
+                              type="button"
+                              className="absolute top-2 right-2 rounded-full bg-white/90 border p-1 text-slate-500 hover:text-red-600"
+                              onClick={() => {
+                                setVrAttachmentFile(null);
+                                setVrAttachmentPreview(null);
+                                setVrAttachmentUrl(null);
+                                setVrAttachmentKind(null);
+                                void persistCalculatorPayload(undefined, undefined, {
+                                  valuationRulingApplied: "yes",
+                                  valuationRulingNumber: vrNumber.trim(),
+                                  valuationRulingAttachmentUrl: "",
+                                });
+                              }}
+                              aria-label="Remove VR attachment"
+                            >
+                              <X className="h-3.5 w-3.5" />
+                            </button>
+                            <p className="text-[11px] text-slate-400 mt-2">
+                              Drag & drop, paste (Ctrl+V), or click Change to replace.
+                            </p>
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="outline"
+                              className="h-7 text-xs mt-1"
+                              onClick={() => vrFileInputRef.current?.click()}
+                            >
+                              Change File
+                            </Button>
+                          </div>
+                        ) : (
+                          <div
+                            data-vr-dropzone
+                            tabIndex={0}
+                            role="button"
+                            onDrop={(e) => {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              const file = extractImageFileFromFileList(e.dataTransfer.files);
+                              void applyVrAttachment(file);
+                            }}
+                            onDragOver={handleDragOver}
+                            onPaste={(e) => {
+                              const file = extractImageFileFromClipboardData(e.clipboardData);
+                              if (!file) return;
+                              e.preventDefault();
+                              e.stopPropagation();
+                              void applyVrAttachment(file);
+                            }}
+                            onClick={() => vrFileInputRef.current?.click()}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter" || e.key === " ") {
+                                e.preventDefault();
+                                vrFileInputRef.current?.click();
+                              }
+                            }}
+                            className="w-full border-2 border-dashed border-slate-300 rounded-lg p-4 text-center hover:border-teal-400 hover:bg-teal-50/30 transition-colors cursor-pointer focus:outline-none focus:border-teal-500"
+                          >
+                            <Upload className="h-6 w-6 mx-auto text-slate-400 mb-1" />
+                            <p className="text-xs text-slate-500">
+                              Drag & drop, paste (Ctrl+V), or click to upload
+                            </p>
+                            <p className="text-[11px] text-slate-400 mt-1">Image or PDF</p>
+                          </div>
+                        )}
+                        <input
+                          ref={vrFileInputRef}
+                          type="file"
+                          accept="image/*,application/pdf,.pdf"
+                          className="hidden"
+                          onChange={(e) => {
+                            const file = e.target.files?.[0] || null;
+                            e.target.value = "";
+                            void applyVrAttachment(file);
+                          }}
+                        />
+                      </div>
+                    </div>
+                  )}
                 </div>
-              )}
+              </div>
+
+              <div>
+                {salesAttachmentUrls.length > 0 ? (
+                  <InquiryAttachmentList
+                    urls={salesAttachmentUrls}
+                    title={`Sales Attachment${salesAttachmentUrls.length > 1 ? "s" : ""}`}
+                    onPreviewImage={openImagePreview}
+                  />
+                ) : (
+                  <div>
+                    <label className="text-xs text-slate-500 font-medium flex items-center gap-1 mb-2">
+                      <ImageIcon className="h-3.5 w-3.5" />
+                      Sales Attachment
+                    </label>
+                    <div className="border-2 border-dashed border-slate-200 rounded-lg p-6 text-center">
+                      <ImageIcon className="h-8 w-8 mx-auto text-slate-300 mb-2" />
+                      <p className="text-xs text-slate-400">No sales attachments</p>
+                    </div>
+                  </div>
+                )}
+              </div>
             </div>
 
             {calculators.map((calcValues, calcIndex) => (
@@ -1563,39 +1940,201 @@ export function OperationsLeadsInquiryPanel({
             {/* Separator */}
             <div className="border-t" />
 
-            {salesAttachmentUrls.length > 0 && (
-              <InquiryAttachmentList
-                urls={salesAttachmentUrls}
-                title={`Sales Attachment${salesAttachmentUrls.length > 1 ? "s" : ""}`}
-                onPreviewImage={openImagePreview}
+            <div>
+              <label className="text-xs text-slate-500 font-medium">Description</label>
+              <Textarea
+                value={operationsDescription}
+                onChange={(e) => setOperationsDescription(e.target.value)}
+                onBlur={() => void persistCalculatorPayload()}
+                placeholder="Enter description..."
+                rows={3}
+                className="mt-1"
               />
-            )}
-
-            {/* Other Details (read-only when not editing) */}
-            {!isEditing && inq.description && (
-              <div>
-                <label className="text-xs text-slate-500 font-medium">Other Details</label>
-                <div className="mt-1 bg-slate-50 border rounded-lg p-3 text-sm whitespace-pre-wrap min-h-[40px]">
-                  {inq.description}
-                </div>
-              </div>
-            )}
-
-            {!isEditing && (
-              <div>
-                <label className="text-xs text-slate-500 font-medium">Description</label>
-                <Textarea
-                  value={operationsDescription}
-                  onChange={(e) => setOperationsDescription(e.target.value)}
-                  onBlur={() => void persistCalculatorPayload()}
-                  placeholder="Enter description..."
-                  rows={3}
-                  className="mt-1"
-                />
-              </div>
-            )}
+            </div>
               </CardContent>
             </Card>
+
+            {!isEditing && (
+              <Card className="border shadow-sm mt-6">
+                <CardContent className="p-6 space-y-5">
+                  <h3 className="text-base font-bold text-slate-800 flex items-center gap-2">
+                    <ClipboardList className="h-5 w-5 text-teal-600" />
+                    Lead Management Form
+                  </h3>
+
+                  <div className="space-y-5">
+                    <div id="lead-management-pdf-document" ref={leadManagementPdfRef}>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div className="space-y-1.5">
+                          <label className="text-sm font-medium text-slate-700">
+                            Product Name <span className="text-red-500">*</span>
+                          </label>
+                          <Input
+                            value={formProductName}
+                            onChange={(e) => setFormProductName(e.target.value)}
+                            placeholder="Product Name"
+                          />
+                        </div>
+                        <div className="space-y-1.5">
+                          <label className="text-sm font-medium text-slate-700">Total Weight</label>
+                          <Input
+                            value={formWeight}
+                            onChange={(e) => setFormWeight(e.target.value)}
+                            placeholder="e.g. 500 kg"
+                          />
+                        </div>
+                        <div className="space-y-1.5">
+                          <label className="text-sm font-medium text-slate-700">CBM</label>
+                          <Input
+                            value={formCbm}
+                            onChange={(e) => setFormCbm(e.target.value)}
+                            placeholder="e.g. 2.5"
+                          />
+                        </div>
+                        <div className="space-y-1.5">
+                          <label className="text-sm font-medium text-slate-700">Quantity</label>
+                          <Input
+                            value={formQuantity}
+                            onChange={(e) => setFormQuantity(e.target.value.replace(/\D/g, ""))}
+                            placeholder="e.g. 100"
+                          />
+                        </div>
+                      </div>
+
+                      <div className="border-t pt-4 mt-4" />
+
+                      {formCalculators.map((calcValues, calcIndex) => (
+                        <div key={`lead-form-calculator-${calcIndex}`} className="space-y-5">
+                          {formCalculators.length > 1 && (
+                            <h4 className="text-sm font-semibold text-slate-700">
+                              Calculator {calcIndex + 1}
+                            </h4>
+                          )}
+                          <EstimatedDutiesAndTaxesBlock
+                            calculatorValues={calcValues}
+                            quantityFallback={formQuantity || inquiryQuantity}
+                            showDisclaimer={calcIndex === 0}
+                          />
+                        </div>
+                      ))}
+
+                      <div className="space-y-1.5">
+                        <label className="text-sm font-medium text-slate-700">Description</label>
+                        <Textarea
+                          value={operationsDescription}
+                          onChange={(e) => setOperationsDescription(e.target.value)}
+                          onBlur={() => void persistCalculatorPayload()}
+                          placeholder="Enter description..."
+                          rows={3}
+                        />
+                      </div>
+                    </div>
+
+                    <div className="flex justify-end">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="gap-1.5"
+                        onClick={() => void handleDownloadLeadManagementPdf()}
+                        disabled={isDownloadingPdf}
+                      >
+                        {isDownloadingPdf ? (
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                        ) : (
+                          <Download className="h-4 w-4" />
+                        )}
+                        Download PDF
+                      </Button>
+                    </div>
+
+                    <div className="border-t pt-4" />
+                    <h4 className="text-sm font-semibold text-slate-700">Attachments</h4>
+
+                    <div className="grid grid-cols-1 gap-4">
+                      {salesAttachmentUrls.length > 0 ? (
+                        <InquiryAttachmentList
+                          urls={salesAttachmentUrls}
+                          title="Sales Attachments (read-only)"
+                          compact
+                          onPreviewImage={openImagePreview}
+                        />
+                      ) : (
+                        <div className="border-2 border-dashed border-slate-200 rounded-lg p-6 text-center">
+                          <ImageIcon className="h-8 w-8 mx-auto text-slate-300 mb-2" />
+                          <p className="text-xs text-slate-400">No sales attachments</p>
+                        </div>
+                      )}
+
+                      {vrApplied === "yes" && vrAttachmentUrl ? (
+                        <InquiryAttachmentList
+                          urls={[vrAttachmentUrl]}
+                          title="VR Attachment"
+                          compact
+                          onPreviewImage={openImagePreview}
+                        />
+                      ) : null}
+
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        {operationsAttachments.map((attachment, index) => (
+                          <ImageUploadSection
+                            key={attachment.id}
+                            attachmentId={attachment.id}
+                            index={index + 1}
+                            preview={attachment.preview}
+                            onPreviewClick={(url) => openImagePreview(url, `Additional Attachment ${index + 1}`)}
+                          />
+                        ))}
+                      </div>
+
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="gap-1.5"
+                        onClick={addOperationsAttachment}
+                      >
+                        <Plus className="h-4 w-4" />
+                        Add Attachment
+                      </Button>
+
+                      <input
+                        ref={operationsFileInputRef}
+                        type="file"
+                        accept="image/*,application/pdf,.doc,.docx,.xlsx,.xls,.txt,.csv"
+                        className="absolute -left-[9999px] h-px w-px opacity-0"
+                        onChange={handleFileInputChange}
+                      />
+                    </div>
+
+                    <div className="flex justify-end gap-2 pt-2">
+                      <Button
+                        variant="outline"
+                        onClick={() => {
+                          setOperationsAttachments([createOperationsAttachment()]);
+                          setActiveAttachmentId(null);
+                          hydrateLeadManagementForm(inq);
+                        }}
+                      >
+                        Reset
+                      </Button>
+                      <Button
+                        onClick={handleSendForConfirmation}
+                        disabled={isSubmitting || !formProductName.trim()}
+                        className="gap-2 bg-teal-600 hover:bg-teal-700"
+                      >
+                        {isSubmitting ? (
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                        ) : (
+                          <Send className="h-4 w-4" />
+                        )}
+                        Send for Confirmation
+                      </Button>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            )}
           </div>
 
           <div className="xl:col-span-1">
@@ -1880,186 +2419,6 @@ export function OperationsLeadsInquiryPanel({
         </div>
 
         <Dialog
-          open={showForm}
-          onOpenChange={(open) => {
-            setShowForm(open);
-            if (!open) resetForm();
-          }}
-        >
-          <DialogContent className="sm:max-w-4xl max-h-[90vh] overflow-y-auto">
-            <DialogHeader>
-              <DialogTitle className="text-base font-bold text-slate-800 flex items-center gap-2">
-                <ClipboardList className="h-5 w-5 text-teal-600" />
-                Lead Management Form
-              </DialogTitle>
-            </DialogHeader>
-
-            <div className="space-y-5">
-              <div id="lead-management-pdf-document" ref={leadManagementPdfRef}>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div className="space-y-1.5">
-                  <label className="text-sm font-medium text-slate-700">
-                    Product Name <span className="text-red-500">*</span>
-                  </label>
-                  <Input
-                    value={formProductName}
-                    onChange={(e) => setFormProductName(e.target.value)}
-                    placeholder="Product Name"
-                  />
-                </div>
-                <div className="space-y-1.5">
-                  <label className="text-sm font-medium text-slate-700">Total Weight</label>
-                  <Input
-                    value={formWeight}
-                    onChange={(e) => setFormWeight(e.target.value)}
-                    placeholder="e.g. 500 kg"
-                  />
-                </div>
-                <div className="space-y-1.5">
-                  <label className="text-sm font-medium text-slate-700">CBM</label>
-                  <Input
-                    value={formCbm}
-                    onChange={(e) => setFormCbm(e.target.value)}
-                    placeholder="e.g. 2.5"
-                  />
-                </div>
-                <div className="space-y-1.5">
-                  <label className="text-sm font-medium text-slate-700">Quantity</label>
-                  <Input
-                    value={formQuantity}
-                    onChange={(e) => setFormQuantity(e.target.value.replace(/\D/g, ""))}
-                    placeholder="e.g. 100"
-                  />
-                </div>
-              </div>
-
-              <div className="border-t pt-4" />
-
-              {formCalculators.map((calcValues, calcIndex) => (
-                <div key={`lead-form-calculator-${calcIndex}`} className="space-y-5">
-                  {formCalculators.length > 1 && (
-                    <h4 className="text-sm font-semibold text-slate-700">
-                      Calculator {calcIndex + 1}
-                    </h4>
-                  )}
-                  <EstimatedDutiesAndTaxesBlock
-                    calculatorValues={calcValues}
-                    quantityFallback={formQuantity || inquiryQuantity}
-                    showDisclaimer={calcIndex === 0}
-                  />
-                </div>
-              ))}
-
-              <div className="space-y-1.5">
-                <label className="text-sm font-medium text-slate-700">Description</label>
-                <Textarea
-                  value={operationsDescription}
-                  onChange={(e) => setOperationsDescription(e.target.value)}
-                  onBlur={() => void persistCalculatorPayload()}
-                  placeholder="Enter description..."
-                  rows={3}
-                />
-              </div>
-              </div>
-
-              <div className="flex justify-end">
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  className="gap-1.5"
-                  onClick={() => void handleDownloadLeadManagementPdf()}
-                  disabled={isDownloadingPdf}
-                >
-                  {isDownloadingPdf ? (
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                  ) : (
-                    <Download className="h-4 w-4" />
-                  )}
-                  Download PDF
-                </Button>
-              </div>
-
-              <div className="border-t pt-4" />
-              <h4 className="text-sm font-semibold text-slate-700">Attachments</h4>
-
-              <div className="grid grid-cols-1 gap-4">
-                {salesAttachmentUrls.length > 0 ? (
-                  <div className="space-y-2">
-                    <InquiryAttachmentList
-                      urls={salesAttachmentUrls}
-                      title="Sales Attachments (read-only)"
-                      compact
-                      onPreviewImage={openImagePreview}
-                    />
-                  </div>
-                ) : (
-                  <div className="border-2 border-dashed border-slate-200 rounded-lg p-6 text-center">
-                    <ImageIcon className="h-8 w-8 mx-auto text-slate-300 mb-2" />
-                    <p className="text-xs text-slate-400">No sales attachments</p>
-                  </div>
-                )}
-
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  {operationsAttachments.map((attachment, index) => (
-                    <ImageUploadSection
-                      key={attachment.id}
-                      attachmentId={attachment.id}
-                      index={index + 1}
-                      preview={attachment.preview}
-                      onPreviewClick={(url) => openImagePreview(url, `Additional Attachment ${index + 1}`)}
-                    />
-                  ))}
-                </div>
-
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  className="gap-1.5"
-                  onClick={addOperationsAttachment}
-                >
-                  <Plus className="h-4 w-4" />
-                  Add Attachment
-                </Button>
-
-                <input
-                  ref={operationsFileInputRef}
-                  type="file"
-                  accept="image/*,application/pdf,.doc,.docx,.xlsx,.xls,.txt,.csv"
-                  className="absolute -left-[9999px] h-px w-px opacity-0"
-                  onChange={handleFileInputChange}
-                />
-              </div>
-            </div>
-
-            <DialogFooter>
-              <Button
-                variant="outline"
-                onClick={() => {
-                  setShowForm(false);
-                  resetForm();
-                }}
-              >
-                Cancel
-              </Button>
-              <Button
-                onClick={handleSendForConfirmation}
-                disabled={isSubmitting || !formProductName.trim()}
-                className="gap-2 bg-teal-600 hover:bg-teal-700"
-              >
-                {isSubmitting ? (
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                ) : (
-                  <Send className="h-4 w-4" />
-                )}
-                Send for Confirmation
-              </Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
-
-        <Dialog
           open={!!imagePreview}
           onOpenChange={(open) => {
             if (!open) setImagePreview(null);
@@ -2067,15 +2426,23 @@ export function OperationsLeadsInquiryPanel({
         >
           <DialogContent className="sm:max-w-5xl w-[95vw] max-h-[95vh] p-4">
             <DialogHeader>
-              <DialogTitle className="text-sm">{imagePreview?.title || "Image Preview"}</DialogTitle>
+              <DialogTitle className="text-sm">{imagePreview?.title || "Attachment Preview"}</DialogTitle>
             </DialogHeader>
             {imagePreview?.url ? (
               <div className="overflow-auto max-h-[80vh]">
-                <img
-                  src={imagePreview.url}
-                  alt={imagePreview.title}
-                  className="w-full h-auto object-contain"
-                />
+                {imagePreview.kind === "pdf" ? (
+                  <iframe
+                    src={imagePreview.url}
+                    title={imagePreview.title}
+                    className="w-full h-[80vh] rounded border bg-white"
+                  />
+                ) : (
+                  <img
+                    src={imagePreview.url}
+                    alt={imagePreview.title}
+                    className="w-full h-auto object-contain"
+                  />
+                )}
               </div>
             ) : null}
           </DialogContent>
@@ -2202,7 +2569,6 @@ export function OperationsLeadsInquiryPanel({
                     <TableHead className="font-semibold">Lead Name</TableHead>
                     <TableHead className="font-semibold">Product Name</TableHead>
                     <TableHead className="font-semibold">Sales Agent</TableHead>
-                    <TableHead className="font-semibold">Status</TableHead>
                     <TableHead className="font-semibold">Confirmation</TableHead>
                     <TableHead className="font-semibold">Sent At</TableHead>
                     <TableHead className="text-right font-semibold">Actions</TableHead>
@@ -2226,11 +2592,6 @@ export function OperationsLeadsInquiryPanel({
                       </TableCell>
                       <TableCell className="text-slate-600">
                         {inquiry.leads?.sales_agents?.name || "-"}
-                      </TableCell>
-                      <TableCell>
-                        <Badge variant="outline" className={`text-xs ${statusColor(inquiry.status)}`}>
-                          {formatStatus(inquiry.status)}
-                        </Badge>
                       </TableCell>
                       <TableCell>
                         {(() => {

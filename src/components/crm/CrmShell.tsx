@@ -24,6 +24,7 @@ import { getCrmPageMeta } from "@/lib/crm-navigation";
 import type { DashboardAccessState } from "@/lib/dashboard-access";
 import { toast } from "sonner";
 import { ModuleLoadingOverlay } from "@/components/ui/ModuleLoadingOverlay";
+import { AppNotificationBell } from "@/components/notifications/AppNotificationBell";
 
 type CrmShellContextValue = {
   searchQuery: string;
@@ -170,6 +171,7 @@ export function CrmShell({ access, children }: Props) {
               <div className="crm-org-switcher [&_button]:h-8 [&_button]:border-white/25 [&_button]:bg-white/10 [&_button]:text-white [&_button]:hover:bg-white/20 [&_button]:max-w-[120px] sm:[&_button]:max-w-[200px] [&_svg]:text-white">
                 <OrganizationSwitcher />
               </div>
+              <AppNotificationBell tone="brand" />
               <CrmUserMenu access={access} />
             </div>
           </div>

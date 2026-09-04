@@ -68,6 +68,7 @@ import {
   duplicateSalesQuotation,
   getSalesQuotationDetail,
   getSalesQuotationPrefillFromOpportunity,
+  getSalesQuotationPrefillFromInquiry,
   getSalesQuotationVersions,
   lockSalesQuotation,
   logSalesQuotationPreview,
@@ -146,6 +147,7 @@ export function SalesQuotationFormView({
   const router = useRouter();
   const searchParams = useSearchParams();
   const opportunityIdParam = searchParams.get("opportunityId");
+  const inquiryIdParam = searchParams.get("inquiryId");
   const { isAdminContext, switchVersion } = useAdminOrganization();
   const [isPending, startTransition] = useTransition();
   const isOrderView = documentKind === "order" || fromToInvoice;
@@ -179,6 +181,7 @@ export function SalesQuotationFormView({
   const [customerNotes, setCustomerNotes] = useState("");
   const [opportunityId, setOpportunityId] = useState<string | null>(null);
   const [, setOpportunityName] = useState<string | null>(null);
+  const [linkedInquiryId, setLinkedInquiryId] = useState<string | null>(null);
   const [lines, setLines] = useState<QuotationLineDraft[]>([newLineDraft()]);
   const [childOptions, setChildOptions] = useState<ChildOption[]>([]);
   const [activeTab, setActiveTab] = useState<"lines" | "other">("lines");
@@ -361,6 +364,7 @@ export function SalesQuotationFormView({
     setCustomerNotes(q.customer_notes || "");
     setOpportunityId(q.opportunity_id);
     setOpportunityName(q.opportunity_name || null);
+    setLinkedInquiryId(q.linked_inquiry_id || null);
     setLines(
       q.lines.length
         ? q.lines.map((line) =>
@@ -446,6 +450,47 @@ export function SalesQuotationFormView({
             await loadCustomerRelations(p.contact_id, { autofill: true });
           }
         }
+      } else if (inquiryIdParam) {
+        const pre = await getSalesQuotationPrefillFromInquiry(inquiryIdParam);
+        if (cancelled) return;
+        if ("error" in pre && pre.error) {
+          toast.error(pre.error);
+        } else if ("prefill" in pre && pre.prefill) {
+          if (pre.existingQuotationId) {
+            router.replace(`/sales/quotations/${pre.existingQuotationId}`);
+            return;
+          }
+          const p = pre.prefill;
+          setLinkedInquiryId(p.inquiry_id);
+          setOpportunityId(p.opportunity_id);
+          setOpportunityName(p.opportunity_name);
+          setContactId(p.contact_id);
+          setCustomerName(p.customer_name);
+          setContactPersonId(p.contact_person_id);
+          setSalespersonId(p.salesperson_id);
+          setSalesTeam(p.sales_team || "");
+          setCustomerReference(p.customer_reference || "");
+          setInternalNotes(p.internal_notes || "");
+          setCustomerInfo({
+            name: p.customer_name,
+            email: p.customer_email,
+            phone: p.customer_phone,
+            mobile: p.customer_mobile,
+            lead_id_formatted: p.customer_reference,
+          });
+          setLines([
+            newLineDraft({
+              product_name: p.product_name || "Product",
+              description: p.description || p.product_name || "",
+              quantity: String(p.quantity || 1),
+              unit_price: String(p.unit_price || 0),
+              uom: p.uom || "Units",
+            }),
+          ]);
+          if (p.contact_id) {
+            await loadCustomerRelations(p.contact_id, { autofill: true });
+          }
+        }
       }
 
       if (!cancelled) setLoading(false);
@@ -457,9 +502,11 @@ export function SalesQuotationFormView({
   }, [
     quotationId,
     opportunityIdParam,
+    inquiryIdParam,
     switchVersion,
     hydrateFromDetail,
     loadCustomerRelations,
+    router,
   ]);
 
   useEffect(() => {
@@ -521,6 +568,7 @@ export function SalesQuotationFormView({
       internal_notes: internalNotes || null,
       customer_notes: customerNotes || null,
       opportunity_id: opportunityId,
+      linked_inquiry_id: linkedInquiryId,
       lines: lines.map((line, index) => ({
         id: line.id,
         product_id: line.product_id || null,
@@ -1244,6 +1292,20 @@ export function SalesQuotationFormView({
                 </div>
                 <div className="text-[10px] text-secondary-muted mt-0.5">
                   Opportunity
+                </div>
+              </button>
+            ) : null}
+            {linkedInquiryId ? (
+              <button
+                type="button"
+                onClick={() => router.push(`/crm/inquiries/${linkedInquiryId}`)}
+                className="rounded-sm border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-left hover:border-[#017e84]/40 min-w-[72px]"
+              >
+                <div className="text-sm font-semibold text-[#017e84] leading-none">
+                  1
+                </div>
+                <div className="text-[10px] text-secondary-muted mt-0.5">
+                  Inquiry
                 </div>
               </button>
             ) : null}

@@ -1,5 +1,6 @@
 import { getSession } from '@/lib/auth/session';
 import { redirect } from 'next/navigation';
+import { Suspense } from 'react';
 import { AdminDashboardShell } from '@/components/admin/AdminDashboardShell';
 import { getAdminOrganizationState } from '@/app/actions/organization-context';
 import { canAccessAdminDashboard } from '@/lib/auth/portal-access';
@@ -33,6 +34,8 @@ export default async function AdminDashboard() {
   };
 
   return (
-    <AdminDashboardShell initialOrganizationState={organizationState} access={access} />
+    <Suspense fallback={null}>
+      <AdminDashboardShell initialOrganizationState={organizationState} access={access} />
+    </Suspense>
   );
 }

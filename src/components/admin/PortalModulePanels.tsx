@@ -24,7 +24,7 @@ import { UserLoadingInstructionsPanel } from "@/components/user/UserLoadingInstr
 import { UsbQrScannerInput } from "@/components/scan/UsbQrScannerInput";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   visiblePortalOpsTabs,
   visiblePortalSalesTabs,
@@ -118,9 +118,27 @@ export function PortalSalesModuleContent({
   );
 }
 
-export function PortalOperationsModuleContent({ access }: { access: DashboardAccessState }) {
+export function PortalOperationsModuleContent({
+  access,
+  focusTab = null,
+  focusConfirmationId = null,
+  focusLeadId = null,
+  focusInquiryId = null,
+}: {
+  access: DashboardAccessState;
+  focusTab?: string | null;
+  focusConfirmationId?: string | null;
+  focusLeadId?: string | null;
+  focusInquiryId?: string | null;
+}) {
   const tabs = useMemo(() => visiblePortalOpsTabs(access.permissions), [access.permissions]);
   const [activeTab, setActiveTab] = useState<OpsTab>(() => tabs[0] || "leads-inquiry");
+
+  useEffect(() => {
+    if (focusTab && tabs.includes(focusTab as OpsTab)) {
+      setActiveTab(focusTab as OpsTab);
+    }
+  }, [focusTab, focusConfirmationId, focusLeadId, focusInquiryId, tabs]);
 
   const resolvedTab = tabs.includes(activeTab) ? activeTab : tabs[0];
 
@@ -145,13 +163,17 @@ export function PortalOperationsModuleContent({ access }: { access: DashboardAcc
           </Button>
         ))}
       </div>
-      {resolvedTab === "leads-inquiry" && <OperationsLeadsInquiryPanel />}
+      {resolvedTab === "leads-inquiry" && (
+        <OperationsLeadsInquiryPanel focusLeadId={focusLeadId} focusInquiryId={focusInquiryId} />
+      )}
       {resolvedTab === "management" && <OrderManagementPanel />}
       {resolvedTab === "console" && <ConsolePanel />}
       {resolvedTab === "loading-instruction" && <LoadingInstructionPanel />}
       {resolvedTab === "import-packing-list" && <ImportPackingListPanel />}
       {resolvedTab === "import-invoice" && <ImportInvoicePanel />}
-      {resolvedTab === "inquiry-confirmation" && <InquiryConfirmationPanel />}
+      {resolvedTab === "inquiry-confirmation" && (
+        <InquiryConfirmationPanel focusConfirmationId={focusConfirmationId} />
+      )}
       {resolvedTab === "calculator-config" && <AdminCalculatorPanel />}
     </div>
   );

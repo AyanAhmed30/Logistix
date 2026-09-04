@@ -27,6 +27,12 @@ import {
 } from '@/lib/inquiry-calculator';
 import { uploadToInquiryImagesBucket } from '@/lib/inquiry-storage';
 import type { SessionPayload } from '@/lib/auth/session';
+import {
+  insertLifecycleNotifications,
+  resolveLeadSalesAgentRecipient,
+  resolveOperationsRecipients,
+} from '@/lib/notify-lifecycle';
+import { getMyAppNotifications } from '@/app/actions/app-notifications';
 
 async function resolveLeadOrganizationId(
   supabase: Awaited<ReturnType<typeof createAdminClient>>,
@@ -245,7 +251,7 @@ export type LeadInquiry = {
   sent_to_accounting: boolean;
   sent_to_operations: boolean;
   sent_at: string | null;
-  approval_status?: 'draft' | 'sent' | 'approved' | 'rejected';
+  approval_status?: 'draft' | 'sent' | 'sent_to_admin' | 'approved' | 'rejected';
   approved_at?: string | null;
   calculator_values: Record<string, string> | Record<string, unknown> | null;
   organization_id?: string | null;
@@ -365,7 +371,18 @@ export type LeadChatNotification = {
   is_read: boolean;
   created_at: string;
   notification_type?: 'chat' | 'lifecycle';
-  event_type?: 'inquiry_sent' | 'sent_for_admin_approval' | 'approved' | 'rejected' | 'lead_transferred';
+  event_type?:
+    | 'inquiry_received'
+    | 'inquiry_sent'
+    | 'sent_for_admin_approval'
+    | 'approved'
+    | 'rejected'
+    | 'lead_transferred'
+    | 'quotation_sent_to_customer'
+    | 'quotation_counter_offer'
+    | 'chat';
+  title?: string | null;
+  href?: string | null;
   message?: string;
   leads?: {
     lead_id_formatted: string | null;
@@ -747,6 +764,34 @@ export async function saveInquiry(
         await linkInquiryToCrmOpportunity(supabase, String(result.id), crmOpportunityId);
       }
 
+      if (result?.id && result.customer_submitted) {
+        try {
+          const leadContext = await resolveLeadSalesAgentRecipient(supabase, leadId);
+          if (leadContext.recipient) {
+            await insertLifecycleNotifications(supabase, {
+              eventType: 'inquiry_received',
+              leadId,
+              inquiryId: String(result.id),
+              senderRole: 'system',
+              senderUsername: 'mobile',
+              recipients: [leadContext.recipient],
+              dedupe: true,
+              payload: {
+                leadId,
+                inquiryId: String(result.id),
+                inquiryNumber: leadContext.leadNumber,
+                customerName: leadContext.customerName,
+                source: leadContext.source || 'mobile',
+                summary: String(inquiryData.product_name || inquiryData.description || ''),
+                origin: 'mobile',
+              },
+            });
+          }
+        } catch {
+          // Notification failure must not block inquiry creation.
+        }
+      }
+
       await supabase.from('inquiry_logs').insert([
         {
           inquiry_id: result.id,
@@ -910,30 +955,44 @@ export async function sendInquiryToAccounting(
     ]);
 
     const leadNumber = leadForNotification?.lead_id_formatted || 'N/A';
-    const recipients = (operationsUsers || [])
-      .map((u) => u.username)
-      .filter((u): u is string => !!u);
-
-    if (recipients.length > 0) {
-      void supabase.from('inquiry_lifecycle_notifications').insert(
-        recipients.map((username) => ({
-          lead_id: inquiry.lead_id,
-          inquiry_id: inquiry.id,
-          confirmation_id: null,
-          sender_role: 'sales_agent',
-          sender_username: session.username || 'sales-agent',
-          recipient_role: 'operations',
-          recipient_username: username,
-          event_type: 'inquiry_sent',
+    const opsFromTable = (operationsUsers || [])
+      .map((u) => String(u.username || '').trim())
+      .filter(Boolean);
+    void (async () => {
+      try {
+        const leadContext = await resolveLeadSalesAgentRecipient(supabase, inquiry.lead_id);
+        const recipients = await resolveOperationsRecipients(supabase, inquiry.lead_id, inquiry.id);
+        const merged =
+          recipients.length > 0
+            ? recipients
+            : opsFromTable.map((username) => ({ role: 'operations' as const, username }));
+        await insertLifecycleNotifications(supabase, {
+          eventType: 'inquiry_sent',
+          leadId: inquiry.lead_id,
+          inquiryId: inquiry.id,
+          senderRole: 'sales_agent',
+          senderUsername: session.username || 'sales-agent',
+          recipients: merged,
           message: `Inquiry sent by Sales Agent for Lead #${leadNumber}.`,
-        }))
-      );
-    }
+          payload: {
+            leadId: inquiry.lead_id,
+            inquiryId: inquiry.id,
+            inquiryNumber: leadNumber,
+            customerName: leadContext.customerName,
+            salesAgent: session.username || leadContext.salesAgentName,
+            summary: inquiry.product_name || '',
+          },
+        });
+      } catch {
+        // Notification failure must not block send.
+      }
+    })();
 
     if (!options?.skipPathRevalidation) {
       revalidatePath('/sales-agent/dashboard');
       revalidatePath('/admin/dashboard');
       revalidatePath('/operations/dashboard');
+      revalidatePath('/crm/inquiries');
       invalidateOperationsInquiriesCache();
     }
 
@@ -1179,7 +1238,7 @@ export async function getInquiryTrackingForSalesAgent() {
       lead_id: string;
       version_number?: number | null;
       status: string;
-      approval_status?: 'draft' | 'sent' | 'approved' | 'rejected' | null;
+      approval_status?: 'draft' | 'sent' | 'sent_to_admin' | 'approved' | 'rejected' | null;
       created_at: string | null;
       sent_to_accounting: boolean;
       sent_at: string | null;
@@ -1233,7 +1292,7 @@ export async function getInquiryTrackingForSalesAgent() {
         approvedCountByLead.set(inq.lead_id, (approvedCountByLead.get(inq.lead_id) || 0) + 1);
       }
 
-      if (approvalStatus === 'sent') {
+      if (approvalStatus === 'sent' || approvalStatus === 'sent_to_admin') {
         pendingCountByLead.set(inq.lead_id, (pendingCountByLead.get(inq.lead_id) || 0) + 1);
       }
       const candidateActivity = inq.updated_at || inq.created_at || null;
@@ -2613,7 +2672,8 @@ export async function saveInquiryCalculatorField(
     ];
     const nextPayload = serializeCalculatorPayload(
       nextCalculators,
-      parsed.operationsDescription
+      parsed.operationsDescription,
+      parsed
     );
 
     const { error: updateError } = await supabase
@@ -2900,76 +2960,32 @@ export async function sendLeadChatMessage(leadId: string, message: string, inqui
 }
 
 export async function getMyLeadChatNotifications(limit = 20) {
-  try {
-    const session = await getSession();
-    if (!session) return { error: 'Unauthorized' };
+  const result = await getMyAppNotifications(limit);
+  if ('error' in result) return result;
 
-    const recipientRole =
-      isSalesPortalActor(session)
-        ? 'sales_agent'
-        : isOperationsPortalActor(session)
-          ? 'operations'
-          : isSuperAdminSession(session)
-            ? 'admin'
-            : null;
+  const notifications: LeadChatNotification[] = result.notifications.map((item) => ({
+    id: item.id,
+    chat_message_id: item.source === 'chat' ? item.id : '',
+    lead_id: item.leadId,
+    inquiry_id: item.inquiryId,
+    sender_role: (item.senderRole as LeadChatNotification['sender_role']) || 'admin',
+    sender_username: item.senderUsername,
+    recipient_role: 'sales_agent',
+    recipient_username: '',
+    is_read: item.isRead,
+    created_at: item.createdAt,
+    notification_type: item.source === 'chat' ? 'chat' : 'lifecycle',
+    event_type: item.eventType as LeadChatNotification['event_type'],
+    title: item.title,
+    href: item.href,
+    message: item.message,
+    leads: item.leadNumber ? { lead_id_formatted: item.leadNumber } : null,
+  }));
 
-    if (!recipientRole) return { error: 'Unauthorized' };
-
-    const supabase = await createAdminClient();
-
-    const [chatResult, lifecycleResult] = await Promise.all([
-      supabase
-        .from('lead_chat_notifications')
-        .select(`
-          *,
-          leads (
-            lead_id_formatted
-          )
-        `)
-        .eq('recipient_role', recipientRole)
-        .eq('recipient_username', session.username)
-        .order('created_at', { ascending: false })
-        .limit(limit),
-      supabase
-        .from('inquiry_lifecycle_notifications')
-        .select(`
-          *,
-          leads (
-            lead_id_formatted
-          )
-        `)
-        .eq('recipient_role', recipientRole)
-        .eq('recipient_username', session.username)
-        .order('created_at', { ascending: false })
-        .limit(limit),
-    ]);
-
-    const { data, error } = chatResult;
-    if (error) return { error: error.message };
-
-    const { data: lifecycleData, error: lifecycleError } = lifecycleResult;
-
-    const chatNotifications = ((data || []) as LeadChatNotification[]).map((n) => ({
-      ...n,
-      notification_type: 'chat' as const,
-    }));
-    const lifecycleNotifications = ((lifecycleError ? [] : (lifecycleData || [])) as LeadChatNotification[]).map((n) => ({
-      ...n,
-      notification_type: 'lifecycle' as const,
-    }));
-
-    const notifications = [...chatNotifications, ...lifecycleNotifications]
-      .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
-      .slice(0, limit);
-    const unreadCount = notifications.filter((n) => !n.is_read).length;
-
-    return {
-      notifications,
-      unreadCount,
-    };
-  } catch (err) {
-    return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };
-  }
+  return {
+    notifications,
+    unreadCount: result.unreadCount,
+  };
 }
 
 export async function markLeadChatNotificationRead(notificationId: string) {

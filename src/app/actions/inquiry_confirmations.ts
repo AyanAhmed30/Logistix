@@ -23,6 +23,13 @@ import {
   sanitizeInquiryAttachmentUrl,
   sanitizeInquiryAttachmentUrls,
 } from '@/lib/inquiry-attachments';
+import {
+  insertLifecycleNotifications,
+  resolveInquiryAdminRecipients,
+  resolveLeadSalesAgentRecipient,
+  resolveOperationsRecipients,
+} from '@/lib/notify-lifecycle';
+import { quotationFromInquiryHref } from '@/lib/app-notifications';
 
 export type ConfirmationStatus = 'pending' | 'approved' | 'rejected';
 
@@ -472,47 +479,60 @@ export async function submitInquiryForConfirmation(data: {
       performed_by: session.username || 'operations',
     }]);
 
-    await supabase
+    const inquiryWorkflowUpdate: Record<string, unknown> = {
+      calculator_values: data.calculator_values || {},
+      approval_status: 'sent_to_admin',
+      updated_at: new Date().toISOString(),
+    };
+    const { error: inquiryWorkflowError } = await supabase
       .from('lead_inquiries')
-      .update({
-        calculator_values: data.calculator_values || {},
-        updated_at: new Date().toISOString(),
-      })
+      .update(inquiryWorkflowUpdate)
       .eq('id', data.inquiry_id);
+    if (
+      inquiryWorkflowError &&
+      /approval_status|check constraint|sent_to_admin/i.test(inquiryWorkflowError.message)
+    ) {
+      const withoutStatus = { ...inquiryWorkflowUpdate };
+      delete withoutStatus.approval_status;
+      await supabase.from('lead_inquiries').update(withoutStatus).eq('id', data.inquiry_id);
+    }
 
-    // Notify the Sales Agent that inquiry was forwarded to Admin for approval.
     try {
-      const { data: lead } = await supabase
-        .from('leads')
-        .select('lead_id_formatted, sales_agent_id')
-        .eq('id', data.lead_id)
-        .maybeSingle();
-      if (lead?.sales_agent_id) {
-        const { data: salesAgent } = await supabase
-          .from('sales_agents')
-          .select('username')
-          .eq('id', lead.sales_agent_id)
-          .maybeSingle();
-        if (salesAgent?.username) {
-          await supabase.from('inquiry_lifecycle_notifications').insert([{
-            lead_id: data.lead_id,
-            inquiry_id: data.inquiry_id,
-            confirmation_id: result.id,
-            sender_role: 'operations',
-            sender_username: session.username || 'operations',
-            recipient_role: 'sales_agent',
-            recipient_username: salesAgent.username,
-            event_type: 'sent_for_admin_approval',
-            message: `Inquiry for Lead #${lead.lead_id_formatted || data.lead_number} was forwarded to Admin for approval.`,
-          }]);
-        }
-      }
+      const [leadContext, adminRecipients] = await Promise.all([
+        resolveLeadSalesAgentRecipient(supabase, data.lead_id),
+        resolveInquiryAdminRecipients(supabase, result.id),
+      ]);
+      const leadNumber = leadContext.leadNumber || data.lead_number;
+      const summary = (data.product_name || '').trim();
+      await insertLifecycleNotifications(supabase, {
+        eventType: 'sent_for_admin_approval',
+        leadId: data.lead_id,
+        inquiryId: data.inquiry_id,
+        confirmationId: result.id,
+        senderRole: 'operations',
+        senderUsername: session.username || 'operations',
+        recipients: adminRecipients,
+        message: summary
+          ? `${summary} is awaiting rate approval.`
+          : `Lead #${leadNumber} is awaiting rate approval.`,
+        payload: {
+          leadId: data.lead_id,
+          inquiryId: data.inquiry_id,
+          confirmationId: result.id,
+          inquiryNumber: leadNumber,
+          customerName: leadContext.customerName,
+          salesAgent: leadContext.salesAgentName,
+          summary,
+        },
+      });
     } catch {
       // Notification failure must not block confirmation success.
     }
 
     revalidatePath('/admin/dashboard');
     revalidatePath('/operations/dashboard');
+    revalidatePath('/crm/inquiries');
+    revalidatePath('/sales-agent/dashboard');
     return { success: true, confirmation: result as InquiryConfirmation };
   } catch (err) {
     return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };
@@ -748,48 +768,81 @@ export async function approveInquiryConfirmation(confirmationId: string) {
       })
       .eq('id', data.inquiry_id);
 
-    // Notify Sales Agent + Operations submitter about approval.
-    const { data: lead } = await supabase
-      .from('leads')
-      .select('lead_id_formatted, sales_agent_id')
-      .eq('id', data.lead_id)
-      .maybeSingle();
-    const recipients: Array<{ role: 'sales_agent' | 'operations'; username: string }> = [];
-    if (lead?.sales_agent_id) {
-      const { data: salesAgent } = await supabase
-        .from('sales_agents')
-        .select('username')
-        .eq('id', lead.sales_agent_id)
-        .maybeSingle();
-      if (salesAgent?.username) {
-        recipients.push({ role: 'sales_agent', username: salesAgent.username });
+    try {
+      const [leadContext, opsRecipients] = await Promise.all([
+        resolveLeadSalesAgentRecipient(supabase, data.lead_id),
+        resolveOperationsRecipients(supabase, data.lead_id, data.inquiry_id),
+      ]);
+      const pricing = buildApprovedInquiryPricing(approvedCalculatorValues, {
+        weightKg: confirmationData.total_weight,
+        quantity: confirmationData.quantity,
+        cbm: confirmationData.cbm,
+      });
+      const rate =
+        pricing && Number.isFinite(pricing.final_price)
+          ? pricing.final_price.toFixed(2)
+          : pricing && Number.isFinite(pricing.unit_price)
+            ? pricing.unit_price.toFixed(2)
+            : null;
+      const leadNumber = leadContext.leadNumber || data.lead_number;
+      const payload = {
+        leadId: data.lead_id,
+        inquiryId: data.inquiry_id,
+        confirmationId: data.id,
+        inquiryNumber: leadNumber,
+        customerName: leadContext.customerName,
+        salesAgent: leadContext.salesAgentName,
+        summary: confirmationData.product_name || '',
+        rate,
+        totalAmount: pricing?.total_amount ?? null,
+      };
+
+      if (leadContext.recipient) {
+        await insertLifecycleNotifications(supabase, {
+          eventType: 'approved',
+          leadId: data.lead_id,
+          inquiryId: data.inquiry_id,
+          confirmationId: data.id,
+          senderRole: 'admin',
+          senderUsername: session.username || 'admin',
+          recipients: [
+            {
+              ...leadContext.recipient,
+              href: data.inquiry_id ? quotationFromInquiryHref(String(data.inquiry_id)) : null,
+            },
+          ],
+          title: 'Rate Approved — Ready for Quotation',
+          message: rate
+            ? `Admin approved the rate (${rate}) for this inquiry. It is ready for quotation.`
+            : `Admin approved the rate for this inquiry. It is ready for quotation.`,
+          payload,
+        });
       }
-    }
-    if (data.submitted_by) {
-      recipients.push({ role: 'operations', username: data.submitted_by });
-    }
-    const uniqueRecipients = recipients.filter(
-      (r, idx, arr) => arr.findIndex((x) => x.role === r.role && x.username === r.username) === idx
-    );
-    if (uniqueRecipients.length > 0) {
-      await supabase.from('inquiry_lifecycle_notifications').insert(
-        uniqueRecipients.map((r) => ({
-          lead_id: data.lead_id,
-          inquiry_id: data.inquiry_id,
-          confirmation_id: data.id,
-          sender_role: 'admin',
-          sender_username: session.username || 'admin',
-          recipient_role: r.role,
-          recipient_username: r.username,
-          event_type: 'approved',
-          message: `Inquiry for Lead #${lead?.lead_id_formatted || data.lead_number} was approved by Admin.`,
-        }))
-      );
+
+      if (opsRecipients.length > 0) {
+        await insertLifecycleNotifications(supabase, {
+          eventType: 'approved',
+          leadId: data.lead_id,
+          inquiryId: data.inquiry_id,
+          confirmationId: data.id,
+          senderRole: 'admin',
+          senderUsername: session.username || 'admin',
+          recipients: opsRecipients,
+          title: 'Inquiry Confirmed by Admin',
+          message: rate
+            ? `Admin confirmed this inquiry (rate ${rate}).`
+            : 'Admin confirmed this inquiry.',
+          payload,
+        });
+      }
+    } catch {
+      // Notification failure must not block approval.
     }
 
     revalidatePath('/admin/dashboard');
     revalidatePath('/operations/dashboard');
-    revalidatePath('/sales-agent/dashboard'); // Sales agent should see approved status
+    revalidatePath('/sales-agent/dashboard');
+    revalidatePath('/crm/inquiries');
     return { success: true, confirmation: data as InquiryConfirmation };
   } catch (err) {
     return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };
@@ -835,28 +888,39 @@ export async function rejectInquiryConfirmation(confirmationId: string, rejectio
       })
       .eq('id', data.inquiry_id);
 
-    // Notify only the Operations submitter about rejection.
-    const { data: lead } = await supabase
-      .from('leads')
-      .select('lead_id_formatted')
-      .eq('id', data.lead_id)
-      .maybeSingle();
-    if (data.submitted_by) {
-      await supabase.from('inquiry_lifecycle_notifications').insert([{
-        lead_id: data.lead_id,
-        inquiry_id: data.inquiry_id,
-        confirmation_id: data.id,
-        sender_role: 'admin',
-        sender_username: session.username || 'admin',
-        recipient_role: 'operations',
-        recipient_username: data.submitted_by,
-        event_type: 'rejected',
-        message: `Inquiry for Lead #${lead?.lead_id_formatted || data.lead_number} was rejected by Admin. Reason: ${reason}`,
-      }]);
+    try {
+      const [leadContext, opsRecipients] = await Promise.all([
+        resolveLeadSalesAgentRecipient(supabase, data.lead_id),
+        resolveOperationsRecipients(supabase, data.lead_id, data.inquiry_id),
+      ]);
+      if (opsRecipients.length > 0) {
+        await insertLifecycleNotifications(supabase, {
+          eventType: 'rejected',
+          leadId: data.lead_id,
+          inquiryId: data.inquiry_id,
+          confirmationId: data.id,
+          senderRole: 'admin',
+          senderUsername: session.username || 'admin',
+          recipients: opsRecipients,
+          title: 'Inquiry Rejected by Admin',
+          message: `Admin rejected this inquiry. Reason: ${reason}`,
+          payload: {
+            leadId: data.lead_id,
+            inquiryId: data.inquiry_id,
+            confirmationId: data.id,
+            inquiryNumber: leadContext.leadNumber || data.lead_number,
+            customerName: leadContext.customerName,
+            summary: reason,
+          },
+        });
+      }
+    } catch {
+      // Notification failure must not block rejection.
     }
 
     revalidatePath('/admin/dashboard');
     revalidatePath('/operations/dashboard');
+    revalidatePath('/crm/inquiries');
     return { success: true, confirmation: data as InquiryConfirmation };
   } catch (err) {
     return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };

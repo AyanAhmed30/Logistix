@@ -103,6 +103,10 @@ type Props = {
     token: number;
   } | null;
   portalOrganization?: Organization | null;
+  focusConfirmationId?: string | null;
+  focusLeadId?: string | null;
+  focusInquiryId?: string | null;
+  focusOpsTab?: string | null;
 };
 
 export function AdminUserManager({
@@ -117,6 +121,10 @@ export function AdminUserManager({
   contactPayload,
   invoicePayload,
   portalOrganization: _portalOrganization = null,
+  focusConfirmationId = null,
+  focusLeadId = null,
+  focusInquiryId = null,
+  focusOpsTab = null,
 }: Props) {
   const access = useDashboardAccess();
   const { switchVersion } = useAdminOrganization();
@@ -153,13 +161,20 @@ export function AdminUserManager({
       // Defer state updates to avoid synchronous setState in effect
       setTimeout(() => {
         if (activeTab === "operations") {
-          setOperationsSubTab("operations");
+          setOperationsSubTab(focusOpsTab === "leads-inquiry" ? "leads-inquiry" : "operations");
         } else if (prevActiveTab === "operations") {
           setOperationsSubTab(null);
         }
       }, 0);
     }
-  }, [activeTab]);
+  }, [activeTab, focusOpsTab]);
+
+  useEffect(() => {
+    if (activeTab !== "operations") return;
+    if (focusOpsTab === "leads-inquiry") {
+      setOperationsSubTab("leads-inquiry");
+    }
+  }, [activeTab, focusOpsTab, focusLeadId, focusInquiryId]);
 
   // When a cross-module payload arrives for invoices, open Accounting.
   useEffect(() => {
@@ -344,7 +359,13 @@ export function AdminUserManager({
         {isPortal && activeModule === "sales" ? (
           <LegacySalesRedirect href={defaultSalesRouteForAccess(access)} />
         ) : isPortal && activeModule === "operations" ? (
-          <PortalOperationsModuleContent access={access} />
+          <PortalOperationsModuleContent
+            access={access}
+            focusTab={focusOpsTab}
+            focusConfirmationId={focusConfirmationId}
+            focusLeadId={focusLeadId}
+            focusInquiryId={focusInquiryId}
+          />
         ) : isPortal && activeModule === "warehouse" ? (
           <PortalWarehouseModuleContent access={access} />
         ) : isPortal && activeModule === "contacts" ? (
@@ -412,11 +433,15 @@ export function AdminUserManager({
 
             {/* Leads Inquiry Sub-tab Content */}
             {operationsSubTab === "leads-inquiry" && (
-              <OperationsLeadsInquiryPanel adminCalculatorMode />
+              <OperationsLeadsInquiryPanel
+                adminCalculatorMode
+                focusLeadId={focusLeadId}
+                focusInquiryId={focusInquiryId}
+              />
             )}
           </div>
         ) : activeTab === "inquiry-confirmation" ? (
-          <InquiryConfirmationPanel />
+          <InquiryConfirmationPanel focusConfirmationId={focusConfirmationId} />
         ) : activeTab === "calculator-config" ? (
           <AdminCalculatorPanel />
         ) : activeTab === "import-packing-list" ? (

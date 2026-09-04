@@ -45,6 +45,7 @@ export type SalesQuotationFormPayload = {
   internal_notes?: string | null;
   customer_notes?: string | null;
   opportunity_id?: string | null;
+  linked_inquiry_id?: string | null;
   lines: SalesQuotationLineInput[];
 };
 
@@ -524,6 +525,9 @@ function headerFromPayload(payload: SalesQuotationFormPayload, sums: ReturnType<
     internal_notes: payload.internal_notes || null,
     customer_notes: payload.customer_notes || null,
     opportunity_id: payload.opportunity_id || null,
+    ...(payload.linked_inquiry_id
+      ? { linked_inquiry_id: payload.linked_inquiry_id }
+      : {}),
     product_service: String(first?.product_name || 'Product').trim(),
     quantity: Number(first?.quantity) || 1,
     unit_price: Number(first?.unit_price) || 0,
@@ -578,6 +582,277 @@ export async function getSalesQuotationPrefillFromOpportunity(opportunityId: str
   } catch (err) {
     return {
       error: err instanceof Error ? err.message : 'Failed to load opportunity',
+    };
+  }
+}
+
+export type SalesQuotationInquiryPrefill = {
+  inquiry_id: string;
+  opportunity_id: string | null;
+  opportunity_name: string | null;
+  contact_id: string | null;
+  customer_name: string;
+  contact_person_id: string | null;
+  salesperson_id: string | null;
+  sales_team: string | null;
+  customer_reference: string | null;
+  product_name: string;
+  description: string;
+  quantity: number;
+  unit_price: number;
+  uom: string;
+  internal_notes: string | null;
+  customer_email: string | null;
+  customer_phone: string | null;
+  customer_mobile: string | null;
+};
+
+/** Prefill for /sales/quotations/new?inquiryId= — uses the same inquiry record. */
+export async function getSalesQuotationPrefillFromInquiry(inquiryId: string): Promise<
+  | { prefill: SalesQuotationInquiryPrefill; existingQuotationId: string | null }
+  | { error: string }
+> {
+  try {
+    const scope = await resolveSalesOrgScope();
+    if ('error' in scope && scope.error) return { error: scope.error };
+
+    const supabase = await createAdminClient();
+    const { data, error } = await supabase
+      .from('lead_inquiries')
+      .select(
+        `
+        id,
+        lead_id,
+        product_name,
+        quantity,
+        total_weight,
+        cbm,
+        description,
+        calculator_values,
+        sent_to_accounting,
+        approval_status,
+        crm_opportunity_id,
+        organization_id,
+        leads (
+          id,
+          lead_id_formatted,
+          contact_id,
+          name,
+          number,
+          sales_agent_id,
+          crm_opportunity_id
+        ),
+        inquiry_confirmations (
+          id,
+          status,
+          created_at,
+          hs_code,
+          calculator_values
+        )
+      `
+      )
+      .eq('id', inquiryId)
+      .maybeSingle();
+
+    if (error || !data) return { error: error?.message || 'Inquiry not found' };
+
+    const { canAccessLeadForInquiry } = await import('@/lib/inquiry-crm-access');
+    const leadAccess = await canAccessLeadForInquiry(
+      scope.session!,
+      supabase,
+      String(data.lead_id),
+      {
+        crmOpportunityId: data.crm_opportunity_id ? String(data.crm_opportunity_id) : null,
+      }
+    );
+    if (!leadAccess.allowed) {
+      return { error: leadAccess.error || 'Unauthorized' };
+    }
+
+    const {
+      resolveInquiryWorkflowStatus,
+      buildInquiryQuotationDescription,
+    } = await import('@/lib/inquiry-workflow');
+    const confirmations = Array.isArray(data.inquiry_confirmations)
+      ? (data.inquiry_confirmations as Array<{
+          status?: string;
+          created_at?: string;
+          hs_code?: string;
+          calculator_values?: unknown;
+        }>)
+      : [];
+    const workflow = resolveInquiryWorkflowStatus({
+      sent_to_accounting: Boolean(data.sent_to_accounting),
+      approval_status: data.approval_status ? String(data.approval_status) : null,
+      confirmations,
+    });
+    if (!workflow.isReadyForQuotation) {
+      return {
+        error: `This inquiry is not ready for quotation yet (${workflow.label}).`,
+      };
+    }
+
+    const {
+      parseStoredCalculatorPayload,
+      buildApprovedInquiryPricing,
+      parsePricingConfig,
+    } = await import('@/lib/inquiry-calculator');
+
+    const approvedConfirmation = [...confirmations]
+      .sort((a, b) => {
+        const aTime = a.created_at ? new Date(a.created_at).getTime() : 0;
+        const bTime = b.created_at ? new Date(b.created_at).getTime() : 0;
+        return bTime - aTime;
+      })
+      .find((c) => String(c.status || '') === 'approved');
+
+    const calculatorRaw =
+      (data.calculator_values && typeof data.calculator_values === 'object'
+        ? (data.calculator_values as Record<string, unknown>)
+        : null) ||
+      (approvedConfirmation?.calculator_values &&
+      typeof approvedConfirmation.calculator_values === 'object'
+        ? (approvedConfirmation.calculator_values as Record<string, unknown>)
+        : null);
+
+    const parsed = parseStoredCalculatorPayload(calculatorRaw);
+    const primary = parsed.calculators[0] || {};
+    const pricing = buildApprovedInquiryPricing(calculatorRaw, {
+      weightKg: String(data.total_weight || ''),
+      quantity: String(data.quantity || ''),
+      cbm: String(data.cbm || ''),
+      pricingConfig: parsePricingConfig(primary),
+    });
+
+    const leadRaw = data.leads as
+      | {
+          lead_id_formatted?: string | null;
+          contact_id?: string | null;
+          name?: string | null;
+          number?: string | null;
+          sales_agent_id?: string | null;
+          crm_opportunity_id?: string | null;
+        }
+      | {
+          lead_id_formatted?: string | null;
+          contact_id?: string | null;
+          name?: string | null;
+          number?: string | null;
+          sales_agent_id?: string | null;
+          crm_opportunity_id?: string | null;
+        }[]
+      | null;
+    const lead = Array.isArray(leadRaw) ? leadRaw[0] : leadRaw;
+
+    let contact_id = lead?.contact_id ? String(lead.contact_id) : null;
+    let customer_name = String(lead?.name || '').trim();
+    let contact_person_id: string | null = null;
+    let salesperson_id = lead?.sales_agent_id ? String(lead.sales_agent_id) : null;
+    let sales_team: string | null = null;
+    let opportunity_id = data.crm_opportunity_id
+      ? String(data.crm_opportunity_id)
+      : lead?.crm_opportunity_id
+        ? String(lead.crm_opportunity_id)
+        : null;
+    let customer_email: string | null = null;
+    let customer_phone = lead?.number ? String(lead.number) : null;
+    let customer_mobile: string | null = null;
+    let opportunity_name: string | null = null;
+
+    if (opportunity_id) {
+      const { data: opp } = await supabase
+        .from('crm_opportunities')
+        .select('id, name, contact_id, contact_person_id, salesperson_id, sales_team, email, phone, mobile')
+        .eq('id', opportunity_id)
+        .maybeSingle();
+      if (opp) {
+        opportunity_name = opp.name ? String(opp.name) : null;
+        contact_id = contact_id || (opp.contact_id ? String(opp.contact_id) : null);
+        contact_person_id = opp.contact_person_id ? String(opp.contact_person_id) : null;
+        salesperson_id = salesperson_id || (opp.salesperson_id ? String(opp.salesperson_id) : null);
+        sales_team = opp.sales_team ? String(opp.sales_team) : null;
+        customer_email = opp.email ? String(opp.email) : customer_email;
+        customer_phone = opp.phone ? String(opp.phone) : customer_phone;
+        customer_mobile = opp.mobile ? String(opp.mobile) : customer_mobile;
+      }
+    }
+
+    if (contact_id) {
+      const { data: contact } = await supabase
+        .from('contacts')
+        .select('name, email, phone, mobile')
+        .eq('id', contact_id)
+        .maybeSingle();
+      if (contact?.name) customer_name = String(contact.name);
+      if (contact?.email) customer_email = String(contact.email);
+      if (contact?.phone) customer_phone = String(contact.phone);
+      if (contact?.mobile) customer_mobile = String(contact.mobile);
+    }
+
+    const quantity = Number(String(data.quantity || '').replace(/,/g, '')) || 1;
+    const unit_price = pricing ? Math.round(pricing.unit_price * 100) / 100 : 0;
+    const uom = String(primary.uom || '').trim() || 'Units';
+    const hsCode = String(approvedConfirmation?.hs_code || primary.hs_code || '').trim();
+    const description = buildInquiryQuotationDescription({
+      productName: String(data.product_name || ''),
+      quantity: String(data.quantity || ''),
+      totalWeight: String(data.total_weight || ''),
+      cbm: String(data.cbm || ''),
+      description: String(data.description || ''),
+      hsCode,
+      uom,
+      operationsDescription: parsed.operationsDescription,
+    });
+
+    const internalNotes = [
+      parsed.operationsDescription
+        ? `Operations notes: ${parsed.operationsDescription}`
+        : '',
+      parsed.valuationRulingApplied === 'yes'
+        ? `Valuation ruling: ${parsed.valuationRulingNumber || 'Yes'}`
+        : '',
+    ]
+      .filter(Boolean)
+      .join('\n');
+
+    let existingQuotationId: string | null = null;
+    const { data: existingQuote, error: existingQuoteError } = await supabase
+      .from('quotations')
+      .select('id')
+      .eq('linked_inquiry_id', inquiryId)
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (!existingQuoteError && existingQuote?.id) {
+      existingQuotationId = String(existingQuote.id);
+    }
+
+    return {
+      prefill: {
+        inquiry_id: String(data.id),
+        opportunity_id,
+        opportunity_name,
+        contact_id,
+        customer_name,
+        contact_person_id,
+        salesperson_id,
+        sales_team,
+        customer_reference: lead?.lead_id_formatted ? String(lead.lead_id_formatted) : null,
+        product_name: String(data.product_name || 'Product'),
+        description,
+        quantity,
+        unit_price,
+        uom,
+        internal_notes: internalNotes || null,
+        customer_email,
+        customer_phone,
+        customer_mobile,
+      },
+      existingQuotationId,
+    };
+  } catch (err) {
+    return {
+      error: err instanceof Error ? err.message : 'Failed to load inquiry',
     };
   }
 }

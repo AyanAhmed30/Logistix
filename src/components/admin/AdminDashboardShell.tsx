@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { SignOutForm } from "@/components/auth/SignOutForm";
 import { Button } from "@/components/ui/button";
-import { LogOut, Bell } from "lucide-react";
+import { LogOut } from "lucide-react";
 import Image from "next/image";
 import { AdminUserManager } from "@/components/admin/AdminUserManager";
 import { OrganizationSwitcher } from "@/components/admin/OrganizationSwitcher";
@@ -28,6 +28,8 @@ import {
   defaultHrRouteForAccess,
 } from "@/lib/dashboard-access";
 import { useRouter } from "next/navigation";
+import { AppNotificationBell } from "@/components/notifications/AppNotificationBell";
+import { useNotificationDeepLink } from "@/hooks/useNotificationDeepLink";
 
 type AppUser = {
   id: string;
@@ -49,13 +51,48 @@ function AdminDashboardContent({
   access,
 }: Omit<Props, "initialOrganizationState">) {
   const router = useRouter();
+  const deepLink = useNotificationDeepLink();
   const { switchVersion, organizationId } = useAdminOrganization();
   const [portalOrganization, setPortalOrganization] = useState<Organization | null>(null);
   const [users, setUsers] = useState<AppUser[]>(initialUsers);
   const [dbError, setDbError] = useState<string | null>(initialDbError);
   const [activeTab, setActiveTab] = useState<AdminTab>("dashboard");
   const [activeModule, setActiveModule] = useState<AdminModule | null>(null);
-  const [unreadCount, setUnreadCount] = useState(0);
+
+  useEffect(() => {
+    const tab = deepLink.tab;
+    const confirmationId = deepLink.confirmationId;
+    const opsTab = deepLink.opsTab;
+    if (!tab && !confirmationId && !opsTab && !deepLink.leadId && !deepLink.inquiryId) {
+      return;
+    }
+
+    if (tab === "inquiry-confirmation" || confirmationId) {
+      setActiveModule("operations");
+      if (access.isPortalAccount) {
+        setActiveTab("dashboard");
+      } else {
+        setActiveTab("inquiry-confirmation");
+      }
+      return;
+    }
+
+    if (tab === "operations" || opsTab === "leads-inquiry") {
+      setActiveModule("operations");
+      if (access.isPortalAccount) {
+        setActiveTab("dashboard");
+      } else {
+        setActiveTab("operations");
+      }
+    }
+  }, [
+    access.isPortalAccount,
+    deepLink.tab,
+    deepLink.confirmationId,
+    deepLink.opsTab,
+    deepLink.leadId,
+    deepLink.inquiryId,
+  ]);
 
   const [quotationPayload, setQuotationPayload] = useState<{
     contactId?: string | null;
@@ -195,33 +232,6 @@ function AdminDashboardContent({
   }, []);
 
   useEffect(() => {
-    if (access.isPortalAccount) return;
-    let isMounted = true;
-    const lastSeenRaw = localStorage.getItem("admin_notifications_seen_at");
-    const lastSeen = lastSeenRaw ? new Date(lastSeenRaw).getTime() : 0;
-
-    getAdminNotifications()
-      .then((result) => {
-        if (!isMounted) return;
-        if ("notifications" in result && Array.isArray(result.notifications)) {
-          const unread = result.notifications.filter((item) => {
-            const createdAt = new Date(item.created_at).getTime();
-            return createdAt > lastSeen;
-          }).length;
-          setUnreadCount(unread);
-        }
-      })
-      .catch(() => {
-        if (!isMounted) return;
-        setUnreadCount(0);
-      });
-
-    return () => {
-      isMounted = false;
-    };
-  }, [switchVersion, access.isPortalAccount]);
-
-  useEffect(() => {
     if (activeTab !== "notifications") return;
     getAdminNotifications()
       .then((result) => {
@@ -233,10 +243,9 @@ function AdminDashboardContent({
         } else {
           localStorage.setItem("admin_notifications_seen_at", new Date().toISOString());
         }
-        setUnreadCount(0);
       })
       .catch(() => {
-        setUnreadCount(0);
+        // Order inbox is optional alongside the inquiry notification center.
       });
   }, [activeTab]);
 
@@ -265,24 +274,20 @@ function AdminDashboardContent({
 
           <div className="flex items-center gap-4 md:gap-6">
             <OrganizationSwitcher />
-            {!access.isPortalAccount && (
-              <button
-                className="text-secondary-muted hover:text-primary-dark transition-colors relative"
-                onClick={() => {
-                  setActiveModule(null);
-                  setActiveTab("notifications");
-                }}
-                aria-label="Notifications"
-              >
-                <Bell className="h-5 w-5" />
-                <span className="absolute -top-1 -right-1 bg-primary-accent h-3 w-3 rounded-full border-2 border-white" />
-                {unreadCount > 0 && (
-                  <span className="absolute -top-2 -right-2 min-w-[18px] rounded-full bg-red-600 px-1 py-0.5 text-[10px] font-bold text-white text-center">
-                    {unreadCount > 99 ? "99+" : unreadCount}
-                  </span>
-                )}
-              </button>
-            )}
+            <AppNotificationBell
+              tone="light"
+              footerAction={
+                access.isPortalAccount
+                  ? undefined
+                  : {
+                      label: "Order notifications",
+                      onClick: () => {
+                        setActiveModule(null);
+                        setActiveTab("notifications");
+                      },
+                    }
+              }
+            />
             <SignOutForm>
               <Button
                 variant="outline"
@@ -309,6 +314,14 @@ function AdminDashboardContent({
         contactPayload={contactPayload}
         invoicePayload={invoicePayload}
         portalOrganization={portalOrganization}
+        focusConfirmationId={deepLink.confirmationId}
+        focusLeadId={deepLink.leadId}
+        focusInquiryId={deepLink.inquiryId}
+        focusOpsTab={
+          deepLink.tab === "inquiry-confirmation"
+            ? "inquiry-confirmation"
+            : deepLink.opsTab || (deepLink.tab === "operations" ? "leads-inquiry" : null)
+        }
       />
     </div>
   );

@@ -11,7 +11,6 @@ import {
   UserPlus,
   Users,
   FileText,
-  Bell,
   ClipboardCheck,
   Calculator,
   ArrowRightLeft,
@@ -30,20 +29,14 @@ import { OrganizationCustomersPanel } from "@/components/organization/Organizati
 import { OrganizationQuotationsPanel } from "@/components/organization/OrganizationQuotationsPanel";
 import type { Organization } from "@/app/actions/organizations";
 import {
-  getMyLeadChatNotifications,
-  markLeadChatNotificationRead,
-  type LeadChatNotification,
-} from "@/app/actions/inquiries";
-import {
   DropdownMenu,
   DropdownMenuContent,
-  DropdownMenuItem,
   DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { useRouter } from "next/navigation";
 import { ClientErrorBoundary } from "@/components/error/ClientErrorBoundary";
+import { AppNotificationBell } from "@/components/notifications/AppNotificationBell";
 
 type Props = {
   username: string;
@@ -117,13 +110,9 @@ export function SalesAgentDashboardShell({
   permissions: initialPermissions,
   organization,
 }: Props) {
-  const router = useRouter();
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   const mounted = useIsHydrated();
   const [permissions, setPermissions] = useState(initialPermissions);
-  const [notifications, setNotifications] = useState<LeadChatNotification[]>([]);
-  const [unreadCount, setUnreadCount] = useState(0);
-  const [notificationsError, setNotificationsError] = useState<string | null>(null);
 
   const [activeTab, setActiveTab] = useState<TabKey>("lead");
 
@@ -165,36 +154,6 @@ export function SalesAgentDashboardShell({
     if (availableTabKeys.has(activeTab)) return activeTab;
     return tabs[0]?.key ?? "lead";
   }, [tabs, activeTab]);
-
-  useEffect(() => {
-    async function fetchNotifications() {
-      const result = await getMyLeadChatNotifications(30);
-      if ("error" in result) {
-        setNotificationsError(result.error || "Failed to load notifications");
-        setNotifications([]);
-        setUnreadCount(0);
-      } else {
-        setNotificationsError(null);
-        setNotifications(result.notifications || []);
-        setUnreadCount(result.unreadCount || 0);
-      }
-    }
-    fetchNotifications();
-    const timer = setInterval(fetchNotifications, 5000);
-    return () => clearInterval(timer);
-  }, []);
-
-  async function handleNotificationClick(notification: LeadChatNotification) {
-    if (!notification.is_read) {
-      await markLeadChatNotificationRead(notification.id);
-      setNotifications((prev) =>
-        prev.map((n) => (n.id === notification.id ? { ...n, is_read: true } : n))
-      );
-      setUnreadCount((prev) => Math.max(0, prev - 1));
-    }
-    const inquiryQuery = notification.inquiry_id ? `&inquiryId=${notification.inquiry_id}` : "";
-    router.push(`/sales-agent/leads/${notification.lead_id}?tab=view${inquiryQuery}`);
-  }
 
   const initials = useMemo(() => {
     const cleaned = (username || "").trim();
@@ -330,88 +289,14 @@ export function SalesAgentDashboardShell({
 
             <div className="flex items-center gap-3">
               {mounted ? (
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild suppressHydrationWarning>
-                    <button
-                      className="relative inline-flex h-10 w-10 items-center justify-center rounded-full bg-slate-100/80 hover:bg-slate-200/80 text-slate-700"
-                      aria-label="Notifications"
-                    >
-                      <Bell className="h-4 w-4" />
-                      {unreadCount > 0 && (
-                        <span className="absolute -top-0.5 -right-0.5 min-w-4 h-4 px-1 rounded-full bg-red-500 text-white text-[10px] leading-4 text-center">
-                          {unreadCount > 9 ? "9+" : unreadCount}
-                        </span>
-                      )}
-                    </button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent align="end" className="w-[360px] z-[90]">
-                    <DropdownMenuLabel>Notifications</DropdownMenuLabel>
-                    <DropdownMenuSeparator />
-                    {notificationsError ? (
-                      <DropdownMenuItem disabled className="text-xs text-red-600">
-                        {notificationsError}
-                      </DropdownMenuItem>
-                    ) : notifications.length === 0 ? (
-                      <DropdownMenuItem disabled className="text-sm text-slate-500">
-                        No notifications
-                      </DropdownMenuItem>
-                    ) : (
-                      notifications.map((n) => (
-                        <DropdownMenuItem
-                          key={n.id}
-                          className={`items-start whitespace-normal cursor-pointer ${
-                            !n.is_read ? "bg-blue-50" : ""
-                          }`}
-                          onClick={() => handleNotificationClick(n)}
-                        >
-                          <div className="text-sm leading-snug">
-                            <div>
-                              {n.notification_type === "lifecycle" ? (
-                                <>
-                                  <span className="font-semibold">{n.sender_username}</span>{" "}
-                                  (
-                                  {n.sender_role === "sales_agent"
-                                    ? "Sales Agent"
-                                    : n.sender_role === "operations"
-                                      ? "Operations"
-                                      : "Admin"}
-                                  ) {n.message || "updated an inquiry status."}
-                                </>
-                              ) : (
-                                <>
-                                  <span className="font-semibold">{n.sender_username}</span>{" "}
-                                  (
-                                  {n.sender_role === "sales_agent"
-                                    ? "Sales Agent"
-                                    : n.sender_role === "operations"
-                                      ? "Operations"
-                                      : "Admin"}
-                                  ) sent you a message regarding Lead #
-                                  {n.leads?.lead_id_formatted || "N/A"}
-                                </>
-                              )}{" "}
-                              at{" "}
-                              {new Date(n.created_at).toLocaleString([], {
-                                hour: "2-digit",
-                                minute: "2-digit",
-                                month: "short",
-                                day: "numeric",
-                                year: "numeric",
-                              })}
-                            </div>
-                          </div>
-                        </DropdownMenuItem>
-                      ))
-                    )}
-                  </DropdownMenuContent>
-                </DropdownMenu>
+                <AppNotificationBell tone="dark" />
               ) : (
                 <button
                   className="relative inline-flex h-10 w-10 items-center justify-center rounded-full bg-slate-100/80 text-slate-700"
                   aria-label="Notifications"
                   type="button"
                 >
-                  <Bell className="h-4 w-4" />
+                  <span className="h-4 w-4 rounded-full bg-slate-300" />
                 </button>
               )}
 

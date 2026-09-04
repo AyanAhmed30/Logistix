@@ -7,7 +7,6 @@ import {
   LogOut,
   Menu,
   X,
-  Bell,
   Package,
   Truck,
   UserPlus,
@@ -23,7 +22,6 @@ import {
 } from "lucide-react";
 import Image from "next/image";
 import { ClientErrorBoundary } from "@/components/error/ClientErrorBoundary";
-import { useRouter } from "next/navigation";
 import { prefetchOperationsInquiries } from "@/lib/operations-inquiries-cache";
 import { PortalOrganizationSwitcher } from "@/components/user/PortalOrganizationSwitcher";
 import { usePortalOrganization } from "@/contexts/PortalOrganizationContext";
@@ -49,19 +47,8 @@ import {
   hasModulePermission,
   type ModuleDepartment,
 } from "@/lib/module-permissions";
-import {
-  getMyLeadChatNotifications,
-  markLeadChatNotificationRead,
-  type LeadChatNotification,
-} from "@/app/actions/inquiries";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
+import { AppNotificationBell } from "@/components/notifications/AppNotificationBell";
+import { useNotificationDeepLink } from "@/hooks/useNotificationDeepLink";
 
 type Props = {
   username: string;
@@ -138,7 +125,7 @@ export function PortalUserDashboardShell({
   username,
   permissions,
 }: Props) {
-  const router = useRouter();
+  const deepLink = useNotificationDeepLink();
   const { organization, switchVersion, organizationId } = usePortalOrganization();
   const canSales = hasDepartmentAccess(permissions, "sales");
   const canOps = hasDepartmentAccess(permissions, "operations");
@@ -156,11 +143,9 @@ export function PortalUserDashboardShell({
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   const [salesTab, setSalesTab] = useState<SalesTab>("lead");
   const [opsTab, setOpsTab] = useState<OpsTab>("leads-inquiry");
-  const [notifications, setNotifications] = useState<LeadChatNotification[]>([]);
-  const [unreadCount, setUnreadCount] = useState(0);
-  const [notificationsError, setNotificationsError] = useState<string | null>(null);
   const [focusLeadId, setFocusLeadId] = useState<string | null>(null);
   const [focusInquiryId, setFocusInquiryId] = useState<string | null>(null);
+  const [focusConfirmationId, setFocusConfirmationId] = useState<string | null>(null);
 
   const visibleSalesTabs = useMemo(
     () => SALES_TABS.filter((t) => hasModulePermission(permissions, t.key)),
@@ -199,43 +184,20 @@ export function PortalUserDashboardShell({
   }, [canOps, switchVersion, organizationId]);
 
   useEffect(() => {
-    async function fetchNotifications() {
-      const result = await getMyLeadChatNotifications(30);
-      if ("error" in result) {
-        setNotificationsError(result.error || "Failed to load notifications");
-        setNotifications([]);
-        setUnreadCount(0);
-      } else {
-        setNotificationsError(null);
-        setNotifications(result.notifications || []);
-        setUnreadCount(result.unreadCount || 0);
-      }
-    }
-    fetchNotifications();
-    const timer = setInterval(fetchNotifications, 8000);
-    return () => clearInterval(timer);
-  }, []);
-
-  async function handleNotificationClick(notification: LeadChatNotification) {
-    if (!notification.is_read) {
-      await markLeadChatNotificationRead(notification.id);
-      setNotifications((prev) =>
-        prev.map((n) => (n.id === notification.id ? { ...n, is_read: true } : n))
-      );
-      setUnreadCount((prev) => Math.max(0, prev - 1));
-    }
-    if (canSales) {
-      const inquiryQuery = notification.inquiry_id ? `&inquiryId=${notification.inquiry_id}` : "";
-      router.push(`/sales-agent/leads/${notification.lead_id}?tab=view${inquiryQuery}`);
+    const tab = deepLink.tab as OpsTab | SalesTab | null;
+    if (deepLink.confirmationId) {
+      setActiveDepartment("operations");
+      setOpsTab("inquiry-confirmation");
+      setFocusConfirmationId(deepLink.confirmationId);
       return;
     }
-    if (canOps) {
+    if (tab === "leads-inquiry" || deepLink.leadId || deepLink.inquiryId) {
       setActiveDepartment("operations");
       setOpsTab("leads-inquiry");
-      setFocusLeadId(notification.lead_id);
-      setFocusInquiryId(notification.inquiry_id || null);
+      if (deepLink.leadId) setFocusLeadId(deepLink.leadId);
+      if (deepLink.inquiryId) setFocusInquiryId(deepLink.inquiryId);
     }
-  }
+  }, [deepLink.tab, deepLink.confirmationId, deepLink.leadId, deepLink.inquiryId]);
 
   const initials = useMemo(() => {
     const cleaned = (username || "").trim();
@@ -313,7 +275,12 @@ export function PortalUserDashboardShell({
       case "import-invoice":
         return <ImportInvoicePanel />;
       case "inquiry-confirmation":
-        return <InquiryConfirmationPanel />;
+        return (
+          <InquiryConfirmationPanel
+            focusConfirmationId={focusConfirmationId}
+            onFocusHandled={() => setFocusConfirmationId(null)}
+          />
+        );
       case "calculator-config":
         return <AdminCalculatorPanel />;
       default:
@@ -446,46 +413,9 @@ export function PortalUserDashboardShell({
 
             <PortalOrganizationSwitcher />
 
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button type="button" variant="ghost" size="icon" className="relative">
-                  <Bell className="h-5 w-5 text-slate-600" />
-                  {unreadCount > 0 && (
-                    <span className="absolute -top-0.5 -right-0.5 h-4 min-w-4 rounded-full bg-rose-500 px-1 text-[10px] font-bold text-white flex items-center justify-center">
-                      {unreadCount > 9 ? "9+" : unreadCount}
-                    </span>
-                  )}
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="w-80">
-                <DropdownMenuLabel>Notifications</DropdownMenuLabel>
-                <DropdownMenuSeparator />
-                {notificationsError && (
-                  <DropdownMenuItem disabled className="text-rose-600 text-xs">
-                    {notificationsError}
-                  </DropdownMenuItem>
-                )}
-                {!notificationsError && notifications.length === 0 && (
-                  <DropdownMenuItem disabled className="text-slate-500 text-xs">
-                    No notifications
-                  </DropdownMenuItem>
-                )}
-                {notifications.slice(0, 8).map((n) => (
-                  <DropdownMenuItem
-                    key={n.id}
-                    onClick={() => handleNotificationClick(n)}
-                    className="flex flex-col items-start gap-0.5 whitespace-normal"
-                  >
-                    <span className="text-sm font-medium">
-                      {n.leads?.lead_id_formatted || n.event_type || "Update"}
-                    </span>
-                    <span className="text-xs text-slate-500 line-clamp-2">
-                      {n.message || "New notification"}
-                    </span>
-                  </DropdownMenuItem>
-                ))}
-              </DropdownMenuContent>
-            </DropdownMenu>
+            <div className="ml-auto">
+              <AppNotificationBell tone="light" />
+            </div>
 
             <div className="flex items-center gap-2 pl-2 border-l border-slate-200">
               <div className="h-9 w-9 rounded-full bg-[#0B1E2D] text-white text-xs font-semibold flex items-center justify-center">

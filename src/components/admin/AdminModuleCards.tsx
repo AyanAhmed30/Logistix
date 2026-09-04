@@ -51,12 +51,7 @@ export function AdminModuleCards({ onModuleSelect, access }: Props) {
 
   return (
     <div className="space-y-4">
-      <div>
-        <h2 className="text-xl font-bold text-primary-dark">Application Modules</h2>
-        <p className="text-sm text-secondary-muted mt-1">
-          Select a module to open its tools — Odoo-style workspace navigation
-        </p>
-      </div>
+      
 
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         {modules.map((module) => {
@@ -88,9 +83,7 @@ export function AdminModuleCards({ onModuleSelect, access }: Props) {
                   </CardDescription>
                 </CardHeader>
                 <CardContent className="pt-0">
-                  <span className="text-xs font-semibold uppercase tracking-wide text-secondary-muted">
-                    Open module
-                  </span>
+                 
                 </CardContent>
               </Card>
             </button>

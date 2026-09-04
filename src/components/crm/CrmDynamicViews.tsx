@@ -39,3 +39,15 @@ export const CrmOpportunityFormViewDynamic = dynamic(
     ),
   { loading: () => <CrmFormSkeleton />, ssr: false }
 );
+
+export const CrmAllInquiriesViewDynamic = dynamic(
+  () =>
+    import('@/components/crm/CrmAllInquiriesView').then((m) => m.CrmAllInquiriesView),
+  { loading: () => <CrmPageSkeleton />, ssr: false }
+);
+
+export const CrmInquiryDetailViewDynamic = dynamic(
+  () =>
+    import('@/components/crm/CrmInquiryDetailView').then((m) => m.CrmInquiryDetailView),
+  { loading: () => <CrmFormSkeleton />, ssr: false }
+);

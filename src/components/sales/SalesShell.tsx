@@ -20,6 +20,7 @@ import { getSalesPageMeta } from "@/lib/sales-navigation";
 import type { DashboardAccessState } from "@/lib/dashboard-access";
 import { toast } from "sonner";
 import { useSalesKeyboardShortcuts } from "@/hooks/useSalesKeyboardShortcuts";
+import { AppNotificationBell } from "@/components/notifications/AppNotificationBell";
 
 type SalesShellContextValue = {
   searchQuery: string;
@@ -212,6 +213,7 @@ export function SalesShell({ access, children }: Props) {
               <div className="sales-org-switcher [&_button]:h-8 [&_button]:border-white/25 [&_button]:bg-white/10 [&_button]:text-white [&_button]:hover:bg-white/20 [&_button]:max-w-[120px] sm:[&_button]:max-w-[200px] [&_svg]:text-white">
                 <OrganizationSwitcher />
               </div>
+              <AppNotificationBell tone="brand" />
               <SalesUserMenu access={access} />
             </div>
           </div>

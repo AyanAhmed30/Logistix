@@ -78,6 +78,16 @@ export function CrmAllInquiriesView() {
     };
   }, [switchVersion]);
 
+  useEffect(() => {
+    router.prefetch("/sales/quotations/new");
+    rows
+      .filter((row) => row.workflow.isReadyForQuotation)
+      .slice(0, 8)
+      .forEach((row) => {
+        router.prefetch(inquiryQuotationHref(row.id));
+      });
+  }, [rows, router]);
+
   const filtered = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
     if (!q) return rows;
@@ -124,7 +134,18 @@ export function CrmAllInquiriesView() {
                   <TableRow
                     key={row.id}
                     className="cursor-pointer hover:bg-[#017e84]/5"
-                    onClick={() => router.push(inquiryDetailsHref(row.id))}
+                    onClick={() =>
+                      router.push(
+                        row.workflow.isReadyForQuotation
+                          ? inquiryQuotationHref(row.id)
+                          : inquiryDetailsHref(row.id)
+                      )
+                    }
+                    onMouseEnter={() => {
+                      if (row.workflow.isReadyForQuotation) {
+                        router.prefetch(inquiryQuotationHref(row.id));
+                      }
+                    }}
                   >
                     <TableCell>
                       <div className="flex items-center gap-2 font-medium text-primary-dark">

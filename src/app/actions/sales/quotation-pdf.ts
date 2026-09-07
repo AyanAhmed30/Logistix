@@ -4,6 +4,7 @@ import { createAdminClient } from '@/utils/supabase/server';
 import { getSalesQuotationDetail } from '@/app/actions/sales/quotation-form';
 import { getSession } from '@/lib/auth/session';
 import { sessionHasSalesAccess } from '@/lib/auth/require-access';
+import { quotationLineDisplayDescription } from '@/lib/sales-quotation-form';
 
 export type SalesQuotationPdfPayload = {
   organization: {
@@ -13,6 +14,7 @@ export type SalesQuotationPdfPayload = {
     email: string;
     phone: string;
     website: string;
+    country: string;
   };
   customer: {
     name: string;
@@ -110,6 +112,7 @@ export async function getSalesQuotationPdfPayload(quotationId: string) {
       email: '',
       phone: '',
       website: '',
+      country: '',
     };
 
     const orgId = q.organization_id;
@@ -137,6 +140,7 @@ export async function getSalesQuotationPdfPayload(quotationId: string) {
           email: String(organization.email || ''),
           phone: String(organization.phone || ''),
           website: String(organization.website || ''),
+          country: String(organization.country || ''),
         };
       }
     }
@@ -175,7 +179,10 @@ export async function getSalesQuotationPdfPayload(quotationId: string) {
       discountTotal += qty * price * (disc / 100);
       return {
         product: line.product_name,
-        description: line.description || line.product_name,
+        description: quotationLineDisplayDescription(
+          line.product_name,
+          line.description
+        ),
         quantity: line.quantity,
         qtyDelivered: line.qty_delivered ?? null,
         uom: line.uom,

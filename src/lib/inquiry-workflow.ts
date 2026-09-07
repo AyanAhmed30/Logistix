@@ -159,29 +159,5 @@ export function buildInquiryQuotationDescription(input: {
   specifications?: string | null;
   operationsDescription?: string | null;
 }): string {
-  const lines: string[] = [];
-  const push = (label: string, value: string | null | undefined) => {
-    const trimmed = String(value || "").trim();
-    if (trimmed) lines.push(`${label}: ${trimmed}`);
-  };
-
-  push("Product", input.productName);
-  push("Quantity", input.quantity);
-  push("Weight (kg)", input.totalWeight);
-  push("CBM", input.cbm);
-  push("UOM", input.uom);
-  push("HS Code", input.hsCode);
-  push("Specifications", input.specifications);
-
-  const description = String(input.description || "").trim();
-  if (description) {
-    lines.push(`Description: ${description}`);
-  }
-
-  const operations = String(input.operationsDescription || "").trim();
-  if (operations) {
-    lines.push(`Operations notes: ${operations}`);
-  }
-
-  return lines.join("\n");
+  return String(input.productName || "").trim();
 }

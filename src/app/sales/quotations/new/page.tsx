@@ -1,13 +1,13 @@
 import { Suspense } from 'react';
 import { requireSalesPageAccess } from '@/lib/sales-page-access';
 import { SalesPageSkeleton } from '@/components/sales/SalesSkeleton';
-import { SalesQuotationFormViewDynamic } from '@/components/sales/SalesDynamicViews';
+import { SalesQuotationFormView } from '@/components/sales/SalesQuotationFormView';
 
 export default async function SalesNewQuotationPage() {
   await requireSalesPageAccess('quotations');
   return (
     <Suspense fallback={<SalesPageSkeleton rows={8} />}>
-      <SalesQuotationFormViewDynamic quotationId={null} />
+      <SalesQuotationFormView quotationId={null} />
     </Suspense>
   );
 }

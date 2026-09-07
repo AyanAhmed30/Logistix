@@ -673,6 +673,7 @@ export async function getSalesQuotationPrefillFromInquiry(inquiryId: string): Pr
       resolveInquiryWorkflowStatus,
       buildInquiryQuotationDescription,
     } = await import('@/lib/inquiry-workflow');
+    const { SALES_DEFAULT_UOM } = await import('@/lib/sales-quotation-form');
     const confirmations = Array.isArray(data.inquiry_confirmations)
       ? (data.inquiry_confirmations as Array<{
           status?: string;
@@ -759,22 +760,36 @@ export async function getSalesQuotationPrefillFromInquiry(inquiryId: string): Pr
     let customer_mobile: string | null = null;
     let opportunity_name: string | null = null;
 
-    if (opportunity_id) {
-      const { data: opp } = await supabase
-        .from('crm_opportunities')
-        .select('id, name, contact_id, contact_person_id, salesperson_id, sales_team, email, phone, mobile')
-        .eq('id', opportunity_id)
-        .maybeSingle();
-      if (opp) {
-        opportunity_name = opp.name ? String(opp.name) : null;
-        contact_id = contact_id || (opp.contact_id ? String(opp.contact_id) : null);
-        contact_person_id = opp.contact_person_id ? String(opp.contact_person_id) : null;
-        salesperson_id = salesperson_id || (opp.salesperson_id ? String(opp.salesperson_id) : null);
-        sales_team = opp.sales_team ? String(opp.sales_team) : null;
-        customer_email = opp.email ? String(opp.email) : customer_email;
-        customer_phone = opp.phone ? String(opp.phone) : customer_phone;
-        customer_mobile = opp.mobile ? String(opp.mobile) : customer_mobile;
-      }
+    const existingQuotePromise = supabase
+      .from('quotations')
+      .select('id')
+      .eq('linked_inquiry_id', inquiryId)
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    const opportunityPromise = opportunity_id
+      ? supabase
+          .from('crm_opportunities')
+          .select(
+            'id, name, contact_id, contact_person_id, salesperson_id, sales_team, email, phone, mobile'
+          )
+          .eq('id', opportunity_id)
+          .maybeSingle()
+      : Promise.resolve({ data: null as null });
+
+    const [{ data: opp }, { data: existingQuote, error: existingQuoteError }] =
+      await Promise.all([opportunityPromise, existingQuotePromise]);
+
+    if (opp) {
+      opportunity_name = opp.name ? String(opp.name) : null;
+      contact_id = contact_id || (opp.contact_id ? String(opp.contact_id) : null);
+      contact_person_id = opp.contact_person_id ? String(opp.contact_person_id) : null;
+      salesperson_id = salesperson_id || (opp.salesperson_id ? String(opp.salesperson_id) : null);
+      sales_team = opp.sales_team ? String(opp.sales_team) : null;
+      customer_email = opp.email ? String(opp.email) : customer_email;
+      customer_phone = opp.phone ? String(opp.phone) : customer_phone;
+      customer_mobile = opp.mobile ? String(opp.mobile) : customer_mobile;
     }
 
     if (contact_id) {
@@ -791,17 +806,9 @@ export async function getSalesQuotationPrefillFromInquiry(inquiryId: string): Pr
 
     const quantity = Number(String(data.quantity || '').replace(/,/g, '')) || 1;
     const unit_price = pricing ? Math.round(pricing.unit_price * 100) / 100 : 0;
-    const uom = String(primary.uom || '').trim() || 'Units';
-    const hsCode = String(approvedConfirmation?.hs_code || primary.hs_code || '').trim();
     const description = buildInquiryQuotationDescription({
       productName: String(data.product_name || ''),
-      quantity: String(data.quantity || ''),
-      totalWeight: String(data.total_weight || ''),
-      cbm: String(data.cbm || ''),
       description: String(data.description || ''),
-      hsCode,
-      uom,
-      operationsDescription: parsed.operationsDescription,
     });
 
     const internalNotes = [
@@ -815,17 +822,8 @@ export async function getSalesQuotationPrefillFromInquiry(inquiryId: string): Pr
       .filter(Boolean)
       .join('\n');
 
-    let existingQuotationId: string | null = null;
-    const { data: existingQuote, error: existingQuoteError } = await supabase
-      .from('quotations')
-      .select('id')
-      .eq('linked_inquiry_id', inquiryId)
-      .order('created_at', { ascending: false })
-      .limit(1)
-      .maybeSingle();
-    if (!existingQuoteError && existingQuote?.id) {
-      existingQuotationId = String(existingQuote.id);
-    }
+    const existingQuotationId =
+      !existingQuoteError && existingQuote?.id ? String(existingQuote.id) : null;
 
     return {
       prefill: {
@@ -842,7 +840,7 @@ export async function getSalesQuotationPrefillFromInquiry(inquiryId: string): Pr
         description,
         quantity,
         unit_price,
-        uom,
+        uom: SALES_DEFAULT_UOM,
         internal_notes: internalNotes || null,
         customer_email,
         customer_phone,

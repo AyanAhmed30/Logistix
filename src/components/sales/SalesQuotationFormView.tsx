@@ -1,7 +1,8 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState, useTransition } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import Image from "next/image";
 import { toast } from "sonner";
 import {
   Copy,
@@ -58,6 +59,7 @@ import { SalesQuotationNegotiationPanel } from "@/components/sales/SalesQuotatio
 import { SalesProductLinePicker } from "@/components/sales/SalesProductLinePicker";
 import { ContactInfoSummary, type ContactInfoSummaryData } from "@/components/shared/ContactInfoSummary";
 import { SalesPageSkeleton } from "@/components/sales/SalesSkeleton";
+import { LOGISTIX_LOGO_PATH } from "@/lib/logistix-logo";
 import { getSalesQuotationPdfPayload } from "@/app/actions/sales/quotation-pdf";
 import { sendSalesQuotationToCustomer } from "@/app/actions/sales/quotation-customer-send";
 import { generateSalesQuotationPdf } from "@/lib/sales-quotation-pdf";
@@ -108,6 +110,11 @@ import {
   isProductLine,
   lineAmountForTaxMode,
   newLineDraft,
+  parseTaxPercent,
+  quotationLineDisplayDescription,
+  SALES_DEFAULT_UOM,
+  SALES_TAX_RATE_OPTIONS,
+  SALES_UOM_OPTIONS,
   unitPriceForDisplay,
   unitPriceFromDisplay,
   type QuotationLineDraft,
@@ -134,9 +141,25 @@ function todayIso() {
 }
 
 function plusDaysIso(days: number) {
-  return new Date(Date.now() + days * 24 * 60 * 60 * 1000)
-    .toISOString()
-    .slice(0, 10);
+  const d = new Date();
+  d.setDate(d.getDate() + days);
+  return d.toISOString().slice(0, 10);
+}
+
+function pdfDataUrlToObjectUrl(dataUrl: string): string {
+  try {
+    const comma = dataUrl.indexOf(",");
+    if (comma < 0) return dataUrl;
+    const header = dataUrl.slice(0, comma);
+    const body = dataUrl.slice(comma + 1);
+    const mime = header.match(/data:([^;]+)/)?.[1] || "application/pdf";
+    const binary = atob(body);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+    return URL.createObjectURL(new Blob([bytes], { type: mime }));
+  } catch {
+    return dataUrl;
+  }
 }
 
 export function SalesQuotationFormView({
@@ -152,7 +175,10 @@ export function SalesQuotationFormView({
   const [isPending, startTransition] = useTransition();
   const isOrderView = documentKind === "order" || fromToInvoice;
 
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(() => Boolean(quotationId));
+  const [inquiryPrefillBusy, setInquiryPrefillBusy] = useState(
+    () => Boolean(!quotationId && inquiryIdParam)
+  );
   const [detail, setDetail] = useState<SalesQuotationDetail | null>(null);
   const [versions, setVersions] = useState<SalesQuotationVersion[]>([]);
   const [salespeople, setSalespeople] = useState<
@@ -189,6 +215,7 @@ export function SalesQuotationFormView({
   const [previewKind, setPreviewKind] = useState<"email" | "pdf">("pdf");
   const [pdfDataUrl, setPdfDataUrl] = useState<string | null>(null);
   const [pdfBusy, setPdfBusy] = useState(false);
+  const pdfObjectUrlRef = useRef<string | null>(null);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [chatterKey, setChatterKey] = useState(0);
   const [emailTemplates, setEmailTemplates] = useState<SalesEmailTemplate[]>(
@@ -372,14 +399,21 @@ export function SalesQuotationFormView({
               key: line.id,
               id: line.id.startsWith("legacy-") ? null : line.id,
               product_id: line.product_id,
-              product_name: line.product_name,
-              description: line.description || "",
+              product_name:
+                quotationLineDisplayDescription(
+                  line.product_name,
+                  line.description
+                ) || line.product_name,
+              description: quotationLineDisplayDescription(
+                line.product_name,
+                line.description
+              ),
               quantity: String(line.quantity),
               qty_delivered: String(line.qty_delivered ?? 0),
-              uom: line.uom,
+              uom: line.uom || SALES_DEFAULT_UOM,
               unit_price: String(line.unit_price),
               discount: String(line.discount),
-              taxes: String(line.taxes),
+              taxes: Number(line.taxes) ? String(line.taxes) : "",
               display_type: inferLineDisplayType({
                 product_name: line.product_name,
                 description: line.description,
@@ -393,17 +427,21 @@ export function SalesQuotationFormView({
   }, []);
 
   useEffect(() => {
-    let cancelled = false;
-    setLoading(true);
-
-    void (async () => {
-      const sp = await getSalespersonOptions();
-      if (!cancelled && "salespersons" in sp) {
+    void getSalespersonOptions().then((sp) => {
+      if ("salespersons" in sp) {
         setSalespeople(
           (sp.salespersons || []).map((o) => ({ id: o.id, name: o.name }))
         );
       }
+    });
+  }, [switchVersion]);
 
+  useEffect(() => {
+    let cancelled = false;
+    if (quotationId) setLoading(true);
+    if (inquiryIdParam && !quotationId) setInquiryPrefillBusy(true);
+
+    void (async () => {
       if (quotationId) {
         const res = await getSalesQuotationDetail(quotationId);
         if (cancelled) return;
@@ -415,7 +453,7 @@ export function SalesQuotationFormView({
         if ("quotation" in res && res.quotation) {
           hydrateFromDetail(res.quotation);
           if (res.quotation.contact_id) {
-            await loadCustomerRelations(res.quotation.contact_id);
+            void loadCustomerRelations(res.quotation.contact_id);
           }
           const ver = await getSalesQuotationVersions(quotationId);
           if ("versions" in ver) setVersions(ver.versions ?? []);
@@ -447,7 +485,7 @@ export function SalesQuotationFormView({
             ]);
           }
           if (p.contact_id) {
-            await loadCustomerRelations(p.contact_id, { autofill: true });
+            void loadCustomerRelations(p.contact_id, { autofill: true });
           }
         }
       } else if (inquiryIdParam) {
@@ -478,22 +516,30 @@ export function SalesQuotationFormView({
             mobile: p.customer_mobile,
             lead_id_formatted: p.customer_reference,
           });
+          const productDescription = quotationLineDisplayDescription(
+            p.product_name,
+            p.description
+          );
           setLines([
             newLineDraft({
               product_name: p.product_name || "Product",
-              description: p.description || p.product_name || "",
+              description: productDescription || p.product_name || "",
               quantity: String(p.quantity || 1),
               unit_price: String(p.unit_price || 0),
-              uom: p.uom || "Units",
+              uom: SALES_DEFAULT_UOM,
+              taxes: "",
             }),
           ]);
           if (p.contact_id) {
-            await loadCustomerRelations(p.contact_id, { autofill: true });
+            void loadCustomerRelations(p.contact_id, { autofill: true });
           }
         }
       }
 
-      if (!cancelled) setLoading(false);
+      if (!cancelled) {
+        setLoading(false);
+        setInquiryPrefillBusy(false);
+      }
     })();
 
     return () => {
@@ -580,7 +626,7 @@ export function SalesQuotationFormView({
         uom: line.uom,
         unit_price: parseFloat(line.unit_price) || 0,
         discount: parseFloat(line.discount) || 0,
-        taxes: parseFloat(line.taxes) || 0,
+        taxes: parseTaxPercent(line.taxes),
         display_type: line.display_type || inferLineDisplayType(line),
       })),
     };
@@ -729,6 +775,10 @@ export function SalesQuotationFormView({
     const id = quotationId || detail?.id;
     if (!id) return;
     setPdfBusy(true);
+    if (mode === "preview") {
+      setPreviewKind("pdf");
+      setPreviewOpen(true);
+    }
     try {
       const res = await getSalesQuotationPdfPayload(id);
       if ("error" in res && res.error) {
@@ -740,10 +790,22 @@ export function SalesQuotationFormView({
         return;
       }
       const generated = await generateSalesQuotationPdf(res.payload, {
+        silent: mode === "preview",
         download: mode === "download",
         openPrintDialog: mode === "print",
       });
-      setPdfDataUrl(generated.dataUrl);
+      if (pdfObjectUrlRef.current) {
+        URL.revokeObjectURL(pdfObjectUrlRef.current);
+        pdfObjectUrlRef.current = null;
+      }
+      const previewUrl =
+        mode === "preview"
+          ? pdfDataUrlToObjectUrl(generated.dataUrl)
+          : generated.dataUrl;
+      if (mode === "preview" && previewUrl.startsWith("blob:")) {
+        pdfObjectUrlRef.current = previewUrl;
+      }
+      setPdfDataUrl(previewUrl);
       if (mode === "preview") {
         setPreviewKind("pdf");
         setPreviewOpen(true);
@@ -756,6 +818,14 @@ export function SalesQuotationFormView({
       setPdfBusy(false);
     }
   }
+
+  useEffect(() => {
+    return () => {
+      if (pdfObjectUrlRef.current) {
+        URL.revokeObjectURL(pdfObjectUrlRef.current);
+      }
+    };
+  }, []);
 
   useEffect(() => {
     if (!fromToInvoice || !detail?.quotation_number) return;
@@ -966,7 +1036,8 @@ export function SalesQuotationFormView({
     "h-8 rounded-sm bg-[#017e84] hover:bg-[#016970] text-white font-medium";
 
   return (
-    <div className="bg-white border border-slate-200 rounded-sm shadow-sm overflow-hidden min-h-[calc(100vh-160px)] flex flex-col">
+    <div className="bg-white border border-[#017e84]/20 rounded-sm shadow-sm overflow-hidden min-h-[calc(100vh-160px)] flex flex-col">
+      <div className="h-1 bg-[#017e84]" />
       {/* Odoo-style action row */}
       <div className="flex flex-wrap items-center justify-between gap-2 px-3 sm:px-4 py-2 border-b border-slate-200">
         <div className="flex flex-wrap items-center gap-1.5">
@@ -1261,6 +1332,11 @@ export function SalesQuotationFormView({
           mode={isSalesOrderDoc ? "order" : "quotation"}
           deliveryStatus={detail?.delivery_status || "waiting"}
         />
+        {inquiryPrefillBusy ? (
+          <p className="mt-1 text-xs text-secondary-muted">
+            Loading inquiry details…
+          </p>
+        ) : null}
         {alreadySentToCustomer ? (
           <div className="mt-2 rounded-sm border border-cyan-200 bg-cyan-50 px-3 py-2 text-xs text-cyan-900">
             Sent to customer app
@@ -1274,9 +1350,19 @@ export function SalesQuotationFormView({
 
       {/* Title + compact smart buttons (Odoo sheet header) */}
       <div className="flex flex-wrap items-start justify-between gap-3 px-4 sm:px-5 pt-4 pb-2">
-        <h1 className="text-2xl sm:text-3xl font-semibold text-primary-dark tracking-tight leading-none">
-          {title}
-        </h1>
+        <div className="flex items-center gap-3 min-w-0">
+          <Image
+            src={LOGISTIX_LOGO_PATH}
+            alt="Logistix"
+            width={150}
+            height={44}
+            className="h-8 w-auto object-contain shrink-0"
+            priority
+          />
+          <h1 className="text-2xl sm:text-3xl font-semibold text-primary-dark tracking-tight leading-none truncate">
+            {title}
+          </h1>
+        </div>
         {quotationId ? (
           <div className="flex flex-wrap gap-1.5">
             {opportunityId ? (
@@ -1371,7 +1457,9 @@ export function SalesQuotationFormView({
               disabled={readOnly}
               inputClassName="h-9 rounded-none border-0 border-b border-[#017e84] bg-transparent px-0 shadow-none focus-visible:ring-0"
             />
-            <ContactInfoSummary data={customerInfo} />
+            {isSalesOrderDoc ? (
+              <ContactInfoSummary data={customerInfo} />
+            ) : null}
           </div>
 
           <div className="space-y-3">
@@ -1429,14 +1517,26 @@ export function SalesQuotationFormView({
                 </div>
               </>
             ) : (
-              <>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 rounded-sm border border-[#017e84]/20 bg-[#017e84]/5 p-3">
+                <div>
+                  <Label className="text-xs text-secondary-muted">
+                    Quotation Date
+                  </Label>
+                  <Input
+                    type="date"
+                    className="mt-1 h-9 rounded-sm bg-white"
+                    value={quotationDate}
+                    disabled={readOnly}
+                    onChange={(e) => setQuotationDate(e.target.value)}
+                  />
+                </div>
                 <div>
                   <Label className="text-xs text-secondary-muted">
                     Expiration
                   </Label>
                   <Input
                     type="date"
-                    className="mt-1 h-9 rounded-sm"
+                    className="mt-1 h-9 rounded-sm bg-white"
                     value={expirationDate}
                     disabled={readOnly}
                     onChange={(e) => setExpirationDate(e.target.value)}
@@ -1444,16 +1544,36 @@ export function SalesQuotationFormView({
                 </div>
                 <div>
                   <Label className="text-xs text-secondary-muted">
-                    Payment Terms
+                    Contact
                   </Label>
-                  <Input
-                    className="mt-1 h-9 rounded-sm"
-                    value={paymentTerms}
-                    disabled={readOnly}
-                    onChange={(e) => setPaymentTerms(e.target.value)}
-                  />
+                  {personOptions.length ? (
+                    <Select
+                      value={contactPersonId || undefined}
+                      onValueChange={(v) => setContactPersonId(v)}
+                      disabled={readOnly || !contactId}
+                    >
+                      <SelectTrigger className="mt-1 h-9 rounded-sm bg-white">
+                        <SelectValue placeholder={customerName || "Contact"} />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {personOptions.map((opt) => (
+                          <SelectItem key={opt.id} value={opt.id}>
+                            {opt.name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  ) : (
+                    <Input
+                      className="mt-1 h-9 rounded-sm bg-white"
+                      value={customerName}
+                      disabled={readOnly}
+                      placeholder="Contact"
+                      onChange={(e) => setCustomerName(e.target.value)}
+                    />
+                  )}
                 </div>
-              </>
+              </div>
             )}
           </div>
         </div>
@@ -1514,30 +1634,33 @@ export function SalesQuotationFormView({
             <div className="overflow-x-auto">
               <Table>
                 <TableHeader>
-                  <TableRow className="border-b border-slate-200 hover:bg-transparent">
-                    <TableHead className="min-w-[220px] h-9 text-xs font-medium text-secondary-muted">
+                  <TableRow className="border-b border-[#017e84]/20 hover:bg-transparent bg-[#017e84]/5">
+                    <TableHead className="min-w-[220px] h-9 text-xs font-semibold text-[#017e84]">
                       Description
                     </TableHead>
-                    <TableHead className="w-24 h-9 text-xs font-medium text-secondary-muted">
+                    <TableHead className="w-24 h-9 text-xs font-semibold text-[#017e84]">
                       Quantity
+                    </TableHead>
+                    <TableHead className="w-28 h-9 text-xs font-semibold text-[#017e84]">
+                      UOM
                     </TableHead>
                     {isSalesOrderDoc ? (
                       <>
-                        <TableHead className="w-24 text-right h-9 text-xs font-medium text-secondary-muted">
+                        <TableHead className="w-24 text-right h-9 text-xs font-semibold text-[#017e84]">
                           Delivered
                         </TableHead>
-                        <TableHead className="w-24 text-right h-9 text-xs font-medium text-secondary-muted">
+                        <TableHead className="w-24 text-right h-9 text-xs font-semibold text-[#017e84]">
                           Invoiced
                         </TableHead>
                       </>
                     ) : null}
-                    <TableHead className="w-28 h-9 text-xs font-medium text-secondary-muted">
+                    <TableHead className="w-28 h-9 text-xs font-semibold text-[#017e84]">
                       Unit Price
                     </TableHead>
-                    <TableHead className="w-28 h-9 text-xs font-medium text-secondary-muted">
+                    <TableHead className="w-28 h-9 text-xs font-semibold text-[#017e84]">
                       Taxes
                     </TableHead>
-                    <TableHead className="w-28 text-right h-9 text-xs font-medium text-secondary-muted">
+                    <TableHead className="w-28 text-right h-9 text-xs font-semibold text-[#017e84]">
                       Amount
                     </TableHead>
                     <TableHead className="w-10" />
@@ -1546,7 +1669,7 @@ export function SalesQuotationFormView({
                 <TableBody>
                   {lines.map((line) => {
                     const lineType = line.display_type || inferLineDisplayType(line);
-                    const colSpan = isSalesOrderDoc ? 6 : 4;
+                    const colSpan = isSalesOrderDoc ? 8 : 6;
                     if (lineType === "line_section") {
                       return (
                         <TableRow key={line.key} className="bg-slate-50/90">
@@ -1617,7 +1740,7 @@ export function SalesQuotationFormView({
                     }
                     const qtyNum = parseFloat(line.quantity) || 0;
                     const invoicedQty = linkedInvoiceId ? qtyNum : 0;
-                    const taxPct = parseFloat(line.taxes) || 0;
+                    const taxPct = parseTaxPercent(line.taxes);
                     const displayPrice = unitPriceForDisplay(
                       parseFloat(line.unit_price) || 0,
                       taxPct,
@@ -1636,34 +1759,31 @@ export function SalesQuotationFormView({
                                 updateLine(line.key, {
                                   product_id: product.id,
                                   product_name: product.name,
-                                  description:
-                                    product.description_sale ||
-                                    product.description ||
-                                    product.name,
-                                  uom: product.uom || line.uom,
+                                  description: product.name,
+                                  uom: product.uom || SALES_DEFAULT_UOM,
                                   unit_price: String(
                                     product.list_price || 0
                                   ),
-                                  taxes: String(product.sales_tax_rate || 0),
                                 });
                               } else if (typeof freeText === "string") {
                                 updateLine(line.key, {
                                   product_id: null,
                                   product_name: freeText,
-                                  description:
-                                    line.description || freeText,
+                                  description: freeText,
                                 });
                               }
                             }}
                           />
                           <Input
-                            className="h-8 rounded-sm mt-1 border-0 border-b border-slate-200 shadow-none focus-visible:ring-0 px-0"
+                            className="h-8 rounded-sm mt-1 border-0 border-b border-[#017e84]/30 shadow-none focus-visible:ring-0 px-0"
                             value={line.description}
                             disabled={readOnly}
-                            placeholder="Description"
+                            placeholder="Product name"
                             onChange={(e) =>
                               updateLine(line.key, {
                                 description: e.target.value,
+                                product_name:
+                                  line.product_name || e.target.value,
                               })
                             }
                           />
@@ -1682,6 +1802,34 @@ export function SalesQuotationFormView({
                               })
                             }
                           />
+                        </TableCell>
+                        <TableCell>
+                          <Select
+                            value={line.uom || SALES_DEFAULT_UOM}
+                            onValueChange={(v) =>
+                              updateLine(line.key, { uom: v })
+                            }
+                            disabled={readOnly}
+                          >
+                            <SelectTrigger className="h-8 rounded-sm min-w-[6.5rem]">
+                              <SelectValue placeholder="kg" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {SALES_UOM_OPTIONS.map((opt) => (
+                                <SelectItem key={opt.value} value={opt.value}>
+                                  {opt.label}
+                                </SelectItem>
+                              ))}
+                              {line.uom &&
+                              !SALES_UOM_OPTIONS.some(
+                                (opt) => opt.value === line.uom
+                              ) ? (
+                                <SelectItem value={line.uom}>
+                                  {line.uom}
+                                </SelectItem>
+                              ) : null}
+                            </SelectContent>
+                          </Select>
                         </TableCell>
                         {isSalesOrderDoc ? (
                           <>
@@ -1747,44 +1895,40 @@ export function SalesQuotationFormView({
                           />
                         </TableCell>
                         <TableCell>
-                          {readOnly && taxPct > 0 ? (
-                            <span className="inline-flex items-center rounded-sm border border-[#017e84]/30 bg-[#017e84]/10 px-1.5 py-0.5 text-[11px] font-medium text-[#017e84]">
-                              GST {taxPct}%
-                            </span>
-                          ) : taxPct > 0 ? (
-                            <div className="space-y-1">
+                          {readOnly ? (
+                            line.taxes.trim() ? (
                               <span className="inline-flex items-center rounded-sm border border-[#017e84]/30 bg-[#017e84]/10 px-1.5 py-0.5 text-[11px] font-medium text-[#017e84]">
-                                GST {taxPct}%
+                                {/%/.test(line.taxes.trim())
+                                  ? line.taxes.trim()
+                                  : `${taxPct}%`}
                               </span>
+                            ) : (
+                              <span className="text-xs text-secondary-muted">
+                                —
+                              </span>
+                            )
+                          ) : (
+                            <div className="relative">
                               <Input
-                                className="h-7 rounded-sm text-[11px]"
-                                type="number"
-                                min="0"
-                                step="0.01"
+                                className="h-8 rounded-sm"
+                                list={`sales-tax-rates-${line.key}`}
                                 value={line.taxes}
                                 disabled={readOnly}
+                                placeholder="Tax %"
                                 onChange={(e) =>
                                   updateLine(line.key, {
                                     taxes: e.target.value,
                                   })
                                 }
                               />
+                              <datalist id={`sales-tax-rates-${line.key}`}>
+                                {SALES_TAX_RATE_OPTIONS.map((rate) => (
+                                  <option key={rate} value={rate}>
+                                    {rate}%
+                                  </option>
+                                ))}
+                              </datalist>
                             </div>
-                          ) : (
-                            <Input
-                              className="h-8 rounded-sm"
-                              type="number"
-                              min="0"
-                              step="0.01"
-                              value={line.taxes}
-                              disabled={readOnly}
-                              placeholder="Tax %"
-                              onChange={(e) =>
-                                updateLine(line.key, {
-                                  taxes: e.target.value,
-                                })
-                              }
-                            />
                           )}
                         </TableCell>
                         <TableCell className="text-right font-medium tabular-nums whitespace-nowrap">
@@ -1878,18 +2022,22 @@ export function SalesQuotationFormView({
             ) : null}
 
             <div className="flex flex-col sm:flex-row gap-6 pt-2 justify-between">
-              <div className="flex-1 max-w-md space-y-1">
-                <Label className="text-xs text-secondary-muted font-normal">
-                  Terms and Conditions
-                </Label>
-                <Textarea
-                  value={customerNotes}
-                  onChange={(e) => setCustomerNotes(e.target.value)}
-                  disabled={readOnly}
-                  placeholder="Terms and conditions..."
-                  className="min-h-[88px] rounded-sm border-slate-200 text-sm"
-                />
-              </div>
+              {isSalesOrderDoc ? (
+                <div className="flex-1 max-w-md space-y-1">
+                  <Label className="text-xs text-secondary-muted font-normal">
+                    Terms and Conditions
+                  </Label>
+                  <Textarea
+                    value={customerNotes}
+                    onChange={(e) => setCustomerNotes(e.target.value)}
+                    disabled={readOnly}
+                    placeholder="Terms and conditions..."
+                    className="min-h-[88px] rounded-sm border-slate-200 text-sm"
+                  />
+                </div>
+              ) : (
+                <div className="flex-1" />
+              )}
               <div className="w-full sm:w-64 space-y-1.5 text-sm shrink-0">
                 <div className="flex justify-between">
                   <span className="text-secondary-muted">Untaxed Amount</span>
@@ -1897,23 +2045,14 @@ export function SalesQuotationFormView({
                     {formatMoney(totals.untaxed)}
                   </span>
                 </div>
-                {totals.tax > 0 ? (
-                  <div className="flex justify-between">
-                    <span className="text-secondary-muted">
-                      General Sales Tax
-                    </span>
-                    <span className="tabular-nums font-medium">
-                      {formatMoney(totals.tax)}
-                    </span>
-                  </div>
-                ) : (
-                  <div className="flex justify-between">
-                    <span className="text-secondary-muted">Taxes</span>
-                    <span className="tabular-nums font-medium">
-                      {formatMoney(totals.tax)}
-                    </span>
-                  </div>
-                )}
+                <div className="flex justify-between">
+                  <span className="text-secondary-muted">
+                    General Sales Tax
+                  </span>
+                  <span className="tabular-nums font-medium">
+                    {formatMoney(totals.tax)}
+                  </span>
+                </div>
                 <div className="flex justify-between border-t border-slate-200 pt-2 text-base font-semibold text-[#017e84]">
                   <span>Total</span>
                   <span className="tabular-nums">
@@ -1928,18 +2067,31 @@ export function SalesQuotationFormView({
         {activeTab === "other" ? (
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 max-w-3xl">
             {!isSalesOrderDoc ? (
-              <div>
-                <Label className="text-xs text-secondary-muted">
-                  Quotation Date
-                </Label>
-                <Input
-                  type="date"
-                  className="mt-1 h-9 rounded-sm"
-                  value={quotationDate}
-                  disabled={readOnly}
-                  onChange={(e) => setQuotationDate(e.target.value)}
-                />
-              </div>
+              <>
+                <div>
+                  <Label className="text-xs text-secondary-muted">
+                    Payment Terms
+                  </Label>
+                  <Input
+                    className="mt-1 h-9 rounded-sm"
+                    value={paymentTerms}
+                    disabled={readOnly}
+                    onChange={(e) => setPaymentTerms(e.target.value)}
+                  />
+                </div>
+                <div className="sm:col-span-2">
+                  <Label className="text-xs text-secondary-muted">
+                    Terms and Conditions
+                  </Label>
+                  <Textarea
+                    value={customerNotes}
+                    onChange={(e) => setCustomerNotes(e.target.value)}
+                    disabled={readOnly}
+                    placeholder="Terms and conditions..."
+                    className="mt-1 min-h-[88px] rounded-sm border-slate-200 text-sm"
+                  />
+                </div>
+              </>
             ) : null}
             <div>
               <Label className="text-xs text-secondary-muted">
@@ -2136,20 +2288,27 @@ export function SalesQuotationFormView({
 
       {/* Preview dialog */}
       <Dialog open={previewOpen} onOpenChange={setPreviewOpen}>
-        <DialogContent className="max-w-3xl">
+        <DialogContent className="max-w-4xl sm:max-w-4xl overflow-hidden">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <FileText className="h-4 w-4 text-[#017e84]" />
               {previewKind === "email" ? "Email Preview" : "PDF Preview"}
             </DialogTitle>
           </DialogHeader>
-          {previewKind === "pdf" && pdfDataUrl ? (
+          {previewKind === "pdf" ? (
             <div className="space-y-3">
-              <iframe
-                title="Quotation PDF"
-                src={pdfDataUrl}
-                className="w-full h-[70vh] rounded-sm border border-slate-200"
-              />
+              {pdfDataUrl ? (
+                <iframe
+                  title="Quotation PDF"
+                  src={pdfDataUrl}
+                  className="w-full h-[75vh] rounded-sm border border-slate-200 bg-white"
+                />
+              ) : (
+                <div className="flex h-[50vh] items-center justify-center gap-2 text-sm text-secondary-muted">
+                  <Loader2 className="h-4 w-4 animate-spin text-[#017e84]" />
+                  Generating quotation PDF…
+                </div>
+              )}
               <DialogFooter className="gap-2 sm:gap-2">
                 <Button
                   variant="outline"
@@ -2392,13 +2551,10 @@ export function SalesQuotationFormView({
                           const draft = newLineDraft({
                             product_id: product.id,
                             product_name: product.name,
-                            description:
-                              product.description_sale ||
-                              product.description ||
-                              product.name,
-                            uom: product.uom || "Units",
+                            description: product.name,
+                            uom: product.uom || SALES_DEFAULT_UOM,
                             unit_price: String(product.list_price || 0),
-                            taxes: String(product.sales_tax_rate || 0),
+                            taxes: "",
                           });
                           if (empty) {
                             return prev.map((l) =>

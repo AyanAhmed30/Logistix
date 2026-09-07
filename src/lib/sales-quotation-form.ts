@@ -26,16 +26,47 @@ export type QuotationLineDraft = {
 
 export const SALES_CURRENCY = 'PKR';
 
+export const SALES_DEFAULT_UOM = 'Kg';
+
 export const SALES_UOM_OPTIONS = [
+  { value: 'Kg', label: 'kg' },
+  { value: 'pieces', label: 'pieces' },
+  { value: '2u pairs', label: '2u pairs' },
   { value: 'Units', label: 'Units' },
   { value: 'Piece', label: 'Piece' },
-  { value: 'Kg', label: 'Kg' },
   { value: 'Box', label: 'Box' },
   { value: 'Hour', label: 'Hour' },
   { value: 'pcs / u', label: 'pcs / u' },
   { value: 'm³', label: 'm³' },
   { value: 'pairs (2u)', label: 'pairs (2u)' },
 ] as const;
+
+export const SALES_TAX_RATE_OPTIONS = [
+  '5',
+  '10',
+  '13',
+  '16',
+  '17',
+  '18',
+  '20',
+] as const;
+
+/** Parse a tax field that may be empty, numeric, or a custom label such as "18%" / "GST 18". */
+export function parseTaxPercent(value: string | number | null | undefined): number {
+  if (value == null || value === '') return 0;
+  if (typeof value === 'number') return Number.isFinite(value) ? Math.max(0, value) : 0;
+  const match = String(value).replace(/,/g, '').match(/(\d+(?:\.\d+)?)/);
+  return match ? Math.max(0, Number(match[1])) : 0;
+}
+
+export function formatTaxLabel(value: string | number | null | undefined): string {
+  const raw = String(value ?? '').trim();
+  if (!raw) return '';
+  if (/%/.test(raw)) return raw;
+  const n = parseTaxPercent(raw);
+  if (!n) return '';
+  return Number.isInteger(n) ? `${n}%` : `${n}%`;
+}
 
 export function newLineDraft(partial?: Partial<QuotationLineDraft>): QuotationLineDraft {
   return {
@@ -48,10 +79,10 @@ export function newLineDraft(partial?: Partial<QuotationLineDraft>): QuotationLi
     qty_delivered: '0',
     account: 'Sales',
     account_id: null,
-    uom: 'Units',
+    uom: SALES_DEFAULT_UOM,
     unit_price: '0',
     discount: '0',
-    taxes: '0',
+    taxes: '',
     display_type: 'product',
     ...partial,
   };
@@ -84,7 +115,7 @@ export function computeLineAmounts(line: QuotationLineDraft) {
   const qty = parseFloat(line.quantity) || 0;
   const price = parseFloat(line.unit_price) || 0;
   const discount = Math.min(100, Math.max(0, parseFloat(line.discount) || 0));
-  const taxRate = Math.max(0, parseFloat(line.taxes) || 0);
+  const taxRate = Math.max(0, parseTaxPercent(line.taxes));
   const base = qty * price * (1 - discount / 100);
   const tax = base * (taxRate / 100);
   return {
@@ -155,6 +186,35 @@ export function formatMoney(value: number, currency = SALES_CURRENCY) {
     currency,
     maximumFractionDigits: 2,
   }).format(value || 0);
+}
+
+export function quotationLineDisplayDescription(
+  productName?: string | null,
+  description?: string | null
+): string {
+  const name = String(productName || '').trim();
+  const desc = String(description || '').trim();
+
+  const extractFromDump = (text: string) => {
+    const lines = text
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean);
+    const metadataCount = lines.filter((line) =>
+      /^(Product|Quantity|Weight\s*\(kg\)|CBM|UOM|HS Code|Specifications|Description|Operations notes)\s*:/i.test(
+        line
+      )
+    ).length;
+    if (metadataCount < 2) return null;
+    const productLine = lines.find((line) => /^Product\s*:/i.test(line));
+    if (productLine) {
+      const extracted = productLine.replace(/^Product\s*:\s*/i, '').trim();
+      if (extracted) return extracted;
+    }
+    return '';
+  };
+
+  return extractFromDump(desc) || extractFromDump(name) || name || desc;
 }
 
 export function formatContactAddress(parts: {

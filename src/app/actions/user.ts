@@ -18,6 +18,7 @@ import {
   buildPortalUserAuditEntries,
   type PortalUserAuditSnapshot,
 } from '@/lib/portal-user-audit';
+import { normalizeUserProfilePhone } from '@/lib/user-profile-phone';
 
 export type PortalUserRole = 'user' | 'admin';
 
@@ -732,40 +733,124 @@ export async function getOrganizationPortalUsers(organizationId?: string) {
 
 export async function getPortalUserProfile() {
   const session = await getSession();
-  if (!session || !isPortalAccountSession(session)) {
+  if (!session || !isPortalAccountSession(session) || !session.appUserId) {
     return { error: 'Unauthorized' as const };
   }
 
   const organizationId = session.organizationId;
-  if (!organizationId) {
-    return { error: 'No organization selected' as const };
-  }
-
   const supabase = await createAdminClient();
 
   let fullName = session.fullName || session.username;
-  if (session.appUserId) {
-    const { data } = await supabase
+  let phone: string | null = null;
+  const { data, error: profileError } = await supabase
+    .from('app_users')
+    .select('full_name, username, phone')
+    .eq('id', session.appUserId)
+    .maybeSingle();
+  if (profileError && String(profileError.message || '').toLowerCase().includes('phone')) {
+    const fallback = await supabase
       .from('app_users')
       .select('full_name, username')
       .eq('id', session.appUserId)
       .maybeSingle();
+    if (fallback.data?.full_name) fullName = String(fallback.data.full_name);
+  } else {
     if (data?.full_name) fullName = String(data.full_name);
+    if (data && 'phone' in data && data.phone) {
+      phone = String(data.phone).trim() || null;
+    }
   }
 
-  const { count } = await supabase
-    .from('user_organizations')
-    .select('user_id', { count: 'exact', head: true })
-    .eq('organization_id', organizationId);
+  let orgUserCount = 0;
+  if (organizationId) {
+    const { count } = await supabase
+      .from('user_organizations')
+      .select('user_id', { count: 'exact', head: true })
+      .eq('organization_id', organizationId);
+    orgUserCount = count ?? 0;
+  }
 
   return {
     profile: {
       username: session.username,
       full_name: fullName,
+      phone,
       organization_name: session.organizationName || 'Organization',
-      organization_user_count: count ?? 0,
+      organization_user_count: orgUserCount,
     },
   };
+}
+
+export async function updatePortalUserPhone(phone: string) {
+  const session = await getSession();
+  if (!session || !isPortalAccountSession(session) || !session.appUserId) {
+    return { error: 'Unauthorized' as const };
+  }
+
+  const parsed = normalizeUserProfilePhone(phone);
+  if (!parsed.ok) return { error: parsed.error };
+
+  const userId = session.appUserId;
+  const supabase = await createAdminClient();
+  const beforeSnapshot = await loadPortalUserAuditSnapshot(supabase, userId);
+
+  const { error } = await supabase
+    .from('app_users')
+    .update({ phone: parsed.value })
+    .eq('id', userId);
+
+  if (error) {
+    if (error.message.toLowerCase().includes('phone')) {
+      return { error: 'Phone number is not available on this database yet.' };
+    }
+    return { error: error.message };
+  }
+
+  // Keep sales_agents.phone_number in sync so mobile Support / CRM see the same number
+  try {
+    let agentId: string | null = null;
+
+    const byAppUser = await supabase
+      .from('sales_agents')
+      .select('id')
+      .eq('app_user_id', userId)
+      .maybeSingle();
+
+    if (byAppUser.data?.id) {
+      agentId = String(byAppUser.data.id);
+    } else if (session.username) {
+      const byUsername = await supabase
+        .from('sales_agents')
+        .select('id')
+        .ilike('username', session.username)
+        .maybeSingle();
+      if (byUsername.data?.id) {
+        agentId = String(byUsername.data.id);
+      }
+    }
+
+    if (agentId) {
+      await supabase
+        .from('sales_agents')
+        .update({ phone_number: parsed.value, updated_at: new Date().toISOString() })
+        .eq('id', agentId);
+    }
+  } catch {
+    // best-effort sync; profile phone is source of truth for Support RPC fallback
+  }
+
+  const afterSnapshot = await loadPortalUserAuditSnapshot(supabase, userId);
+  if (afterSnapshot) {
+    await writePortalUserAuditLogs(
+      supabase,
+      userId,
+      buildPortalUserAuditEntries(beforeSnapshot, afterSnapshot),
+      resolveAuditActor(session)
+    );
+  }
+
+  revalidatePath('/admin/dashboard');
+  return { success: true as const, phone: parsed.value };
 }
 
 export async function updatePortalUserPassword(password: string) {

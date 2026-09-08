@@ -79,6 +79,8 @@ export type Contact = {
 
   /** Lead channel when migrated from legacy Sales Agent leads (Meta / LinkedIn / …). */
   source?: string | null;
+  mobile_registered_at?: string | null;
+  mobile_user_id?: string | null;
   /** Original `leads.id` when this contact was created/linked by the legacy migration. */
   legacy_lead_id?: string | null;
   /** Permanent 6-digit Lead Number / Customer ID (auto-assigned; never changed). */
@@ -312,6 +314,33 @@ export async function getContacts(search?: string) {
       const retry = await fallbackQuery;
       rows = (retry.data || null) as unknown as Contact[] | null;
       error = retry.error;
+    }
+
+    // Pre-021 DBs may lack mobile_registered_at — retry without mobile columns
+    if (
+      error &&
+      (String(error.message || '').includes('mobile_registered_at') ||
+        String(error.message || '').includes('mobile_user_id') ||
+        error.code === 'PGRST204' ||
+        error.code === '42703')
+    ) {
+      const leanWithoutMobile =
+        'id, name, company_name, email, phone, country, company_type, customer_rank, vendor_rank, salesperson_id, created_by, organization_id, legacy_lead_id, source, created_at, updated_at, lead_id_formatted';
+      let fallbackQuery = supabase
+        .from('contacts')
+        .select(leanWithoutMobile)
+        .or(CONTACTS_LIST_OR_FILTER);
+      if (!('unscoped' in org)) {
+        fallbackQuery = applyOrganizationFilter(fallbackQuery, org.organizationId);
+      }
+      fallbackQuery = fallbackQuery.order('created_at', { ascending: false }).limit(500);
+      const retry = await fallbackQuery;
+      if (!retry.error && retry.data) {
+        rows = retry.data as unknown as Contact[];
+        error = null;
+      } else {
+        error = retry.error;
+      }
     }
 
     if (error && isMissingOrganizationColumnError(error)) {
@@ -736,6 +765,8 @@ const TRACKED_FIELD_LABELS: Record<string, string> = {
   fiscal_position: 'Fiscal Position',
   notes: 'Notes',
   parent_id: 'Company (Employer)',
+  salesperson_id: 'Salesperson',
+  source: 'Source',
 };
 
 async function resolveContactParentCompany(
@@ -1162,6 +1193,21 @@ export async function updateContact(input: ContactUpsertInput) {
 
     if (input.tag_ids !== undefined) {
       await replaceTagLinks(supabase, id, input.tag_ids || []);
+    }
+
+    const prevAgent = (existing as Contact).salesperson_id ?? null;
+    const nextAgent = (data as Contact).salesperson_id ?? null;
+    if (prevAgent !== nextAgent) {
+      await supabase.from('contact_sales_assignments').insert([
+        {
+          contact_id: id,
+          sales_agent_id: nextAgent,
+          previous_sales_agent_id: prevAgent,
+          assignment_type: 'manual',
+          changed_by: s.username,
+          reason: 'admin_reassignment',
+        },
+      ]);
     }
 
     // Log only the fields that actually changed

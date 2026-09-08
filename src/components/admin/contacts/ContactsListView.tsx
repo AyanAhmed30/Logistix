@@ -49,6 +49,11 @@ type Props = {
 const PAGE_SIZE = 40;
 
 type TypeFilter = "all" | "person" | "company";
+type SourceFilter = "all" | "mobile_app" | "manual";
+
+function isMobileAppContact(c: ContactWithRelations): boolean {
+  return Boolean(c.mobile_registered_at) || c.source === "mobile_app";
+}
 
 export function ContactsListView({
   onNewContact,
@@ -65,6 +70,7 @@ export function ContactsListView({
   const [contacts, setContacts] = useState<ContactWithRelations[]>(initialContacts);
   const [search, setSearch] = useState("");
   const [typeFilter, setTypeFilter] = useState<TypeFilter>("all");
+  const [sourceFilter, setSourceFilter] = useState<SourceFilter>("all");
   const [loading, setLoading] = useState(initialContacts.length === 0);
   const [page, setPage] = useState(1);
 
@@ -107,13 +113,25 @@ export function ContactsListView({
     const needle = search.trim().toLowerCase();
     return contacts.filter((c) => {
       if (typeFilter !== "all" && c.company_type !== typeFilter) return false;
+      if (sourceFilter === "mobile_app" && !isMobileAppContact(c)) return false;
+      if (sourceFilter === "manual" && isMobileAppContact(c)) return false;
       if (!needle) return true;
       const tagNames = (c.tags || []).map((t) => t.name).join(" ");
       const hay =
         `${c.lead_id_formatted || ""} ${c.name} ${c.company_name || ""} ${c.email || ""} ${c.phone || ""} ${c.country || ""} ${tagNames}`.toLowerCase();
       return hay.includes(needle);
     });
-  }, [contacts, search, typeFilter]);
+  }, [contacts, search, typeFilter, sourceFilter]);
+
+  const sourceCounts = useMemo(() => {
+    let mobile = 0;
+    let manual = 0;
+    for (const c of contacts) {
+      if (isMobileAppContact(c)) mobile += 1;
+      else manual += 1;
+    }
+    return { all: contacts.length, mobile, manual };
+  }, [contacts]);
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   const currentPage = Math.min(page, totalPages);
@@ -174,6 +192,28 @@ export function ContactsListView({
               <SelectItem value="all">All types</SelectItem>
               <SelectItem value="person">Individuals</SelectItem>
               <SelectItem value="company">Companies</SelectItem>
+            </SelectContent>
+          </Select>
+          <Select
+            value={sourceFilter}
+            onValueChange={(value) => {
+              setSourceFilter(value as SourceFilter);
+              setPage(1);
+            }}
+          >
+            <SelectTrigger className="h-9 w-[200px] bg-slate-50 border-slate-200">
+              <SelectValue placeholder="Source" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">
+                All ({sourceCounts.all})
+              </SelectItem>
+              <SelectItem value="mobile_app">
+                Mobile App Customers ({sourceCounts.mobile})
+              </SelectItem>
+              <SelectItem value="manual">
+                Manual / CRM Contacts ({sourceCounts.manual})
+              </SelectItem>
             </SelectContent>
           </Select>
         </div>
@@ -256,7 +296,14 @@ export function ContactsListView({
                     {contact.lead_id_formatted || "—"}
                   </TableCell>
                   <TableCell className="font-medium text-primary-dark">
-                    {contact.name}
+                    <div className="flex flex-col gap-0.5">
+                      <span>{contact.name}</span>
+                      {isMobileAppContact(contact) ? (
+                        <span className="inline-flex w-fit rounded px-1.5 py-0.5 text-[10px] font-medium bg-sky-50 text-sky-700 border border-sky-100">
+                          Mobile App Customer
+                        </span>
+                      ) : null}
+                    </div>
                   </TableCell>
                   <TableCell className="text-secondary-muted">
                     {contact.email || "—"}

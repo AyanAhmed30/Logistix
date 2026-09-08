@@ -6,7 +6,11 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
-import { getPortalUserProfile, updatePortalUserPassword } from "@/app/actions/user";
+import {
+  getPortalUserProfile,
+  updatePortalUserPassword,
+  updatePortalUserPhone,
+} from "@/app/actions/user";
 import { useDashboardAccess } from "@/contexts/DashboardAccessContext";
 import { useAdminOrganization } from "@/contexts/AdminOrganizationContext";
 
@@ -14,15 +18,23 @@ export function PortalUserProfilePanel() {
   const access = useDashboardAccess();
   const { organizationName, switchVersion } = useAdminOrganization();
   const [orgUserCount, setOrgUserCount] = useState<number | null>(null);
+  const [savedPhone, setSavedPhone] = useState<string | null>(null);
+  const [draftPhone, setDraftPhone] = useState("");
+  const [editingPhone, setEditingPhone] = useState(true);
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [isPending, startTransition] = useTransition();
+  const [isPhonePending, startPhoneTransition] = useTransition();
 
   useEffect(() => {
     void getPortalUserProfile().then((result) => {
       if ("error" in result && result.error) return;
       if ("profile" in result && result.profile) {
         setOrgUserCount(result.profile.organization_user_count);
+        const phone = result.profile.phone?.trim() || null;
+        setSavedPhone(phone);
+        setDraftPhone(phone || "");
+        setEditingPhone(!phone);
       }
     });
   }, [organizationName, switchVersion]);
@@ -47,6 +59,29 @@ export function PortalUserProfilePanel() {
       setPassword("");
       setConfirmPassword("");
     });
+  }
+
+  function handlePhoneSave(event: React.FormEvent) {
+    event.preventDefault();
+    if (isPhonePending) return;
+    startPhoneTransition(async () => {
+      const result = await updatePortalUserPhone(draftPhone);
+      if ("error" in result && result.error) {
+        toast.error(result.error);
+        return;
+      }
+      if ("phone" in result) {
+        setSavedPhone(result.phone);
+        setDraftPhone(result.phone);
+        setEditingPhone(false);
+        toast.success("Phone number saved");
+      }
+    });
+  }
+
+  function handlePhoneCancel() {
+    setDraftPhone(savedPhone || "");
+    setEditingPhone(!savedPhone);
   }
 
   return (
@@ -75,6 +110,65 @@ export function PortalUserProfilePanel() {
               {orgUserCount === null ? "…" : orgUserCount}
             </p>
           </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Phone Number</CardTitle>
+          <CardDescription>
+            {savedPhone && !editingPhone
+              ? "Your saved contact number."
+              : "Enter your phone number"}
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          {savedPhone && !editingPhone ? (
+            <div className="flex flex-wrap items-center justify-between gap-3 max-w-md">
+              <p className="font-medium text-primary-dark">{savedPhone}</p>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => {
+                  setDraftPhone(savedPhone);
+                  setEditingPhone(true);
+                }}
+              >
+                Edit
+              </Button>
+            </div>
+          ) : (
+            <form onSubmit={handlePhoneSave} className="grid gap-4 max-w-md">
+              <div className="space-y-2">
+                <Label htmlFor="profile-phone">Phone Number</Label>
+                <Input
+                  id="profile-phone"
+                  type="tel"
+                  inputMode="tel"
+                  autoComplete="tel"
+                  value={draftPhone}
+                  onChange={(e) => setDraftPhone(e.target.value)}
+                  placeholder="+92XXXXXXXXXX"
+                  disabled={isPhonePending}
+                />
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <Button type="submit" disabled={isPhonePending}>
+                  {isPhonePending ? "Saving..." : "Save"}
+                </Button>
+                {savedPhone ? (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    disabled={isPhonePending}
+                    onClick={handlePhoneCancel}
+                  >
+                    Cancel
+                  </Button>
+                ) : null}
+              </div>
+            </form>
+          )}
         </CardContent>
       </Card>
 

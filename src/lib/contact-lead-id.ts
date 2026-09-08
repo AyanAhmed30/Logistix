@@ -36,11 +36,11 @@ export function isMissingLeadIdColumnError(
 
 /** PostgREST/Postgres select list for contacts — excludes lead_id_formatted (loaded via RPC). */
 export const CONTACTS_ROW_SELECT =
-  'id, parent_id, contact_kind, company_type, name, company_name, job_position, title, image_url, email, phone, mobile, website, street, street2, city, state, zip, country, tax_id, company_ref, industry, salesperson_id, payment_terms, pricelist, delivery_method, customer_rank, vendor_rank, sales_payment_method, incoterm, incoterm_location, group_rfq, buyer, purchase_payment_terms, purchase_payment_method, receipt_reminder, receivable_account, payable_account, tax_settings, fiscal_position, notes, source, legacy_lead_id, is_active, organization_id, created_by, created_at, updated_at';
+  'id, parent_id, contact_kind, company_type, name, company_name, job_position, title, image_url, email, phone, mobile, website, street, street2, city, state, zip, country, tax_id, company_ref, industry, salesperson_id, payment_terms, pricelist, delivery_method, customer_rank, vendor_rank, sales_payment_method, incoterm, incoterm_location, group_rfq, buyer, purchase_payment_terms, purchase_payment_method, receipt_reminder, receivable_account, payable_account, tax_settings, fiscal_position, notes, source, mobile_registered_at, mobile_user_id, legacy_lead_id, is_active, organization_id, created_by, created_at, updated_at';
 
 /** Lean columns for Contacts list / table — keeps list loads fast. */
 export const CONTACTS_LIST_SELECT =
-  'id, name, company_name, email, phone, country, company_type, customer_rank, vendor_rank, salesperson_id, created_by, organization_id, legacy_lead_id, created_at, updated_at';
+  'id, name, company_name, email, phone, country, company_type, customer_rank, vendor_rank, salesperson_id, created_by, organization_id, legacy_lead_id, source, mobile_registered_at, created_at, updated_at';
 
 export const CONTACTS_PICKER_SELECT =
   'id, name, company_name, email, phone, city, country, company_type, customer_rank, vendor_rank, created_at, salesperson_id, created_by, legacy_lead_id';

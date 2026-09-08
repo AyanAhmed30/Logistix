@@ -780,6 +780,13 @@ export function ContactFormView({
                     </p>
                   ) : null}
 
+                  {loadedContact?.mobile_registered_at ||
+                  loadedContact?.source === "mobile_app" ? (
+                    <span className="inline-flex w-fit rounded px-2 py-0.5 text-[11px] font-medium bg-sky-50 text-sky-700 border border-sky-100">
+                      Mobile App Customer
+                    </span>
+                  ) : null}
+
                   {/* Icon rows */}
                   {/* Company (Employer) — individuals only (Odoo-style parent company link) */}
                   {form.company_type === "person" ? (

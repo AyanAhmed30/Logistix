@@ -370,7 +370,7 @@ export function AccountingAssetFormView({ assetId }: Props) {
         return;
       }
       toast.success("Depreciation schedule computed");
-      if (res.asset) setDetail(res.asset);
+      if ("asset" in res && res.asset) setDetail(res.asset);
       load();
     });
   }

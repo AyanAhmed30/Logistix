@@ -71,8 +71,9 @@ export function PortalUserProfilePanel() {
         return;
       }
       if ("phone" in result) {
-        setSavedPhone(result.phone);
-        setDraftPhone(result.phone);
+        const phone = result.phone ?? null;
+        setSavedPhone(phone);
+        setDraftPhone(phone || "");
         setEditingPhone(false);
         toast.success("Phone number saved");
       }

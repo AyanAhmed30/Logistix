@@ -318,7 +318,7 @@ export function AccountingLoanFormView({ loanId }: Props) {
         return;
       }
       toast.success("Installment schedule computed");
-      if (res.loan) setDetail(res.loan);
+      if ("loan" in res && res.loan) setDetail(res.loan);
       setTab("installments");
       load();
     });

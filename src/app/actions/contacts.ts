@@ -1194,6 +1194,7 @@ export async function updateContact(input: ContactUpsertInput) {
 
     // Transfer Contact + CRM ownership BEFORE the row update so the RPC
     // still sees the previous salesperson_id (avoids no-op / missed opp moves).
+    let omitSalespersonFromUpdate = false;
     if (prevAgent !== nextAgentFromPayload && nextAgentFromPayload) {
       const { error: transferError } = await supabase.rpc(
         'transfer_contact_to_sales_agent',
@@ -1210,13 +1211,21 @@ export async function updateContact(input: ContactUpsertInput) {
             'Failed to sync CRM ownership on salesperson change. Apply migration 028.',
         };
       }
-      // Transfer already set salesperson_id / created_by; keep other field updates
-      delete payload.salesperson_id;
+      // Transfer already set salesperson_id / created_by
+      omitSalespersonFromUpdate = true;
     }
+
+    const updateBody = omitSalespersonFromUpdate
+      ? (() => {
+          const { salesperson_id: _ignored, ...rest } = payload;
+          void _ignored;
+          return { ...rest, updated_at: new Date().toISOString() };
+        })()
+      : { ...payload, updated_at: new Date().toISOString() };
 
     let updateQuery = supabase
       .from('contacts')
-      .update({ ...payload, updated_at: new Date().toISOString() })
+      .update(updateBody)
       .eq('id', id);
     if (!('unscoped' in org)) {
       updateQuery = updateQuery.eq('organization_id', org.organizationId);

@@ -16,7 +16,7 @@ type Props = {
   children: ReactNode;
 };
 
-const SETTINGS_TABS: AdminTab[] = ["create", "organization"];
+const SETTINGS_TABS: AdminTab[] = ["create", "organization", "application-users"];
 const ORG_CREATE_HASH = "#organization-create";
 const ORG_CREATE_EVENT = "logistix:organization-create";
 const USER_CREATE_HASH = "#user-create";

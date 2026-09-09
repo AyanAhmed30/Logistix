@@ -386,7 +386,13 @@ export async function getContacts(search?: string) {
         const username = String(session.username || '').trim();
         contacts = contacts.filter((c) => {
           if (agentId && c.salesperson_id === agentId) return true;
-          if (username && c.created_by === username) return true;
+          if (
+            username &&
+            c.created_by &&
+            String(c.created_by).trim().toLowerCase() === username.toLowerCase()
+          ) {
+            return true;
+          }
           return false;
         });
       }
@@ -1180,6 +1186,34 @@ export async function updateContact(input: ContactUpsertInput) {
     }
     payload.name = displayName;
 
+    const prevAgent = (existing as Contact).salesperson_id ?? null;
+    const nextAgentFromPayload =
+      payload.salesperson_id !== undefined
+        ? ((payload.salesperson_id as string | null) ?? null)
+        : prevAgent;
+
+    // Transfer Contact + CRM ownership BEFORE the row update so the RPC
+    // still sees the previous salesperson_id (avoids no-op / missed opp moves).
+    if (prevAgent !== nextAgentFromPayload && nextAgentFromPayload) {
+      const { error: transferError } = await supabase.rpc(
+        'transfer_contact_to_sales_agent',
+        {
+          p_contact_id: id,
+          p_to_agent_id: nextAgentFromPayload,
+          p_changed_by: s.username,
+        }
+      );
+      if (transferError) {
+        return {
+          error:
+            transferError.message ||
+            'Failed to sync CRM ownership on salesperson change. Apply migration 028.',
+        };
+      }
+      // Transfer already set salesperson_id / created_by; keep other field updates
+      delete payload.salesperson_id;
+    }
+
     let updateQuery = supabase
       .from('contacts')
       .update({ ...payload, updated_at: new Date().toISOString() })
@@ -1195,9 +1229,9 @@ export async function updateContact(input: ContactUpsertInput) {
       await replaceTagLinks(supabase, id, input.tag_ids || []);
     }
 
-    const prevAgent = (existing as Contact).salesperson_id ?? null;
     const nextAgent = (data as Contact).salesperson_id ?? null;
-    if (prevAgent !== nextAgent) {
+    if (prevAgent !== nextAgent && !nextAgentFromPayload) {
+      // Cleared salesperson — record history only (no target agent to transfer to)
       await supabase.from('contact_sales_assignments').insert([
         {
           contact_id: id,
@@ -1627,7 +1661,13 @@ export async function searchCustomerContacts(
         const username = String(session.username || '').trim();
         rows = rows.filter((c) => {
           if (agentId && c.salesperson_id === agentId) return true;
-          if (username && c.created_by === username) return true;
+          if (
+            username &&
+            c.created_by &&
+            String(c.created_by).trim().toLowerCase() === username.toLowerCase()
+          ) {
+            return true;
+          }
           return false;
         });
       }

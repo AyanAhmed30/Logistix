@@ -45,6 +45,7 @@ import { AdminCalculatorPanel } from "@/components/admin/AdminCalculatorPanel";
 import { ContactsPanel } from "@/components/admin/ContactsPanel";
 import { OrganizationPanel } from "@/components/admin/OrganizationPanel";
 import { UsersManagementPanel } from "@/components/admin/UsersManagementPanel";
+import { ApplicationUsersPanel } from "@/components/admin/ApplicationUsersPanel";
 import { useDashboardAccess } from "@/contexts/DashboardAccessContext";
 import {
   canAccessAdminTab,
@@ -247,7 +248,9 @@ export function AdminUserManager({
   const isSettingsModule = activeModule === "settings";
   const isSettingsTab =
     !isPortal &&
-    (activeTab === "create" || activeTab === "organization");
+    (activeTab === "create" ||
+      activeTab === "organization" ||
+      activeTab === "application-users");
   const usesPortalModuleShell =
     isPortal &&
     (activeModule === "operations" ||
@@ -460,6 +463,8 @@ export function AdminUserManager({
           >
             {activeTab === "create" ? (
               <UsersManagementPanel />
+            ) : activeTab === "application-users" ? (
+              <ApplicationUsersPanel />
             ) : (
               <OrganizationPanel />
             )}

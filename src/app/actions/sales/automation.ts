@@ -88,13 +88,26 @@ async function resolveSalesOrgScope() {
 export async function resolveCurrentSalespersonId(): Promise<string | null> {
   const session = await getSession();
   if (!session) return null;
+  const username = String(session.username || '').trim();
+  if (!username) return null;
+
   const supabase = await createAdminClient();
-  const { data } = await supabase
+  const { data: exact } = await supabase
     .from('sales_agents')
     .select('id')
-    .eq('username', session.username)
+    .eq('username', username)
     .maybeSingle();
-  return data?.id ? String(data.id) : null;
+  if (exact?.id) return String(exact.id);
+
+  // Case-insensitive fallback (portal username vs sales_agents.username casing)
+  const { data: rows } = await supabase
+    .from('sales_agents')
+    .select('id, username')
+    .limit(500);
+  const match = (rows || []).find(
+    (r) => String(r.username || '').trim().toLowerCase() === username.toLowerCase()
+  );
+  return match?.id ? String(match.id) : null;
 }
 
 /** List reusable templates (org overrides + system defaults). */

@@ -423,17 +423,65 @@ export async function deleteSalesAgent(formData: FormData) {
 
     const supabase = await createAdminClient();
 
-    const { error } = await supabase
-      .from('sales_agents')
-      .delete()
-      .eq('id', id);
+    // Reassign assigned customers first (also enforced by DB BEFORE DELETE trigger).
+    // Uses least-loaded picker among remaining active agents; blocks delete if none.
+    let reassignedContacts = 0;
+    const { data: reassignData, error: reassignError } = await supabase.rpc(
+      'reassign_customers_before_sales_agent_delete',
+      { p_agent_id: id }
+    );
+
+    if (reassignError) {
+      const message = String(reassignError.message || '');
+      if (
+        message.includes('cannot_delete_sales_agent_no_replacement') ||
+        message.toLowerCase().includes('no other active sales agent')
+      ) {
+        return {
+          error:
+            'Cannot delete this Sales Agent because customers are still assigned and no other active Sales Agent is available. Create or activate another Sales Agent first, then try again.',
+        };
+      }
+      // If RPC missing (migration not applied), fall through to delete —
+      // trigger may still handle it once 025 is applied.
+      if (
+        !message.toLowerCase().includes('does not exist') &&
+        !message.toLowerCase().includes('could not find')
+      ) {
+        return { error: message };
+      }
+    } else if (reassignData && typeof reassignData === 'object') {
+      const payload = reassignData as { reassigned_contacts?: number };
+      reassignedContacts = Number(payload.reassigned_contacts || 0);
+    }
+
+    const { error } = await supabase.from('sales_agents').delete().eq('id', id);
 
     if (error) {
-      return { error: error.message };
+      const message = String(error.message || '');
+      if (
+        message.includes('cannot_delete_sales_agent_no_replacement') ||
+        message.toLowerCase().includes('no other active sales agent')
+      ) {
+        return {
+          error:
+            'Cannot delete this Sales Agent because customers are still assigned and no other active Sales Agent is available. Create or activate another Sales Agent first, then try again.',
+        };
+      }
+      if (message.toLowerCase().includes('restrict') || error.code === '23503') {
+        return {
+          error:
+            'Cannot delete this Sales Agent because related records still reference them. Reassign or clear those records first.',
+        };
+      }
+      return { error: message };
     }
 
     revalidatePath('/admin/dashboard');
-    return { success: true };
+    return {
+      success: true as const,
+      reassignedContacts,
+    };
   } catch (err) {
     return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };
   }

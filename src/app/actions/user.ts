@@ -1176,11 +1176,86 @@ export async function deletePortalUser(formData: FormData) {
     const belongs = await userBelongsToOrganization(supabase, id, auth.organizationId);
     if (!belongs) return { error: 'Access Denied' };
   }
+
+  // Resolve linked Sales Agent BEFORE deleting app_users (customers live on sales_agents.id)
+  const { data: portalUser } = await supabase
+    .from('app_users')
+    .select('id, username, full_name')
+    .eq('id', id)
+    .maybeSingle();
+
+  const linkedAgentIds = new Set<string>();
+
+  const { data: byAppUser } = await supabase
+    .from('sales_agents')
+    .select('id')
+    .eq('app_user_id', id);
+  for (const row of byAppUser || []) {
+    if (row?.id) linkedAgentIds.add(String(row.id));
+  }
+
+  const username = String(portalUser?.username || '').trim();
+  if (username) {
+    const { data: byUsername } = await supabase
+      .from('sales_agents')
+      .select('id')
+      .ilike('username', username);
+    for (const row of byUsername || []) {
+      if (row?.id) linkedAgentIds.add(String(row.id));
+    }
+  }
+
+  for (const agentId of linkedAgentIds) {
+    const { error: reassignError } = await supabase.rpc(
+      'reassign_customers_before_sales_agent_delete',
+      { p_agent_id: agentId }
+    );
+    if (reassignError) {
+      const message = String(reassignError.message || '');
+      if (
+        message.includes('cannot_delete_sales_agent_no_replacement') ||
+        message.toLowerCase().includes('no other active sales agent')
+      ) {
+        return {
+          error:
+            'Cannot delete this user: they are a Sales Agent with assigned customers, and no other active Sales Agent is available to receive them. Create/activate another Sales Agent first.',
+        };
+      }
+      if (
+        !message.toLowerCase().includes('does not exist') &&
+        !message.toLowerCase().includes('could not find')
+      ) {
+        return { error: `Failed to reassign customers: ${message}` };
+      }
+    }
+
+    const { error: agentDeleteError } = await supabase
+      .from('sales_agents')
+      .delete()
+      .eq('id', agentId);
+
+    if (agentDeleteError) {
+      const message = String(agentDeleteError.message || '');
+      if (
+        message.includes('cannot_delete_sales_agent_no_replacement') ||
+        message.toLowerCase().includes('no other active sales agent')
+      ) {
+        return {
+          error:
+            'Cannot delete this user: they are a Sales Agent with assigned customers, and no other active Sales Agent is available to receive them. Create/activate another Sales Agent first.',
+        };
+      }
+      return {
+        error: `Failed to remove linked Sales Agent account: ${message}`,
+      };
+    }
+  }
+
   const { error } = await supabase.from('app_users').delete().eq('id', id);
   if (error) return { error: error.message };
 
   revalidatePath('/admin/dashboard');
-  return { success: true };
+  return { success: true as const, removedSalesAgents: linkedAgentIds.size };
 }
 
 /** @deprecated Prefer getPortalUsers — kept for AdminDashboardShell compatibility */

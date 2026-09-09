@@ -188,9 +188,18 @@ export function SalesAgentPanel({ initialCreateOpen = false, onCreateOpenChange 
         });
         return;
       }
-      toast.success("Sales agent deleted successfully", {
-        className: "bg-green-400 text-white border-green-400",
-      });
+      const moved =
+        result && "reassignedContacts" in result
+          ? Number(result.reassignedContacts || 0)
+          : 0;
+      toast.success(
+        moved > 0
+          ? `Sales agent deleted. ${moved} customer${moved === 1 ? "" : "s"} reassigned automatically.`
+          : "Sales agent deleted successfully",
+        {
+          className: "bg-green-400 text-white border-green-400",
+        }
+      );
       setDeleteOpen(false);
       setDeleteSalesAgentTarget(null);
       router.refresh();

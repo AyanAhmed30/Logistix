@@ -19,6 +19,7 @@ import {
   Warehouse,
   Target,
   Users,
+  Smartphone,
 } from "lucide-react";
 
 export type AdminTab =
@@ -38,7 +39,8 @@ export type AdminTab =
   | "inquiry-confirmation"
   | "calculator-config"
   | "contacts"
-  | "organization";
+  | "organization"
+  | "application-users";
 
 export type AdminModule =
   | "contacts"
@@ -215,6 +217,13 @@ export const ADMIN_SIDEBAR_ITEMS: AdminSidebarItem[] = [
     label: "Organizations",
     title: "Organizations / Companies",
     icon: Building2,
+    module: "settings",
+  },
+  {
+    tab: "application-users",
+    label: "Application Users",
+    title: "Mobile application customers",
+    icon: Smartphone,
     module: "settings",
   },
 ];

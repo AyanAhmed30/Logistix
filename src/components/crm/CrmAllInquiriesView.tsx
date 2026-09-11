@@ -92,7 +92,7 @@ export function CrmAllInquiriesView() {
     const q = searchQuery.trim().toLowerCase();
     if (!q) return rows;
     return rows.filter((row) =>
-      [row.product_name, row.customer_name, row.lead_number, row.workflow.label, row.quantity]
+      [row.product_name, row.customer_name, row.lead_number, row.inquiry_reference, row.workflow.label, row.quantity]
         .join(" ")
         .toLowerCase()
         .includes(q)
@@ -123,6 +123,7 @@ export function CrmAllInquiriesView() {
               <TableHeader>
                 <TableRow className="bg-slate-50/80">
                   <TableHead>Inquiry</TableHead>
+                  <TableHead>Inquiry Ref</TableHead>
                   <TableHead>Customer</TableHead>
                   <TableHead>Lead Number</TableHead>
                   <TableHead className="hidden sm:table-cell">Sent</TableHead>
@@ -152,6 +153,9 @@ export function CrmAllInquiriesView() {
                         <ClipboardList className="h-4 w-4 text-[#017e84] shrink-0" />
                         <span className="truncate">{row.product_name || "Inquiry"}</span>
                       </div>
+                    </TableCell>
+                    <TableCell className="font-mono text-sm text-secondary-muted">
+                      {row.inquiry_reference || "—"}
                     </TableCell>
                     <TableCell className="text-secondary-muted">{row.customer_name}</TableCell>
                     <TableCell className="font-mono text-sm text-secondary-muted">

@@ -64,6 +64,8 @@ export function CrmShell({ access, children }: Props) {
   const isOpportunityForm =
     pathname.startsWith("/crm/opportunities/") ||
     pathname === "/crm/opportunities/new";
+  const isOpportunityInquiry =
+    pathname.startsWith("/crm/opportunities/") && pathname.includes("/inquiry");
 
   useEffect(() => {
     invalidateCrmClientCache();
@@ -72,10 +74,14 @@ export function CrmShell({ access, children }: Props) {
   }, [switchVersion]);
 
   useEffect(() => {
+    if (isOpportunityInquiry) {
+      setNavigating(false);
+      return;
+    }
     setNavigating(true);
     const id = window.setTimeout(() => setNavigating(false), 400);
     return () => window.clearTimeout(id);
-  }, [pathname]);
+  }, [pathname, isOpportunityInquiry]);
 
   useEffect(() => {
     setMobileNavOpen(false);

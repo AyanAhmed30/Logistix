@@ -499,21 +499,19 @@ export async function deleteQuotation(id: string) {
   }
 }
 
-export async function sendQuotation(
-  id: string,
-  messageData?: {
-    phone_number?: string;
-    whatsapp_message?: string;
-    pdf_base64?: string;
-    pdf_filename?: string;
-  }
-) {
+export async function sendQuotation(formData: FormData) {
   try {
     const session = await getSession();
     ensureAdminOrSalesAgent(session);
     if (!session) {
       return { error: 'Unauthorized' };
     }
+
+    const id = String(formData.get('id') || '').trim();
+    const phone_number = String(formData.get('phone_number') || '').trim();
+    const whatsapp_message = String(formData.get('whatsapp_message') || '').trim();
+    const pdf_filename =
+      String(formData.get('pdf_filename') || 'Quotation.pdf').trim() || 'Quotation.pdf';
 
     if (!id) {
       return { error: 'Quotation id is required' };
@@ -537,13 +535,18 @@ export async function sendQuotation(
     let whatsappMediaId: string | null = null;
     let sendMethod = 'whatsapp_web';
 
-    if (messageData?.phone_number && messageData?.whatsapp_message && messageData?.pdf_base64) {
-      const pdfBuffer = Buffer.from(messageData.pdf_base64, 'base64');
+    const pdfEntry = formData.get('pdf');
+    const pdfBuffer =
+      pdfEntry instanceof Blob && pdfEntry.size > 0
+        ? Buffer.from(await pdfEntry.arrayBuffer())
+        : null;
+
+    if (phone_number && whatsapp_message && pdfBuffer) {
       const whatsappResult = await sendWhatsAppDocument(
-        messageData.phone_number.trim(),
+        phone_number,
         pdfBuffer,
-        (messageData.pdf_filename || 'Quotation.pdf').trim(),
-        messageData.whatsapp_message.trim()
+        pdf_filename,
+        whatsapp_message
       );
 
       if (whatsappResult.useWebFallback) {
@@ -592,11 +595,11 @@ export async function sendQuotation(
       {
         action: 'Send Quotation via WhatsApp',
         send_method: sendMethod,
-        phone_number: messageData?.phone_number || null,
-        whatsapp_message: messageData?.whatsapp_message || null,
+        phone_number: phone_number || null,
+        whatsapp_message: whatsapp_message || null,
         whatsapp_message_id: whatsappMessageId,
         whatsapp_media_id: whatsappMediaId,
-        pdf_filename: messageData?.pdf_filename || null,
+        pdf_filename: pdf_filename || null,
       }
     );
 
@@ -617,14 +620,17 @@ export async function sendInquiryQuotationDocument(formData: FormData): Promise<
 
     const phone_number = String(formData.get('phone_number') || '').trim();
     const whatsapp_message = String(formData.get('whatsapp_message') || '').trim();
-    const pdf_base64 = String(formData.get('pdf_base64') || '').trim();
     const pdf_filename = String(formData.get('pdf_filename') || 'Quotation.pdf').trim() || 'Quotation.pdf';
+    const pdfEntry = formData.get('pdf');
+    const pdfBuffer =
+      pdfEntry instanceof Blob && pdfEntry.size > 0
+        ? Buffer.from(await pdfEntry.arrayBuffer())
+        : null;
 
-    if (!phone_number || !whatsapp_message || !pdf_base64) {
+    if (!phone_number || !whatsapp_message || !pdfBuffer) {
       return { error: 'Missing required WhatsApp message or PDF payload' };
     }
 
-    const pdfBuffer = Buffer.from(pdf_base64, 'base64');
     const whatsappResult = await sendWhatsAppDocument(
       phone_number,
       pdfBuffer,

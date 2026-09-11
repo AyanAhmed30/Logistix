@@ -38,6 +38,7 @@ export type CrmOpportunityInquiryBootstrap = {
     salesperson_name: string | null;
     organization_id: string;
     source: string | null;
+    lead_inquiry_id: string | null;
   };
   lead: Lead;
   inquiries: LeadInquiry[];
@@ -65,6 +66,7 @@ type OpportunityInquiryContext =
         salesperson_id: string | null;
         organization_id: string;
         salesperson_name: string | null;
+        lead_inquiry_id: string | null;
       };
     }
   | { error: string };
@@ -81,8 +83,7 @@ async function loadOpportunityContext(
     .select(
       `
       id, name, stage_id, contact_id, contact_person_id,
-      email, phone, mobile, source, salesperson_id, organization_id,
-      crm_pipeline_stages ( name, is_won, is_lost )
+      email, phone, mobile, source, salesperson_id, organization_id, lead_inquiry_id
     `
     )
     .eq('id', opportunityId);
@@ -91,16 +92,32 @@ async function loadOpportunityContext(
     query = query.eq('organization_id', scope.organizationId);
   }
 
-  const { data, error } = await query.maybeSingle();
+  let { data, error } = await query.maybeSingle();
+  if (error && /lead_inquiry_id|column/i.test(error.message)) {
+    const fallback = supabase
+      .from('crm_opportunities')
+      .select(
+        `
+        id, name, stage_id, contact_id, contact_person_id,
+        email, phone, mobile, source, salesperson_id, organization_id
+      `
+      )
+      .eq('id', opportunityId);
+    const retry = !scope.isGlobalAdminView
+      ? await fallback.eq('organization_id', scope.organizationId).maybeSingle()
+      : await fallback.maybeSingle();
+    data = retry.data as typeof data;
+    error = retry.error;
+  }
   if (error) return { error: error.message || 'Failed to load opportunity.' };
   if (!data) return { error: 'Opportunity not found.' };
 
-  const stageRaw = data.crm_pipeline_stages as
-    | { name?: string; is_won?: boolean; is_lost?: boolean }
-    | { name?: string; is_won?: boolean; is_lost?: boolean }[]
-    | null;
-  const stage = Array.isArray(stageRaw) ? stageRaw[0] : stageRaw;
-  const stageName = String(stage?.name || '');
+  const { data: stageRow } = await supabase
+    .from('crm_pipeline_stages')
+    .select('name, is_won, is_lost')
+    .eq('id', data.stage_id)
+    .maybeSingle();
+  const stageName = String(stageRow?.name || '');
 
   let customerName: string | null = null;
   let contactPersonName: string | null = null;
@@ -157,8 +174,8 @@ async function loadOpportunityContext(
       id: String(data.id),
       name: String(data.name),
       stage_name: stageName,
-      stage_is_won: Boolean(stage?.is_won),
-      stage_is_lost: Boolean(stage?.is_lost),
+      stage_is_won: Boolean(stageRow?.is_won),
+      stage_is_lost: Boolean(stageRow?.is_lost),
       contact_id: data.contact_id ? String(data.contact_id) : null,
       customer_name: customerName,
       contact_person_name: contactPersonName,
@@ -169,8 +186,30 @@ async function loadOpportunityContext(
       salesperson_id: data.salesperson_id ? String(data.salesperson_id) : null,
       organization_id: String(data.organization_id),
       salesperson_name: salespersonName,
+      lead_inquiry_id: (data as { lead_inquiry_id?: string | null }).lead_inquiry_id
+        ? String((data as { lead_inquiry_id?: string }).lead_inquiry_id)
+        : null,
     },
   };
+}
+
+function inquiriesForCrmOpportunity(
+  inquiries: LeadInquiry[],
+  opportunityId: string,
+  leadInquiryId: string | null
+): LeadInquiry[] {
+  const visible = inquiries.filter((inq) => String(inq.status || '').toLowerCase() !== 'draft');
+  const bound = visible.filter((inq) => {
+    if (leadInquiryId && inq.id === leadInquiryId) return true;
+    if (inq.crm_opportunity_id && String(inq.crm_opportunity_id) === opportunityId) {
+      return true;
+    }
+    return false;
+  });
+  if (bound.length > 0) return bound;
+  const anyLinked = visible.some((inq) => Boolean(inq.crm_opportunity_id));
+  if (!leadInquiryId && !anyLinked) return visible;
+  return bound;
 }
 
 function mapLeadRow(row: Record<string, unknown>): Lead {
@@ -232,18 +271,48 @@ async function resolveLeadForCrmOpportunityWithContext(
   const { supabase, opportunity, scope } = ctx;
 
   const trySelectLead = async (leadId: string) => {
-    const { data } = await supabase
+    const withBridge = await supabase
       .from('leads')
       .select(
         'id, lead_id_formatted, name, number, source, status, sales_agent_id, created_by_sales_agent_id, transferred_from_sales_agent_id, transferred_at, converted, created_at, updated_at, contact_id, crm_opportunity_id'
       )
       .eq('id', leadId)
       .maybeSingle();
-    return data as Record<string, unknown> | null;
+    if (!withBridge.error) return (withBridge.data as Record<string, unknown> | null);
+    if (!/crm_opportunity_id|column/i.test(withBridge.error.message)) return null;
+    const fallback = await supabase
+      .from('leads')
+      .select(
+        'id, lead_id_formatted, name, number, source, status, sales_agent_id, created_by_sales_agent_id, transferred_from_sales_agent_id, transferred_at, converted, created_at, updated_at, contact_id'
+      )
+      .eq('id', leadId)
+      .maybeSingle();
+    return (fallback.data as Record<string, unknown> | null) || null;
   };
 
   const leadSelect =
     'id, lead_id_formatted, name, number, source, status, sales_agent_id, created_by_sales_agent_id, transferred_from_sales_agent_id, transferred_at, converted, created_at, updated_at, contact_id, crm_opportunity_id';
+
+  // Prefer the lead that owns this opportunity's bound inquiry
+  if (opportunity.lead_inquiry_id) {
+    const { data: inquiryLead } = await supabase
+      .from('lead_inquiries')
+      .select('lead_id')
+      .eq('id', opportunity.lead_inquiry_id)
+      .maybeSingle();
+    if (inquiryLead?.lead_id) {
+      const bound = await trySelectLead(String(inquiryLead.lead_id));
+      if (bound) {
+        return {
+          lead: await syncLeadCustomerIdFromContact(
+            supabase,
+            bound,
+            opportunity.contact_id
+          ),
+        };
+      }
+    }
+  }
 
   const { data: byOpp } = await supabase
     .from('leads')
@@ -412,7 +481,11 @@ export async function getCrmOpportunityInquiryBootstrap(
   if (!access.allowed) return { error: access.error || 'Unauthorized' };
   if ('error' in listed) return { error: listed.error };
 
-  const inquiries = listed.inquiries || [];
+  const inquiries = inquiriesForCrmOpportunity(
+    listed.inquiries || [],
+    opportunityId,
+    ctx.opportunity.lead_inquiry_id
+  );
   const approvedInquiryId =
     inquiries.find((inq) => inq.approval_status === 'approved')?.id || null;
 
@@ -432,6 +505,7 @@ export async function getCrmOpportunityInquiryBootstrap(
         salesperson_name: ctx.opportunity.salesperson_name,
         organization_id: ctx.opportunity.organization_id,
         source: ctx.opportunity.source,
+        lead_inquiry_id: ctx.opportunity.lead_inquiry_id,
       },
       lead: leadResult.lead,
       inquiries,
@@ -451,13 +525,16 @@ export async function getCrmOpportunityInquirySummary(
   const leadId = 'lead' in leadResult ? leadResult.lead.id : null;
 
   const supabase = await createAdminClient();
+  const ctx = await loadOpportunityContext(opportunityId);
+  const leadInquiryId = 'opportunity' in ctx ? ctx.opportunity.lead_inquiry_id : null;
+
   let query = supabase
     .from('lead_inquiries')
     .select('id, status, approval_status, product_name, sent_at, created_at')
     .order('created_at', { ascending: false });
 
-  if (leadId) {
-    query = query.or(`crm_opportunity_id.eq.${opportunityId},lead_id.eq.${leadId}`);
+  if (leadInquiryId) {
+    query = query.eq('id', leadInquiryId);
   } else {
     query = query.eq('crm_opportunity_id', opportunityId);
   }

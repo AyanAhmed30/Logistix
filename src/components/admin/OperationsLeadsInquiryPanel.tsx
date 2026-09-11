@@ -17,6 +17,7 @@ import {
   saveInquiryCalculatorPayload,
   getLeadChatMessages,
   sendLeadChatMessage,
+  raiseInquiryFlag,
   type LeadInquiryWithLead,
   type InquiryLog,
   type LeadChatMessage,
@@ -33,6 +34,8 @@ import {
   type InquiryConfirmation,
 } from "@/app/actions/inquiry_confirmations";
 import { InquiryAttachmentList } from "@/components/inquiry/InquiryAttachmentList";
+import { InquiryFlagMessages } from "@/components/inquiry/InquiryFlagMessages";
+import { inquiryHasFlag } from "@/lib/inquiry-flags";
 import { InquiryCalculatorSection } from "@/components/admin/InquiryCalculatorSection";
 import { EstimatedDutiesAndTaxesBlock } from "@/components/admin/EstimatedDutiesAndTaxesBlock";
 import { collectInquiryAttachmentUrls, classifyInquiryAttachment } from "@/lib/inquiry-attachments";
@@ -100,6 +103,7 @@ import {
   Save,
   Plus,
   Download,
+  Flag,
 } from "lucide-react";
 
 // ─── Helpers ─────────────────────────────────────────────────────────
@@ -271,6 +275,10 @@ export function OperationsLeadsInquiryPanel({
     title: string;
     kind?: "image" | "pdf";
   } | null>(null);
+  const [flagDialogOpen, setFlagDialogOpen] = useState(false);
+  const [flagMessage, setFlagMessage] = useState("");
+  const [flagError, setFlagError] = useState<string | null>(null);
+  const [isSendingFlag, setIsSendingFlag] = useState(false);
 
   // Duty calculator state (Operations detail view)
   const [calculators, setCalculators] = useState<Record<string, string>[]>(() => [
@@ -858,6 +866,48 @@ export function OperationsLeadsInquiryPanel({
       toast.error("Failed to delete inquiry.");
     } finally {
       setIsDeleting(false);
+    }
+  }
+
+  async function handleRaiseFlag() {
+    if (!selectedInquiry || isSendingFlag) return;
+    const text = flagMessage.trim();
+    if (!text) {
+      setFlagError("Enter a flag message.");
+      toast.error("Enter a flag message.");
+      return;
+    }
+    setFlagError(null);
+    setIsSendingFlag(true);
+    try {
+      const result = await raiseInquiryFlag(selectedInquiry.id, text);
+      if ("error" in result && result.error) {
+        setFlagError(result.error);
+        toast.error(result.error);
+        return;
+      }
+      if ("flag" in result && result.flag) {
+        const saved = result.flag;
+        setSelectedInquiry((prev) =>
+          prev && prev.id === selectedInquiry.id
+            ? { ...prev, inquiry_flags: [saved, ...(prev.inquiry_flags || [])] }
+            : prev
+        );
+        setInquiries((prev) =>
+          prev.map((row) =>
+            row.id === selectedInquiry.id ? { ...row, inquiry_flags: [saved] } : row
+          )
+        );
+        invalidateCachedOperationsBootstrap();
+        setFlagMessage("");
+        setFlagDialogOpen(false);
+        toast.success("Flag sent to Sales.");
+      }
+    } catch {
+      setFlagError("Failed to send flag.");
+      toast.error("Failed to send flag.");
+    } finally {
+      setIsSendingFlag(false);
     }
   }
 
@@ -1510,6 +1560,19 @@ export function OperationsLeadsInquiryPanel({
             })()}
             {!isEditing && (
               <>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => {
+                    setFlagMessage("");
+                    setFlagError(null);
+                    setFlagDialogOpen(true);
+                  }}
+                  className="gap-1"
+                >
+                  <Flag className="h-3.5 w-3.5" />
+                  Raise a Flag
+                </Button>
                 <Button size="sm" variant="outline" onClick={() => startEdit(inq)} className="gap-1">
                   <Pencil className="h-3.5 w-3.5" />
                   Edit
@@ -1540,8 +1603,15 @@ export function OperationsLeadsInquiryPanel({
           <div className="xl:col-span-2">
             <Card className="border shadow-sm">
               <CardContent className="p-6 space-y-5">
+            <InquiryFlagMessages flags={inq.inquiry_flags} />
             {/* Lead Info Grid */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-3">
+              <div>
+                <label className="text-xs text-slate-500 font-medium">Inquiry Reference</label>
+                <div className="font-mono font-bold text-primary-accent mt-0.5">
+                  {inq.inquiry_reference || "—"}
+                </div>
+              </div>
               <div>
                 <label className="text-xs text-slate-500 font-medium">Lead Number</label>
                 <div className="font-mono font-bold text-primary-accent mt-0.5">
@@ -2448,6 +2518,55 @@ export function OperationsLeadsInquiryPanel({
           </DialogContent>
         </Dialog>
 
+        <Dialog
+          open={flagDialogOpen}
+          onOpenChange={(open) => {
+            if (isSendingFlag) return;
+            setFlagDialogOpen(open);
+            if (!open) setFlagMessage("");
+          }}
+        >
+          <DialogContent className="sm:max-w-md">
+            <DialogHeader>
+              <DialogTitle>Raise a Flag</DialogTitle>
+              <DialogDescription>
+                Describe the issue. Sales will be notified and can open this same inquiry to see your message.
+              </DialogDescription>
+            </DialogHeader>
+            <Textarea
+              value={flagMessage}
+              onChange={(e) => setFlagMessage(e.target.value)}
+              placeholder="Type the issue or message for Sales…"
+              rows={5}
+              disabled={isSendingFlag}
+            />
+            {flagError ? <p className="text-sm text-red-600">{flagError}</p> : null}
+            <DialogFooter>
+              <Button
+                type="button"
+                variant="outline"
+                disabled={isSendingFlag}
+                onClick={() => {
+                  setFlagDialogOpen(false);
+                  setFlagMessage("");
+                  setFlagError(null);
+                }}
+              >
+                Cancel
+              </Button>
+              <Button
+                type="button"
+                data-testid="send-inquiry-flag"
+                onClick={() => void handleRaiseFlag()}
+                disabled={isSendingFlag}
+              >
+                {isSendingFlag ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <Send className="h-4 w-4 mr-1" />}
+                {isSendingFlag ? "Sending..." : "Send"}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
         {/* ═══════════════════════════════════════════════════════════ */}
         {/*  CONFIRMATION HISTORY                                      */}
         {/* ═══════════════════════════════════════════════════════════ */}
@@ -2566,6 +2685,7 @@ export function OperationsLeadsInquiryPanel({
                 <TableHeader>
                   <TableRow className="bg-slate-50">
                     <TableHead className="font-semibold">Lead #</TableHead>
+                    <TableHead className="font-semibold">Inquiry Ref</TableHead>
                     <TableHead className="font-semibold">Lead Name</TableHead>
                     <TableHead className="font-semibold">Product Name</TableHead>
                     <TableHead className="font-semibold">Sales Agent</TableHead>
@@ -2584,6 +2704,9 @@ export function OperationsLeadsInquiryPanel({
                       <TableCell className="font-mono text-xs font-semibold text-primary-accent">
                         {inquiry.leads?.lead_id_formatted ? `#${inquiry.leads.lead_id_formatted}` : "-"}
                       </TableCell>
+                      <TableCell className="font-mono text-xs font-semibold text-slate-700">
+                        {inquiry.inquiry_reference || "—"}
+                      </TableCell>
                       <TableCell className="font-semibold text-teal-700">
                         {inquiry.leads?.name || "Unknown"}
                       </TableCell>
@@ -2596,20 +2719,26 @@ export function OperationsLeadsInquiryPanel({
                       <TableCell>
                         {(() => {
                           const confStatus = getLatestConfirmationStatus(inquiry);
-                          if (confStatus) {
-                            return (
-                              <div className="flex items-center gap-1.5">
-                                {confirmationStatusIcon(confStatus)}
-                                <Badge variant="outline" className={`text-xs ${statusColor(confStatus)}`}>
-                                  {formatStatus(confStatus)}
-                                </Badge>
-                              </div>
-                            );
-                          }
                           return (
-                            <Badge variant="outline" className="text-xs bg-slate-50 text-slate-500 border-slate-300">
-                              Not Submitted
-                            </Badge>
+                            <div className="flex flex-col items-start gap-1">
+                              {confStatus ? (
+                                <div className="flex items-center gap-1.5">
+                                  {confirmationStatusIcon(confStatus)}
+                                  <Badge variant="outline" className={`text-xs ${statusColor(confStatus)}`}>
+                                    {formatStatus(confStatus)}
+                                  </Badge>
+                                </div>
+                              ) : (
+                                <Badge variant="outline" className="text-xs bg-slate-50 text-slate-500 border-slate-300">
+                                  Not Submitted
+                                </Badge>
+                              )}
+                              {inquiryHasFlag(inquiry.inquiry_flags) ? (
+                                <Badge variant="outline" className="text-xs bg-amber-50 text-amber-800 border-amber-300">
+                                  Flag Raised
+                                </Badge>
+                              ) : null}
+                            </div>
                           );
                         })()}
                       </TableCell>

@@ -55,8 +55,15 @@ begin
       'approved',
       'rejected',
       'lead_transferred',
+      'customer_submitted',
       'quotation_sent_to_customer',
-      'quotation_counter_offer'
+      'quotation_negotiation_request',
+      'quotation_counter_offer',
+      'quotation_customer_accepted',
+      'quotation_customer_declined',
+      'customer_requested_negotiation',
+      'customer_accepted_quotation',
+      'customer_declined_quotation'
     ])
   ) s;
 
@@ -97,7 +104,7 @@ begin
     where sender_role is not null
       and btrim(sender_role) <> ''
     union
-    select unnest(array['sales_agent', 'operations', 'admin', 'system'])
+    select unnest(array['sales_agent', 'operations', 'admin', 'system', 'customer'])
   ) s;
 
   execute format(

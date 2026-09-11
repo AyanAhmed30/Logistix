@@ -89,7 +89,11 @@ function OpportunityCard({
 }: {
   opportunity: CrmOpportunityCard;
   onOpen: (id: string) => void;
-  onSendInquiry: (id: string) => void;
+  onSendInquiry: (
+    id: string,
+    tab?: "create" | "view",
+    inquiryId?: string | null
+  ) => void;
   sendingInquiry?: boolean;
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
@@ -143,7 +147,23 @@ function OpportunityCard({
             <p className="text-[11px] text-slate-400 truncate">{createdLabel}</p>
           ) : null}
           {showSendInquiry ? (
-            <div className="pt-2">
+            <div className="pt-2 space-y-1.5">
+              {opportunity.lead_inquiry_id ? (
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  disabled={sendingInquiry}
+                  className="h-7 w-full text-xs border-[#017e84] text-[#017e84] hover:bg-[#017e84]/5 disabled:opacity-70"
+                  onPointerDown={(e) => e.stopPropagation()}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onSendInquiry(opportunity.id, "view", opportunity.lead_inquiry_id);
+                  }}
+                >
+                  View Inquiry
+                </Button>
+              ) : null}
               <Button
                 type="button"
                 size="sm"
@@ -152,7 +172,11 @@ function OpportunityCard({
                 onPointerDown={(e) => e.stopPropagation()}
                 onClick={(e) => {
                   e.stopPropagation();
-                  onSendInquiry(opportunity.id);
+                  onSendInquiry(
+                    opportunity.id,
+                    opportunity.lead_inquiry_id ? "view" : "create",
+                    opportunity.lead_inquiry_id
+                  );
                 }}
               >
                 {sendingInquiry ? (
@@ -161,6 +185,22 @@ function OpportunityCard({
                   <Send className="h-3 w-3 mr-1.5" />
                 )}
                 {sendingInquiry ? "Opening…" : "Send Inquiry"}
+              </Button>
+            </div>
+          ) : opportunity.lead_inquiry_id ? (
+            <div className="pt-2">
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                className="h-7 w-full text-xs border-[#017e84] text-[#017e84] hover:bg-[#017e84]/5"
+                onPointerDown={(e) => e.stopPropagation()}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onSendInquiry(opportunity.id, "view", opportunity.lead_inquiry_id);
+                }}
+              >
+                View Inquiry
               </Button>
             </div>
           ) : null}
@@ -188,7 +228,11 @@ function StageColumn({
   stage: CrmPipelineStage;
   opportunities: CrmOpportunityCard[];
   onOpenOpportunity: (id: string) => void;
-  onSendInquiry: (id: string) => void;
+  onSendInquiry: (
+    id: string,
+    tab?: "create" | "view",
+    inquiryId?: string | null
+  ) => void;
   sendingInquiryId?: string | null;
   onToggleFold: (stage: CrmPipelineStage) => void;
   isGlobalAdminView: boolean;
@@ -669,10 +713,10 @@ export function CrmPipelineView() {
                 stage={stage}
                 opportunities={opportunities}
                 onOpenOpportunity={(id) => router.push(`/crm/opportunities/${id}`)}
-                onSendInquiry={(id) => {
+                onSendInquiry={(id, tab, inquiryId) => {
                   if (sendingInquiryId) return;
                   setSendingInquiryId(id);
-                  router.push(crmOpportunityInquiryUrl(id, "create"));
+                  router.push(crmOpportunityInquiryUrl(id, tab || "create", inquiryId));
                 }}
                 sendingInquiryId={sendingInquiryId}
                 onToggleFold={handleToggleFold}

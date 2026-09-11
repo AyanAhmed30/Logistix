@@ -972,26 +972,7 @@ export function SalesQuotationFormView({
 
       setPdfBusy(true);
       try {
-        const payloadRes = await getSalesQuotationPdfPayload(id);
-        if ("error" in payloadRes && payloadRes.error) {
-          toast.error(payloadRes.error);
-          return;
-        }
-        if (!("payload" in payloadRes) || !payloadRes.payload) {
-          toast.error("Failed to build quotation PDF");
-          return;
-        }
-
-        // Same PDF generator as Download PDF — store that artifact for the customer
-        const generated = await generateSalesQuotationPdf(payloadRes.payload, {
-          silent: true,
-        });
-        if (!generated?.dataUrl) {
-          toast.error("PDF generation failed");
-          return;
-        }
-
-        const result = await sendSalesQuotationToCustomer(id, generated.dataUrl);
+        const result = await sendSalesQuotationToCustomer(id);
         if ("error" in result) {
           toast.error(result.error);
           return;

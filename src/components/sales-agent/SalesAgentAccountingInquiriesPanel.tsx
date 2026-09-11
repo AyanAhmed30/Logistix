@@ -418,15 +418,22 @@ export function SalesAgentAccountingInquiriesPanel() {
         return;
       }
 
-      // Send using existing sendQuotation flow so it updates status/logs consistently
       const formattedPhone = formatPhoneForWhatsApp(phoneNumber);
 
-      const sendResult = await sendQuotation(quotationId, {
-        phone_number: formattedPhone,
-        whatsapp_message: message,
-        pdf_base64: pdfBase64,
-        pdf_filename: filename,
-      });
+      const sendForm = new FormData();
+      sendForm.append('id', quotationId);
+      sendForm.append('phone_number', formattedPhone);
+      sendForm.append('whatsapp_message', message);
+      sendForm.append('pdf_filename', filename);
+      const pdfBinary = atob(pdfBase64);
+      const pdfBytes = new Uint8Array(pdfBinary.length);
+      for (let i = 0; i < pdfBinary.length; i++) pdfBytes[i] = pdfBinary.charCodeAt(i);
+      sendForm.append(
+        'pdf',
+        new File([pdfBytes], filename, { type: 'application/pdf' })
+      );
+
+      const sendResult = await sendQuotation(sendForm);
 
       if ('error' in sendResult) {
         toast.error(sendResult.error || 'Failed to send quotation');

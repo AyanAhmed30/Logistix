@@ -626,7 +626,10 @@ export function LeadInquiryWorkspace({
       }
 
       try {
-        const inquiryListResult = await getInquiriesForLead(lead.id);
+        const inquiryListResult = await getInquiriesForLead(
+          lead.id,
+          crmOpportunityId ? { crmOpportunityId } : undefined
+        );
 
         if ("error" in inquiryListResult) {
           setLeadInquiries([]);
@@ -657,11 +660,13 @@ export function LeadInquiryWorkspace({
           const staffList = list.filter((x) => !isCustomerAppInquiry(x));
           const customerList = list.filter((x) => isCustomerAppInquiry(x));
           const pool =
-            mainTab === "customer"
-              ? customerList
-              : mainTab === "view"
-                ? staffList
-                : list;
+            isCrmLayout && crmOpportunityId
+              ? list
+              : mainTab === "customer"
+                ? customerList
+                : mainTab === "view"
+                  ? staffList
+                  : list;
           const current = selected || pool[0] || null;
           hydrateFormFromInquiry(current);
 
@@ -682,7 +687,7 @@ export function LeadInquiryWorkspace({
         setIsLoading(false);
       }
     },
-    [lead, layout, mainTab, hydrateFormFromInquiry, fetchPricingForInquiries, fetchLogsForInquiry, initialInquiryBootstrap, leadInquiries.length]
+    [lead, layout, mainTab, hydrateFormFromInquiry, fetchPricingForInquiries, fetchLogsForInquiry, initialInquiryBootstrap, leadInquiries.length, crmOpportunityId, isCrmLayout]
   );
 
   useEffect(() => {
@@ -695,20 +700,22 @@ export function LeadInquiryWorkspace({
       approvedInquiryId: initialInquiryBootstrap.approvedInquiryId,
     });
 
-    const skipFormHydration = (layout === "page" || layout === "crm") && mainTab === "create";
-    if (!skipFormHydration && initialInquiryBootstrap.inquiries.length > 0) {
-      const list = initialInquiryBootstrap.inquiries;
-      const selectedId = selectedInquiryIdRef.current;
-      const selected = selectedId ? list.find((x) => x.id === selectedId) || null : null;
-      const staffList = list.filter((x) => !isCustomerAppInquiry(x));
-      const customerList = list.filter((x) => isCustomerAppInquiry(x));
-      const pool =
-        mainTab === "customer"
-          ? customerList
-          : mainTab === "view"
-            ? staffList
-            : list;
-      const current = selected || pool[0] || null;
+      const skipFormHydration = (layout === "page" || layout === "crm") && mainTab === "create";
+      if (!skipFormHydration && initialInquiryBootstrap.inquiries.length > 0) {
+        const list = initialInquiryBootstrap.inquiries;
+        const selectedId = selectedInquiryIdRef.current;
+        const selected = selectedId ? list.find((x) => x.id === selectedId) || null : null;
+        const staffList = list.filter((x) => !isCustomerAppInquiry(x));
+        const customerList = list.filter((x) => isCustomerAppInquiry(x));
+        const pool =
+          isCrmLayout && crmOpportunityId
+            ? list
+            : mainTab === "customer"
+              ? customerList
+              : mainTab === "view"
+                ? staffList
+                : list;
+        const current = selected || pool[0] || null;
       hydrateFormFromInquiry(current);
       if ((mainTab === "view" || mainTab === "customer") && current?.id) {
         void recordInquiryViewed(current.id);

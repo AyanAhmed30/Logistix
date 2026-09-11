@@ -66,6 +66,7 @@ function mapRow(row: Record<string, unknown>): CrmOpportunityCard {
     created_by: row.created_by ? String(row.created_by) : null,
     created_at: String(row.created_at || ''),
     updated_at: String(row.updated_at || ''),
+    lead_inquiry_id: row.lead_inquiry_id ? String(row.lead_inquiry_id) : null,
     customer_name: null,
     customer_lead_id: null,
     contact_person_name: null,

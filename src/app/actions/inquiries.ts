@@ -33,6 +33,12 @@ import {
   resolveOperationsRecipients,
 } from '@/lib/notify-lifecycle';
 import { getMyAppNotifications } from '@/app/actions/app-notifications';
+import {
+  normalizeInquiryFlagMessage,
+  normalizeInquiryFlags,
+  type InquiryFlag,
+} from '@/lib/inquiry-flags';
+import { inquiryDetailsHref } from '@/lib/inquiry-workflow';
 
 async function resolveLeadOrganizationId(
   supabase: Awaited<ReturnType<typeof createAdminClient>>,
@@ -166,6 +172,7 @@ const SALES_AGENT_LEAD_INQUIRIES_SELECT = `
   approval_status,
   approved_at,
   customer_submitted,
+  crm_opportunity_id,
   created_at,
   updated_at,
   inquiry_confirmations (
@@ -179,8 +186,13 @@ function sanitizeInquiriesForSession(
   rows: (LeadInquiry & { inquiry_confirmations?: InquiryConfirmationLite[] })[],
   role: string
 ) {
+  const withoutCustomerDrafts = rows.filter(
+    (row) => String(row.status || '').toLowerCase() !== 'draft'
+  );
   const visibleRows =
-    role === 'sales_agent' ? rows.filter((row) => row.approval_status !== 'rejected') : rows;
+    role === 'sales_agent'
+      ? withoutCustomerDrafts.filter((row) => row.approval_status !== 'rejected')
+      : withoutCustomerDrafts;
   const sanitized = visibleRows.map((row) => ({
     ...row,
     inquiry_confirmations:
@@ -225,10 +237,32 @@ export async function listInquiriesForLead(
     .order('version_number', { ascending: false })
     .order('created_at', { ascending: false });
 
+  if (error && /crm_opportunity_id|column/i.test(error.message)) {
+    const fallbackSelect = SALES_AGENT_LEAD_INQUIRIES_SELECT.replace(
+      /\s*crm_opportunity_id,\s*/m,
+      '\n'
+    );
+    const retry = await supabase
+      .from('lead_inquiries')
+      .select(fallbackSelect)
+      .eq('lead_id', leadId)
+      .order('version_number', { ascending: false })
+      .order('created_at', { ascending: false });
+    if (retry.error) return { error: retry.error.message };
+    return sanitizeInquiriesForSession(
+      (retry.data || []) as unknown as (LeadInquiry & {
+        inquiry_confirmations?: InquiryConfirmationLite[];
+      })[],
+      role
+    );
+  }
+
   if (error) return { error: error.message };
 
   return sanitizeInquiriesForSession(
-    (data || []) as (LeadInquiry & { inquiry_confirmations?: InquiryConfirmationLite[] })[],
+    (data || []) as unknown as (LeadInquiry & {
+      inquiry_confirmations?: InquiryConfirmationLite[];
+    })[],
     role
   );
 }
@@ -239,6 +273,7 @@ export type LeadInquiry = {
   inquiry_group_id?: string;
   version_number?: number;
   is_current_version?: boolean;
+  inquiry_reference?: string | null;
   description: string;
   image_url: string | null;
   additional_image_urls?: string[] | null;
@@ -266,6 +301,7 @@ export type LeadInquiry = {
     status: string;
     created_at: string;
   }[];
+  inquiry_flags?: InquiryFlag[];
 };
 
 export type LeadInquiryWithLead = LeadInquiry & {
@@ -292,6 +328,7 @@ export type LeadInquiryWithLead = LeadInquiry & {
     status: string;
     created_at: string;
   }[];
+  inquiry_flags?: InquiryFlag[];
 };
 
 export type InquiryQuotation = {
@@ -768,6 +805,9 @@ export async function saveInquiry(
         try {
           const leadContext = await resolveLeadSalesAgentRecipient(supabase, leadId);
           if (leadContext.recipient) {
+            const opportunityId =
+              crmOpportunityId ||
+              (result.crm_opportunity_id ? String(result.crm_opportunity_id) : null);
             await insertLifecycleNotifications(supabase, {
               eventType: 'inquiry_received',
               leadId,
@@ -779,6 +819,7 @@ export async function saveInquiry(
               payload: {
                 leadId,
                 inquiryId: String(result.id),
+                opportunityId,
                 inquiryNumber: leadContext.leadNumber,
                 customerName: leadContext.customerName,
                 source: leadContext.source || 'mobile',
@@ -1462,6 +1503,26 @@ export async function getInquiriesForLead(
 
     const result = await listInquiriesForLead(supabase, leadId, session.role);
     if ('error' in result) return result;
+    if (options?.crmOpportunityId) {
+      const all = result.inquiries || [];
+      const filtered = all.filter(
+        (inq) =>
+          inq.crm_opportunity_id &&
+          String(inq.crm_opportunity_id) === options.crmOpportunityId
+      );
+      if (filtered.length > 0) {
+        return {
+          ...result,
+          inquiries: filtered,
+          approvedInquiryId:
+            filtered.find((inq) => inq.approval_status === 'approved')?.id || null,
+        };
+      }
+      const anyLinked = all.some((inq) => Boolean(inq.crm_opportunity_id));
+      if (anyLinked) {
+        return { ...result, inquiries: [], approvedInquiryId: null };
+      }
+    }
     return result;
   } catch (err) {
     return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };
@@ -1648,6 +1709,34 @@ const OPERATIONS_LIST_INQUIRY_SELECT = `
   product_name,
   status,
   sent_at,
+  inquiry_reference,
+  leads (
+    id,
+    lead_id_formatted,
+    contact_id,
+    name,
+    number,
+    sales_agents!leads_sales_agent_id_fkey (
+      id,
+      name
+    )
+  ),
+  inquiry_confirmations (
+    id,
+    status,
+    created_at
+  ),
+  inquiry_flags (
+    id
+  )
+`;
+
+const OPERATIONS_LIST_INQUIRY_SELECT_LEGACY = `
+  id,
+  lead_id,
+  product_name,
+  status,
+  sent_at,
   leads (
     id,
     lead_id_formatted,
@@ -1667,6 +1756,56 @@ const OPERATIONS_LIST_INQUIRY_SELECT = `
 `;
 
 const OPERATIONS_DETAIL_INQUIRY_SELECT = `
+  id,
+  lead_id,
+  description,
+  image_url,
+  additional_image_urls,
+  link_url,
+  product_name,
+  total_weight,
+  cbm,
+  quantity,
+  status,
+  sent_to_accounting,
+  sent_to_operations,
+  sent_at,
+  approval_status,
+  approved_at,
+  calculator_values,
+  created_at,
+  updated_at,
+  inquiry_reference,
+  leads (
+    id,
+    lead_id_formatted,
+    contact_id,
+    name,
+    number,
+    source,
+    sales_agent_id,
+    sales_agents!leads_sales_agent_id_fkey (
+      id,
+      name,
+      username
+    )
+  ),
+  inquiry_confirmations (
+    id,
+    status,
+    created_at
+  ),
+  inquiry_flags (
+    id,
+    inquiry_id,
+    message,
+    raised_by,
+    raised_by_role,
+    created_at
+  )
+`;
+
+const OPERATIONS_DETAIL_INQUIRY_SELECT_LEGACY = `
   id,
   lead_id,
   description,
@@ -1734,6 +1873,8 @@ function normalizeOperationsInquiryRow(row: Record<string, unknown>): LeadInquir
             : null,
         }
       : null,
+    inquiry_reference: row.inquiry_reference ? String(row.inquiry_reference) : null,
+    inquiry_flags: normalizeInquiryFlags(row.inquiry_flags),
   } as LeadInquiryWithLead;
 }
 
@@ -1783,14 +1924,17 @@ async function queryOperationsInquiriesPage(
     }
   }
 
-  async function runPageQuery(filterByLeadIds?: string[] | null) {
+  async function runPageQuery(
+    filterByLeadIds?: string[] | null,
+    selectClause = OPERATIONS_LIST_INQUIRY_SELECT
+  ) {
     if (filterByLeadIds && filterByLeadIds.length === 0) {
       return { data: [] as Record<string, unknown>[], error: null };
     }
 
     let query = supabase
       .from('lead_inquiries')
-      .select(OPERATIONS_LIST_INQUIRY_SELECT)
+      .select(selectClause)
       .eq('sent_to_accounting', true);
 
     if (organizationId && filterByLeadIds === undefined) {
@@ -1806,6 +1950,10 @@ async function queryOperationsInquiriesPage(
     if (search) {
       const leadIdClause =
         matchedLeadIds.length > 0 ? `,lead_id.in.(${matchedLeadIds.join(',')})` : '';
+      const referenceClause =
+        selectClause.includes('inquiry_reference')
+          ? `,inquiry_reference.ilike.%${search}%`
+          : '';
       query = query.or(
         [
           `product_name.ilike.%${search}%`,
@@ -1814,7 +1962,9 @@ async function queryOperationsInquiriesPage(
           `total_weight.ilike.%${search}%`,
           `cbm.ilike.%${search}%`,
           `quantity.ilike.%${search}%`,
-        ].join(',') + leadIdClause
+        ].join(',') +
+          leadIdClause +
+          referenceClause
       );
     }
 
@@ -1822,14 +1972,32 @@ async function queryOperationsInquiriesPage(
       .order('created_at', { foreignTable: 'inquiry_confirmations', ascending: false })
       .limit(1, { foreignTable: 'inquiry_confirmations' });
 
+    if (selectClause.includes('inquiry_flags')) {
+      query = query
+        .order('created_at', { foreignTable: 'inquiry_flags', ascending: false })
+        .limit(1, { foreignTable: 'inquiry_flags' });
+    }
+
     return query;
   }
 
   let pageResult = await runPageQuery();
+  if (
+    pageResult.error &&
+    /inquiry_flags|inquiry_reference|could not find the/i.test(pageResult.error.message || '')
+  ) {
+    pageResult = await runPageQuery(undefined, OPERATIONS_LIST_INQUIRY_SELECT_LEGACY);
+  }
   if (pageResult.error && organizationId && isMissingOrganizationColumnError(pageResult.error)) {
     const leadIds = await getLeadIdsForOrganization(supabase, organizationId);
     if (leadIds && 'error' in leadIds) return { error: leadIds.error };
     pageResult = await runPageQuery(leadIds);
+    if (
+      pageResult.error &&
+      /inquiry_flags|inquiry_reference|could not find the/i.test(pageResult.error.message || '')
+    ) {
+      pageResult = await runPageQuery(leadIds, OPERATIONS_LIST_INQUIRY_SELECT_LEGACY);
+    }
   }
 
   const { data, error } = pageResult;
@@ -1943,14 +2111,28 @@ export async function getInquiryForOperations(inquiryId: string) {
     );
     if ('error' in access) return { error: access.error };
 
-    const { data, error } = await supabase
+    let { data, error } = await supabase
       .from('lead_inquiries')
       .select(OPERATIONS_DETAIL_INQUIRY_SELECT)
       .eq('id', inquiryId)
       .eq('sent_to_accounting', true)
       .order('created_at', { foreignTable: 'inquiry_confirmations', ascending: false })
       .limit(1, { foreignTable: 'inquiry_confirmations' })
+      .order('created_at', { foreignTable: 'inquiry_flags', ascending: false })
       .maybeSingle();
+
+    if (error && /inquiry_flags|inquiry_reference|could not find the/i.test(error.message || '')) {
+      const fallback = await supabase
+        .from('lead_inquiries')
+        .select(OPERATIONS_DETAIL_INQUIRY_SELECT_LEGACY)
+        .eq('id', inquiryId)
+        .eq('sent_to_accounting', true)
+        .order('created_at', { foreignTable: 'inquiry_confirmations', ascending: false })
+        .limit(1, { foreignTable: 'inquiry_confirmations' })
+        .maybeSingle();
+      data = fallback.data as typeof data;
+      error = fallback.error;
+    }
 
     if (error) return { error: error.message };
     if (!data) return { error: 'Inquiry not found' };
@@ -1973,6 +2155,113 @@ export async function getInquiryForOperations(inquiryId: string) {
     }
 
     return { inquiry };
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };
+  }
+}
+
+export async function raiseInquiryFlag(inquiryId: string, message: string) {
+  try {
+    const scopeResult = await resolveOperationsOrganizationScope();
+    if ('error' in scopeResult) return { error: scopeResult.error };
+    if (scopeResult.empty) return { error: 'Unauthorized' };
+
+    const parsed = normalizeInquiryFlagMessage(message);
+    if (!parsed.ok) return { error: parsed.error };
+    if (!inquiryId?.trim()) return { error: 'Inquiry id is required' };
+
+    const supabase = await createAdminClient();
+    const access = await assertInquiryInOrganization(
+      supabase,
+      inquiryId.trim(),
+      scopeResult.organizationId
+    );
+    if ('error' in access) return { error: access.error };
+
+    let { data: inquiry, error: inquiryError } = await supabase
+      .from('lead_inquiries')
+      .select('id, lead_id, inquiry_reference, sent_to_accounting, crm_opportunity_id')
+      .eq('id', inquiryId.trim())
+      .maybeSingle();
+
+    if (inquiryError && /inquiry_reference|could not find the/i.test(inquiryError.message || '')) {
+      const fallback = await supabase
+        .from('lead_inquiries')
+        .select('id, lead_id, sent_to_accounting, crm_opportunity_id')
+        .eq('id', inquiryId.trim())
+        .maybeSingle();
+      inquiry = fallback.data as typeof inquiry;
+      inquiryError = fallback.error;
+    }
+
+    if (inquiryError || !inquiry) return { error: 'Inquiry not found' };
+    if (!inquiry.sent_to_accounting) return { error: 'Inquiry not found' };
+
+    const raisedBy = String(scopeResult.session.username || '').trim() || 'operations';
+    const { data: flagRow, error: flagError } = await supabase
+      .from('inquiry_flags')
+      .insert([
+        {
+          inquiry_id: inquiry.id,
+          message: parsed.value,
+          raised_by: raisedBy,
+          raised_by_role: 'operations',
+        },
+      ])
+      .select('id, inquiry_id, message, raised_by, raised_by_role, created_at')
+      .single();
+
+    if (flagError) {
+      if (/inquiry_flags|could not find the/i.test(flagError.message || '')) {
+        return { error: 'Inquiry flags are not available on this database yet.' };
+      }
+      return { error: flagError.message };
+    }
+
+    const flag = normalizeInquiryFlags([flagRow])[0];
+    if (!flag) return { error: 'Failed to save flag.' };
+
+    try {
+      const leadContext = await resolveLeadSalesAgentRecipient(supabase, String(inquiry.lead_id));
+      if (leadContext.recipient) {
+        const inquiryReference =
+          inquiry && 'inquiry_reference' in inquiry
+            ? String((inquiry as { inquiry_reference?: string | null }).inquiry_reference || '').trim()
+            : '';
+        await insertLifecycleNotifications(supabase, {
+          eventType: 'inquiry_flag_raised',
+          leadId: String(inquiry.lead_id),
+          inquiryId: String(inquiry.id),
+          senderRole: 'operations',
+          senderUsername: raisedBy,
+          recipients: [
+            {
+              ...leadContext.recipient,
+              href: inquiryDetailsHref(String(inquiry.id)),
+            },
+          ],
+          message: parsed.value,
+          payload: {
+            leadId: String(inquiry.lead_id),
+            inquiryId: String(inquiry.id),
+            opportunityId: inquiry.crm_opportunity_id ? String(inquiry.crm_opportunity_id) : null,
+            inquiryNumber: leadContext.leadNumber,
+            inquiryReference,
+            customerName: leadContext.customerName,
+            salesAgent: leadContext.salesAgentName,
+            summary: parsed.value,
+          },
+        });
+      }
+    } catch {
+      // Flag is persisted even if notification insert fails.
+    }
+
+    invalidateOperationsInquiriesCache();
+    revalidatePath('/crm/inquiries');
+    revalidatePath('/admin/dashboard');
+    revalidatePath('/operations/dashboard');
+    return { success: true as const, flag };
   } catch (err) {
     return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };
   }

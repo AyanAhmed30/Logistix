@@ -565,7 +565,9 @@ export function CrmOpportunityFormView({ opportunityId, initialStageId }: Props)
               onClick={() => {
                 if (!opportunityId) return;
                 startTransition(() => {
-                  router.push(crmOpportunityInquiryUrl(opportunityId, "create"));
+                  router.push(
+                    crmOpportunityInquiryUrl(opportunityId, "create")
+                  );
                 });
               }}
             >

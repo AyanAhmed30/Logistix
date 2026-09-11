@@ -5,6 +5,7 @@ export const SALES_NOTIFICATION_EVENTS = [
   'lead_transferred',
   'quotation_sent_to_customer',
   'quotation_counter_offer',
+  'inquiry_flag_raised',
 ] as const;
 
 /** Events an Operations user should see. */
@@ -28,6 +29,7 @@ export const LIFECYCLE_EVENT_TYPES = [
   'lead_transferred',
   'quotation_sent_to_customer',
   'quotation_counter_offer',
+  'inquiry_flag_raised',
 ] as const;
 
 export type LifecycleEventType = (typeof LIFECYCLE_EVENT_TYPES)[number];
@@ -40,7 +42,9 @@ export type AppNotificationPayload = {
   leadId?: string;
   inquiryId?: string | null;
   confirmationId?: string | null;
+  opportunityId?: string | null;
   inquiryNumber?: string;
+  inquiryReference?: string;
   customerName?: string;
   salesAgent?: string;
   source?: string;
@@ -118,6 +122,10 @@ export const NOTIFICATION_EVENT_CATALOG: Record<string, EventCatalogEntry> = {
   quotation_counter_offer: {
     title: 'Customer Counter-Offer Received',
     fallbackMessage: 'The customer sent a counter-offer on a quotation.',
+  },
+  inquiry_flag_raised: {
+    title: 'Flag Raised on Inquiry',
+    fallbackMessage: 'Operations raised a flag on your inquiry.',
   },
   chat: {
     title: 'New Message',
@@ -231,6 +239,29 @@ export function crmInquiryHref(inquiryId: string): string {
   return `/crm/inquiries/${inquiryId}`;
 }
 
+/** Pipeline inquiry workspace — Sales → My Pipeline → Opportunity → Inquiry */
+export function crmPipelineInquiryHref(
+  opportunityId: string,
+  inquiryId?: string | null
+): string {
+  const params = new URLSearchParams({ tab: 'view' });
+  if (inquiryId) params.set('inquiryId', inquiryId);
+  return `/crm/opportunities/${encodeURIComponent(opportunityId)}/inquiry?${params.toString()}`;
+}
+
+export function opportunityIdFromNotification(input: {
+  payload?: AppNotificationPayload | null;
+  storedHref?: string | null;
+}): string | null {
+  const payload = input.payload || {};
+  const raw = payload.opportunityId ?? payload.opportunity_id;
+  if (typeof raw === 'string' && raw.trim()) return raw.trim();
+
+  const href = String(input.storedHref || '');
+  const match = href.match(/\/crm\/opportunities\/([^/?#]+)/i);
+  return match?.[1] ? decodeURIComponent(match[1]) : null;
+}
+
 export function quotationFromInquiryHref(inquiryId: string): string {
   return `/sales/quotations/new?inquiryId=${encodeURIComponent(inquiryId)}`;
 }
@@ -269,15 +300,40 @@ export function resolveNotificationHref(input: {
   inquiryId: string | null;
   confirmationId: string | null;
   storedHref?: string | null;
+  payload?: AppNotificationPayload | null;
   ctx: NotificationViewerContext;
 }): string {
-  const { eventType, source, leadId, inquiryId, confirmationId, storedHref, ctx } = input;
+  const { eventType, source, leadId, inquiryId, confirmationId, storedHref, payload, ctx } = input;
+  const opportunityId = opportunityIdFromNotification({ payload, storedHref });
+  const canOpenCrmPipeline =
+    ctx.hasCrm || ctx.isSalesActor || ctx.canAccessAdminDashboard || ctx.isSuperAdmin;
 
   if (source === 'chat' && leadId) {
     return `/sales-agent/leads/${leadId}?tab=chat`;
   }
 
-  if (eventType === 'inquiry_received' || eventType === 'lead_transferred') {
+  if (eventType === 'inquiry_flag_raised' && inquiryId) {
+    if (ctx.hasCrm || ctx.isSalesActor || ctx.canAccessAdminDashboard || ctx.isSuperAdmin) {
+      return crmInquiryHref(inquiryId);
+    }
+    if (leadId) return salesAgentInquiryHref(leadId, inquiryId);
+  }
+
+  if (eventType === 'inquiry_received' || eventType === 'customer_submitted') {
+    if (canOpenCrmPipeline && opportunityId) {
+      return crmPipelineInquiryHref(opportunityId, inquiryId);
+    }
+    if (!canOpenCrmPipeline && leadId) {
+      return salesAgentInquiryHref(leadId, inquiryId);
+    }
+    // CRM users must never land on All Inquiries for a new-inquiry notification.
+    return '/crm/pipeline';
+  }
+
+  if (eventType === 'lead_transferred') {
+    if (canOpenCrmPipeline && opportunityId) {
+      return crmPipelineInquiryHref(opportunityId, inquiryId);
+    }
     if (ctx.hasCrm && inquiryId) return crmInquiryHref(inquiryId);
     if (leadId) return salesAgentInquiryHref(leadId, inquiryId);
   }
@@ -287,6 +343,9 @@ export function resolveNotificationHref(input: {
       return adminOperationsInquiryHref(leadId, inquiryId);
     }
     if (ctx.hasSalesQuotations && inquiryId) return quotationFromInquiryHref(inquiryId);
+    if (canOpenCrmPipeline && opportunityId) {
+      return crmPipelineInquiryHref(opportunityId, inquiryId);
+    }
     if (ctx.hasCrm && inquiryId) return crmInquiryHref(inquiryId);
     if (leadId) return salesAgentInquiryHref(leadId, inquiryId);
   }
@@ -301,10 +360,16 @@ export function resolveNotificationHref(input: {
         return adminOperationsInquiryHref(leadId, inquiryId);
       }
     }
+    if (canOpenCrmPipeline && opportunityId) {
+      return crmPipelineInquiryHref(opportunityId, inquiryId);
+    }
     if (ctx.hasCrm && inquiryId) return crmInquiryHref(inquiryId);
     if (leadId) return salesAgentInquiryHref(leadId, inquiryId);
   }
 
+  if (canOpenCrmPipeline && opportunityId) {
+    return crmPipelineInquiryHref(opportunityId, inquiryId);
+  }
   if (inquiryId && ctx.hasCrm) return crmInquiryHref(inquiryId);
   if (leadId) return salesAgentInquiryHref(leadId, inquiryId);
   if (storedHref && storedHref.startsWith('/')) return storedHref;
@@ -314,6 +379,8 @@ export function resolveNotificationHref(input: {
 export function notificationMetaLine(item: Pick<AppInboxItem, 'leadNumber' | 'customerName' | 'payload'>): string {
   const lead = item.leadNumber || item.payload.inquiryNumber || '';
   const customer = item.customerName || item.payload.customerName || '';
+  const reference =
+    typeof item.payload.inquiryReference === 'string' ? item.payload.inquiryReference.trim() : '';
   const leadLabel = lead ? (String(lead).startsWith('#') ? `Lead ${lead}` : `Lead #${lead}`) : '';
-  return [leadLabel, customer].filter(Boolean).join(' · ');
+  return [leadLabel, customer, reference].filter(Boolean).join(' · ');
 }

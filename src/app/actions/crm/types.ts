@@ -52,6 +52,8 @@ export type CrmOpportunity = {
   created_by: string | null;
   created_at: string;
   updated_at: string;
+  /** Bound mobile/staff inquiry — one opportunity per inquiry. */
+  lead_inquiry_id?: string | null;
 };
 
 export type CrmOpportunityCard = CrmOpportunity & {

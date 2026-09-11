@@ -17,6 +17,8 @@ import {
   lifecycleEventsForRecipientRoles,
   operationsCatalogMessage,
   operationsCatalogTitle,
+  crmPipelineInquiryHref,
+  opportunityIdFromNotification,
   resolveNotificationHref,
   type AppInboxItem,
   type AppNotificationPayload,
@@ -116,6 +118,74 @@ function asPayload(raw: unknown): AppNotificationPayload {
   return {};
 }
 
+const PIPELINE_INQUIRY_EVENTS = new Set([
+  'inquiry_received',
+  'customer_submitted',
+  'lead_transferred',
+]);
+
+/** Inbox-time only: fill missing opportunityId so click can navigate without a follow-up fetch. */
+async function withOpportunityIds(
+  supabase: Awaited<ReturnType<typeof createAdminClient>>,
+  rows: LifecycleRow[]
+): Promise<LifecycleRow[]> {
+  const missing = rows.filter((row) => {
+    if (!PIPELINE_INQUIRY_EVENTS.has(row.event_type) || !row.inquiry_id) return false;
+    return !opportunityIdFromNotification({
+      payload: asPayload(row.payload),
+      storedHref: row.href,
+    });
+  });
+  if (missing.length === 0) return rows;
+
+  const inquiryIds = [...new Set(missing.map((row) => String(row.inquiry_id)))];
+  const byInquiry = new Map<string, string>();
+
+  const fromInquiries = await supabase
+    .from('lead_inquiries')
+    .select('id, crm_opportunity_id')
+    .in('id', inquiryIds);
+  if (!fromInquiries.error) {
+    for (const row of fromInquiries.data || []) {
+      if (row.crm_opportunity_id) {
+        byInquiry.set(String(row.id), String(row.crm_opportunity_id));
+      }
+    }
+  }
+
+  const stillMissing = inquiryIds.filter((id) => !byInquiry.has(id));
+  if (stillMissing.length > 0) {
+    const fromOpps = await supabase
+      .from('crm_opportunities')
+      .select('id, lead_inquiry_id')
+      .in('lead_inquiry_id', stillMissing);
+    if (!fromOpps.error) {
+      for (const row of fromOpps.data || []) {
+        if (row.lead_inquiry_id && row.id) {
+          byInquiry.set(String(row.lead_inquiry_id), String(row.id));
+        }
+      }
+    }
+  }
+
+  if (byInquiry.size === 0) return rows;
+
+  return rows.map((row) => {
+    const inquiryId = row.inquiry_id ? String(row.inquiry_id) : '';
+    const opportunityId = inquiryId ? byInquiry.get(inquiryId) : undefined;
+    if (!opportunityId) return row;
+    return {
+      ...row,
+      href: crmPipelineInquiryHref(opportunityId, inquiryId),
+      payload: {
+        ...asPayload(row.payload),
+        opportunityId,
+        inquiryId,
+      },
+    };
+  });
+}
+
 function asLead(raw: unknown): { lead_id_formatted: string | null; name?: string | null } | null {
   if (Array.isArray(raw)) {
     const first = raw[0];
@@ -158,6 +228,7 @@ function mapLifecycleRow(row: LifecycleRow, ctx: NotificationViewerContext): App
       inquiryId,
       confirmationId,
       storedHref: row.href,
+      payload,
       ctx,
     }),
     isRead: Boolean(row.is_read),
@@ -340,10 +411,13 @@ export async function getMyAppNotifications(limit = 40): Promise<
       const chatItems = ((chatResult.data || []) as unknown as ChatRow[]).map((row) =>
         mapChatRow({ ...row, leads: asLead(row.leads) }, ctx)
       );
-      const lifecycleItems = filterLifecycleRows(
-        (fallback.data || []) as unknown as LifecycleRow[],
-        lifecycleEvents
-      ).map((row) => mapLifecycleRow({ ...row, leads: asLead(row.leads) }, ctx));
+      const fallbackLifecycle = await withOpportunityIds(
+        supabase,
+        filterLifecycleRows((fallback.data || []) as unknown as LifecycleRow[], lifecycleEvents)
+      );
+      const lifecycleItems = fallbackLifecycle.map((row) =>
+        mapLifecycleRow({ ...row, leads: asLead(row.leads) }, ctx)
+      );
       const notifications = [...chatItems, ...lifecycleItems]
         .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
         .slice(0, cappedLimit);
@@ -357,10 +431,13 @@ export async function getMyAppNotifications(limit = 40): Promise<
     const chatItems = ((chatResult.data || []) as unknown as ChatRow[]).map((row) =>
       mapChatRow({ ...row, leads: asLead(row.leads) }, ctx)
     );
-    const lifecycleItems = filterLifecycleRows(
-      (lifecycleResult.data || []) as unknown as LifecycleRow[],
-      lifecycleEvents
-    ).map((row) => mapLifecycleRow({ ...row, leads: asLead(row.leads) }, ctx));
+    const lifecycleWithOpps = await withOpportunityIds(
+      supabase,
+      filterLifecycleRows((lifecycleResult.data || []) as unknown as LifecycleRow[], lifecycleEvents)
+    );
+    const lifecycleItems = lifecycleWithOpps.map((row) =>
+      mapLifecycleRow({ ...row, leads: asLead(row.leads) }, ctx)
+    );
     const notifications = [...chatItems, ...lifecycleItems]
       .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
       .slice(0, cappedLimit);

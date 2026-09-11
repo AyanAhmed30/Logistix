@@ -9,6 +9,7 @@ import { InquiryAttachmentList } from "@/components/inquiry/InquiryAttachmentLis
 import { InquiryPricingSummary } from "@/components/admin/InquiryPricingSummary";
 import { EstimatedDutiesAndTaxesTable } from "@/components/inquiry/EstimatedDutiesAndTaxesTable";
 import { ContactInfoSummary } from "@/components/shared/ContactInfoSummary";
+import { InquiryFlagMessages } from "@/components/inquiry/InquiryFlagMessages";
 import { CrmEmptyState, CrmPageSkeleton } from "@/components/crm/CrmSkeleton";
 import {
   getSalesInquiryDetail,
@@ -165,6 +166,7 @@ export function CrmInquiryDetailView({ inquiryId }: { inquiryId: string }) {
               {inquiry.product_name || "Inquiry"}
             </h1>
             <p className="text-sm text-secondary-muted">
+              {inquiry.inquiry_reference ? `${inquiry.inquiry_reference} · ` : ""}
               Lead {inquiry.lead_number}
               {inquiry.opportunity_name ? ` · ${inquiry.opportunity_name}` : ""}
             </p>
@@ -189,6 +191,8 @@ export function CrmInquiryDetailView({ inquiryId }: { inquiryId: string }) {
         </div>
       </div>
 
+      <InquiryFlagMessages flags={inquiry.flags} />
+
       <Section title="Customer details">
         <div className="flex items-start gap-3">
           <Building2 className="h-4 w-4 text-[#017e84] mt-0.5 shrink-0" />
@@ -197,6 +201,7 @@ export function CrmInquiryDetailView({ inquiryId }: { inquiryId: string }) {
               <DetailField label="Customer name" value={customer.name} />
               <DetailField label="Company" value={customer.company_name} />
               <DetailField label="Lead number" value={inquiry.lead_number} />
+              <DetailField label="Inquiry reference" value={inquiry.inquiry_reference} />
               <DetailField label="Phone" value={customer.phone} />
               <DetailField label="Mobile" value={customer.mobile} />
               <DetailField label="Email" value={customer.email} />

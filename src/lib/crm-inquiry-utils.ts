@@ -8,9 +8,12 @@ export function isCrmQualifiedStage(stageName: string | null | undefined): boole
 /** CRM inquiry workspace route for an opportunity. */
 export function crmOpportunityInquiryUrl(
   opportunityId: string,
-  tab: 'create' | 'view' | 'status' = 'create'
+  tab: 'create' | 'view' | 'customer' | 'status' = 'create',
+  inquiryId?: string | null
 ): string {
-  return `/crm/opportunities/${opportunityId}/inquiry?tab=${tab}`;
+  const params = new URLSearchParams({ tab });
+  if (inquiryId) params.set('inquiryId', inquiryId);
+  return `/crm/opportunities/${opportunityId}/inquiry?${params.toString()}`;
 }
 
 import { INQUIRY_APPROVAL_STATUS_LABELS } from '@/lib/inquiry-workflow';

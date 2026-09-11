@@ -23,6 +23,7 @@ import {
   resolveInquiryWorkflowStatus,
   type InquiryWorkflowStatus,
 } from '@/lib/inquiry-workflow';
+import { normalizeInquiryFlags, type InquiryFlag } from '@/lib/inquiry-flags';
 
 const LIST_SELECT = `
   id,
@@ -39,6 +40,7 @@ const LIST_SELECT = `
   organization_id,
   created_by,
   crm_opportunity_id,
+  inquiry_reference,
   leads!inner (
     id,
     lead_id_formatted,
@@ -82,6 +84,7 @@ const DETAIL_SELECT = `
   created_by,
   created_at,
   updated_at,
+  inquiry_reference,
   leads (
     id,
     lead_id_formatted,
@@ -117,6 +120,14 @@ const DETAIL_SELECT = `
     reviewed_by,
     reviewed_at,
     rejection_reason
+  ),
+  inquiry_flags (
+    id,
+    inquiry_id,
+    message,
+    raised_by,
+    raised_by_role,
+    created_at
   )
 `;
 
@@ -125,6 +136,7 @@ export type SalesAllInquiryListItem = {
   product_name: string;
   customer_name: string;
   lead_number: string;
+  inquiry_reference: string | null;
   quantity: string;
   sent_at: string | null;
   workflow: InquiryWorkflowStatus;
@@ -155,6 +167,7 @@ export type SalesInquiryDetail = {
   id: string;
   lead_id: string;
   lead_number: string;
+  inquiry_reference: string | null;
   product_name: string;
   quantity: string;
   total_weight: string;
@@ -186,6 +199,7 @@ export type SalesInquiryDetail = {
     reviewed_at: string | null;
     rejection_reason: string | null;
   } | null;
+  flags: InquiryFlag[];
   pricing: {
     unit_price: number;
     total_amount: number;
@@ -333,6 +347,7 @@ function mapListRows(
       product_name: String(row.product_name || 'Inquiry'),
       customer_name: String(lead?.name || '').trim() || '—',
       lead_number: String(lead?.lead_id_formatted || '').trim() || '—',
+      inquiry_reference: row.inquiry_reference ? String(row.inquiry_reference).trim() || null : null,
       quantity: String(row.quantity || '').trim(),
       sent_at: row.sent_at ? String(row.sent_at) : null,
       workflow,
@@ -473,6 +488,9 @@ export async function getSalesInquiryDetail(
         id: String(row.id),
         lead_id: leadId,
         lead_number: String(lead?.lead_id_formatted || '').trim() || '—',
+        inquiry_reference: row.inquiry_reference
+          ? String(row.inquiry_reference).trim() || null
+          : null,
         product_name: String(row.product_name || ''),
         quantity: String(row.quantity || ''),
         total_weight: String(row.total_weight || ''),
@@ -514,6 +532,7 @@ export async function getSalesInquiryDetail(
                 : null,
             }
           : null,
+        flags: normalizeInquiryFlags(row.inquiry_flags),
         pricing: pricing
           ? {
               unit_price: pricing.unit_price,

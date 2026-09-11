@@ -65,6 +65,8 @@ function iconForEvent(eventType: string) {
     case "quotation_sent_to_customer":
     case "quotation_counter_offer":
       return FileText;
+    case "inquiry_flag_raised":
+      return AlertCircle;
     case "chat":
       return MessageSquare;
     default:
@@ -84,6 +86,8 @@ function iconToneForEvent(eventType: string) {
       return "bg-sky-50 text-sky-700 ring-sky-100";
     case "inquiry_sent":
       return "bg-teal-50 text-[#017e84] ring-teal-100";
+    case "inquiry_flag_raised":
+      return "bg-amber-50 text-amber-700 ring-amber-100";
     default:
       return "bg-slate-100 text-slate-600 ring-slate-200";
   }
@@ -140,23 +144,28 @@ export function AppNotificationBell({
     if (open) void fetchInbox("open");
   }, [open, fetchInbox]);
 
+  useEffect(() => {
+    for (const item of items) {
+      if (item.href?.startsWith("/")) router.prefetch(item.href);
+    }
+  }, [items, router]);
+
   const unreadLabel = useMemo(() => {
     if (unreadCount <= 0) return null;
     return unreadCount > 99 ? "99+" : String(unreadCount);
   }, [unreadCount]);
 
-  async function handleItemClick(item: AppInboxItem) {
+  function handleItemClick(item: AppInboxItem) {
+    const href = item.href;
+    setOpen(false);
+    const handled = onNavigate?.(item);
+    if (!handled && href) router.push(href);
+
     if (!item.isRead) {
       setItems((prev) => prev.map((row) => (row.id === item.id ? { ...row, isRead: true } : row)));
       setUnreadCount((prev) => Math.max(0, prev - 1));
       void markAppNotificationRead(item.id, item.source);
     }
-
-    setOpen(false);
-
-    const handled = onNavigate?.(item);
-    if (handled) return;
-    if (item.href) router.push(item.href);
   }
 
   async function handleMarkAllRead() {
@@ -263,7 +272,7 @@ export function AppNotificationBell({
                   <li key={`${item.source}-${item.id}`}>
                     <button
                       type="button"
-                      onClick={() => void handleItemClick(item)}
+                      onClick={() => handleItemClick(item)}
                       className={cn(
                         "w-full text-left px-4 py-3.5 flex gap-3 transition-colors",
                         "hover:bg-slate-50 focus-visible:bg-slate-50 focus-visible:outline-none",

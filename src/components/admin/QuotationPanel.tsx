@@ -135,16 +135,6 @@ function computeAmounts(quantity: string, unitPrice: string, taxes: string) {
   return { untaxed, tax, total, taxRate };
 }
 
-async function blobToBase64(blob: Blob): Promise<string> {
-  const dataUrl = await new Promise<string>((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(String(reader.result || ""));
-    reader.onerror = () => reject(new Error("Failed to convert PDF to base64"));
-    reader.readAsDataURL(blob);
-  });
-  return dataUrl.split(",")[1] || "";
-}
-
 function getQAmounts(q: Quotation) {
   const untaxed = q.quantity * q.unit_price;
   const taxRate = q.taxes || 0;
@@ -877,14 +867,15 @@ export function QuotationPanel({
     startTransition(async () => {
       try {
         const pdf = await generateQuotationPdf(selectedQuotation);
-        const pdfBase64 = await blobToBase64(pdf.blob);
 
-        const result = await sendQuotation(selectedQuotation.id, {
-          phone_number: phone,
-          whatsapp_message: sendWhatsAppMessage,
-          pdf_base64: pdfBase64,
-          pdf_filename: pdf.fileName,
-        });
+        const sendForm = new FormData();
+        sendForm.append("id", selectedQuotation.id);
+        sendForm.append("phone_number", phone);
+        sendForm.append("whatsapp_message", sendWhatsAppMessage);
+        sendForm.append("pdf_filename", pdf.fileName);
+        sendForm.append("pdf", pdf.blob, pdf.fileName);
+
+        const result = await sendQuotation(sendForm);
 
         if ("error" in result) {
           toast.error(result.error || "Failed to send quotation");

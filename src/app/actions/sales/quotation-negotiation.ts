@@ -12,6 +12,8 @@ import {
   INQUIRY_IMAGES_BUCKET,
   ensureInquiryImagesBucket,
 } from '@/lib/inquiry-storage';
+import { renderSalesQuotationPdfBufferFromPayload } from '@/lib/sales-quotation-pdf-server';
+import { getSalesQuotationPdfPayload } from '@/app/actions/sales/quotation-pdf';
 
 export type NegotiationEvent = {
   id: string;
@@ -331,24 +333,17 @@ async function applyTotalAndReplaceLines(
   return { total, untaxed, tax };
 }
 
-function stripPdfDataUrl(pdfDataUrlOrBase64: string): Buffer {
-  const raw = pdfDataUrlOrBase64.trim();
-  const base64 = raw.includes('base64,') ? raw.split('base64,')[1] || '' : raw;
-  if (!base64) throw new Error('PDF payload is empty');
-  return Buffer.from(base64, 'base64');
-}
-
 async function uploadCustomerPdf(
   supabase: Awaited<ReturnType<typeof createAdminClient>>,
   quotationId: string,
-  pdfDataUrlOrBase64: string
+  pdfBytes: Buffer
 ) {
   const ensured = await ensureInquiryImagesBucket(supabase);
   if (!ensured.ok) {
     throw new Error(ensured.error);
   }
 
-  const bytes = stripPdfDataUrl(pdfDataUrlOrBase64);
+  const bytes = pdfBytes;
   const filePath = `customer-quotes/${quotationId}/${Date.now()}.pdf`;
   let { error: uploadError } = await supabase.storage
     .from(INQUIRY_IMAGES_BUCKET)
@@ -716,12 +711,11 @@ export async function applyNegotiationTotals(
 }
 
 /**
- * Phase 2: after totals applied + client PDF generated for NEW amounts,
- * upload PDF and finalize negotiation event / customer visibility.
+ * After totals are applied, render the PDF on the server and notify the customer.
+ * Do not accept a client data URL — React Flight rejects large PDF payloads.
  */
 export async function attachNegotiationCustomerPdf(
   quotationId: string,
-  pdfDataUrlOrBase64: string,
   mode: ApplyAndSendMode
 ): Promise<
   | { quotation: SalesQuotationDetail; negotiation: QuotationNegotiationState; pdfUrl: string }
@@ -730,9 +724,6 @@ export async function attachNegotiationCustomerPdf(
   try {
     const scope = await resolveSalesScope();
     if ('error' in scope) return { error: scope.error };
-    if (!pdfDataUrlOrBase64?.trim()) {
-      return { error: 'PDF is required before notifying the customer.' };
-    }
 
     const supabase = await createAdminClient();
     const { data: row, error } = await supabase
@@ -746,9 +737,29 @@ export async function attachNegotiationCustomerPdf(
       return { error: 'Quotation is not linked to a customer inquiry.' };
     }
 
+    const payloadRes = await getSalesQuotationPdfPayload(quotationId);
+    if ('error' in payloadRes && payloadRes.error) {
+      return {
+        error: `${payloadRes.error} Totals may already be updated — use Send Quotation to Customer.`,
+      };
+    }
+    if (!('payload' in payloadRes) || !payloadRes.payload) {
+      return {
+        error:
+          'Failed to build quotation PDF. Totals may already be updated — use Send Quotation to Customer.',
+      };
+    }
+
+    const rendered = await renderSalesQuotationPdfBufferFromPayload(payloadRes.payload);
+    if ('error' in rendered) {
+      return {
+        error: `${rendered.error} Totals may already be updated — use Send Quotation to Customer.`,
+      };
+    }
+
     let uploaded: { filePath: string; pdfUrl: string };
     try {
-      uploaded = await uploadCustomerPdf(supabase, quotationId, pdfDataUrlOrBase64);
+      uploaded = await uploadCustomerPdf(supabase, quotationId, rendered.buffer);
     } catch (err) {
       return {
         error:
@@ -872,10 +883,9 @@ export async function attachNegotiationCustomerPdf(
 /** @deprecated Prefer applyNegotiationTotals + attachNegotiationCustomerPdf */
 export async function applyNegotiationOfferAndSendToCustomer(
   quotationId: string,
-  pdfDataUrlOrBase64: string,
   mode: ApplyAndSendMode
 ) {
   const applied = await applyNegotiationTotals(quotationId, mode);
   if ('error' in applied) return applied;
-  return attachNegotiationCustomerPdf(quotationId, pdfDataUrlOrBase64, mode);
+  return attachNegotiationCustomerPdf(quotationId, mode);
 }

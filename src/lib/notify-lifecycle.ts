@@ -9,6 +9,8 @@ import {
   adminOperationsInquiryHref,
   catalogMessageForEvent,
   catalogTitleForEvent,
+  crmInquiryHref,
+  crmPipelineInquiryHref,
   quotationFromInquiryHref,
   salesAgentInquiryHref,
   type AppNotificationPayload,
@@ -94,7 +96,18 @@ export async function insertLifecycleNotifications(
     event_type: input.eventType,
     title,
     message,
-    href: recipient.href || input.href || null,
+    href:
+      recipient.href ||
+      input.href ||
+      defaultHrefForRecipient({
+        eventType: input.eventType,
+        role: recipient.role,
+        leadId: input.leadId,
+        inquiryId: input.inquiryId,
+        confirmationId: input.confirmationId,
+        opportunityId:
+          typeof payload.opportunityId === 'string' ? payload.opportunityId : null,
+      }),
     payload,
   }));
 
@@ -244,14 +257,24 @@ export function defaultHrefForRecipient(input: {
   leadId: string;
   inquiryId?: string | null;
   confirmationId?: string | null;
+  opportunityId?: string | null;
 }): string {
-  const { eventType, role, leadId, inquiryId, confirmationId } = input;
+  const { eventType, role, leadId, inquiryId, confirmationId, opportunityId } = input;
   if (eventType === 'sent_for_admin_approval' && confirmationId) {
     return adminConfirmationHref(confirmationId);
   }
   if (eventType === 'approved' && inquiryId) {
     if (role === 'sales_agent') return quotationFromInquiryHref(inquiryId);
     return salesAgentInquiryHref(leadId, inquiryId);
+  }
+  if (
+    (eventType === 'inquiry_received' || eventType === 'customer_submitted' || eventType === 'lead_transferred') &&
+    opportunityId
+  ) {
+    return crmPipelineInquiryHref(opportunityId, inquiryId);
+  }
+  if (eventType === 'inquiry_flag_raised' && inquiryId) {
+    return crmInquiryHref(inquiryId);
   }
   if (eventType === 'inquiry_received' && inquiryId) {
     return salesAgentInquiryHref(leadId, inquiryId);

@@ -173,7 +173,7 @@ export function getCrmPageMeta(
 
   if (path.startsWith("/crm/opportunities/") && path.includes("/inquiry")) {
     return {
-      title: "Send Inquiry",
+      title: "Inquiry",
       breadcrumbs: [
         { label: "Sales", href: "/crm/pipeline" },
         { label: "My Pipeline", href: "/crm/pipeline" },

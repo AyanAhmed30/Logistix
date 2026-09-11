@@ -11,6 +11,8 @@ import {
   INQUIRY_IMAGES_BUCKET,
   ensureInquiryImagesBucket,
 } from '@/lib/inquiry-storage';
+import { renderSalesQuotationPdfBufferFromPayload } from '@/lib/sales-quotation-pdf-server';
+import { getSalesQuotationPdfPayload } from '@/app/actions/sales/quotation-pdf';
 
 export type SendQuotationToCustomerResult =
   | {
@@ -20,15 +22,6 @@ export type SendQuotationToCustomerResult =
       pdfUrl: string;
     }
   | { error: string };
-
-function stripPdfDataUrl(pdfDataUrlOrBase64: string): Buffer {
-  const raw = pdfDataUrlOrBase64.trim();
-  const base64 = raw.includes('base64,') ? raw.split('base64,')[1] || '' : raw;
-  if (!base64) {
-    throw new Error('PDF payload is empty');
-  }
-  return Buffer.from(base64, 'base64');
-}
 
 async function resolveLinkedInquiryId(
   supabase: Awaited<ReturnType<typeof createAdminClient>>,
@@ -129,14 +122,14 @@ async function resolveLinkedInquiryId(
 }
 
 /**
- * Upload the SAME staff-generated quotation PDF and make it visible
- * to the matching customer in the mobile app (via linked inquiry).
+ * Generate the quotation PDF on the server and make it visible to the
+ * matching customer in the mobile app (via linked inquiry).
  *
- * pdfDataUrlOrBase64: data URL or raw base64 from generateSalesQuotationPdf.
+ * The PDF must be rendered here — passing a data URL from the client
+ * through a Server Action trips React Flight ("Maximum array nesting exceeded").
  */
 export async function sendSalesQuotationToCustomer(
-  quotationId: string,
-  pdfDataUrlOrBase64: string
+  quotationId: string
 ): Promise<SendQuotationToCustomerResult> {
   try {
     const session = await getSession();
@@ -146,9 +139,6 @@ export async function sendSalesQuotationToCustomer(
 
     if (!quotationId?.trim()) {
       return { error: 'Quotation id is required' };
-    }
-    if (!pdfDataUrlOrBase64?.trim()) {
-      return { error: 'Quotation PDF is required. Generate/download the PDF first.' };
     }
 
     const detailRes = await getSalesQuotationDetail(quotationId);
@@ -184,18 +174,19 @@ export async function sendSalesQuotationToCustomer(
       return { error: link.error };
     }
 
-    let pdfBuffer: Buffer;
-    try {
-      pdfBuffer = stripPdfDataUrl(pdfDataUrlOrBase64);
-    } catch {
-      return { error: 'Invalid PDF payload. Please regenerate the PDF and try again.' };
+    const payloadRes = await getSalesQuotationPdfPayload(quotationId);
+    if ('error' in payloadRes && payloadRes.error) {
+      return { error: payloadRes.error };
     }
-    if (pdfBuffer.byteLength < 100) {
-      return { error: 'PDF generation failed. Please try Download PDF first, then send again.' };
+    if (!('payload' in payloadRes) || !payloadRes.payload) {
+      return { error: 'Failed to build quotation PDF' };
     }
-    if (pdfBuffer.byteLength > 20 * 1024 * 1024) {
-      return { error: 'PDF is too large to send (max 20 MB).' };
+
+    const rendered = await renderSalesQuotationPdfBufferFromPayload(payloadRes.payload);
+    if ('error' in rendered) {
+      return { error: rendered.error };
     }
+    const pdfBuffer = rendered.buffer;
 
     const bucketReady = await ensureInquiryImagesBucket(supabase);
     if (!bucketReady.ok) {

@@ -14,8 +14,6 @@ import {
   saveNegotiationCounterDraft,
   type QuotationNegotiationState,
 } from "@/app/actions/sales/quotation-negotiation";
-import { getSalesQuotationPdfPayload } from "@/app/actions/sales/quotation-pdf";
-import { generateSalesQuotationPdf } from "@/lib/sales-quotation-pdf";
 
 type Props = {
   quotationId: string | null;
@@ -163,36 +161,7 @@ export function SalesQuotationNegotiationPanel({
           return;
         }
 
-        const freshPayload = await getSalesQuotationPdfPayload(quotationId);
-        if ("error" in freshPayload && freshPayload.error) {
-          toast.error(
-            `Totals updated but PDF failed: ${freshPayload.error}. Use Send Quotation to Customer to retry PDF.`
-          );
-          onApplied?.();
-          return;
-        }
-        if (!("payload" in freshPayload) || !freshPayload.payload) {
-          toast.error("Totals updated but PDF payload missing. Resend PDF manually.");
-          onApplied?.();
-          return;
-        }
-
-        const generated = await generateSalesQuotationPdf(freshPayload.payload, {
-          silent: true,
-        });
-        if (!generated?.dataUrl) {
-          toast.error(
-            "Totals updated but PDF generation failed. Use Send Quotation to Customer to retry."
-          );
-          onApplied?.();
-          return;
-        }
-
-        const attached = await attachNegotiationCustomerPdf(
-          quotationId,
-          generated.dataUrl,
-          mode
-        );
+        const attached = await attachNegotiationCustomerPdf(quotationId, mode);
         if ("error" in attached && attached.error) {
           toast.error(attached.error);
           onApplied?.();

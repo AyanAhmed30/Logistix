@@ -53,7 +53,6 @@ export function CrmOpportunityInquiryClient({
         setError(res.error);
         setLoading(false);
         toast.error(res.error);
-        router.replace(`/crm/opportunities/${opportunityId}`);
         return;
       }
       if ("bootstrap" in res && res.bootstrap) {
@@ -75,16 +74,32 @@ export function CrmOpportunityInquiryClient({
     });
   }, [bootstrap]);
 
+  if (error) {
+    return (
+      <div className="max-w-lg mx-auto mt-12 rounded-lg border border-rose-200 bg-rose-50 p-6 text-center">
+        <p className="text-sm font-semibold text-rose-900">Unable to open inquiry</p>
+        <p className="text-sm text-rose-800 mt-2">{error}</p>
+        <button
+          type="button"
+          className="mt-4 text-sm font-medium text-[#017e84] hover:underline"
+          onClick={() => router.push(`/crm/opportunities/${opportunityId}`)}
+        >
+          Back to opportunity
+        </button>
+      </div>
+    );
+  }
+
   if (loading || !bootstrap) {
     return <ModuleLoadingOverlay label="Inquiry" />;
   }
 
-  if (error) {
-    return null;
-  }
-
   const { opportunity, lead, inquiries, approvedInquiryId, allowInquiry } = bootstrap;
-  const remountKey = `${opportunity.id}-${initialTab ?? "create"}-${initialInquiryId ?? "none"}-${allowInquiry ? "1" : "0"}`;
+  const boundInquiryId = initialInquiryId || opportunity.lead_inquiry_id || undefined;
+  const defaultTab: LeadInquiryWorkspaceTab =
+    initialTab ??
+    (boundInquiryId ? "view" : allowInquiry ? "create" : "view");
+  const remountKey = `${opportunity.id}-${defaultTab}-${boundInquiryId ?? "none"}-${allowInquiry ? "1" : "0"}`;
 
   return (
     <ClientErrorBoundary
@@ -99,8 +114,8 @@ export function CrmOpportunityInquiryClient({
           mode="view"
           active
           layout="crm"
-          initialMainTab={initialTab ?? (allowInquiry ? "create" : "view")}
-          initialInquiryId={initialInquiryId}
+          initialMainTab={defaultTab}
+          initialInquiryId={boundInquiryId}
           allowInquiry={allowInquiry}
           boardStatus={opportunity.stage_name}
           initialInquiryBootstrap={{ inquiries, approvedInquiryId }}

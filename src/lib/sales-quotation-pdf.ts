@@ -1,5 +1,8 @@
 import type { SalesQuotationPdfPayload } from '@/app/actions/sales/quotation-pdf';
-import { preparePdfLogoFit } from '@/lib/logistix-logo';
+import {
+  preparePdfLogoFit,
+  type PreparedPdfLogo,
+} from '@/lib/logistix-logo';
 import {
   createErpPdfContext,
   ensurePdfSpace,
@@ -15,6 +18,8 @@ export type GenerateSalesQuotationPdfOptions = {
   openPrintDialog?: boolean;
   /** When true, only return dataUrl — do not download, print, or open a tab. */
   silent?: boolean;
+  /** Skip browser logo loading (used when rendering on the server). */
+  logo?: PreparedPdfLogo | null;
 };
 
 function formatOdooDate(value: string | null | undefined) {
@@ -100,7 +105,10 @@ export async function generateSalesQuotationPdf(
   ctx.y = 12;
   ctx.footerReserve = 24;
 
-  const logo = await preparePdfLogoFit(payload.organization.logoUrl, 78, 26);
+  const logo =
+    options.logo !== undefined
+      ? options.logo
+      : await preparePdfLogoFit(payload.organization.logoUrl, 78, 26);
   const logoH = drawLogo(doc, logo, ctx.margin, ctx.y);
   ctx.y += (logoH || 22) + 5;
   doc.setDrawColor(1, 126, 132);

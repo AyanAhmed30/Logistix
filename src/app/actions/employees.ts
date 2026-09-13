@@ -22,7 +22,8 @@ export type EmploymentType =
   | "temporary"
   | "part_time"
   | "full_time"
-  | "internee";
+  | "internee"
+  | "hybrid";
 
 export type EmployeeGender = "male" | "female" | "other" | "prefer_not_to_say";
 
@@ -72,6 +73,7 @@ const EMPLOYMENT_TYPES: EmploymentType[] = [
   "part_time",
   "full_time",
   "internee",
+  "hybrid",
 ];
 
 const GENDERS: EmployeeGender[] = [

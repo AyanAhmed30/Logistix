@@ -63,9 +63,28 @@ type HrPersonRecord = {
   department: string;
   designation: string;
   employeeId: string;
+  joiningDate: string;
   status: HrPersonStatus;
   createdAt: string;
 };
+
+function formatJoiningDate(value: string | null | undefined) {
+  if (!value) return "—";
+  const datePart = value.slice(0, 10);
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(datePart);
+  if (!match) return value;
+  const date = new Date(
+    Number(match[1]),
+    Number(match[2]) - 1,
+    Number(match[3]),
+  );
+  if (Number.isNaN(date.getTime())) return "—";
+  return date.toLocaleDateString("en-GB", {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+  });
+}
 
 function mapEmployeeToRecord(row: Employee): HrPersonRecord {
   return {
@@ -77,6 +96,7 @@ function mapEmployeeToRecord(row: Employee): HrPersonRecord {
     department: row.department || "",
     designation: row.designation || "",
     employeeId: row.employee_id || "",
+    joiningDate: row.joining_date || "",
     status: row.status,
     createdAt: row.created_at,
   };
@@ -480,25 +500,37 @@ export function EmployeeProfileManagement() {
               </div>
             ) : (
               <div className="overflow-x-auto">
-                <Table>
+                <Table className="min-w-[980px]">
                   <TableHeader>
                     <TableRow>
-                      <TableHead>Full Name</TableHead>
-                      <TableHead>Email Address</TableHead>
-                      <TableHead>Department</TableHead>
-                      <TableHead>Employment Status</TableHead>
-                      <TableHead className="text-right">Actions</TableHead>
+                      <TableHead className="px-2">Full Name</TableHead>
+                      <TableHead className="px-2">Email Address</TableHead>
+                      <TableHead className="px-2">Mobile Number</TableHead>
+                      <TableHead className="px-2">Department</TableHead>
+                      <TableHead className="px-2">Date of Joining</TableHead>
+                      <TableHead className="px-2">Employment Status</TableHead>
+                      <TableHead className="px-2 text-right">Actions</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
                     {sortedPersons.map((person) => (
                       <TableRow key={person.id}>
-                        <TableCell className="font-semibold">
+                        <TableCell className="px-2 font-semibold">
                           {person.fullName}
                         </TableCell>
-                        <TableCell>{person.email || "—"}</TableCell>
-                        <TableCell>{person.department || "—"}</TableCell>
-                        <TableCell>
+                        <TableCell className="px-2 max-w-[180px] truncate">
+                          {person.email || "—"}
+                        </TableCell>
+                        <TableCell className="px-2 whitespace-nowrap">
+                          {person.phone || "—"}
+                        </TableCell>
+                        <TableCell className="px-2">
+                          {person.department || "—"}
+                        </TableCell>
+                        <TableCell className="px-2 whitespace-nowrap">
+                          {formatJoiningDate(person.joiningDate)}
+                        </TableCell>
+                        <TableCell className="px-2">
                           <span
                             className={`inline-flex rounded-full px-2.5 py-0.5 text-xs font-medium ${
                               person.status === "active"
@@ -529,7 +561,7 @@ export function EmployeeProfileManagement() {
                               : person.status}
                           </span>
                         </TableCell>
-                        <TableCell className="text-right space-x-2">
+                        <TableCell className="px-2 text-right whitespace-nowrap space-x-2">
                           <Button
                             size="sm"
                             variant="outline"

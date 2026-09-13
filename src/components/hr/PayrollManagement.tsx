@@ -68,7 +68,7 @@ const selectClassName =
   "flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2";
 
 const PAYROLL_ACCEPT =
-  ".pdf,.doc,.docx,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+  ".pdf,.doc,.docx,.jpg,.jpeg,.png,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,image/jpeg,image/png";
 
 const EMPTY_FORM: PayrollFormState = {
   employeeId: "",
@@ -521,7 +521,7 @@ export function PayrollManagement() {
 
               <PdfAttachmentInput
                 label="Attach Payroll Document"
-                description="PDF, DOC, or DOCX. Maximum size 10 MB."
+                description="Allowed formats: PDF, DOC, DOCX, PNG, JPG, JPEG. Maximum size 10 MB."
                 chooseLabel="Choose File"
                 accept={PAYROLL_ACCEPT}
                 validateFile={validatePayrollDocumentFile}
@@ -860,7 +860,7 @@ export function PayrollManagement() {
 
               <PdfAttachmentInput
                 label="Attach Payroll Document"
-                description="PDF, DOC, or DOCX. Maximum size 10 MB."
+                description="Allowed formats: PDF, DOC, DOCX, PNG, JPG, JPEG. Maximum size 10 MB."
                 chooseLabel="Choose File"
                 accept={PAYROLL_ACCEPT}
                 validateFile={validatePayrollDocumentFile}

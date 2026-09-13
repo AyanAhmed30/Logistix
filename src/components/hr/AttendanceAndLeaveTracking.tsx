@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -97,49 +97,18 @@ function EmployeeSelect({
   employees: EmployeeOption[];
   onChange: (employeeId: string) => void;
 }) {
-  const [query, setQuery] = useState("");
-
-  const filtered = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    if (!q) return employees;
-    return employees.filter((employee) =>
-      employee.fullName.toLowerCase().includes(q),
-    );
-  }, [employees, query]);
-
-  const selectedName =
-    employees.find((employee) => employee.id === value)?.fullName || "";
-
   return (
     <div className="space-y-2">
-      <Label htmlFor={`${id}-search`}>Employee</Label>
-      <Input
-        id={`${id}-search`}
-        value={query || (value ? selectedName : "")}
-        onChange={(event) => {
-          setQuery(event.target.value);
-          if (value) onChange("");
-        }}
-        onFocus={() => {
-          if (value && !query) setQuery(selectedName);
-        }}
-        placeholder="Search employee..."
-      />
+      <Label htmlFor={id}>Employee</Label>
       <select
         id={id}
         value={value}
-        onChange={(event) => {
-          onChange(event.target.value);
-          const name =
-            employees.find((employee) => employee.id === event.target.value)
-              ?.fullName || "";
-          setQuery(name);
-        }}
+        onChange={(event) => onChange(event.target.value)}
         className={selectClassName}
         required
       >
         <option value="">Select employee</option>
-        {filtered.map((employee) => (
+        {employees.map((employee) => (
           <option key={employee.id} value={employee.id}>
             {employee.fullName}
           </option>

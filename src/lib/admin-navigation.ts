@@ -19,6 +19,7 @@ import {
   Warehouse,
   Target,
   Users,
+  ListTodo,
 } from "lucide-react";
 
 export type AdminTab =
@@ -48,6 +49,7 @@ export type AdminModule =
   | "operations"
   | "warehouse"
   | "hr"
+  | "todo"
   | "analytics"
   | "settings";
 
@@ -132,6 +134,15 @@ export const ADMIN_MODULES: AdminModuleDefinition[] = [
     accentClass: "text-[#0f766e]",
     borderClass: "border-[#0f766e]/20 hover:border-[#0f766e]/40",
     iconBgClass: "bg-[#0f766e]/10 text-[#0f766e]",
+  },
+  {
+    id: "todo",
+    label: "To-Do",
+    description: "Create tasks and view work assigned to you",
+    icon: ListTodo,
+    accentClass: "text-[#c2410c]",
+    borderClass: "border-[#c2410c]/20 hover:border-[#c2410c]/40",
+    iconBgClass: "bg-[#c2410c]/10 text-[#c2410c]",
   },
   {
     id: "analytics",

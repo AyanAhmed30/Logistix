@@ -65,6 +65,7 @@ export async function middleware(request: NextRequest) {
     pathname.startsWith('/crm') ||
     pathname.startsWith('/sales') ||
     pathname.startsWith('/hr') ||
+    pathname.startsWith('/todo') ||
     pathname.startsWith('/user') ||
     pathname.startsWith('/sales-agent') ||
     pathname.startsWith('/operations') ||
@@ -97,6 +98,13 @@ export async function middleware(request: NextRequest) {
 
   // HR module — Super Admin / portal accounts (page-level permission checks apply)
   if (pathname.startsWith('/hr')) {
+    if (!session || !canAccessAdminDashboard(session)) {
+      return hadInvalidToken ? redirectToSessionExpired(request) : redirectAccessDenied(request);
+    }
+  }
+
+  // Global To-Do module — Super Admin and portal accounts
+  if (pathname.startsWith('/todo')) {
     if (!session || !canAccessAdminDashboard(session)) {
       return hadInvalidToken ? redirectToSessionExpired(request) : redirectAccessDenied(request);
     }

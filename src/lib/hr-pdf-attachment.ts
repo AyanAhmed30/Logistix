@@ -73,26 +73,20 @@ export function validateHrDocumentFile(
   return { ok: true };
 }
 
-/** Payroll uploads: PDF, DOC, DOCX only. */
+/** Payroll uploads: PDF, DOC, DOCX, JPG, JPEG, PNG. */
 export function validatePayrollDocumentFile(
   file: File,
 ): { ok: true } | { ok: false; error: string } {
   const extension = fileExtension(file.name);
-  const allowed = [".pdf", ".doc", ".docx"] as const;
-  const mimeOk =
-    !file.type ||
-    file.type === "application/pdf" ||
-    file.type === "application/msword" ||
-    file.type ===
-      "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
-  const extensionOk = allowed.includes(
-    extension as (typeof allowed)[number],
+  const mimeOk = !file.type || DOCUMENT_MIME_TYPES.has(file.type);
+  const extensionOk = DOCUMENT_EXTENSIONS.includes(
+    extension as (typeof DOCUMENT_EXTENSIONS)[number],
   );
 
   if (!extensionOk || (!mimeOk && file.type)) {
     return {
       ok: false,
-      error: "Only PDF, DOC, or DOCX files are allowed.",
+      error: "Allowed formats: PDF, DOC, DOCX, PNG, JPG, JPEG",
     };
   }
 

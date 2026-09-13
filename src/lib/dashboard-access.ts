@@ -33,6 +33,7 @@ export function visibleModulesForAccess(access: DashboardAccessState): AdminModu
       'operations',
       'warehouse',
       'hr',
+      'todo',
       'analytics',
       'settings',
     ];
@@ -61,6 +62,7 @@ export function visibleModulesForAccess(access: DashboardAccessState): AdminModu
   if (hasDepartmentAccess(access.permissions, 'operations')) modules.push('operations');
   if (hasDepartmentAccess(access.permissions, 'warehouse')) modules.push('warehouse');
   if (hasDepartmentAccess(access.permissions, 'hr')) modules.push('hr');
+  modules.push('todo');
   const hasSalesOrOps =
     hasSales || hasDepartmentAccess(access.permissions, 'operations');
   if (hasSalesOrOps) modules.push('analytics');
@@ -125,6 +127,7 @@ export function canAccessAdminTab(
     if (module === 'operations') return hasDepartmentAccess(access.permissions, 'operations');
     if (module === 'warehouse') return hasDepartmentAccess(access.permissions, 'warehouse');
     if (module === 'hr') return hasDepartmentAccess(access.permissions, 'hr');
+    if (module === 'todo') return true;
     return false;
   }
 

@@ -26,6 +26,7 @@ function routeForModule(
   if (module === "sales") return defaultSalesRouteForAccess(access);
   if (module === "accounting") return defaultAccountingRouteForAccess(access);
   if (module === "hr") return defaultHrRouteForAccess(access);
+  if (module === "todo") return "/todo";
   return null;
 }
 

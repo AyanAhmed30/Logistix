@@ -24,6 +24,7 @@ const EMPLOYMENT_TYPE_OPTIONS = [
   { value: "part_time", label: "Part Time" },
   { value: "full_time", label: "Full Time" },
   { value: "internee", label: "Internee" },
+  { value: "hybrid", label: "Hybrid" },
 ] as const;
 
 const GENDER_OPTIONS = [

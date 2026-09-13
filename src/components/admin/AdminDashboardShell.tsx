@@ -128,6 +128,10 @@ function AdminDashboardContent({
       router.push(defaultHrRouteForAccess(access));
       return;
     }
+    if (nextModule === "todo") {
+      router.push("/todo");
+      return;
+    }
     setActiveModule(nextModule);
     if (
       access.isPortalAccount &&

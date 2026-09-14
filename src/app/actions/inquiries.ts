@@ -664,6 +664,7 @@ export async function saveInquiry(
     image_url: string | null;
     additional_image_urls?: string[] | null;
     description: string;
+    customer_submitted?: boolean;
   },
   inquiryId?: string,
   options?: {
@@ -721,6 +722,7 @@ export async function saveInquiry(
       image_url: data.image_url || null,
       additional_image_urls: Array.isArray(data.additional_image_urls) ? data.additional_image_urls : [],
       updated_at: new Date().toISOString(),
+      ...(data.customer_submitted ? { customer_submitted: true as const } : {}),
     };
 
     if (inquiryData.total_weight && !isValidDecimal(inquiryData.total_weight)) {
@@ -849,7 +851,8 @@ export async function saveInquiry(
       if (crmOpportunityId) {
         insertPayload.crm_opportunity_id = crmOpportunityId;
       }
-      if (inquiryData.customer_submitted) {
+      if (data.customer_submitted) {
+        insertPayload.customer_submitted = true;
         insertPayload.sent_to_accounting = true;
         insertPayload.sent_to_operations = true;
         insertPayload.sent_at = new Date().toISOString();
@@ -868,7 +871,7 @@ export async function saveInquiry(
         await linkInquiryToCrmOpportunity(supabase, String(result.id), crmOpportunityId);
       }
 
-      if (result?.id && result.customer_submitted) {
+      if (result?.id && data.customer_submitted) {
         try {
           const opportunityId =
             crmOpportunityId ||

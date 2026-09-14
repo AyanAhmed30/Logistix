@@ -28,6 +28,29 @@ export function inquiryHasFlag(
   return Array.isArray(flags) && flags.length > 0;
 }
 
+/** Show "Flag Raised" only while a flag is newer than the last send-to-admin confirmation. */
+export function inquiryShowsFlagRaised(
+  flags: Array<{ id?: string; created_at?: string } | InquiryFlag> | null | undefined,
+  confirmations?: Array<{ created_at?: string | null }> | null
+): boolean {
+  if (!Array.isArray(flags) || flags.length === 0) return false;
+  const latestFlag = Math.max(
+    ...flags.map((flag) => {
+      const time = flag.created_at ? new Date(flag.created_at).getTime() : 0;
+      return Number.isFinite(time) ? time : 0;
+    })
+  );
+  const confs = Array.isArray(confirmations) ? confirmations : [];
+  if (confs.length === 0) return true;
+  const latestConfirmation = Math.max(
+    ...confs.map((row) => {
+      const time = row.created_at ? new Date(row.created_at).getTime() : 0;
+      return Number.isFinite(time) ? time : 0;
+    })
+  );
+  return latestFlag > latestConfirmation;
+}
+
 export function normalizeInquiryFlags(raw: unknown): InquiryFlag[] {
   if (!Array.isArray(raw)) return [];
   return raw

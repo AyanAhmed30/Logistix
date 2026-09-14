@@ -1,9 +1,9 @@
 'use server';
 
 import { createAdminClient } from '@/utils/supabase/server';
-import { getSalesQuotationDetail } from '@/app/actions/sales/quotation-form';
+import { getSalesQuotationDetail, getSalesQuotationDetailForWorkflow } from '@/app/actions/sales/quotation-form';
 import { getSession } from '@/lib/auth/session';
-import { sessionHasSalesAccess } from '@/lib/auth/require-access';
+import { requireChildModule, sessionHasSalesAccess } from '@/lib/auth/require-access';
 import { quotationLineDisplayDescription } from '@/lib/sales-quotation-form';
 
 export type SalesQuotationPdfPayload = {
@@ -94,11 +94,27 @@ async function loadContactAddress(
 export async function getSalesQuotationPdfPayload(quotationId: string) {
   try {
     const session = await getSession();
-    if (!session || !sessionHasSalesAccess(session)) {
+    if (!session) {
       return { error: 'Unauthorized' };
     }
 
-    const detailRes = await getSalesQuotationDetail(quotationId);
+    let detailRes: Awaited<ReturnType<typeof getSalesQuotationDetail>>;
+    if (sessionHasSalesAccess(session)) {
+      detailRes = await getSalesQuotationDetail(quotationId);
+      // Super Admin / rate-approval may lack a Sales org context — fall back.
+      if ('error' in detailRes && detailRes.error) {
+        const auth = await requireChildModule('inquiry-confirmation');
+        if (!('error' in auth)) {
+          detailRes = await getSalesQuotationDetailForWorkflow(quotationId);
+        }
+      }
+    } else {
+      const auth = await requireChildModule('inquiry-confirmation');
+      if ('error' in auth) {
+        return { error: 'Unauthorized' };
+      }
+      detailRes = await getSalesQuotationDetailForWorkflow(quotationId);
+    }
     if ('error' in detailRes && detailRes.error) return { error: detailRes.error };
     const q = detailRes.quotation;
     if (!q) return { error: 'Quotation not found' };

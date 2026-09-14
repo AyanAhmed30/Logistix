@@ -2,9 +2,13 @@
 
 import { createAdminClient } from '@/utils/supabase/server';
 import { getSession } from '@/lib/auth/session';
-import { sessionHasSalesAccess } from '@/lib/auth/require-access';
+import {
+  requireChildModule,
+  sessionHasSalesAccess,
+} from '@/lib/auth/require-access';
 import {
   getSalesQuotationDetail,
+  getSalesQuotationDetailForWorkflow,
   type SalesQuotationDetail,
 } from '@/app/actions/sales/quotation-form';
 import {
@@ -13,6 +17,14 @@ import {
 } from '@/lib/inquiry-storage';
 import { renderSalesQuotationPdfBufferFromPayload } from '@/lib/sales-quotation-pdf-server';
 import { getSalesQuotationPdfPayload } from '@/app/actions/sales/quotation-pdf';
+import {
+  adminSentQuotationToCustomerMessage,
+  quotationFromInquiryHref,
+} from '@/lib/app-notifications';
+import {
+  insertLifecycleNotifications,
+  resolveLeadSalesAgentRecipient,
+} from '@/lib/notify-lifecycle';
 
 export type SendQuotationToCustomerResult =
   | {
@@ -128,223 +140,262 @@ async function resolveLinkedInquiryId(
  * The PDF must be rendered here — passing a data URL from the client
  * through a Server Action trips React Flight ("Maximum array nesting exceeded").
  */
-export async function sendSalesQuotationToCustomer(
-  quotationId: string
-): Promise<SendQuotationToCustomerResult> {
-  try {
-    const session = await getSession();
-    if (!session || !sessionHasSalesAccess(session)) {
-      return { error: 'Unauthorized' };
-    }
+async function deliverQuotationPdfToCustomer(input: {
+  quotation: SalesQuotationDetail;
+  actorUsername: string;
+  actorRole: 'sales' | 'admin';
+  notifySalesOfAdminSend?: boolean;
+}): Promise<SendQuotationToCustomerResult> {
+  const { quotation, actorUsername, actorRole } = input;
+  if (quotation.status === 'cancelled') {
+    return { error: 'Cancelled quotations cannot be sent to the customer.' };
+  }
+  if (quotation.status === 'sales_order') {
+    return { error: 'This document is already a Sales Order.' };
+  }
+  if (!quotation.contact_id) {
+    return {
+      error:
+        'This quotation has no customer contact. Select a customer before sending to the mobile app.',
+    };
+  }
 
-    if (!quotationId?.trim()) {
-      return { error: 'Quotation id is required' };
-    }
+  const supabase = await createAdminClient();
+  const link = await resolveLinkedInquiryId(supabase, {
+    id: quotation.id,
+    contact_id: quotation.contact_id,
+    opportunity_id: quotation.opportunity_id,
+    linked_inquiry_id: quotation.linked_inquiry_id || null,
+  });
+  if ('error' in link) {
+    return { error: link.error };
+  }
 
-    const detailRes = await getSalesQuotationDetail(quotationId);
-    if ('error' in detailRes && detailRes.error) {
-      return { error: detailRes.error };
-    }
-    if (!('quotation' in detailRes) || !detailRes.quotation) {
-      return { error: 'Quotation not found' };
-    }
+  const payloadRes = await getSalesQuotationPdfPayload(quotation.id);
+  if ('error' in payloadRes && payloadRes.error) {
+    return { error: payloadRes.error };
+  }
+  if (!('payload' in payloadRes) || !payloadRes.payload) {
+    return { error: 'Failed to build quotation PDF' };
+  }
 
-    const quotation = detailRes.quotation;
-    if (quotation.status === 'cancelled') {
-      return { error: 'Cancelled quotations cannot be sent to the customer.' };
-    }
-    if (quotation.status === 'sales_order') {
-      return { error: 'This document is already a Sales Order.' };
-    }
-    if (!quotation.contact_id) {
-      return {
-        error:
-          'This quotation has no customer contact. Select a customer before sending to the mobile app.',
-      };
-    }
+  const rendered = await renderSalesQuotationPdfBufferFromPayload(payloadRes.payload);
+  if ('error' in rendered) {
+    return { error: rendered.error };
+  }
+  const pdfBuffer = rendered.buffer;
 
-    const supabase = await createAdminClient();
-    const link = await resolveLinkedInquiryId(supabase, {
-      id: quotation.id,
-      contact_id: quotation.contact_id,
-      opportunity_id: quotation.opportunity_id,
-      linked_inquiry_id: quotation.linked_inquiry_id || null,
+  const bucketReady = await ensureInquiryImagesBucket(supabase);
+  if (!bucketReady.ok) {
+    return { error: bucketReady.error };
+  }
+
+  const safeNumber = (quotation.quotation_number || 'quotation').replace(
+    /[^a-zA-Z0-9._-]/g,
+    '_'
+  );
+  const filePath = `customer-quotes/${quotation.id}_${Date.now()}_${safeNumber}.pdf`;
+
+  const uploadBytes = new Uint8Array(pdfBuffer);
+  const firstAttempt = await supabase.storage
+    .from(INQUIRY_IMAGES_BUCKET)
+    .upload(filePath, uploadBytes, {
+      contentType: 'application/pdf',
+      upsert: false,
     });
-    if ('error' in link) {
-      return { error: link.error };
-    }
 
-    const payloadRes = await getSalesQuotationPdfPayload(quotationId);
-    if ('error' in payloadRes && payloadRes.error) {
-      return { error: payloadRes.error };
+  let uploadError = firstAttempt.error;
+  if (uploadError && /bucket not found|bucket does not exist/i.test(uploadError.message)) {
+    const retryBucket = await ensureInquiryImagesBucket(supabase);
+    if (!retryBucket.ok) {
+      return { error: retryBucket.error };
     }
-    if (!('payload' in payloadRes) || !payloadRes.payload) {
-      return { error: 'Failed to build quotation PDF' };
-    }
-
-    const rendered = await renderSalesQuotationPdfBufferFromPayload(payloadRes.payload);
-    if ('error' in rendered) {
-      return { error: rendered.error };
-    }
-    const pdfBuffer = rendered.buffer;
-
-    const bucketReady = await ensureInquiryImagesBucket(supabase);
-    if (!bucketReady.ok) {
-      return { error: bucketReady.error };
-    }
-
-    const safeNumber = (quotation.quotation_number || 'quotation').replace(
-      /[^a-zA-Z0-9._-]/g,
-      '_'
-    );
-    const filePath = `customer-quotes/${quotation.id}_${Date.now()}_${safeNumber}.pdf`;
-
-    const uploadBytes = new Uint8Array(pdfBuffer);
-    const firstAttempt = await supabase.storage
+    const secondAttempt = await supabase.storage
       .from(INQUIRY_IMAGES_BUCKET)
       .upload(filePath, uploadBytes, {
         contentType: 'application/pdf',
         upsert: false,
       });
+    uploadError = secondAttempt.error;
+  }
 
-    let uploadError = firstAttempt.error;
-    if (uploadError && /bucket not found|bucket does not exist/i.test(uploadError.message)) {
-      const retryBucket = await ensureInquiryImagesBucket(supabase);
-      if (!retryBucket.ok) {
-        return { error: retryBucket.error };
-      }
-      const secondAttempt = await supabase.storage
-        .from(INQUIRY_IMAGES_BUCKET)
-        .upload(filePath, uploadBytes, {
-          contentType: 'application/pdf',
-          upsert: false,
-        });
-      uploadError = secondAttempt.error;
-    }
+  if (uploadError) {
+    return { error: uploadError.message || 'Failed to store quotation PDF' };
+  }
 
-    if (uploadError) {
-      return { error: uploadError.message || 'Failed to store quotation PDF' };
-    }
+  const { data: urlData } = supabase.storage
+    .from(INQUIRY_IMAGES_BUCKET)
+    .getPublicUrl(filePath);
+  const pdfUrl = urlData.publicUrl;
 
-    const { data: urlData } = supabase.storage
-      .from(INQUIRY_IMAGES_BUCKET)
-      .getPublicUrl(filePath);
-    const pdfUrl = urlData.publicUrl;
+  const alreadySent = Boolean(quotation.sent_to_customer_at);
+  const now = new Date().toISOString();
+  const totalAmount = Number(quotation.total_amount) || 0;
 
-    const alreadySent = Boolean(quotation.sent_to_customer_at);
-    const now = new Date().toISOString();
-    const totalAmount = Number(quotation.total_amount) || 0;
+  const { data: existingNeg } = await supabase
+    .from('quotations')
+    .select('original_offer_amount, negotiation_status')
+    .eq('id', quotation.id)
+    .maybeSingle();
 
-    const { data: existingNeg } = await supabase
-      .from('quotations')
-      .select('original_offer_amount, negotiation_status')
-      .eq('id', quotation.id)
-      .maybeSingle();
+  const seedOriginal =
+    existingNeg == null ||
+    existingNeg.original_offer_amount == null ||
+    existingNeg.original_offer_amount === undefined;
 
-    const seedOriginal =
-      existingNeg == null ||
-      existingNeg.original_offer_amount == null ||
-      existingNeg.original_offer_amount === undefined;
+  const { data: updated, error: updateError } = await supabase
+    .from('quotations')
+    .update({
+      linked_inquiry_id: link.inquiryId,
+      customer_pdf_path: filePath,
+      customer_pdf_url: pdfUrl,
+      sent_to_customer_at: now,
+      sent_to_customer_by: actorUsername,
+      status: quotation.status === 'quotation' ? 'quotation_sent' : quotation.status,
+      ...(seedOriginal
+        ? {
+            original_offer_amount: totalAmount,
+            negotiation_status: 'awaiting_customer',
+          }
+        : {}),
+      updated_at: now,
+      updated_by: actorUsername,
+    })
+    .eq('id', quotation.id)
+    .select('*')
+    .single();
 
-    const { data: updated, error: updateError } = await supabase
-      .from('quotations')
-      .update({
-        linked_inquiry_id: link.inquiryId,
+  if (updateError || !updated) {
+    return { error: updateError?.message || 'Failed to mark quotation as sent to customer' };
+  }
+
+  await supabase
+    .from('lead_inquiries')
+    .update({
+      status: 'quotation_sent',
+      updated_at: now,
+    })
+    .eq('id', link.inquiryId);
+
+  await supabase.from('quotation_logs').insert([
+    {
+      quotation_id: quotation.id,
+      action: alreadySent ? 'resent_to_customer' : 'sent_to_customer',
+      previous_status: quotation.status,
+      new_status: updated.status,
+      performed_by: actorUsername,
+      details: {
+        inquiry_id: link.inquiryId,
         customer_pdf_path: filePath,
         customer_pdf_url: pdfUrl,
-        sent_to_customer_at: now,
-        sent_to_customer_by: session.username,
-        status: quotation.status === 'quotation' ? 'quotation_sent' : quotation.status,
-        ...(seedOriginal
-          ? {
-              original_offer_amount: totalAmount,
-              negotiation_status: 'awaiting_customer',
-            }
-          : {}),
-        updated_at: now,
-        updated_by: session.username,
-      })
-      .eq('id', quotation.id)
-      .select('*')
-      .single();
-
-    if (updateError || !updated) {
-      return { error: updateError?.message || 'Failed to mark quotation as sent to customer' };
-    }
-
-    // Drive mobile "Quote ready" from inquiry status (existing mapping)
-    await supabase
-      .from('lead_inquiries')
-      .update({
-        status: 'quotation_sent',
-        updated_at: now,
-      })
-      .eq('id', link.inquiryId);
-
-    await supabase.from('quotation_logs').insert([
-      {
-        quotation_id: quotation.id,
-        action: alreadySent ? 'resent_to_customer' : 'sent_to_customer',
-        previous_status: quotation.status,
-        new_status: updated.status,
-        performed_by: session.username,
-        details: {
-          inquiry_id: link.inquiryId,
-          customer_pdf_path: filePath,
-          customer_pdf_url: pdfUrl,
-          total_amount: totalAmount,
-        },
+        total_amount: totalAmount,
+        sent_by_role: actorRole,
       },
-    ]);
+    },
+  ]);
 
-    // Seed immutable negotiation history (same quotation number)
-    try {
-      if (!alreadySent || seedOriginal) {
-        const { count } = await supabase
-          .from('quotation_negotiation_events')
-          .select('id', { count: 'exact', head: true })
-          .eq('quotation_id', quotation.id)
-          .eq('event_type', 'original_offer');
+  try {
+    if (!alreadySent || seedOriginal) {
+      const { count } = await supabase
+        .from('quotation_negotiation_events')
+        .select('id', { count: 'exact', head: true })
+        .eq('quotation_id', quotation.id)
+        .eq('event_type', 'original_offer');
 
-        if (!count) {
-          await supabase.from('quotation_negotiation_events').insert([
-            {
-              quotation_id: quotation.id,
-              inquiry_id: link.inquiryId,
-              event_type: 'original_offer',
-              actor_role: 'sales',
-              actor_username: session.username,
-              previous_amount: null,
-              offered_amount: totalAmount,
-              message: 'Original quotation offer sent to customer',
-              pdf_url: pdfUrl,
-              pdf_path: filePath,
-              metadata: { quotation_number: quotation.quotation_number },
-            },
-          ]);
-        }
-      } else {
+      if (!count) {
         await supabase.from('quotation_negotiation_events').insert([
           {
             quotation_id: quotation.id,
             inquiry_id: link.inquiryId,
-            event_type: 'resent_offer',
+            event_type: 'original_offer',
             actor_role: 'sales',
-            actor_username: session.username,
-            previous_amount: totalAmount,
+            actor_username: actorUsername,
+            previous_amount: null,
             offered_amount: totalAmount,
-            message: 'Quotation PDF resent to customer',
+            message:
+              actorRole === 'admin'
+                ? 'Original quotation offer sent to customer by Admin'
+                : 'Original quotation offer sent to customer',
             pdf_url: pdfUrl,
             pdf_path: filePath,
             metadata: { quotation_number: quotation.quotation_number },
           },
         ]);
       }
-    } catch {
-      // negotiation table may not exist until migration 020
+    } else {
+      await supabase.from('quotation_negotiation_events').insert([
+        {
+          quotation_id: quotation.id,
+          inquiry_id: link.inquiryId,
+          event_type: 'resent_offer',
+          actor_role: 'sales',
+          actor_username: actorUsername,
+          previous_amount: totalAmount,
+          offered_amount: totalAmount,
+          message:
+            actorRole === 'admin'
+              ? 'Quotation PDF resent to customer by Admin'
+              : 'Quotation PDF resent to customer',
+          pdf_url: pdfUrl,
+          pdf_path: filePath,
+          metadata: { quotation_number: quotation.quotation_number },
+        },
+      ]);
     }
+  } catch {
+    // negotiation table may not exist until migration 020
+  }
 
-    // Optional lifecycle notification for future inbox (ignore failures / role constraints)
+  if (input.notifySalesOfAdminSend) {
+    try {
+      const { data: inquiryRow } = await supabase
+        .from('lead_inquiries')
+        .select('lead_id, crm_opportunity_id')
+        .eq('id', link.inquiryId)
+        .maybeSingle();
+
+      if (inquiryRow?.lead_id) {
+        const salesContext = await resolveLeadSalesAgentRecipient(
+          supabase,
+          String(inquiryRow.lead_id)
+        );
+        if (salesContext.recipient) {
+          await insertLifecycleNotifications(supabase, {
+            eventType: 'quotation_sent_to_customer',
+            leadId: String(inquiryRow.lead_id),
+            inquiryId: link.inquiryId,
+            senderRole: 'admin',
+            senderUsername: actorUsername,
+            recipients: [
+              {
+                ...salesContext.recipient,
+                href: quotationFromInquiryHref(link.inquiryId),
+              },
+            ],
+            title: 'Quotation Sent to Customer',
+            message: adminSentQuotationToCustomerMessage(
+              salesContext.customerName,
+              salesContext.leadNumber
+            ),
+            payload: {
+              leadId: String(inquiryRow.lead_id),
+              inquiryId: link.inquiryId,
+              opportunityId: inquiryRow.crm_opportunity_id
+                ? String(inquiryRow.crm_opportunity_id)
+                : null,
+              inquiryNumber: salesContext.leadNumber,
+              customerName: salesContext.customerName,
+              salesAgent: salesContext.salesAgentName,
+              summary: quotation.quotation_number || '',
+            },
+          });
+        }
+      }
+    } catch {
+      // non-blocking
+    }
+  } else {
+    // Sales-initiated send: keep lightweight inbox row for the salesperson.
     try {
       const { data: inquiryRow } = await supabase
         .from('lead_inquiries')
@@ -366,7 +417,7 @@ export async function sendSalesQuotationToCustomer(
               inquiry_id: link.inquiryId,
               confirmation_id: null,
               sender_role: 'sales_agent',
-              sender_username: session.username,
+              sender_username: actorUsername,
               recipient_role: 'sales_agent',
               recipient_username: agent.username,
               event_type: 'quotation_sent_to_customer',
@@ -378,31 +429,98 @@ export async function sendSalesQuotationToCustomer(
     } catch {
       // non-blocking
     }
+  }
 
-    const refreshed = await getSalesQuotationDetail(quotation.id);
-    if ('quotation' in refreshed && refreshed.quotation) {
-      return {
-        quotation: refreshed.quotation,
-        inquiryId: link.inquiryId,
-        resent: alreadySent,
-        pdfUrl,
-      };
-    }
-
+  const refreshed =
+    actorRole === 'admin'
+      ? await getSalesQuotationDetailForWorkflow(quotation.id)
+      : await getSalesQuotationDetail(quotation.id);
+  if ('quotation' in refreshed && refreshed.quotation) {
     return {
-      quotation: {
-        ...quotation,
-        status: String(updated.status),
-        linked_inquiry_id: link.inquiryId,
-        customer_pdf_url: pdfUrl,
-        customer_pdf_path: filePath,
-        sent_to_customer_at: now,
-        sent_to_customer_by: session.username,
-      },
+      quotation: refreshed.quotation,
       inquiryId: link.inquiryId,
       resent: alreadySent,
       pdfUrl,
     };
+  }
+
+  return {
+    quotation: {
+      ...quotation,
+      status: String(updated.status),
+      linked_inquiry_id: link.inquiryId,
+      customer_pdf_url: pdfUrl,
+      customer_pdf_path: filePath,
+      sent_to_customer_at: now,
+      sent_to_customer_by: actorUsername,
+    },
+    inquiryId: link.inquiryId,
+    resent: alreadySent,
+    pdfUrl,
+  };
+}
+
+export async function sendSalesQuotationToCustomer(
+  quotationId: string
+): Promise<SendQuotationToCustomerResult> {
+  try {
+    const session = await getSession();
+    if (!session || !sessionHasSalesAccess(session)) {
+      return { error: 'Unauthorized' };
+    }
+
+    if (!quotationId?.trim()) {
+      return { error: 'Quotation id is required' };
+    }
+
+    const detailRes = await getSalesQuotationDetail(quotationId);
+    if ('error' in detailRes && detailRes.error) {
+      return { error: detailRes.error };
+    }
+    if (!('quotation' in detailRes) || !detailRes.quotation) {
+      return { error: 'Quotation not found' };
+    }
+
+    return deliverQuotationPdfToCustomer({
+      quotation: detailRes.quotation,
+      actorUsername: session.username,
+      actorRole: 'sales',
+      notifySalesOfAdminSend: false,
+    });
+  } catch (err) {
+    return {
+      error: err instanceof Error ? err.message : 'Failed to send quotation to customer',
+    };
+  }
+}
+
+/** Admin rate-approval path: send the approved quotation PDF to the customer app. */
+export async function sendQuotationToCustomerAfterAdminApproval(
+  quotationId: string,
+  actorUsername: string
+): Promise<SendQuotationToCustomerResult> {
+  try {
+    const auth = await requireChildModule('inquiry-confirmation');
+    if ('error' in auth) return { error: auth.error };
+
+    if (!quotationId?.trim()) {
+      return { error: 'Quotation id is required' };
+    }
+
+    const detailRes = await getSalesQuotationDetailForWorkflow(quotationId);
+    if ('error' in detailRes && detailRes.error) {
+      return { error: detailRes.error };
+    }
+    if (!('quotation' in detailRes) || !detailRes.quotation) {
+      return { error: 'Quotation not found' };
+    }
+
+    return deliverQuotationPdfToCustomer({
+      quotation: detailRes.quotation,
+      actorUsername: String(actorUsername || auth.username || 'admin'),
+      actorRole: 'admin',
+      notifySalesOfAdminSend: true,
+    });
   } catch (err) {
     return {
       error: err instanceof Error ? err.message : 'Failed to send quotation to customer',

@@ -38,7 +38,10 @@ import {
   normalizeInquiryFlags,
   type InquiryFlag,
 } from '@/lib/inquiry-flags';
-import { inquiryDetailsHref } from '@/lib/inquiry-workflow';
+import {
+  crmPipelineInquiryHref,
+  customerSubmittedInquiryMessage,
+} from '@/lib/app-notifications';
 
 async function resolveLeadOrganizationId(
   supabase: Awaited<ReturnType<typeof createAdminClient>>,
@@ -544,6 +547,64 @@ function inquiryIsSent(row: Pick<InquirySaveTargetRow, 'sent_to_accounting'>) {
   return Boolean(row.sent_to_accounting);
 }
 
+async function notifyCustomerSubmittedInquiryDirect(
+  supabase: Awaited<ReturnType<typeof createAdminClient>>,
+  input: {
+    leadId: string;
+    inquiryId: string;
+    opportunityId?: string | null;
+    summary?: string;
+  }
+) {
+  const leadContext = await resolveLeadSalesAgentRecipient(supabase, input.leadId);
+  const payload = {
+    leadId: input.leadId,
+    inquiryId: input.inquiryId,
+    opportunityId: input.opportunityId || null,
+    inquiryNumber: leadContext.leadNumber,
+    customerName: leadContext.customerName,
+    source: leadContext.source || 'mobile',
+    summary: input.summary || '',
+    origin: 'mobile',
+  };
+
+  if (leadContext.recipient) {
+    await insertLifecycleNotifications(supabase, {
+      eventType: 'inquiry_received',
+      leadId: input.leadId,
+      inquiryId: input.inquiryId,
+      senderRole: 'system',
+      senderUsername: 'mobile',
+      recipients: [leadContext.recipient],
+      dedupe: true,
+      message: customerSubmittedInquiryMessage(
+        leadContext.customerName,
+        leadContext.leadNumber
+      ),
+      payload,
+    });
+  }
+
+  const opsRecipients = await resolveOperationsRecipients(
+    supabase,
+    input.leadId,
+    input.inquiryId
+  );
+  if (opsRecipients.length > 0) {
+    await insertLifecycleNotifications(supabase, {
+      eventType: 'inquiry_sent',
+      leadId: input.leadId,
+      inquiryId: input.inquiryId,
+      senderRole: 'system',
+      senderUsername: 'mobile',
+      recipients: opsRecipients,
+      dedupe: true,
+      message: `Inquiry sent by Sales Agent for Lead #${leadContext.leadNumber || 'N/A'}.`,
+      payload,
+    });
+  }
+}
+
 async function getNextInquiryVersionNumber(
   supabase: Awaited<ReturnType<typeof createAdminClient>>,
   leadId: string
@@ -788,6 +849,12 @@ export async function saveInquiry(
       if (crmOpportunityId) {
         insertPayload.crm_opportunity_id = crmOpportunityId;
       }
+      if (inquiryData.customer_submitted) {
+        insertPayload.sent_to_accounting = true;
+        insertPayload.sent_to_operations = true;
+        insertPayload.sent_at = new Date().toISOString();
+        insertPayload.approval_status = 'sent';
+      }
 
       const { data: result, error } = await supabase
         .from('lead_inquiries')
@@ -803,31 +870,15 @@ export async function saveInquiry(
 
       if (result?.id && result.customer_submitted) {
         try {
-          const leadContext = await resolveLeadSalesAgentRecipient(supabase, leadId);
-          if (leadContext.recipient) {
-            const opportunityId =
-              crmOpportunityId ||
-              (result.crm_opportunity_id ? String(result.crm_opportunity_id) : null);
-            await insertLifecycleNotifications(supabase, {
-              eventType: 'inquiry_received',
-              leadId,
-              inquiryId: String(result.id),
-              senderRole: 'system',
-              senderUsername: 'mobile',
-              recipients: [leadContext.recipient],
-              dedupe: true,
-              payload: {
-                leadId,
-                inquiryId: String(result.id),
-                opportunityId,
-                inquiryNumber: leadContext.leadNumber,
-                customerName: leadContext.customerName,
-                source: leadContext.source || 'mobile',
-                summary: String(inquiryData.product_name || inquiryData.description || ''),
-                origin: 'mobile',
-              },
-            });
-          }
+          const opportunityId =
+            crmOpportunityId ||
+            (result.crm_opportunity_id ? String(result.crm_opportunity_id) : null);
+          await notifyCustomerSubmittedInquiryDirect(supabase, {
+            leadId,
+            inquiryId: String(result.id),
+            opportunityId,
+            summary: String(inquiryData.product_name || inquiryData.description || ''),
+          });
         } catch {
           // Notification failure must not block inquiry creation.
         }
@@ -1727,7 +1778,8 @@ const OPERATIONS_LIST_INQUIRY_SELECT = `
     created_at
   ),
   inquiry_flags (
-    id
+    id,
+    created_at
   )
 `;
 
@@ -2228,6 +2280,30 @@ export async function raiseInquiryFlag(inquiryId: string, message: string) {
           inquiry && 'inquiry_reference' in inquiry
             ? String((inquiry as { inquiry_reference?: string | null }).inquiry_reference || '').trim()
             : '';
+        let opportunityId = inquiry.crm_opportunity_id
+          ? String(inquiry.crm_opportunity_id)
+          : '';
+        if (!opportunityId) {
+          const { data: oppByInquiry } = await supabase
+            .from('crm_opportunities')
+            .select('id')
+            .eq('lead_inquiry_id', inquiry.id)
+            .maybeSingle();
+          if (oppByInquiry?.id) opportunityId = String(oppByInquiry.id);
+        }
+        if (!opportunityId) {
+          const { data: leadRow } = await supabase
+            .from('leads')
+            .select('crm_opportunity_id')
+            .eq('id', inquiry.lead_id)
+            .maybeSingle();
+          if (leadRow && 'crm_opportunity_id' in leadRow && leadRow.crm_opportunity_id) {
+            opportunityId = String(leadRow.crm_opportunity_id);
+          }
+        }
+        const href = opportunityId
+          ? crmPipelineInquiryHref(opportunityId, String(inquiry.id))
+          : undefined;
         await insertLifecycleNotifications(supabase, {
           eventType: 'inquiry_flag_raised',
           leadId: String(inquiry.lead_id),
@@ -2237,14 +2313,14 @@ export async function raiseInquiryFlag(inquiryId: string, message: string) {
           recipients: [
             {
               ...leadContext.recipient,
-              href: inquiryDetailsHref(String(inquiry.id)),
+              href,
             },
           ],
           message: parsed.value,
           payload: {
             leadId: String(inquiry.lead_id),
             inquiryId: String(inquiry.id),
-            opportunityId: inquiry.crm_opportunity_id ? String(inquiry.crm_opportunity_id) : null,
+            opportunityId: opportunityId || null,
             inquiryNumber: leadContext.leadNumber,
             inquiryReference,
             customerName: leadContext.customerName,

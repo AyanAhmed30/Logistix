@@ -91,6 +91,27 @@ export function computeVolumetricWeight(cbm: number): number {
   return safeCbm * VOLUMETRIC_CBM_FACTOR;
 }
 
+/** Per-calculator heading used only when more than one calculator is present. */
+export const CALCULATOR_HEADING_KEY = "heading";
+
+export function getCalculatorHeading(
+  values: Record<string, unknown> | null | undefined
+): string {
+  if (!values || typeof values !== "object") return "";
+  return String((values as Record<string, unknown>)[CALCULATOR_HEADING_KEY] ?? "").trim();
+}
+
+export function formatCalculatorSectionTitle(
+  values: Record<string, unknown> | null | undefined,
+  index: number,
+  totalCount: number
+): string {
+  const heading = getCalculatorHeading(values);
+  if (heading) return heading;
+  if (totalCount > 1) return `Calculation ${index + 1}`;
+  return "Calculation on Actual";
+}
+
 export function getEmptyCalculatorValues(): Record<string, string> {
   return {
     inv_value: "0",
@@ -108,6 +129,7 @@ export function getEmptyCalculatorValues(): Record<string, string> {
     uom: "KG",
     quantity: "0",
     hs_code: "",
+    [CALCULATOR_HEADING_KEY]: "",
   };
 }
 
@@ -237,7 +259,14 @@ function sanitizeSingleCalculatorValues(
   for (const key of CALCULATOR_PAYLOAD_METADATA_KEYS) {
     delete sanitized[key];
   }
-  return withDerivedInvValue(sanitized);
+  const heading = String(sanitized[CALCULATOR_HEADING_KEY] ?? "").trim();
+  const withInv = withDerivedInvValue(sanitized);
+  if (heading) {
+    withInv[CALCULATOR_HEADING_KEY] = heading;
+  } else {
+    delete withInv[CALCULATOR_HEADING_KEY];
+  }
+  return withInv;
 }
 
 /** Coerce jsonb that may arrive as a JSON string (double-encoded rows). */
@@ -533,12 +562,8 @@ export function computeCalculatorTotals(
     pricingConfig?: CalculatorPricingConfig | Record<string, unknown> | null;
   }
 ): CalculatorTotals | null {
-  const normalizedValues = getPrimaryCalculatorValues(values);
-  const taxBreakdown = computeInquiryTaxBreakdown(normalizedValues);
-  if (!taxBreakdown) return null;
-
+  const payload = parseStoredCalculatorPayload(values);
   const weightKg = Math.max(toNum(options?.weightKg), 0);
-  const quantity = Math.max(toNum(options?.quantity ?? normalizedValues?.quantity ?? 1), 1) || 1;
   const cbm = toNum(options?.cbm);
   const pricingConfig = parsePricingConfig(
     options?.pricingConfig && typeof options.pricingConfig === "object" && "grossWeightValue" in options.pricingConfig
@@ -550,28 +575,104 @@ export function computeCalculatorTotals(
       : (options?.pricingConfig as Record<string, unknown> | null | undefined)
   );
 
-  const pricing = computeInquiryPricing(taxBreakdown, {
+  const pricingOptions = {
     totalWeightKg: weightKg,
     cbm,
     pricingConfig,
-  });
+  };
 
-  const costPerWeight = pricing.finalAnswer;
-  const totalAmount = weightKg > 0 ? pricing.finalAnswer * weightKg : pricing.finalAnswer;
+  // Single calculator: preserve exact existing behavior.
+  if (payload.calculators.length <= 1) {
+    const normalizedValues = payload.calculators[0] ?? getEmptyCalculatorValues();
+    const taxBreakdown = computeInquiryTaxBreakdown(normalizedValues);
+    if (!taxBreakdown) return null;
+
+    const quantity =
+      Math.max(toNum(options?.quantity ?? normalizedValues?.quantity ?? 1), 1) || 1;
+    const pricing = computeInquiryPricing(taxBreakdown, pricingOptions);
+    const costPerWeight = pricing.finalAnswer;
+    const totalAmount = weightKg > 0 ? pricing.finalAnswer * weightKg : pricing.finalAnswer;
+    const unitPrice = quantity > 0 ? totalAmount / quantity : totalAmount;
+
+    return {
+      pkrValue: taxBreakdown.pkrValue,
+      assessedValue: taxBreakdown.assessedValue,
+      sumOfAllTaxes: taxBreakdown.sumOfAllTaxes,
+      taxPerKg: pricing.taxPerKg,
+      volumetricWeight: pricing.volumetricWeight,
+      pricingCase: pricing.pricingCase,
+      finalAnswer: pricing.finalAnswer,
+      costPerWeight,
+      unitPrice,
+      totalAmount,
+    };
+  }
+
+  // Multiple calculators: combine applicable Final Pricing totals.
+  let combinedFinalAnswer = 0;
+  let sumOfAllTaxes = 0;
+  let pkrValue = 0;
+  let assessedValue = 0;
+  let taxPerKg = 0;
+  let volumetricWeight = 0;
+  let pricingCase: PricingCase = "gross_weight";
+  let applicableCount = 0;
+  const primary = payload.calculators[0] ?? getEmptyCalculatorValues();
+
+  for (const calc of payload.calculators) {
+    const taxBreakdown = computeInquiryTaxBreakdown(calc);
+    if (!taxBreakdown) continue;
+    const pricing = computeInquiryPricing(taxBreakdown, pricingOptions);
+    applicableCount += 1;
+    combinedFinalAnswer += pricing.finalAnswer;
+    sumOfAllTaxes += taxBreakdown.sumOfAllTaxes;
+    pkrValue += taxBreakdown.pkrValue;
+    assessedValue += taxBreakdown.assessedValue;
+    taxPerKg += pricing.taxPerKg;
+    volumetricWeight = pricing.volumetricWeight;
+    pricingCase = pricing.pricingCase;
+  }
+
+  if (applicableCount === 0) return null;
+
+  const quantity = Math.max(toNum(options?.quantity ?? primary.quantity ?? 1), 1) || 1;
+  const totalAmount = weightKg > 0 ? combinedFinalAnswer * weightKg : combinedFinalAnswer;
   const unitPrice = quantity > 0 ? totalAmount / quantity : totalAmount;
 
   return {
-    pkrValue: taxBreakdown.pkrValue,
-    assessedValue: taxBreakdown.assessedValue,
-    sumOfAllTaxes: taxBreakdown.sumOfAllTaxes,
-    taxPerKg: pricing.taxPerKg,
-    volumetricWeight: pricing.volumetricWeight,
-    pricingCase: pricing.pricingCase,
-    finalAnswer: pricing.finalAnswer,
-    costPerWeight,
+    pkrValue,
+    assessedValue,
+    sumOfAllTaxes,
+    taxPerKg,
+    volumetricWeight,
+    pricingCase,
+    finalAnswer: combinedFinalAnswer,
+    costPerWeight: combinedFinalAnswer,
     unitPrice,
     totalAmount,
   };
+}
+
+/** Sum Final Pricing answers across all applicable calculators (multi-calc only). */
+export function computeCombinedFinalAnswer(
+  calculators: Record<string, string>[],
+  options: {
+    totalWeightKg: number;
+    cbm: number;
+    pricingConfig: CalculatorPricingConfig;
+  }
+): number | null {
+  if (!Array.isArray(calculators) || calculators.length === 0) return null;
+  let combined = 0;
+  let applicable = 0;
+  for (const calc of calculators) {
+    const taxBreakdown = computeInquiryTaxBreakdown(calc);
+    if (!taxBreakdown) continue;
+    const pricing = computeInquiryPricing(taxBreakdown, options);
+    combined += pricing.finalAnswer;
+    applicable += 1;
+  }
+  return applicable > 0 ? combined : null;
 }
 
 export type EstimatedDutyRow = {

@@ -117,7 +117,7 @@ export const NOTIFICATION_EVENT_CATALOG: Record<string, EventCatalogEntry> = {
   },
   quotation_sent_to_customer: {
     title: 'Quotation Sent to Customer',
-    fallbackMessage: 'A quotation was sent to the customer.',
+    fallbackMessage: 'Admin has sent the quotation to the customer.',
   },
   quotation_counter_offer: {
     title: 'Customer Counter-Offer Received',
@@ -262,6 +262,27 @@ export function opportunityIdFromNotification(input: {
   return match?.[1] ? decodeURIComponent(match[1]) : null;
 }
 
+export function formatLeadNumberLabel(leadNumber: string | null | undefined): string {
+  const num = String(leadNumber || '').trim().replace(/^#+/, '');
+  return num ? `Lead #${num}` : 'Lead';
+}
+
+export function customerSubmittedInquiryMessage(
+  customerName: string | null | undefined,
+  leadNumber: string | null | undefined
+): string {
+  const name = String(customerName || '').trim() || 'Customer';
+  return `${formatLeadNumberLabel(leadNumber)} - Customer ${name} has submitted an Inquiry to Operations.`;
+}
+
+export function adminSentQuotationToCustomerMessage(
+  customerName: string | null | undefined,
+  leadNumber: string | null | undefined
+): string {
+  const name = String(customerName || '').trim() || 'Customer';
+  return `Admin has sent the quotation to Customer ${name} (${formatLeadNumberLabel(leadNumber)}).`;
+}
+
 export function quotationFromInquiryHref(inquiryId: string): string {
   return `/sales/quotations/new?inquiryId=${encodeURIComponent(inquiryId)}`;
 }
@@ -313,8 +334,8 @@ export function resolveNotificationHref(input: {
   }
 
   if (eventType === 'inquiry_flag_raised' && inquiryId) {
-    if (ctx.hasCrm || ctx.isSalesActor || ctx.canAccessAdminDashboard || ctx.isSuperAdmin) {
-      return crmInquiryHref(inquiryId);
+    if (canOpenCrmPipeline && opportunityId) {
+      return crmPipelineInquiryHref(opportunityId, inquiryId);
     }
     if (leadId) return salesAgentInquiryHref(leadId, inquiryId);
   }
@@ -338,8 +359,8 @@ export function resolveNotificationHref(input: {
     if (leadId) return salesAgentInquiryHref(leadId, inquiryId);
   }
 
-  if (eventType === 'approved') {
-    if (ctx.isOperationsActor && !ctx.isSalesActor && leadId) {
+  if (eventType === 'approved' || eventType === 'quotation_sent_to_customer') {
+    if (eventType === 'approved' && ctx.isOperationsActor && !ctx.isSalesActor && leadId) {
       return adminOperationsInquiryHref(leadId, inquiryId);
     }
     if (ctx.hasSalesQuotations && inquiryId) return quotationFromInquiryHref(inquiryId);

@@ -2,7 +2,7 @@
 
 import { createAdminClient } from '@/utils/supabase/server';
 import { getSession, type SessionPayload } from '@/lib/auth/session';
-import { sessionHasSalesAccess } from '@/lib/auth/require-access';
+import { requireChildModule, sessionHasSalesAccess } from '@/lib/auth/require-access';
 import {
   computeOrderDeliveryFulfillment,
   fulfillmentToLegacyDeliveryStatus,
@@ -588,6 +588,8 @@ export async function getSalesQuotationPrefillFromOpportunity(opportunityId: str
 
 export type SalesQuotationInquiryPrefill = {
   inquiry_id: string;
+  lead_id: string;
+  organization_id: string | null;
   opportunity_id: string | null;
   opportunity_name: string | null;
   contact_id: string | null;
@@ -607,16 +609,14 @@ export type SalesQuotationInquiryPrefill = {
   customer_mobile: string | null;
 };
 
-/** Prefill for /sales/quotations/new?inquiryId= — uses the same inquiry record. */
-export async function getSalesQuotationPrefillFromInquiry(inquiryId: string): Promise<
+async function fetchInquiryQuotationPrefill(
+  supabase: Awaited<ReturnType<typeof createAdminClient>>,
+  inquiryId: string
+): Promise<
   | { prefill: SalesQuotationInquiryPrefill; existingQuotationId: string | null }
   | { error: string }
 > {
   try {
-    const scope = await resolveSalesOrgScope();
-    if ('error' in scope && scope.error) return { error: scope.error };
-
-    const supabase = await createAdminClient();
     const { data, error } = await supabase
       .from('lead_inquiries')
       .select(
@@ -655,19 +655,6 @@ export async function getSalesQuotationPrefillFromInquiry(inquiryId: string): Pr
       .maybeSingle();
 
     if (error || !data) return { error: error?.message || 'Inquiry not found' };
-
-    const { canAccessLeadForInquiry } = await import('@/lib/inquiry-crm-access');
-    const leadAccess = await canAccessLeadForInquiry(
-      scope.session!,
-      supabase,
-      String(data.lead_id),
-      {
-        crmOpportunityId: data.crm_opportunity_id ? String(data.crm_opportunity_id) : null,
-      }
-    );
-    if (!leadAccess.allowed) {
-      return { error: leadAccess.error || 'Unauthorized' };
-    }
 
     const {
       resolveInquiryWorkflowStatus,
@@ -828,6 +815,8 @@ export async function getSalesQuotationPrefillFromInquiry(inquiryId: string): Pr
     return {
       prefill: {
         inquiry_id: String(data.id),
+        lead_id: String(data.lead_id),
+        organization_id: data.organization_id ? String(data.organization_id) : null,
         opportunity_id,
         opportunity_name,
         contact_id,
@@ -848,6 +837,40 @@ export async function getSalesQuotationPrefillFromInquiry(inquiryId: string): Pr
       },
       existingQuotationId,
     };
+  } catch (err) {
+    return {
+      error: err instanceof Error ? err.message : 'Failed to load inquiry',
+    };
+  }
+}
+
+/** Prefill for /sales/quotations/new?inquiryId= — uses the same inquiry record. */
+export async function getSalesQuotationPrefillFromInquiry(inquiryId: string): Promise<
+  | { prefill: SalesQuotationInquiryPrefill; existingQuotationId: string | null }
+  | { error: string }
+> {
+  try {
+    const scope = await resolveSalesOrgScope();
+    if ('error' in scope && scope.error) return { error: scope.error };
+
+    const supabase = await createAdminClient();
+    const loaded = await fetchInquiryQuotationPrefill(supabase, inquiryId);
+    if ('error' in loaded) return loaded;
+
+    const { canAccessLeadForInquiry } = await import('@/lib/inquiry-crm-access');
+    const leadAccess = await canAccessLeadForInquiry(
+      scope.session!,
+      supabase,
+      loaded.prefill.lead_id,
+      {
+        crmOpportunityId: loaded.prefill.opportunity_id,
+      }
+    );
+    if (!leadAccess.allowed) {
+      return { error: leadAccess.error || 'Unauthorized' };
+    }
+
+    return loaded;
   } catch (err) {
     return {
       error: err instanceof Error ? err.message : 'Failed to load inquiry',
@@ -906,6 +929,57 @@ export async function getSalesQuotationDetail(id: string) {
         opportunity_name,
         salesperson_name,
       }),
+    };
+  } catch (err) {
+    return {
+      error: err instanceof Error ? err.message : 'Failed to load quotation',
+    };
+  }
+}
+
+async function hydrateSalesQuotationDetail(
+  supabase: Awaited<ReturnType<typeof createAdminClient>>,
+  data: Record<string, unknown>
+): Promise<SalesQuotationDetail> {
+  const id = String(data.id);
+  const lines = await loadLines(supabase, id, data);
+  let opportunity_name: string | null = null;
+  if (data.opportunity_id) {
+    const { data: opp } = await supabase
+      .from('crm_opportunities')
+      .select('name')
+      .eq('id', data.opportunity_id)
+      .maybeSingle();
+    opportunity_name = opp?.name ? String(opp.name) : null;
+  }
+  let salesperson_name: string | null = null;
+  if (data.salesperson_id) {
+    const { data: sp } = await supabase
+      .from('sales_agents')
+      .select('name')
+      .eq('id', data.salesperson_id)
+      .maybeSingle();
+    salesperson_name = sp?.name ? String(sp.name) : null;
+  }
+  return mapRowToDetail(data, lines, { opportunity_name, salesperson_name });
+}
+
+/** Load a quotation by id for admin approval → customer send (no Sales org switcher). */
+export async function getSalesQuotationDetailForWorkflow(id: string) {
+  try {
+    const session = await getSession();
+    if (!session) return { error: 'Unauthorized' };
+    if (!sessionHasSalesAccess(session)) {
+      const auth = await requireChildModule('inquiry-confirmation');
+      if ('error' in auth) return { error: 'Unauthorized' };
+    }
+
+    const supabase = await createAdminClient();
+    const { data, error } = await supabase.from('quotations').select('*').eq('id', id).maybeSingle();
+    if (error || !data) return { error: error?.message || 'Quotation not found' };
+
+    return {
+      quotation: await hydrateSalesQuotationDetail(supabase, data as Record<string, unknown>),
     };
   } catch (err) {
     return {
@@ -1567,6 +1641,157 @@ export async function setSalesOrderDeliveryStatus(
   } catch (err) {
     return {
       error: err instanceof Error ? err.message : 'Failed to update delivery status',
+    };
+  }
+}
+
+/**
+ * Create the Sales quotation from an approved inquiry if one does not already
+ * exist. Reuses the same prefill/create path Sales uses — never duplicates.
+ */
+export async function ensureQuotationForApprovedInquiry(
+  inquiryId: string,
+  actorUsername: string
+): Promise<{ quotationId: string } | { error: string }> {
+  try {
+    const auth = await requireChildModule('inquiry-confirmation');
+    if ('error' in auth) return { error: auth.error };
+
+    const supabase = await createAdminClient();
+    const loaded = await fetchInquiryQuotationPrefill(supabase, inquiryId);
+    if ('error' in loaded) return { error: loaded.error };
+
+    if (loaded.existingQuotationId) {
+      return { quotationId: loaded.existingQuotationId };
+    }
+
+    const prefill = loaded.prefill;
+    if (!prefill.contact_id) {
+      return {
+        error:
+          'This inquiry has no customer contact. A contact is required to send the quotation.',
+      };
+    }
+
+    let organizationId = prefill.organization_id;
+    if (!organizationId) {
+      const { data: lead } = await supabase
+        .from('leads')
+        .select('organization_id')
+        .eq('id', prefill.lead_id)
+        .maybeSingle();
+      organizationId = lead?.organization_id ? String(lead.organization_id) : null;
+    }
+    if (!organizationId) {
+      return { error: 'Inquiry has no organization. Cannot create quotation.' };
+    }
+
+    const { quotationLineDisplayDescription } = await import('@/lib/sales-quotation-form');
+    const today = new Date().toISOString().slice(0, 10);
+    const description = quotationLineDisplayDescription(
+      prefill.product_name,
+      prefill.description
+    );
+    const payload: SalesQuotationFormPayload = {
+      contact_id: prefill.contact_id,
+      customer_name: prefill.customer_name,
+      contact_person_id: prefill.contact_person_id,
+      salesperson_id: prefill.salesperson_id,
+      sales_team: prefill.sales_team,
+      customer_reference: prefill.customer_reference,
+      payment_terms: 'Immediate',
+      quotation_date: today,
+      internal_notes: prefill.internal_notes,
+      opportunity_id: prefill.opportunity_id,
+      linked_inquiry_id: prefill.inquiry_id,
+      lines: [
+        {
+          product_name: prefill.product_name || 'Product',
+          description: description || prefill.product_name || '',
+          quantity: prefill.quantity || 1,
+          uom: prefill.uom,
+          unit_price: prefill.unit_price || 0,
+          discount: 0,
+          taxes: 0,
+        },
+      ],
+    };
+
+    const validation = validatePayload(payload);
+    if (validation) return { error: validation };
+
+    const sums = summarizeLines(payload.lines);
+    const quotation_number = await generateQuotationNumber(supabase, organizationId);
+    const header = headerFromPayload(payload, sums);
+    const now = new Date().toISOString();
+    const actor = String(actorUsername || auth.username || 'admin');
+
+    const insertRow = {
+      ...header,
+      quotation_number,
+      organization_id: organizationId,
+      status: 'quotation',
+      is_locked: false,
+      revision: 1,
+      created_by: actor,
+      updated_by: actor,
+      created_at: now,
+      updated_at: now,
+    };
+
+    let { data, error } = await supabase.from('quotations').insert([insertRow]).select('id').single();
+    if (error && /column|schema cache/i.test(error.message)) {
+      const minimal = {
+        quotation_number,
+        contact_id: header.contact_id,
+        customer_name: header.customer_name,
+        product_service: header.product_service,
+        quantity: header.quantity,
+        unit_price: header.unit_price,
+        taxes: header.taxes,
+        uom: header.uom,
+        total_amount: header.total_amount,
+        expiration_date: header.expiration_date,
+        payment_terms: header.payment_terms,
+        status: 'quotation',
+        created_by: actor,
+        organization_id: organizationId,
+        salesperson_id: header.salesperson_id,
+      };
+      const retry = await supabase.from('quotations').insert([minimal]).select('id').single();
+      data = retry.data;
+      error = retry.error;
+    }
+
+    if (error || !data?.id) {
+      // Another approval may have created the quotation concurrently.
+      const { data: existing } = await supabase
+        .from('quotations')
+        .select('id')
+        .eq('linked_inquiry_id', inquiryId)
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (existing?.id) return { quotationId: String(existing.id) };
+      return { error: error?.message || 'Failed to create quotation' };
+    }
+
+    try {
+      await replaceLines(supabase, data.id, payload.lines);
+    } catch {
+      // lines table may not exist yet — header still saved
+    }
+
+    await logAction(supabase, data.id, 'created', actor, null, 'quotation', {
+      quotation_number,
+      linked_inquiry_id: inquiryId,
+      origin: 'admin_approval',
+    });
+
+    return { quotationId: String(data.id) };
+  } catch (err) {
+    return {
+      error: err instanceof Error ? err.message : 'Failed to create quotation from inquiry',
     };
   }
 }

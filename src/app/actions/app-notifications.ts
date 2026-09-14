@@ -122,6 +122,7 @@ const PIPELINE_INQUIRY_EVENTS = new Set([
   'inquiry_received',
   'customer_submitted',
   'lead_transferred',
+  'inquiry_flag_raised',
 ]);
 
 /** Inbox-time only: fill missing opportunityId so click can navigate without a follow-up fetch. */

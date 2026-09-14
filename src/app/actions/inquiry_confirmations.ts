@@ -30,6 +30,8 @@ import {
   resolveOperationsRecipients,
 } from '@/lib/notify-lifecycle';
 import { quotationFromInquiryHref } from '@/lib/app-notifications';
+import { ensureQuotationForApprovedInquiry } from '@/app/actions/sales/quotation-form';
+import { sendQuotationToCustomerAfterAdminApproval } from '@/app/actions/sales/quotation-customer-send';
 
 export type ConfirmationStatus = 'pending' | 'approved' | 'rejected';
 
@@ -768,6 +770,32 @@ export async function approveInquiryConfirmation(confirmationId: string) {
       })
       .eq('id', data.inquiry_id);
 
+    // Admin → Customer: create quotation (if needed) and send PDF without Sales handoff.
+    let quotationSentToCustomer = false;
+    let quotationSendError: string | null = null;
+    try {
+      const ensured = await ensureQuotationForApprovedInquiry(
+        String(data.inquiry_id),
+        session.username || 'admin'
+      );
+      if ('error' in ensured && ensured.error) {
+        quotationSendError = ensured.error;
+      } else if ('quotationId' in ensured && ensured.quotationId) {
+        const sent = await sendQuotationToCustomerAfterAdminApproval(
+          ensured.quotationId,
+          session.username || 'admin'
+        );
+        if ('error' in sent && sent.error) {
+          quotationSendError = sent.error;
+        } else {
+          quotationSentToCustomer = true;
+        }
+      }
+    } catch (err) {
+      quotationSendError =
+        err instanceof Error ? err.message : 'Failed to send quotation to customer';
+    }
+
     try {
       const [leadContext, opsRecipients] = await Promise.all([
         resolveLeadSalesAgentRecipient(supabase, data.lead_id),
@@ -797,7 +825,27 @@ export async function approveInquiryConfirmation(confirmationId: string) {
         totalAmount: pricing?.total_amount ?? null,
       };
 
-      if (leadContext.recipient) {
+      // Operations keeps the existing approval notification unchanged.
+      if (opsRecipients.length > 0) {
+        await insertLifecycleNotifications(supabase, {
+          eventType: 'approved',
+          leadId: data.lead_id,
+          inquiryId: data.inquiry_id,
+          confirmationId: data.id,
+          senderRole: 'admin',
+          senderUsername: session.username || 'admin',
+          recipients: opsRecipients,
+          title: 'Inquiry Confirmed by Admin',
+          message: rate
+            ? `Admin confirmed this inquiry (rate ${rate}).`
+            : 'Admin confirmed this inquiry.',
+          payload,
+        });
+      }
+
+      // Sales: informational only after Admin sends quotation to customer.
+      // If auto-send failed, fall back to the previous Ready-for-Quotation notice.
+      if (leadContext.recipient && !quotationSentToCustomer) {
         await insertLifecycleNotifications(supabase, {
           eventType: 'approved',
           leadId: data.lead_id,
@@ -818,23 +866,6 @@ export async function approveInquiryConfirmation(confirmationId: string) {
           payload,
         });
       }
-
-      if (opsRecipients.length > 0) {
-        await insertLifecycleNotifications(supabase, {
-          eventType: 'approved',
-          leadId: data.lead_id,
-          inquiryId: data.inquiry_id,
-          confirmationId: data.id,
-          senderRole: 'admin',
-          senderUsername: session.username || 'admin',
-          recipients: opsRecipients,
-          title: 'Inquiry Confirmed by Admin',
-          message: rate
-            ? `Admin confirmed this inquiry (rate ${rate}).`
-            : 'Admin confirmed this inquiry.',
-          payload,
-        });
-      }
     } catch {
       // Notification failure must not block approval.
     }
@@ -843,7 +874,13 @@ export async function approveInquiryConfirmation(confirmationId: string) {
     revalidatePath('/operations/dashboard');
     revalidatePath('/sales-agent/dashboard');
     revalidatePath('/crm/inquiries');
-    return { success: true, confirmation: data as InquiryConfirmation };
+    revalidatePath('/sales/quotations');
+    return {
+      success: true,
+      confirmation: data as InquiryConfirmation,
+      quotationSentToCustomer,
+      quotationSendError,
+    };
   } catch (err) {
     return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };
   }

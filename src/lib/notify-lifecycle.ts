@@ -9,7 +9,6 @@ import {
   adminOperationsInquiryHref,
   catalogMessageForEvent,
   catalogTitleForEvent,
-  crmInquiryHref,
   crmPipelineInquiryHref,
   quotationFromInquiryHref,
   salesAgentInquiryHref,
@@ -263,7 +262,7 @@ export function defaultHrefForRecipient(input: {
   if (eventType === 'sent_for_admin_approval' && confirmationId) {
     return adminConfirmationHref(confirmationId);
   }
-  if (eventType === 'approved' && inquiryId) {
+  if ((eventType === 'approved' || eventType === 'quotation_sent_to_customer') && inquiryId) {
     if (role === 'sales_agent') return quotationFromInquiryHref(inquiryId);
     return salesAgentInquiryHref(leadId, inquiryId);
   }
@@ -274,7 +273,8 @@ export function defaultHrefForRecipient(input: {
     return crmPipelineInquiryHref(opportunityId, inquiryId);
   }
   if (eventType === 'inquiry_flag_raised' && inquiryId) {
-    return crmInquiryHref(inquiryId);
+    if (opportunityId) return crmPipelineInquiryHref(opportunityId, inquiryId);
+    return salesAgentInquiryHref(leadId, inquiryId);
   }
   if (eventType === 'inquiry_received' && inquiryId) {
     return salesAgentInquiryHref(leadId, inquiryId);

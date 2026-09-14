@@ -35,8 +35,9 @@ import {
 } from "@/app/actions/inquiry_confirmations";
 import { InquiryAttachmentList } from "@/components/inquiry/InquiryAttachmentList";
 import { InquiryFlagMessages } from "@/components/inquiry/InquiryFlagMessages";
-import { inquiryHasFlag } from "@/lib/inquiry-flags";
+import { inquiryShowsFlagRaised } from "@/lib/inquiry-flags";
 import { InquiryCalculatorSection } from "@/components/admin/InquiryCalculatorSection";
+import { InquiryPricingSummary } from "@/components/admin/InquiryPricingSummary";
 import { EstimatedDutiesAndTaxesBlock } from "@/components/admin/EstimatedDutiesAndTaxesBlock";
 import { collectInquiryAttachmentUrls, classifyInquiryAttachment } from "@/lib/inquiry-attachments";
 import {
@@ -45,6 +46,10 @@ import {
 } from "@/lib/inquiry-attachments";
 import { downloadLeadManagementPdf } from "@/lib/lead-management-pdf";
 import {
+  CALCULATOR_HEADING_KEY,
+  computeCombinedFinalAnswer,
+  formatCalculatorSectionTitle,
+  getCalculatorHeading,
   getEmptyCalculatorValues,
   parseStoredCalculatorPayload,
   serializeCalculatorPayload,
@@ -355,6 +360,15 @@ export function OperationsLeadsInquiryPanel({
     setCalculators((prev) => {
       const next = [...prev];
       next[index] = withDerivedInvValue(values);
+      return next;
+    });
+  }, []);
+
+  const updateCalculatorHeading = useCallback((index: number, heading: string) => {
+    setCalculators((prev) => {
+      const next = [...prev];
+      const current = next[index] ?? getEmptyCalculatorValues();
+      next[index] = { ...current, [CALCULATOR_HEADING_KEY]: heading };
       return next;
     });
   }, []);
@@ -1320,6 +1334,29 @@ export function OperationsLeadsInquiryPanel({
       setOperationsAttachments([createOperationsAttachment()]);
       setActiveAttachmentId(null);
       hydrateLeadManagementForm(inquirySnapshot);
+      const confirmation = "confirmation" in result ? result.confirmation : null;
+      if (confirmation) {
+        const nextConfs = [
+          {
+            id: confirmation.id,
+            status: confirmation.status,
+            created_at: confirmation.created_at,
+            original_image_url: confirmation.original_image_url || null,
+          },
+          ...(inquirySnapshot.inquiry_confirmations || []),
+        ];
+        setSelectedInquiry((prev) =>
+          prev && prev.id === inquirySnapshot.id
+            ? { ...prev, inquiry_confirmations: nextConfs }
+            : prev
+        );
+        setInquiries((prev) =>
+          prev.map((row) =>
+            row.id === inquirySnapshot.id ? { ...row, inquiry_confirmations: nextConfs } : row
+          )
+        );
+      }
+      invalidateCachedOperationsBootstrap();
 
       try {
         const confResult = await getConfirmationsForInquiry(inquirySnapshot.id);
@@ -1969,7 +2006,22 @@ export function OperationsLeadsInquiryPanel({
             </div>
 
             {calculators.map((calcValues, calcIndex) => (
-              <div key={`calculator-${inq.id}-${calcIndex}`}>
+              <div key={`calculator-${inq.id}-${calcIndex}`} className="space-y-3">
+                {calculators.length > 1 ? (
+                  <div className="border-t pt-4 space-y-1.5">
+                    <label className="text-xs text-slate-500 font-medium">
+                      Calculation {calcIndex + 1} heading / description
+                    </label>
+                    <Textarea
+                      value={getCalculatorHeading(calcValues)}
+                      onChange={(e) => updateCalculatorHeading(calcIndex, e.target.value)}
+                      onBlur={() => void persistCalculatorPayload()}
+                      placeholder='e.g. "Air Freight - Customer Shipment"'
+                      rows={2}
+                      className="mt-1"
+                    />
+                  </div>
+                ) : null}
                 <InquiryCalculatorSection
                   values={calcValues}
                   onChange={(values) => updateCalculatorAt(calcIndex, values)}
@@ -1983,14 +2035,39 @@ export function OperationsLeadsInquiryPanel({
                   cbm={cbm}
                   pricingConfig={pricingConfig}
                   adminCalculatorMode={adminCalculatorMode}
-                  title={
-                    calculators.length > 1
-                      ? `Calculation on Actual (Calculator ${calcIndex + 1})`
-                      : "Calculation on Actual"
-                  }
+                  showPricingSummary={calculators.length <= 1}
+                  title={formatCalculatorSectionTitle(
+                    calcValues,
+                    calcIndex,
+                    calculators.length
+                  )}
                 />
               </div>
             ))}
+
+            {calculators.length > 1 ? (
+              <div className="mt-4">
+                <InquiryPricingSummary
+                  calculatorValues={
+                    calculators[0]
+                      ? withDerivedInvValue({
+                          ...calculators[0],
+                          quantity:
+                            calculators[0].quantity?.trim() || inquiryQuantity || "0",
+                        })
+                      : getEmptyCalculatorValues()
+                  }
+                  totalWeightKg={weightKg}
+                  cbm={cbm}
+                  pricingConfig={pricingConfig}
+                  combinedTotal={computeCombinedFinalAnswer(calculators, {
+                    totalWeightKg: weightKg,
+                    cbm,
+                    pricingConfig,
+                  })}
+                />
+              </div>
+            ) : null}
 
             <div className="pt-2">
               <Button
@@ -2077,7 +2154,11 @@ export function OperationsLeadsInquiryPanel({
                         <div key={`lead-form-calculator-${calcIndex}`} className="space-y-5">
                           {formCalculators.length > 1 && (
                             <h4 className="text-sm font-semibold text-slate-700">
-                              Calculator {calcIndex + 1}
+                              {formatCalculatorSectionTitle(
+                                calcValues,
+                                calcIndex,
+                                formCalculators.length
+                              )}
                             </h4>
                           )}
                           <EstimatedDutiesAndTaxesBlock
@@ -2733,7 +2814,10 @@ export function OperationsLeadsInquiryPanel({
                                   Not Submitted
                                 </Badge>
                               )}
-                              {inquiryHasFlag(inquiry.inquiry_flags) ? (
+                              {inquiryShowsFlagRaised(
+                                inquiry.inquiry_flags,
+                                inquiry.inquiry_confirmations
+                              ) ? (
                                 <Badge variant="outline" className="text-xs bg-amber-50 text-amber-800 border-amber-300">
                                   Flag Raised
                                 </Badge>

@@ -47,7 +47,7 @@ export function CrmOpportunityInquiryClient({
     setLoading(true);
     setError(null);
 
-    void getCrmOpportunityInquiryBootstrap(opportunityId).then((res) => {
+    void getCrmOpportunityInquiryBootstrap(opportunityId, initialInquiryId).then((res) => {
       if (cancelled) return;
       if ("error" in res && res.error) {
         setError(res.error);
@@ -56,6 +56,15 @@ export function CrmOpportunityInquiryClient({
         return;
       }
       if ("bootstrap" in res && res.bootstrap) {
+        const resolvedId = res.bootstrap.opportunity.id;
+        // Notification may point at a stale/mismatched id — normalize the URL.
+        if (resolvedId && resolvedId !== opportunityId) {
+          const params = new URLSearchParams();
+          params.set("tab", initialTab || "view");
+          if (initialInquiryId) params.set("inquiryId", initialInquiryId);
+          router.replace(`/crm/opportunities/${resolvedId}/inquiry?${params.toString()}`);
+          return;
+        }
         setBootstrap(res.bootstrap);
       }
       setLoading(false);
@@ -64,7 +73,7 @@ export function CrmOpportunityInquiryClient({
     return () => {
       cancelled = true;
     };
-  }, [opportunityId, initialBootstrap, router]);
+  }, [opportunityId, initialBootstrap, initialInquiryId, initialTab, router]);
 
   useEffect(() => {
     if (!bootstrap) return;

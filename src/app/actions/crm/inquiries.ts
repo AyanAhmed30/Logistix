@@ -71,46 +71,184 @@ type OpportunityInquiryContext =
     }
   | { error: string };
 
-async function loadOpportunityContext(
-  opportunityId: string
-): Promise<OpportunityInquiryContext> {
-  const scope = await resolveCrmOrganizationScope();
-  if ('error' in scope) return { error: scope.error };
+type OpportunityRow = {
+  id: string;
+  name: string;
+  stage_id: string;
+  contact_id: string | null;
+  contact_person_id: string | null;
+  email: string | null;
+  phone: string | null;
+  mobile: string | null;
+  source: string | null;
+  salesperson_id: string | null;
+  organization_id: string | null;
+  lead_inquiry_id?: string | null;
+  created_by?: string | null;
+};
 
-  const supabase = await createAdminClient();
+const OPPORTUNITY_SELECT = `
+  id, name, stage_id, contact_id, contact_person_id,
+  email, phone, mobile, source, salesperson_id, organization_id, lead_inquiry_id, created_by
+`;
+
+const OPPORTUNITY_SELECT_LEGACY = `
+  id, name, stage_id, contact_id, contact_person_id,
+  email, phone, mobile, source, salesperson_id, organization_id, created_by
+`;
+
+async function fetchOpportunityById(
+  supabase: Awaited<ReturnType<typeof createAdminClient>>,
+  opportunityId: string,
+  organizationId?: string | null
+): Promise<{ data: OpportunityRow | null; error: string | null }> {
   let query = supabase
     .from('crm_opportunities')
-    .select(
-      `
-      id, name, stage_id, contact_id, contact_person_id,
-      email, phone, mobile, source, salesperson_id, organization_id, lead_inquiry_id
-    `
-    )
+    .select(OPPORTUNITY_SELECT)
     .eq('id', opportunityId);
 
-  if (!scope.isGlobalAdminView) {
-    query = query.eq('organization_id', scope.organizationId);
+  if (organizationId) {
+    query = query.eq('organization_id', organizationId);
   }
 
   let { data, error } = await query.maybeSingle();
   if (error && /lead_inquiry_id|column/i.test(error.message)) {
-    const fallback = supabase
+    let fallback = supabase
       .from('crm_opportunities')
-      .select(
-        `
-        id, name, stage_id, contact_id, contact_person_id,
-        email, phone, mobile, source, salesperson_id, organization_id
-      `
-      )
+      .select(OPPORTUNITY_SELECT_LEGACY)
       .eq('id', opportunityId);
-    const retry = !scope.isGlobalAdminView
-      ? await fallback.eq('organization_id', scope.organizationId).maybeSingle()
-      : await fallback.maybeSingle();
+    if (organizationId) {
+      fallback = fallback.eq('organization_id', organizationId);
+    }
+    const retry = await fallback.maybeSingle();
     data = retry.data as typeof data;
     error = retry.error;
   }
-  if (error) return { error: error.message || 'Failed to load opportunity.' };
-  if (!data) return { error: 'Opportunity not found.' };
+
+  if (error) return { data: null, error: error.message || 'Failed to load opportunity.' };
+  return { data: (data as OpportunityRow | null) || null, error: null };
+}
+
+async function resolveOpportunityIdFromInquiry(
+  supabase: Awaited<ReturnType<typeof createAdminClient>>,
+  inquiryId: string
+): Promise<string | null> {
+  const { data: inquiry } = await supabase
+    .from('lead_inquiries')
+    .select('id, crm_opportunity_id')
+    .eq('id', inquiryId)
+    .maybeSingle();
+
+  if (inquiry?.crm_opportunity_id) {
+    return String(inquiry.crm_opportunity_id);
+  }
+
+  const { data: byLeadInquiry } = await supabase
+    .from('crm_opportunities')
+    .select('id')
+    .eq('lead_inquiry_id', inquiryId)
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  return byLeadInquiry?.id ? String(byLeadInquiry.id) : null;
+}
+
+/**
+ * Notification deep-links must open even when the opportunity has a null /
+ * mismatched organization_id (common for mobile-submitted inquiries).
+ * Still require salesperson / creator / lead ownership when bypassing org filter.
+ */
+async function canAccessOpportunityDeepLink(
+  scope: Exclude<Awaited<ReturnType<typeof resolveCrmOrganizationScope>>, { error: string }>,
+  supabase: Awaited<ReturnType<typeof createAdminClient>>,
+  row: OpportunityRow
+): Promise<boolean> {
+  if (scope.isGlobalAdminView) return true;
+
+  const oppOrg = row.organization_id ? String(row.organization_id) : null;
+  if (oppOrg && scope.organizationId && oppOrg === scope.organizationId) {
+    const { resolveCrmVisibilityScope, canAccessCrmOpportunityRow } = await import(
+      '@/lib/crm-visibility'
+    );
+    const visibility = await resolveCrmVisibilityScope(scope.session);
+    return canAccessCrmOpportunityRow(visibility, {
+      salesperson_id: row.salesperson_id,
+      created_by: row.created_by,
+    });
+  }
+
+  const { resolveCrmVisibilityScope } = await import('@/lib/crm-visibility');
+  const visibility = await resolveCrmVisibilityScope(scope.session);
+  const username = String(scope.session.username || '').trim();
+
+  if (
+    visibility.salesAgentId &&
+    row.salesperson_id &&
+    String(row.salesperson_id) === visibility.salesAgentId
+  ) {
+    return true;
+  }
+  if (username && row.created_by && String(row.created_by) === username) {
+    return true;
+  }
+
+  // Fall back to lead ownership for the bound inquiry.
+  let leadId: string | null = null;
+  if (row.lead_inquiry_id) {
+    const { data: inquiry } = await supabase
+      .from('lead_inquiries')
+      .select('lead_id')
+      .eq('id', row.lead_inquiry_id)
+      .maybeSingle();
+    leadId = inquiry?.lead_id ? String(inquiry.lead_id) : null;
+  }
+
+  if (!leadId && visibility.salesAgentId) {
+    const { data: leadByOpp } = await supabase
+      .from('leads')
+      .select('id, sales_agent_id')
+      .eq('crm_opportunity_id', row.id)
+      .maybeSingle();
+    if (
+      leadByOpp &&
+      visibility.salesAgentId &&
+      String(leadByOpp.sales_agent_id) === visibility.salesAgentId
+    ) {
+      return true;
+    }
+  }
+
+  if (leadId && visibility.salesAgentId) {
+    const { data: lead } = await supabase
+      .from('leads')
+      .select('id, sales_agent_id')
+      .eq('id', leadId)
+      .maybeSingle();
+    if (lead && String(lead.sales_agent_id) === visibility.salesAgentId) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+async function mapOpportunityContext(
+  scope: Exclude<Awaited<ReturnType<typeof resolveCrmOrganizationScope>>, { error: string }>,
+  supabase: Awaited<ReturnType<typeof createAdminClient>>,
+  data: OpportunityRow
+): Promise<Exclude<OpportunityInquiryContext, { error: string }>> {
+  // Best-effort repair: assign the viewer's org when the opportunity has none.
+  if (!data.organization_id && scope.organizationId && !scope.isGlobalAdminView) {
+    const { error: repairError } = await supabase
+      .from('crm_opportunities')
+      .update({ organization_id: scope.organizationId, updated_at: new Date().toISOString() })
+      .eq('id', data.id)
+      .is('organization_id', null);
+    if (!repairError) {
+      data = { ...data, organization_id: scope.organizationId };
+    }
+  }
 
   const { data: stageRow } = await supabase
     .from('crm_pipeline_stages')
@@ -152,7 +290,6 @@ async function loadOpportunityContext(
   ]);
 
   if (contactRes.data) {
-    // Customer name = contact person/company display name (prefer name).
     customerName =
       String(contactRes.data.name || contactRes.data.company_name || '').trim() || null;
   }
@@ -184,13 +321,62 @@ async function loadOpportunityContext(
       mobile: data.mobile ? String(data.mobile) : null,
       source: data.source ? String(data.source) : null,
       salesperson_id: data.salesperson_id ? String(data.salesperson_id) : null,
-      organization_id: String(data.organization_id),
+      organization_id: data.organization_id
+        ? String(data.organization_id)
+        : String(scope.organizationId || ''),
       salesperson_name: salespersonName,
-      lead_inquiry_id: (data as { lead_inquiry_id?: string | null }).lead_inquiry_id
-        ? String((data as { lead_inquiry_id?: string }).lead_inquiry_id)
-        : null,
+      lead_inquiry_id: data.lead_inquiry_id ? String(data.lead_inquiry_id) : null,
     },
   };
+}
+
+async function loadOpportunityContext(
+  opportunityId: string,
+  options?: { inquiryId?: string | null }
+): Promise<OpportunityInquiryContext> {
+  const scope = await resolveCrmOrganizationScope();
+  if ('error' in scope) return { error: scope.error };
+
+  const supabase = await createAdminClient();
+  const candidateIds: string[] = [];
+  if (opportunityId?.trim()) candidateIds.push(opportunityId.trim());
+
+  const inquiryId = options?.inquiryId?.trim() || '';
+  if (inquiryId) {
+    const fromInquiry = await resolveOpportunityIdFromInquiry(supabase, inquiryId);
+    if (fromInquiry && !candidateIds.includes(fromInquiry)) {
+      candidateIds.push(fromInquiry);
+    }
+  }
+
+  if (candidateIds.length === 0) {
+    return { error: 'Opportunity not found.' };
+  }
+
+  for (const candidateId of candidateIds) {
+    // 1) Preferred: active organization scope (pipeline list behavior).
+    if (!scope.isGlobalAdminView && scope.organizationId) {
+      const scoped = await fetchOpportunityById(supabase, candidateId, scope.organizationId);
+      if (scoped.error && !/not found/i.test(scoped.error)) {
+        // keep trying unscoped / other candidates
+      }
+      if (scoped.data) {
+        return mapOpportunityContext(scope, supabase, scoped.data);
+      }
+    }
+
+    // 2) Deep-link fallback: load by id without org filter (null / mismatched org).
+    const unscoped = await fetchOpportunityById(supabase, candidateId, null);
+    if (unscoped.error) return { error: unscoped.error };
+    if (unscoped.data) {
+      const allowed = await canAccessOpportunityDeepLink(scope, supabase, unscoped.data);
+      if (allowed) {
+        return mapOpportunityContext(scope, supabase, unscoped.data);
+      }
+    }
+  }
+
+  return { error: 'Opportunity not found.' };
 }
 
 function inquiriesForCrmOpportunity(
@@ -459,21 +645,22 @@ export async function resolveLeadForCrmOpportunity(opportunityId: string): Promi
 }
 
 export async function getCrmOpportunityInquiryBootstrap(
-  opportunityId: string
+  opportunityId: string,
+  inquiryId?: string | null
 ): Promise<{ bootstrap: CrmOpportunityInquiryBootstrap } | { error: string }> {
   const auth = await requireAnyChildModule(['crm-pipeline']);
   if (isAccessDenied(auth)) return { error: auth.error };
 
-  const ctx = await loadOpportunityContext(opportunityId);
+  const ctx = await loadOpportunityContext(opportunityId, { inquiryId });
   if ('error' in ctx) return { error: ctx.error };
 
   // Single opportunity load — resolve lead reuses the same context.
-  const leadResult = await resolveLeadForCrmOpportunityWithContext(ctx, opportunityId);
+  const leadResult = await resolveLeadForCrmOpportunityWithContext(ctx, ctx.opportunity.id);
   if ('error' in leadResult) return { error: leadResult.error };
 
   const [access, listed] = await Promise.all([
     canAccessLeadForInquiry(ctx.scope.session, ctx.supabase, leadResult.lead.id, {
-      crmOpportunityId: opportunityId,
+      crmOpportunityId: ctx.opportunity.id,
     }),
     listInquiriesForLead(ctx.supabase, leadResult.lead.id, ctx.scope.session.role),
   ]);
@@ -483,9 +670,22 @@ export async function getCrmOpportunityInquiryBootstrap(
 
   const inquiries = inquiriesForCrmOpportunity(
     listed.inquiries || [],
-    opportunityId,
+    ctx.opportunity.id,
     ctx.opportunity.lead_inquiry_id
   );
+  // Prefer the notification's inquiryId when it belongs to this opportunity/lead.
+  const preferredInquiryId = inquiryId?.trim() || null;
+  if (
+    preferredInquiryId &&
+    !inquiries.some((inq) => inq.id === preferredInquiryId) &&
+    (listed.inquiries || []).some((inq) => inq.id === preferredInquiryId)
+  ) {
+    const preferred = (listed.inquiries || []).find((inq) => inq.id === preferredInquiryId);
+    if (preferred && String(preferred.status || '').toLowerCase() !== 'draft') {
+      inquiries.unshift(preferred);
+    }
+  }
+
   const approvedInquiryId =
     inquiries.find((inq) => inq.approval_status === 'approved')?.id || null;
 
@@ -505,7 +705,7 @@ export async function getCrmOpportunityInquiryBootstrap(
         salesperson_name: ctx.opportunity.salesperson_name,
         organization_id: ctx.opportunity.organization_id,
         source: ctx.opportunity.source,
-        lead_inquiry_id: ctx.opportunity.lead_inquiry_id,
+        lead_inquiry_id: preferredInquiryId || ctx.opportunity.lead_inquiry_id,
       },
       lead: leadResult.lead,
       inquiries,

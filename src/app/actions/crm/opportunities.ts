@@ -593,7 +593,52 @@ export async function getCrmOpportunityById(opportunityId: string) {
     query = query.eq('organization_id', scope.organizationId);
   }
 
-  const { data, error } = await query.maybeSingle();
+  let { data, error } = await query.maybeSingle();
+
+  // Notification / mobile deep-links: opportunity may have null or mismatched org.
+  if (!error && !data && !scope.isGlobalAdminView) {
+    const unscoped = await supabase
+      .from('crm_opportunities')
+      .select('*')
+      .eq('id', opportunityId)
+      .maybeSingle();
+    error = unscoped.error;
+    data = unscoped.data;
+    if (data) {
+      const { resolveCrmVisibilityScope } = await import('@/lib/crm-visibility');
+      const visibility = await resolveCrmVisibilityScope(scope.session);
+      const username = String(scope.session.username || '').trim();
+      const salespersonOk =
+        visibility.salesAgentId &&
+        data.salesperson_id &&
+        String(data.salesperson_id) === visibility.salesAgentId;
+      const creatorOk =
+        username && data.created_by && String(data.created_by) === username;
+      const oppOrg = data.organization_id ? String(data.organization_id) : null;
+      const otherCompany =
+        Boolean(oppOrg && scope.organizationId && oppOrg !== scope.organizationId);
+
+      // Never leak another company's opportunities to org-wide viewers.
+      if (otherCompany && !salespersonOk && !creatorOk) {
+        return { error: 'Opportunity not found.' };
+      }
+      if (!otherCompany && !salespersonOk && !creatorOk && visibility.mode !== 'all') {
+        return { error: 'Opportunity not found.' };
+      }
+      // Repair null org so the card stays visible in the active company pipeline.
+      if (!data.organization_id && scope.organizationId && (salespersonOk || creatorOk || visibility.mode === 'all')) {
+        await supabase
+          .from('crm_opportunities')
+          .update({
+            organization_id: scope.organizationId,
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', opportunityId)
+          .is('organization_id', null);
+        data = { ...data, organization_id: scope.organizationId };
+      }
+    }
+  }
 
   if (error) return { error: error.message };
   if (!data) return { error: 'Opportunity not found.' };
@@ -603,7 +648,17 @@ export async function getCrmOpportunityById(opportunityId: string) {
   );
   const visibility = await resolveCrmVisibilityScope(scope.session);
   if (!canAccessCrmOpportunityRow(visibility, data as Record<string, unknown>)) {
-    return { error: 'You do not have access to this opportunity.' };
+    // Own-document users already checked above for unscoped; for scoped rows enforce visibility.
+    const username = String(scope.session.username || '').trim();
+    const salespersonOk =
+      visibility.salesAgentId &&
+      data.salesperson_id &&
+      String(data.salesperson_id) === visibility.salesAgentId;
+    const creatorOk =
+      username && data.created_by && String(data.created_by) === username;
+    if (!salespersonOk && !creatorOk) {
+      return { error: 'You do not have access to this opportunity.' };
+    }
   }
 
   const [opportunity] = await enrichOpportunities([data as Record<string, unknown>]);

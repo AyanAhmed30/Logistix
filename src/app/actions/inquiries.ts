@@ -182,6 +182,14 @@ const SALES_AGENT_LEAD_INQUIRIES_SELECT = `
     id,
     status,
     created_at
+  ),
+  inquiry_flags (
+    id,
+    inquiry_id,
+    message,
+    raised_by,
+    raised_by_role,
+    created_at
   )
 `;
 
@@ -202,6 +210,7 @@ function sanitizeInquiriesForSession(
       role === 'sales_agent'
         ? (row.inquiry_confirmations || []).filter((c) => c.status === 'approved')
         : (row.inquiry_confirmations || []),
+    inquiry_flags: normalizeInquiryFlags(row.inquiry_flags),
   }));
 
   const approvedCandidate = [...sanitized]
@@ -240,11 +249,17 @@ export async function listInquiriesForLead(
     .order('version_number', { ascending: false })
     .order('created_at', { ascending: false });
 
-  if (error && /crm_opportunity_id|column/i.test(error.message)) {
-    const fallbackSelect = SALES_AGENT_LEAD_INQUIRIES_SELECT.replace(
-      /\s*crm_opportunity_id,\s*/m,
-      '\n'
-    );
+  if (error && /crm_opportunity_id|inquiry_flags|column|could not find the/i.test(error.message)) {
+    let fallbackSelect = SALES_AGENT_LEAD_INQUIRIES_SELECT;
+    if (/crm_opportunity_id/i.test(error.message)) {
+      fallbackSelect = fallbackSelect.replace(/\s*crm_opportunity_id,\s*/m, '\n');
+    }
+    if (/inquiry_flags/i.test(error.message)) {
+      fallbackSelect = fallbackSelect.replace(
+        /,?\s*inquiry_flags\s*\([\s\S]*?\)\s*/m,
+        '\n'
+      );
+    }
     const retry = await supabase
       .from('lead_inquiries')
       .select(fallbackSelect)

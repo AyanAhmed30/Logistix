@@ -26,14 +26,31 @@ async function canAccessOpportunityForCrmInquiry(
 
   if (!opp) return false;
 
-  if (session.organizationId) {
-    const { data: orgRow } = await supabase
-      .from('crm_opportunities')
-      .select('organization_id')
-      .eq('id', opportunityId)
-      .eq('organization_id', session.organizationId)
-      .maybeSingle();
-    if (!orgRow) return false;
+  const oppOrg = opp.organization_id ? String(opp.organization_id) : null;
+  if (session.organizationId && oppOrg && oppOrg !== session.organizationId) {
+    // Cross-org: still allow the assigned salesperson / creator (notification deep links).
+    const visibility = await resolveCrmVisibilityScope(session);
+    const username = String(session.username || '').trim();
+    if (
+      visibility.salesAgentId &&
+      opp.salesperson_id &&
+      String(opp.salesperson_id) === visibility.salesAgentId
+    ) {
+      return true;
+    }
+    if (username && opp.created_by && String(opp.created_by) === username) {
+      return true;
+    }
+    return false;
+  }
+
+  // Null organization_id on the opportunity: allow via visibility ownership.
+  if (session.organizationId && !oppOrg) {
+    const visibility = await resolveCrmVisibilityScope(session);
+    return canAccessCrmOpportunityRow(visibility, {
+      salesperson_id: opp.salesperson_id ? String(opp.salesperson_id) : null,
+      created_by: opp.created_by ? String(opp.created_by) : null,
+    });
   }
 
   const visibility = await resolveCrmVisibilityScope(session);

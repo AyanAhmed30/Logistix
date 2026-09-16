@@ -68,6 +68,7 @@ import {
   invalidateCachedLeadInquiries,
   setCachedLeadInquiries,
 } from "@/lib/sales-agent-lead-inquiries-cache";
+import { InquiryFlagMessages } from "@/components/inquiry/InquiryFlagMessages";
 import {
   Dialog,
   DialogContent,
@@ -1643,6 +1644,8 @@ export function LeadInquiryWorkspace({
           </div>
         </Card>
       )}
+
+      <InquiryFlagMessages flags={inquiry?.inquiry_flags} />
 
       {mode === "view" && inquiry?.sent_to_accounting && (
         <div className="flex items-center gap-2 flex-wrap">

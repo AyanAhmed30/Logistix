@@ -256,7 +256,7 @@ function mapChatRow(row: ChatRow, ctx: NotificationViewerContext): AppInboxItem 
     source: 'chat',
     eventType: 'chat',
     title: catalogTitleForEvent('chat'),
-    message: `${row.sender_username} sent you a message regarding Lead #${leadNumber || 'N/A'}.`,
+    message: `${row.sender_username} sent you a message regarding Customer ID ${leadNumber || 'N/A'}.`,
     href: resolveNotificationHref({
       eventType: 'chat',
       source: 'chat',

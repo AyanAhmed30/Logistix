@@ -289,7 +289,7 @@ export function SalesAgentAccountingInquiriesPanel() {
     pdf.text(`Date: ${new Date().toLocaleDateString()}`, pageWidth - margin, y, { align: "right" });
     y += 6;
     pdf.text(`Phone: ${inquiry.leads?.number || "-"}`, margin, y);
-    pdf.text(`Lead ID: ${inquiry.leads?.lead_id_formatted || "-"}`, pageWidth - margin, y, { align: "right" });
+    pdf.text(`Customer ID: ${inquiry.leads?.lead_id_formatted || "-"}`, pageWidth - margin, y, { align: "right" });
     y += 12;
 
     // Inquiry details section
@@ -545,7 +545,7 @@ export function SalesAgentAccountingInquiriesPanel() {
                     </div>
                   </div>
                   <div>
-                    <label className="text-xs text-slate-500 font-medium">Lead #</label>
+                    <label className="text-xs text-slate-500 font-medium">Customer ID</label>
                     <div className="font-semibold text-teal-700 mt-0.5">
                       #{inq.leads?.lead_id_formatted || "N/A"}
                     </div>
@@ -791,7 +791,7 @@ export function SalesAgentAccountingInquiriesPanel() {
               <Table>
                 <TableHeader>
                   <TableRow className="bg-slate-50">
-                    <TableHead className="font-semibold">Lead #</TableHead>
+                    <TableHead className="font-semibold">Customer ID</TableHead>
                     <TableHead className="font-semibold">Lead Name</TableHead>
                     <TableHead className="font-semibold">Product Name</TableHead>
                     <TableHead className="font-semibold">Weight</TableHead>

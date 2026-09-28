@@ -284,7 +284,7 @@ export function InquiryTrackingPanel() {
               <Table>
                 <TableHeader>
                   <TableRow className="bg-slate-50">
-                    <TableHead className="font-semibold">Lead #</TableHead>
+                    <TableHead className="font-semibold">Customer ID</TableHead>
                     <TableHead className="font-semibold">Lead Name</TableHead>
                     <TableHead className="font-semibold">Phone</TableHead>
                     <TableHead className="font-semibold">Product Name</TableHead>

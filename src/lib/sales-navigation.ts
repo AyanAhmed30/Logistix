@@ -39,6 +39,13 @@ export const SALES_TOP_MENUS: SalesTopMenu[] = [
         description: 'Confirmed sales orders',
       },
       {
+        id: 'orders-info',
+        label: 'Orders Info',
+        href: '/sales/orders-info',
+        permission: 'quotations',
+        description: 'Customer acceptance and shipment information',
+      },
+      {
         id: 'customers',
         label: 'Customers',
         href: '/sales/customers',
@@ -185,6 +192,21 @@ export function getSalesPageMeta(pathname: string): SalesPageMeta {
       showCreate: false,
       searchPlaceholder: 'Search…',
       searchMode: 'customers',
+      showFilters: false,
+      showFavorites: true,
+    };
+  }
+
+  if (path.startsWith('/sales/orders-info')) {
+    return {
+      title: 'Orders Info',
+      breadcrumbs: [
+        { label: 'Orders', href: '/sales/quotations' },
+        { label: 'Orders Info' },
+      ],
+      showCreate: false,
+      searchPlaceholder: 'Search Customer ID, name, quotation, tracking…',
+      searchMode: 'quotations',
       showFilters: false,
       showFavorites: true,
     };

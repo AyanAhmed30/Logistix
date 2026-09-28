@@ -5,6 +5,12 @@ export const SALES_NOTIFICATION_EVENTS = [
   'lead_transferred',
   'quotation_sent_to_customer',
   'quotation_counter_offer',
+  'quotation_negotiation_request',
+  'quotation_customer_accepted',
+  'quotation_shipment_tracking_added',
+  'quotation_shipment_photo_uploaded',
+  'quotation_shipment_info_updated',
+  'quotation_shipment_info_added_by_sales',
   'inquiry_flag_raised',
 ] as const;
 
@@ -29,6 +35,12 @@ export const LIFECYCLE_EVENT_TYPES = [
   'lead_transferred',
   'quotation_sent_to_customer',
   'quotation_counter_offer',
+  'quotation_negotiation_request',
+  'quotation_customer_accepted',
+  'quotation_shipment_tracking_added',
+  'quotation_shipment_photo_uploaded',
+  'quotation_shipment_info_updated',
+  'quotation_shipment_info_added_by_sales',
   'inquiry_flag_raised',
 ] as const;
 
@@ -122,6 +134,30 @@ export const NOTIFICATION_EVENT_CATALOG: Record<string, EventCatalogEntry> = {
   quotation_counter_offer: {
     title: 'Customer Counter-Offer Received',
     fallbackMessage: 'The customer sent a counter-offer on a quotation.',
+  },
+  quotation_negotiation_request: {
+    title: 'Negotiation Request',
+    fallbackMessage: 'A customer requested negotiation on a quotation.',
+  },
+  quotation_customer_accepted: {
+    title: 'Quotation Accepted',
+    fallbackMessage: 'A customer accepted a quotation.',
+  },
+  quotation_shipment_tracking_added: {
+    title: 'Tracking Number Uploaded',
+    fallbackMessage: 'A customer uploaded a tracking number.',
+  },
+  quotation_shipment_photo_uploaded: {
+    title: 'Parcel Photo Uploaded',
+    fallbackMessage: 'A customer uploaded a parcel photo.',
+  },
+  quotation_shipment_info_updated: {
+    title: 'Shipment Information Updated',
+    fallbackMessage: 'Shipment information was updated for an order.',
+  },
+  quotation_shipment_info_added_by_sales: {
+    title: 'Shipment Info Added by Sales',
+    fallbackMessage: 'Sales added shipment information for a customer order.',
   },
   inquiry_flag_raised: {
     title: 'Flag Raised on Inquiry',
@@ -264,7 +300,7 @@ export function opportunityIdFromNotification(input: {
 
 export function formatLeadNumberLabel(leadNumber: string | null | undefined): string {
   const num = String(leadNumber || '').trim().replace(/^#+/, '');
-  return num ? `Lead #${num}` : 'Lead';
+  return num ? `Customer ID ${num}` : 'Customer ID';
 }
 
 export function customerSubmittedInquiryMessage(
@@ -359,6 +395,23 @@ export function resolveNotificationHref(input: {
     if (leadId) return salesAgentInquiryHref(leadId, inquiryId);
   }
 
+  if (
+    eventType === 'quotation_customer_accepted' ||
+    eventType === 'quotation_negotiation_request' ||
+    eventType === 'quotation_counter_offer' ||
+    eventType === 'quotation_shipment_tracking_added' ||
+    eventType === 'quotation_shipment_photo_uploaded' ||
+    eventType === 'quotation_shipment_info_updated' ||
+    eventType === 'quotation_shipment_info_added_by_sales'
+  ) {
+    if (ctx.hasSalesQuotations) return '/sales/orders-info';
+    if (ctx.hasSalesQuotations && inquiryId) return quotationFromInquiryHref(inquiryId);
+    if (canOpenCrmPipeline && opportunityId) {
+      return crmPipelineInquiryHref(opportunityId, inquiryId);
+    }
+    if (leadId) return salesAgentInquiryHref(leadId, inquiryId);
+  }
+
   if (eventType === 'approved' || eventType === 'quotation_sent_to_customer') {
     if (eventType === 'approved' && ctx.isOperationsActor && !ctx.isSalesActor && leadId) {
       return adminOperationsInquiryHref(leadId, inquiryId);
@@ -402,6 +455,10 @@ export function notificationMetaLine(item: Pick<AppInboxItem, 'leadNumber' | 'cu
   const customer = item.customerName || item.payload.customerName || '';
   const reference =
     typeof item.payload.inquiryReference === 'string' ? item.payload.inquiryReference.trim() : '';
-  const leadLabel = lead ? (String(lead).startsWith('#') ? `Lead ${lead}` : `Lead #${lead}`) : '';
+  const leadLabel = lead
+    ? String(lead).startsWith('#')
+      ? `Customer ID ${String(lead).replace(/^#+/, '')}`
+      : `Customer ID ${lead}`
+    : '';
   return [leadLabel, customer, reference].filter(Boolean).join(' · ');
 }

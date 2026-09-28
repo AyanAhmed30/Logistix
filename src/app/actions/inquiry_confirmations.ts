@@ -516,7 +516,7 @@ export async function submitInquiryForConfirmation(data: {
         recipients: adminRecipients,
         message: summary
           ? `${summary} is awaiting rate approval.`
-          : `Lead #${leadNumber} is awaiting rate approval.`,
+          : `Customer ID ${leadNumber} is awaiting rate approval.`,
         payload: {
           leadId: data.lead_id,
           inquiryId: data.inquiry_id,

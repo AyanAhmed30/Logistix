@@ -200,7 +200,7 @@ export function CrmInquiryDetailView({ inquiryId }: { inquiryId: string }) {
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-x-6 gap-y-3">
               <DetailField label="Customer name" value={customer.name} />
               <DetailField label="Company" value={customer.company_name} />
-              <DetailField label="Lead number" value={inquiry.lead_number} />
+              <DetailField label="Customer ID" value={inquiry.lead_number} />
               <DetailField label="Inquiry reference" value={inquiry.inquiry_reference} />
               <DetailField label="Phone" value={customer.phone} />
               <DetailField label="Mobile" value={customer.mobile} />

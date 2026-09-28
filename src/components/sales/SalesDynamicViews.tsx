@@ -55,6 +55,14 @@ export const SalesOrdersViewDynamic = dynamic(
   { loading: () => <SalesKanbanSkeleton />, ssr: false }
 );
 
+export const SalesOrdersInfoViewDynamic = dynamic(
+  () =>
+    import('@/components/sales/SalesOrdersInfoView').then(
+      (m) => m.SalesOrdersInfoView
+    ),
+  { loading: () => <SalesPageSkeleton />, ssr: false }
+);
+
 export const SalesReportsViewDynamic = dynamic(
   () =>
     import('@/components/sales/SalesReportsView').then(

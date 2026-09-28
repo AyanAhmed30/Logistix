@@ -1548,7 +1548,7 @@ export async function transferLeadToSalesAgent(leadId: string, targetSalesAgentI
           recipient_role: 'sales_agent',
           recipient_username: recipientAgent.username,
           event_type: 'lead_transferred',
-          message: `${senderAgent.name} sent Lead #${leadRef} (${lead.name || 'N/A'}) to you.`,
+          message: `${senderAgent.name} sent Customer ID ${leadRef} (${lead.name || 'N/A'}) to you.`,
         }]);
 
       if (notificationError) {

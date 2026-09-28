@@ -614,7 +614,7 @@ async function notifyCustomerSubmittedInquiryDirect(
       senderUsername: 'mobile',
       recipients: opsRecipients,
       dedupe: true,
-      message: `Inquiry sent by Sales Agent for Lead #${leadContext.leadNumber || 'N/A'}.`,
+      message: `Inquiry sent by Sales Agent for Customer ID ${leadContext.leadNumber || 'N/A'}.`,
       payload,
     });
   }
@@ -1083,7 +1083,7 @@ export async function sendInquiryToAccounting(
           senderRole: 'sales_agent',
           senderUsername: session.username || 'sales-agent',
           recipients: merged,
-          message: `Inquiry sent by Sales Agent for Lead #${leadNumber}.`,
+          message: `Inquiry sent by Sales Agent for Customer ID ${leadNumber}.`,
           payload: {
             leadId: inquiry.lead_id,
             inquiryId: inquiry.id,

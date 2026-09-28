@@ -2675,7 +2675,7 @@ export function OperationsLeadsInquiryPanel({
                       {confirmationStatusIcon(conf.status)}
                       <div>
                         <p className="text-sm font-medium text-slate-800">
-                          {conf.product_name} — Lead #{conf.lead_number}
+                          {conf.product_name} — Customer ID {conf.lead_number}
                         </p>
                         <p className="text-xs text-slate-500">
                           Submitted by {conf.submitted_by} on{" "}
@@ -2765,7 +2765,7 @@ export function OperationsLeadsInquiryPanel({
               <Table>
                 <TableHeader>
                   <TableRow className="bg-slate-50">
-                    <TableHead className="font-semibold">Lead #</TableHead>
+                    <TableHead className="font-semibold">Customer ID</TableHead>
                     <TableHead className="font-semibold">Inquiry Ref</TableHead>
                     <TableHead className="font-semibold">Lead Name</TableHead>
                     <TableHead className="font-semibold">Product Name</TableHead>

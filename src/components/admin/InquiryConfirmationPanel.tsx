@@ -919,7 +919,7 @@ export function InquiryConfirmationPanel({
               <Table>
                 <TableHeader>
                   <TableRow className="bg-slate-50">
-                    <TableHead className="font-semibold">Lead #</TableHead>
+                    <TableHead className="font-semibold">Customer ID</TableHead>
                     <TableHead className="font-semibold">Lead Name</TableHead>
                     <TableHead className="font-semibold">Product Name</TableHead>
                     <TableHead className="font-semibold">Weight</TableHead>

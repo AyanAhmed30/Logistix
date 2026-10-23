@@ -45,6 +45,52 @@ async function readDefaultOrganizationId(
   return value ? String(value) : null;
 }
 
+/**
+ * If a portal user has no company link, attach the oldest usable organization
+ * (active or legacy NULL status). Fixes "No organizations" for migrated sales agents.
+ */
+async function healMissingOrganizationAssignment(
+  supabase: Awaited<ReturnType<typeof createAdminClient>>,
+  userId: string
+): Promise<string | null> {
+  const { data: orgRow } = await supabase
+    .from('organizations')
+    .select('id')
+    .or('status.eq.active,status.is.null')
+    .order('organization_name', { ascending: true })
+    .limit(1)
+    .maybeSingle();
+
+  const orgId = orgRow?.id ? String(orgRow.id) : null;
+  if (!orgId) return null;
+
+  const { error: linkError } = await supabase.from('user_organizations').upsert(
+    { user_id: userId, organization_id: orgId },
+    { onConflict: 'user_id,organization_id', ignoreDuplicates: true }
+  );
+  if (linkError && !String(linkError.message || '').includes('duplicate')) {
+    // Fallback plain insert when unique constraint name differs
+    const { error: insertError } = await supabase
+      .from('user_organizations')
+      .insert({ user_id: userId, organization_id: orgId });
+    if (
+      insertError &&
+      !String(insertError.message || '').toLowerCase().includes('duplicate')
+    ) {
+      console.error('[healMissingOrganizationAssignment]', insertError.message);
+      return null;
+    }
+  }
+
+  await supabase
+    .from('app_users')
+    .update({ default_organization: orgId })
+    .eq('id', userId)
+    .is('default_organization', null);
+
+  return orgId;
+}
+
 /** Load assigned organizations for a portal user directly from the database. */
 export async function fetchPortalUserOrganizationAssignments(
   supabase: Awaited<ReturnType<typeof createAdminClient>>,
@@ -99,6 +145,11 @@ export async function fetchPortalUserOrganizationAssignments(
   }
 
   if (organizationIds.length === 0) {
+    const healed = await healMissingOrganizationAssignment(supabase, userId);
+    if (healed) organizationIds = [healed];
+  }
+
+  if (organizationIds.length === 0) {
     return {
       organizationIds: [],
       organizations: [],
@@ -111,7 +162,7 @@ export async function fetchPortalUserOrganizationAssignments(
     .from('organizations')
     .select('id, organization_name')
     .in('id', organizationIds)
-    .eq('status', 'active')
+    .or('status.eq.active,status.is.null')
     .order('organization_name', { ascending: true });
 
   if (orgError) {

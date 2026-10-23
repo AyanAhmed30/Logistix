@@ -196,16 +196,27 @@ export async function migrateLegacyAccountToPortal(
   const { data: defaultOrgRow } = await supabase
     .from('organizations')
     .select('id')
-    .eq('status', 'active')
+    .or('status.eq.active,status.is.null')
     .order('organization_name', { ascending: true })
     .limit(1)
     .maybeSingle();
 
   if (defaultOrgRow?.id) {
-    await supabase.from('user_organizations').insert({
-      user_id: appUserId,
-      organization_id: defaultOrgRow.id,
-    });
+    const orgId = String(defaultOrgRow.id);
+    const { error: linkError } = await supabase.from('user_organizations').upsert(
+      { user_id: appUserId, organization_id: orgId },
+      { onConflict: 'user_id,organization_id', ignoreDuplicates: true }
+    );
+    if (linkError) {
+      await supabase
+        .from('user_organizations')
+        .insert({ user_id: appUserId, organization_id: orgId });
+    }
+    await supabase
+      .from('app_users')
+      .update({ default_organization: orgId })
+      .eq('id', appUserId)
+      .is('default_organization', null);
   }
 
   const { data: finalUser } = await supabase
@@ -224,6 +235,8 @@ export async function migrateLegacyAccountToPortal(
     full_name: finalUser.full_name ? String(finalUser.full_name) : null,
     default_organization_id: finalUser.default_organization
       ? String(finalUser.default_organization)
-      : null,
+      : defaultOrgRow?.id
+        ? String(defaultOrgRow.id)
+        : null,
   };
 }

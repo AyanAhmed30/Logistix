@@ -57,7 +57,10 @@ const LIST_SELECT = `
   inquiry_confirmations (
     id,
     status,
-    created_at
+    created_at,
+    submitted_by,
+    reviewed_by,
+    reviewed_at
   )
 `;
 
@@ -131,6 +134,13 @@ const DETAIL_SELECT = `
   )
 `;
 
+export type InquiryActivityEvent = {
+  key: 'sales_submitted' | 'ops_submitted' | 'admin_approved' | 'admin_rejected';
+  label: string;
+  at: string;
+  actor: string | null;
+};
+
 export type SalesAllInquiryListItem = {
   id: string;
   product_name: string;
@@ -140,6 +150,8 @@ export type SalesAllInquiryListItem = {
   quantity: string;
   sent_at: string | null;
   workflow: InquiryWorkflowStatus;
+  /** Workflow activity timeline for the Status column (persisted timestamps only). */
+  activity: InquiryActivityEvent[];
 };
 
 export type SalesInquiryCustomerDetails = {
@@ -246,9 +258,191 @@ function confirmationsFromRow(row: Record<string, unknown>): Array<{
   id?: string;
   status?: string;
   created_at?: string;
+  submitted_by?: string | null;
+  reviewed_by?: string | null;
+  reviewed_at?: string | null;
 }> {
   const raw = row.inquiry_confirmations;
-  return Array.isArray(raw) ? (raw as Array<{ id?: string; status?: string; created_at?: string }>) : [];
+  return Array.isArray(raw)
+    ? (raw as Array<{
+        id?: string;
+        status?: string;
+        created_at?: string;
+        submitted_by?: string | null;
+        reviewed_by?: string | null;
+        reviewed_at?: string | null;
+      }>)
+    : [];
+}
+
+type InquiryLogRow = {
+  inquiry_id?: string;
+  action?: string;
+  performed_by?: string | null;
+  performed_at?: string | null;
+};
+
+/** Build Status-column timeline from stored timestamps / logs only (no fabricated events). */
+function buildInquiryActivityTimeline(
+  row: Record<string, unknown>,
+  lead: LeadEmbed | null,
+  logs: InquiryLogRow[] = []
+): InquiryActivityEvent[] {
+  const byKey = new Map<InquiryActivityEvent['key'], InquiryActivityEvent>();
+  const salesActor =
+    salesAgentName(lead) ||
+    (row.created_by ? String(row.created_by) : null);
+
+  const put = (event: InquiryActivityEvent) => {
+    const prev = byKey.get(event.key);
+    if (!prev) {
+      byKey.set(event.key, event);
+      return;
+    }
+    // Keep earliest for submit events; latest for admin decisions
+    const preferLater =
+      event.key === 'admin_approved' || event.key === 'admin_rejected';
+    const prevTs = Date.parse(prev.at);
+    const nextTs = Date.parse(event.at);
+    if (
+      (preferLater && nextTs > prevTs) ||
+      (!preferLater && nextTs < prevTs)
+    ) {
+      byKey.set(event.key, {
+        ...event,
+        actor: event.actor || prev.actor,
+      });
+    } else if (!prev.actor && event.actor) {
+      byKey.set(event.key, { ...prev, actor: event.actor });
+    }
+  };
+
+  // From inquiry_logs (most reliable when present)
+  for (const log of logs) {
+    const action = String(log.action || '');
+    const at = log.performed_at ? String(log.performed_at) : '';
+    if (!at) continue;
+    const actor = log.performed_by ? String(log.performed_by) : null;
+    if (action === 'inquiry_sent' || action === 'inquiry_resent') {
+      put({
+        key: 'sales_submitted',
+        label: 'Sales submitted inquiry to Operations',
+        at,
+        actor: actor || salesActor,
+      });
+    } else if (action === 'send_for_confirmation') {
+      put({
+        key: 'ops_submitted',
+        label: 'Operations submitted inquiry to Admin',
+        at,
+        actor,
+      });
+    } else if (action === 'admin_approved') {
+      put({
+        key: 'admin_approved',
+        label: 'Admin approved',
+        at,
+        actor,
+      });
+    } else if (action === 'admin_rejected') {
+      put({
+        key: 'admin_rejected',
+        label: 'Admin rejected',
+        at,
+        actor,
+      });
+    }
+  }
+
+  // Fallbacks from inquiry / confirmation columns (existing inquiries)
+  if (row.sent_at) {
+    put({
+      key: 'sales_submitted',
+      label: 'Sales submitted inquiry to Operations',
+      at: String(row.sent_at),
+      actor: salesActor,
+    });
+  }
+
+  const confirmations = confirmationsFromRow(row);
+  const opsSubmit = [...confirmations]
+    .filter((c) => c.created_at)
+    .sort(
+      (a, b) =>
+        Date.parse(String(a.created_at)) - Date.parse(String(b.created_at))
+    )[0];
+  if (opsSubmit?.created_at) {
+    put({
+      key: 'ops_submitted',
+      label: 'Operations submitted inquiry to Admin',
+      at: String(opsSubmit.created_at),
+      actor: opsSubmit.submitted_by ? String(opsSubmit.submitted_by) : null,
+    });
+  }
+
+  const reviewed = [...confirmations]
+    .filter(
+      (c) =>
+        c.reviewed_at && (c.status === 'approved' || c.status === 'rejected')
+    )
+    .sort(
+      (a, b) =>
+        Date.parse(String(b.reviewed_at)) - Date.parse(String(a.reviewed_at))
+    )[0];
+
+  if (reviewed?.reviewed_at && reviewed.status === 'approved') {
+    put({
+      key: 'admin_approved',
+      label: 'Admin approved',
+      at: String(reviewed.reviewed_at),
+      actor: reviewed.reviewed_by ? String(reviewed.reviewed_by) : null,
+    });
+  } else if (reviewed?.reviewed_at && reviewed.status === 'rejected') {
+    put({
+      key: 'admin_rejected',
+      label: 'Admin rejected',
+      at: String(reviewed.reviewed_at),
+      actor: reviewed.reviewed_by ? String(reviewed.reviewed_by) : null,
+    });
+  } else if (
+    row.approved_at &&
+    String(row.approval_status || '') === 'approved'
+  ) {
+    put({
+      key: 'admin_approved',
+      label: 'Admin approved',
+      at: String(row.approved_at),
+      actor: null,
+    });
+  } else if (String(row.approval_status || '') === 'rejected') {
+    // Rejected may only set approval_status without approved_at
+    const rejectedConf = [...confirmations]
+      .filter((c) => c.status === 'rejected' && c.reviewed_at)
+      .sort(
+        (a, b) =>
+          Date.parse(String(b.reviewed_at)) - Date.parse(String(a.reviewed_at))
+      )[0];
+    if (rejectedConf?.reviewed_at) {
+      put({
+        key: 'admin_rejected',
+        label: 'Admin rejected',
+        at: String(rejectedConf.reviewed_at),
+        actor: rejectedConf.reviewed_by
+          ? String(rejectedConf.reviewed_by)
+          : null,
+      });
+    }
+  }
+
+  const order: InquiryActivityEvent['key'][] = [
+    'sales_submitted',
+    'ops_submitted',
+    'admin_approved',
+    'admin_rejected',
+  ];
+  return order
+    .map((key) => byKey.get(key))
+    .filter((e): e is InquiryActivityEvent => Boolean(e));
 }
 
 async function requireSalesInquiryAccess(): Promise<
@@ -271,6 +465,41 @@ function rowMatchesAssignedVisibility(
   if (salesAgentId && String(lead?.sales_agent_id || '') === salesAgentId) return true;
   if (username && String(row.created_by || '') === username) return true;
   return false;
+}
+
+async function fetchInquiryLogsByInquiryIds(
+  supabase: Awaited<ReturnType<typeof createAdminClient>>,
+  inquiryIds: string[]
+): Promise<Map<string, InquiryLogRow[]>> {
+  const map = new Map<string, InquiryLogRow[]>();
+  if (!inquiryIds.length) return map;
+
+  const CHUNK = 100;
+  for (let i = 0; i < inquiryIds.length; i += CHUNK) {
+    const chunk = inquiryIds.slice(i, i + CHUNK);
+    const { data, error } = await supabase
+      .from('inquiry_logs')
+      .select('inquiry_id, action, performed_by, performed_at')
+      .in('inquiry_id', chunk)
+      .in('action', [
+        'inquiry_sent',
+        'inquiry_resent',
+        'send_for_confirmation',
+        'admin_approved',
+        'admin_rejected',
+      ])
+      .order('performed_at', { ascending: true });
+
+    if (error || !data?.length) continue;
+    for (const row of data as InquiryLogRow[]) {
+      const id = String(row.inquiry_id || '');
+      if (!id) continue;
+      const list = map.get(id) || [];
+      list.push(row);
+      map.set(id, list);
+    }
+  }
+  return map;
 }
 
 export async function getSalesAllInquiries(): Promise<
@@ -302,6 +531,7 @@ export async function getSalesAllInquiries(): Promise<
 
     const { data, error } = await query;
 
+    let rows: unknown[] = data || [];
     if (error && scope.organizationId && isMissingOrganizationColumnError(error)) {
       let fallback = supabase
         .from('lead_inquiries')
@@ -313,11 +543,35 @@ export async function getSalesAllInquiries(): Promise<
       }
       const retry = await fallback;
       if (retry.error) return { error: retry.error.message };
-      return { inquiries: mapListRows(retry.data || [], visibility, auth.session.username) };
+      rows = retry.data || [];
+    } else if (error) {
+      return { error: error.message };
     }
 
-    if (error) return { error: error.message };
-    return { inquiries: mapListRows(data || [], visibility, auth.session.username) };
+    const mappedBase = mapListRows(rows, visibility, auth.session.username);
+    const logsByInquiry = await fetchInquiryLogsByInquiryIds(
+      supabase,
+      mappedBase.map((r) => r.id)
+    );
+
+    const rowById = new Map(
+      (rows as Record<string, unknown>[]).map((r) => [String(r.id), r])
+    );
+
+    return {
+      inquiries: mappedBase.map((item) => {
+        const sourceRow = rowById.get(item.id);
+        if (!sourceRow) return item;
+        return {
+          ...item,
+          activity: buildInquiryActivityTimeline(
+            sourceRow,
+            leadFromRow(sourceRow),
+            logsByInquiry.get(item.id) || []
+          ),
+        };
+      }),
+    };
   } catch (err) {
     return { error: err instanceof Error ? err.message : 'Failed to load inquiries' };
   }
@@ -351,6 +605,7 @@ function mapListRows(
       quantity: String(row.quantity || '').trim(),
       sent_at: row.sent_at ? String(row.sent_at) : null,
       workflow,
+      activity: buildInquiryActivityTimeline(row, lead),
     };
   });
 }

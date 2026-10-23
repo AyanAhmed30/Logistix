@@ -38,6 +38,7 @@ import {
 } from "@/lib/contacts-client-cache";
 import { useAdminOrganization } from "@/contexts/AdminOrganizationContext";
 import { ModuleLoadingOverlay } from "@/components/ui/ModuleLoadingOverlay";
+import { useDebouncedValue } from "@/hooks/useDebouncedValue";
 
 type Props = {
   onNewContact: () => void;
@@ -55,6 +56,22 @@ function isMobileAppContact(c: ContactWithRelations): boolean {
   return Boolean(c.mobile_registered_at) || c.source === "mobile_app";
 }
 
+/** Display contact Added time in Pakistan business timezone. */
+function formatContactAddedAt(value: string | null | undefined) {
+  if (!value) return "—";
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return "—";
+  return d.toLocaleString("en-PK", {
+    timeZone: "Asia/Karachi",
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+    hour12: true,
+  });
+}
+
 export function ContactsListView({
   onNewContact,
   onOpenContact,
@@ -69,6 +86,7 @@ export function ContactsListView({
 
   const [contacts, setContacts] = useState<ContactWithRelations[]>(initialContacts);
   const [search, setSearch] = useState("");
+  const debouncedSearch = useDebouncedValue(search, 250);
   const [typeFilter, setTypeFilter] = useState<TypeFilter>("all");
   const [sourceFilter, setSourceFilter] = useState<SourceFilter>("all");
   const [loading, setLoading] = useState(initialContacts.length === 0);
@@ -76,52 +94,66 @@ export function ContactsListView({
 
   useEffect(() => {
     let cancelled = false;
+    const needle = debouncedSearch.trim();
     const key = `${switchVersion}:${refreshToken}`;
-    const existing = peekContactsClientCache(key);
-    const hasCache =
-      existing && "contacts" in existing && Array.isArray(existing.contacts);
 
-    if (hasCache) {
-      setContacts(existing.contacts);
-      setLoading(false);
-      onListLoaded?.();
+    // Empty search: use list cache. Active search: always hit Supabase via getContacts(search).
+    if (!needle) {
+      const existing = peekContactsClientCache(key);
+      const hasCache =
+        existing && "contacts" in existing && Array.isArray(existing.contacts);
+
+      if (hasCache) {
+        setContacts(existing.contacts);
+        setLoading(false);
+        onListLoaded?.();
+      } else {
+        setLoading(true);
+      }
+
+      getCachedContactsList(key, () => getContacts(), { force: !hasCache }).then(
+        (res) => {
+          if (cancelled) return;
+          if ("error" in res && res.error) {
+            toast.error(res.error);
+            if (!hasCache) setContacts([]);
+          } else if ("contacts" in res && res.contacts) {
+            setContacts(res.contacts);
+          }
+          setLoading(false);
+          onListLoaded?.();
+        }
+      );
     } else {
       setLoading(true);
-    }
-
-    // Always refetch when cache had no Customer IDs (peek already dropped those).
-    getCachedContactsList(key, () => getContacts(), { force: !hasCache }).then(
-      (res) => {
+      void getContacts(needle).then((res) => {
         if (cancelled) return;
         if ("error" in res && res.error) {
           toast.error(res.error);
-          if (!hasCache) setContacts([]);
+          setContacts([]);
         } else if ("contacts" in res && res.contacts) {
           setContacts(res.contacts);
         }
         setLoading(false);
         onListLoaded?.();
-      }
-    );
+      });
+    }
 
     return () => {
       cancelled = true;
     };
-  }, [refreshToken, switchVersion, onListLoaded]);
+  }, [refreshToken, switchVersion, onListLoaded, debouncedSearch]);
 
   const filtered = useMemo(() => {
-    const needle = search.trim().toLowerCase();
+    // Name / phone / Customer ID search is DB-backed (debouncedSearch → getContacts).
+    // Keep only type / source filters client-side.
     return contacts.filter((c) => {
       if (typeFilter !== "all" && c.company_type !== typeFilter) return false;
       if (sourceFilter === "mobile_app" && !isMobileAppContact(c)) return false;
       if (sourceFilter === "manual" && isMobileAppContact(c)) return false;
-      if (!needle) return true;
-      const tagNames = (c.tags || []).map((t) => t.name).join(" ");
-      const hay =
-        `${c.lead_id_formatted || ""} ${c.name} ${c.company_name || ""} ${c.email || ""} ${c.phone || ""} ${c.country || ""} ${tagNames}`.toLowerCase();
-      return hay.includes(needle);
+      return true;
     });
-  }, [contacts, search, typeFilter, sourceFilter]);
+  }, [contacts, typeFilter, sourceFilter]);
 
   const sourceCounts = useMemo(() => {
     let mobile = 0;
@@ -171,7 +203,7 @@ export function ContactsListView({
               setSearch(e.target.value);
               setPage(1);
             }}
-            placeholder="Search contacts…"
+            placeholder="Search by name, Customer ID, or phone…"
             className="pl-9 h-9 bg-slate-50 border-slate-200"
           />
         </div>
@@ -255,22 +287,23 @@ export function ContactsListView({
                 Customer ID
               </TableHead>
               <TableHead className="font-semibold text-primary-dark">Name</TableHead>
-              <TableHead className="font-semibold text-primary-dark">Email</TableHead>
               <TableHead className="font-semibold text-primary-dark">Phone</TableHead>
               <TableHead className="font-semibold text-primary-dark">Tags</TableHead>
-              <TableHead className="font-semibold text-primary-dark">Country</TableHead>
+              <TableHead className="font-semibold text-primary-dark whitespace-nowrap">
+                Added
+              </TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {loading ? (
               <TableRow>
-                <TableCell colSpan={7} className="py-10 text-center text-secondary-muted">
+                <TableCell colSpan={6} className="py-10 text-center text-secondary-muted">
                   Loading contacts…
                 </TableCell>
               </TableRow>
             ) : paged.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={7} className="py-16 text-center">
+                <TableCell colSpan={6} className="py-16 text-center">
                   <div className="flex flex-col items-center gap-2 text-secondary-muted">
                     <UserRound className="h-10 w-10 text-slate-300" />
                     <p className="text-sm font-medium">No contacts yet</p>
@@ -306,16 +339,13 @@ export function ContactsListView({
                     </div>
                   </TableCell>
                   <TableCell className="text-secondary-muted">
-                    {contact.email || "—"}
-                  </TableCell>
-                  <TableCell className="text-secondary-muted">
                     {contact.phone || "—"}
                   </TableCell>
                   <TableCell>
-                    <ContactTagsCell tags={contact.tags} />
+                    <ContactTagsCell contact={contact} />
                   </TableCell>
-                  <TableCell className="text-secondary-muted">
-                    {contact.country || "—"}
+                  <TableCell className="text-sm text-secondary-muted whitespace-nowrap">
+                    {formatContactAddedAt(contact.created_at)}
                   </TableCell>
                 </TableRow>
               ))
@@ -327,20 +357,49 @@ export function ContactsListView({
   );
 }
 
-function ContactTagsCell({
-  tags,
-}: {
-  tags?: ContactWithRelations["tags"];
-}) {
-  if (!tags?.length) {
+const LEAD_SOURCE_VALUES = new Set(["meta", "linkedin", "whatsapp", "others"]);
+
+function leadSourceDisplayTags(contact: ContactWithRelations) {
+  const fromTags = (contact.tags || []).filter((tag) => {
+    const name = String(tag.name || "").trim().toLowerCase();
+    if (!name || name === "legacy lead") return false;
+    return name.startsWith("lead source:");
+  });
+
+  if (fromTags.length) return fromTags;
+
+  const source = String(contact.source || "").trim();
+  if (source && LEAD_SOURCE_VALUES.has(source.toLowerCase())) {
+    return [
+      {
+        id: `source-${contact.id}`,
+        name: `Lead Source: ${source}`,
+        color:
+          source.toLowerCase() === "whatsapp"
+            ? "#25D366"
+            : source.toLowerCase() === "meta"
+              ? "#1877F2"
+              : source.toLowerCase() === "linkedin"
+                ? "#0A66C2"
+                : "#6B7280",
+      },
+    ];
+  }
+
+  return [];
+}
+
+function ContactTagsCell({ contact }: { contact: ContactWithRelations }) {
+  const tags = leadSourceDisplayTags(contact);
+  if (!tags.length) {
     return <span className="text-secondary-muted text-xs">—</span>;
   }
   return (
-    <div className="flex flex-wrap gap-1 max-w-[200px]">
-      {tags.slice(0, 3).map((tag) => (
+    <div className="flex flex-wrap gap-1 max-w-[220px]">
+      {tags.slice(0, 2).map((tag) => (
         <span
           key={tag.id}
-          className="inline-flex rounded-full px-2 py-0.5 text-[10px] font-medium truncate max-w-[90px]"
+          className="inline-flex rounded-full px-2 py-0.5 text-[10px] font-medium truncate max-w-[160px]"
           style={{
             backgroundColor: `${tag.color}20`,
             color: tag.color,
@@ -350,8 +409,8 @@ function ContactTagsCell({
           {tag.name}
         </span>
       ))}
-      {tags.length > 3 && (
-        <span className="text-[10px] text-secondary-muted">+{tags.length - 3}</span>
+      {tags.length > 2 && (
+        <span className="text-[10px] text-secondary-muted">+{tags.length - 2}</span>
       )}
     </div>
   );

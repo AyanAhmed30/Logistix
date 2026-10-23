@@ -194,6 +194,231 @@ function normalizeCompanyType(value: CompanyType | undefined): CompanyType {
 /** Odoo list: top-level companies + all individuals (including employer-linked). */
 const CONTACTS_LIST_OR_FILTER = 'parent_id.is.null,company_type.eq.person';
 
+/** Page size for chunked contact fetches (avoids oversized single responses). */
+const CONTACTS_FETCH_PAGE_SIZE = 1000;
+
+function escapePostgrestFilterValue(value: string): string {
+  const v = String(value || '');
+  if (/[\s,().]/.test(v) || v.includes('"')) {
+    return `"${v.replace(/"/g, '\\"')}"`;
+  }
+  return v;
+}
+
+/** PostgREST `.or(...)` for name / phone / Customer ID search (DB-side). */
+function buildContactsSearchOrFilter(rawQuery: string): string | null {
+  const needle = String(rawQuery || '').trim();
+  if (!needle) return null;
+  const escaped = needle.replace(/[%_,.()]/g, ' ').replace(/\s+/g, ' ').trim();
+  if (!escaped) return null;
+  const phoneDigits = needle.replace(/\D/g, '');
+  const parts = [
+    `name.ilike.%${escaped}%`,
+    `company_name.ilike.%${escaped}%`,
+    `email.ilike.%${escaped}%`,
+    `phone.ilike.%${escaped}%`,
+    `mobile.ilike.%${escaped}%`,
+    `lead_id_formatted.ilike.%${escaped}%`,
+  ];
+  if (phoneDigits.length >= 3) {
+    parts.push(`phone.ilike.%${phoneDigits}%`);
+    parts.push(`mobile.ilike.%${phoneDigits}%`);
+  }
+  // Exact / prefix Customer ID tokens (digits only)
+  if (/^\d{3,}$/.test(phoneDigits) && phoneDigits === escaped.replace(/\s/g, '')) {
+    parts.push(`lead_id_formatted.eq.${phoneDigits}`);
+  }
+  return parts.join(',');
+}
+
+export type DuplicateContactInfo = {
+  id: string;
+  name: string;
+  lead_id_formatted: string | null;
+};
+
+function formatDuplicateContactError(existing: DuplicateContactInfo): string {
+  const customerId =
+    String(existing.lead_id_formatted || '').trim() || '—';
+  const customerName = String(existing.name || '').trim() || '—';
+  return [
+    'This customer already exists in the system.',
+    '',
+    `Customer Name: ${customerName}`,
+    `Customer ID / Lead Number: ${customerId}`,
+    '',
+    'Please search for this customer instead of creating a duplicate.',
+  ].join('\n');
+}
+
+function phonesMatchDigits(a: string | null | undefined, bDigits: string): boolean {
+  const dig = String(a || '').replace(/\D/g, '');
+  if (!dig || bDigits.length < 10) return false;
+  const aTail = dig.length >= 10 ? dig.slice(-10) : dig;
+  const bTail = bDigits.slice(-10);
+  return aTail === bTail;
+}
+
+/**
+ * Global (org-scoped) duplicate lookup by normalized phone / mobile.
+ * Used before insert so any Sales Agent is blocked from recreating an existing customer.
+ */
+async function findExistingContactByPhone(
+  supabase: Awaited<ReturnType<typeof createAdminClient>>,
+  phoneRaw: string | null | undefined,
+  options?: { organizationId?: string | null; excludeContactId?: string | null }
+): Promise<DuplicateContactInfo | null> {
+  const raw = String(phoneRaw || '').trim();
+  if (!raw) return null;
+
+  const { normalizePhoneDigits, normalizePakistaniPhone } = await import(
+    '@/lib/pakistan-phone'
+  );
+  let digits = normalizePhoneDigits(raw);
+  const pk = normalizePakistaniPhone(raw);
+  if (pk.ok) digits = pk.value;
+  if (digits.length < 10) return null;
+
+  const last10 = digits.slice(-10);
+  let q = supabase
+    .from('contacts')
+    .select('id, name, phone, mobile, lead_id_formatted, organization_id')
+    .or(`phone.ilike.%${last10}%,mobile.ilike.%${last10}%`)
+    .limit(120);
+
+  if (options?.excludeContactId) {
+    q = q.neq('id', options.excludeContactId);
+  }
+
+  const { data, error } = await q;
+  if (error || !data?.length) return null;
+
+  const orgId = options?.organizationId
+    ? String(options.organizationId)
+    : null;
+
+  for (const row of data) {
+    if (orgId) {
+      const rowOrg = row.organization_id ? String(row.organization_id) : null;
+      if (rowOrg && rowOrg !== orgId) continue;
+    }
+    if (
+      phonesMatchDigits(row.phone as string | null, digits) ||
+      phonesMatchDigits(row.mobile as string | null, digits)
+    ) {
+      return {
+        id: String(row.id),
+        name: String(row.name || '').trim() || '—',
+        lead_id_formatted: row.lead_id_formatted
+          ? String(row.lead_id_formatted)
+          : null,
+      };
+    }
+  }
+  return null;
+}
+
+function parseDuplicateContactTriggerError(
+  message: string | undefined
+): DuplicateContactInfo | null {
+  const msg = String(message || '');
+  const marker = 'duplicate_contact_phone:';
+  const idx = msg.indexOf(marker);
+  if (idx < 0) return null;
+  const payload = msg.slice(idx + marker.length).trim();
+  // id|name|lead_id_formatted
+  const [id, name, leadId] = payload.split('|');
+  if (!id) return null;
+  return {
+    id: id.trim(),
+    name: (name || '').trim() || '—',
+    lead_id_formatted: (leadId || '').trim() || null,
+  };
+}
+
+function earlierIsoTimestamp(
+  a: string | null | undefined,
+  b: string | null | undefined
+): string | null {
+  const aMs = a ? Date.parse(a) : NaN;
+  const bMs = b ? Date.parse(b) : NaN;
+  if (Number.isFinite(aMs) && Number.isFinite(bMs)) {
+    return aMs <= bMs ? String(a) : String(b);
+  }
+  if (Number.isFinite(aMs)) return String(a);
+  if (Number.isFinite(bMs)) return String(b);
+  return null;
+}
+
+/**
+ * Prefer the original lead created_at for "Added" when contacts were
+ * migrated/merged with a later batch timestamp.
+ */
+async function applyOriginalContactAddedAt(
+  supabase: Awaited<ReturnType<typeof createAdminClient>>,
+  contacts: Contact[]
+): Promise<Contact[]> {
+  if (!contacts.length) return contacts;
+
+  const earliestByContact = new Map<string, string>();
+  const note = (contactId: string, ts: string | null | undefined) => {
+    if (!contactId || !ts) return;
+    const prev = earliestByContact.get(contactId);
+    const next = earlierIsoTimestamp(prev, ts);
+    if (next) earliestByContact.set(contactId, next);
+  };
+
+  for (const c of contacts) {
+    note(c.id, c.created_at);
+  }
+
+  const legacyIds = [
+    ...new Set(
+      contacts
+        .map((c) => String(c.legacy_lead_id || '').trim())
+        .filter(Boolean)
+    ),
+  ];
+  const contactIds = contacts.map((c) => c.id);
+  const CHUNK = 150;
+
+  for (let i = 0; i < legacyIds.length; i += CHUNK) {
+    const chunk = legacyIds.slice(i, i + CHUNK);
+    const { data } = await supabase
+      .from('leads')
+      .select('id, contact_id, created_at')
+      .in('id', chunk);
+    for (const lead of data || []) {
+      const ts = lead.created_at ? String(lead.created_at) : null;
+      const legacyMatches = contacts.filter(
+        (c) => String(c.legacy_lead_id || '') === String(lead.id)
+      );
+      for (const c of legacyMatches) note(c.id, ts);
+      if (lead.contact_id) note(String(lead.contact_id), ts);
+    }
+  }
+
+  for (let i = 0; i < contactIds.length; i += CHUNK) {
+    const chunk = contactIds.slice(i, i + CHUNK);
+    const { data } = await supabase
+      .from('leads')
+      .select('contact_id, created_at')
+      .in('contact_id', chunk)
+      .not('created_at', 'is', null);
+    for (const lead of data || []) {
+      if (lead.contact_id) {
+        note(String(lead.contact_id), lead.created_at ? String(lead.created_at) : null);
+      }
+    }
+  }
+
+  return contacts.map((c) => {
+    const added = earliestByContact.get(c.id);
+    if (!added || added === c.created_at) return c;
+    return { ...c, created_at: added };
+  });
+}
+
 function resolveContactDisplayName(
   input: ContactUpsertInput,
   payload: { name: string; phone: string | null; mobile: string | null },
@@ -265,10 +490,6 @@ export async function getContacts(search?: string) {
   try {
     const session = ensureAuth(await getSession());
 
-    const org = await resolveContactsOrganizationId(session);
-    if ('error' in org) return { error: org.error };
-    if ('empty' in org) return { contacts: [] };
-
     const {
       applyOrganizationFilter,
       isMissingOrganizationColumnError,
@@ -280,40 +501,117 @@ export async function getContacts(search?: string) {
       mergeContactLeadIdsForList,
       assignMissingContactLeadIds,
     } = await import('@/lib/contact-lead-id');
+    const {
+      resolveSalesAccessRole,
+      salesRoleSeesAllOrgRecords,
+    } = await import('@/lib/sales-roles');
+    const { resolveCurrentSalespersonId } = await import(
+      '@/app/actions/sales/automation'
+    );
 
-    const supabase = await createAdminClient();
+    // Contact Module ownership: if the login maps to sales_agents, always scope
+    // by salesperson_id so UI totals match the DB ownership query (e.g. muneeba 2071).
+    // Sales administrators still see the full org list. Do not OR created_by.
+    const { isSuperAdminSession } = await import('@/lib/auth/super-admin');
+    const salesRole = resolveSalesAccessRole(session as never);
+    const ownsDocumentsOnly = Boolean(salesRole && !salesRoleSeesAllOrgRecords(salesRole));
+    const isSalesAdministrator =
+      salesRole === 'administrator' || isSuperAdminSession(session as never);
 
-    // Lean list select + Customer ID in one round-trip when PostgREST exposes the column.
-    const selectWithLeadId = `${CONTACTS_LIST_SELECT}, lead_id_formatted`;
-    let query = supabase
-      .from('contacts')
-      .select(selectWithLeadId)
-      .or(CONTACTS_LIST_OR_FILTER);
-
-    if (!('unscoped' in org)) {
-      query = applyOrganizationFilter(query, org.organizationId);
+    let agentIdForOwnership: string | null = null;
+    let createdByFallback: string | null = null;
+    if (!isSalesAdministrator) {
+      agentIdForOwnership = await resolveCurrentSalespersonId();
+      if (!agentIdForOwnership && ownsDocumentsOnly) {
+        const username = String(session.username || '').trim();
+        if (username) createdByFallback = username;
+      }
     }
 
-    query = query.order('created_at', { ascending: false }).limit(500);
+    const org = await resolveContactsOrganizationId(session);
+    if ('error' in org) return { error: org.error };
 
-    const primary = await query;
-    let rows: Contact[] | null = null;
-    let error = primary.error;
+    // Header "No organizations" → empty unless we can scope by salesperson / created_by.
+    if ('empty' in org && !agentIdForOwnership && !createdByFallback) {
+      return { contacts: [] };
+    }
 
-    if (!error && primary.data) {
-      rows = primary.data as unknown as Contact[];
-    } else if (error && isMissingLeadIdColumnError(error)) {
-      let fallbackQuery = supabase
-        .from('contacts')
-        .select(CONTACTS_LIST_SELECT)
-        .or(CONTACTS_LIST_OR_FILTER);
-      if (!('unscoped' in org)) {
-        fallbackQuery = applyOrganizationFilter(fallbackQuery, org.organizationId);
+    const supabase = await createAdminClient();
+    const organizationId =
+      'unscoped' in org || 'empty' in org ? null : org.organizationId;
+    const searchOrFilter = buildContactsSearchOrFilter(String(search || ''));
+
+    async function fetchAllContactRows(
+      selectCols: string
+    ): Promise<{ rows: Contact[] | null; error: { message?: string; code?: string; details?: string; hint?: string } | null }> {
+      const allRows: Contact[] = [];
+      let offset = 0;
+
+      for (;;) {
+        let pageQuery = supabase.from('contacts').select(selectCols);
+
+        // Active search: org-wide DB lookup (name / Customer ID / phone) so agents
+        // can locate an existing customer after a duplicate warning. Empty browse
+        // stays ownership-scoped for sales agents. Without an org, keep ownership.
+        if (searchOrFilter) {
+          if (organizationId) {
+            pageQuery = applyOrganizationFilter(pageQuery, organizationId);
+            pageQuery = pageQuery.or(searchOrFilter);
+          } else if (agentIdForOwnership) {
+            pageQuery = pageQuery
+              .eq('salesperson_id', agentIdForOwnership)
+              .or(searchOrFilter);
+          } else if (createdByFallback) {
+            pageQuery = pageQuery
+              .eq('created_by', createdByFallback)
+              .or(searchOrFilter);
+          } else {
+            pageQuery = pageQuery.or(searchOrFilter);
+          }
+        } else if (agentIdForOwnership) {
+          pageQuery = pageQuery.eq('salesperson_id', agentIdForOwnership);
+        } else if (createdByFallback) {
+          pageQuery = pageQuery.eq('created_by', createdByFallback);
+          if (organizationId) {
+            pageQuery = applyOrganizationFilter(pageQuery, organizationId);
+          }
+        } else {
+          if (organizationId) {
+            pageQuery = applyOrganizationFilter(pageQuery, organizationId);
+          }
+          pageQuery = pageQuery.or(CONTACTS_LIST_OR_FILTER);
+        }
+
+        pageQuery = pageQuery
+          .order('created_at', { ascending: false })
+          .range(offset, offset + CONTACTS_FETCH_PAGE_SIZE - 1);
+
+        const pageRes = await pageQuery;
+        if (pageRes.error) {
+          return { rows: null, error: pageRes.error };
+        }
+
+        const batch = (pageRes.data || []) as unknown as Contact[];
+        allRows.push(...batch);
+
+        if (batch.length < CONTACTS_FETCH_PAGE_SIZE) break;
+        offset += CONTACTS_FETCH_PAGE_SIZE;
+        // Safety cap for pathological orgs
+        if (offset >= 100_000) break;
       }
-      fallbackQuery = fallbackQuery.order('created_at', { ascending: false }).limit(500);
-      const retry = await fallbackQuery;
-      rows = (retry.data || null) as unknown as Contact[] | null;
-      error = retry.error;
+
+      return { rows: allRows, error: null };
+    }
+
+    const selectWithLeadId = `${CONTACTS_LIST_SELECT}, lead_id_formatted`;
+    let fetched = await fetchAllContactRows(selectWithLeadId);
+    let rows = fetched.rows;
+    let error = fetched.error;
+
+    if (error && isMissingLeadIdColumnError(error)) {
+      fetched = await fetchAllContactRows(CONTACTS_LIST_SELECT);
+      rows = fetched.rows;
+      error = fetched.error;
     }
 
     // Pre-021 DBs may lack mobile_registered_at — retry without mobile columns
@@ -326,20 +624,12 @@ export async function getContacts(search?: string) {
     ) {
       const leanWithoutMobile =
         'id, name, company_name, email, phone, country, company_type, customer_rank, vendor_rank, salesperson_id, created_by, organization_id, legacy_lead_id, source, created_at, updated_at, lead_id_formatted';
-      let fallbackQuery = supabase
-        .from('contacts')
-        .select(leanWithoutMobile)
-        .or(CONTACTS_LIST_OR_FILTER);
-      if (!('unscoped' in org)) {
-        fallbackQuery = applyOrganizationFilter(fallbackQuery, org.organizationId);
-      }
-      fallbackQuery = fallbackQuery.order('created_at', { ascending: false }).limit(500);
-      const retry = await fallbackQuery;
-      if (!retry.error && retry.data) {
-        rows = retry.data as unknown as Contact[];
+      fetched = await fetchAllContactRows(leanWithoutMobile);
+      if (!fetched.error && fetched.rows) {
+        rows = fetched.rows;
         error = null;
       } else {
-        error = retry.error;
+        error = fetched.error;
       }
     }
 
@@ -362,6 +652,13 @@ export async function getContacts(search?: string) {
 
     let contacts = (rows || []) as Contact[];
 
+    // Search / manager list: refine to Odoo list shape (companies + persons).
+    if (searchOrFilter || (!agentIdForOwnership && !createdByFallback)) {
+      contacts = contacts.filter(
+        (c) => !c.parent_id || c.company_type === 'person'
+      );
+    }
+
     // 1) Read existing Customer IDs (REST/RPC)
     contacts = (await mergeContactLeadIdsForList(supabase, contacts)) as Contact[];
 
@@ -371,50 +668,57 @@ export async function getContacts(search?: string) {
       contacts = (await assignMissingContactLeadIds(supabase, contacts)) as Contact[];
     }
 
-    // Odoo Own Documents — filter in memory (avoids PostgREST .or() Bad Request)
-    try {
-      const {
-        resolveSalesAccessRole,
-        salesRoleSeesAllOrgRecords,
-      } = await import('@/lib/sales-roles');
-      const role = resolveSalesAccessRole(session as never);
-      if (role && !salesRoleSeesAllOrgRecords(role)) {
-        const { resolveCurrentSalespersonId } = await import(
-          '@/app/actions/sales/automation'
-        );
-        const agentId = await resolveCurrentSalespersonId();
-        const username = String(session.username || '').trim();
-        contacts = contacts.filter((c) => {
-          if (agentId && c.salesperson_id === agentId) return true;
-          if (
-            username &&
-            c.created_by &&
-            String(c.created_by).trim().toLowerCase() === username.toLowerCase()
-          ) {
-            return true;
-          }
-          return false;
-        });
-      }
-    } catch {
-      // ownership filter is best-effort
+    // Defense-in-depth: ownership for empty browse; also when searching without org.
+    const enforceOwnership =
+      Boolean(agentIdForOwnership || createdByFallback) &&
+      (!searchOrFilter || !organizationId);
+    if (enforceOwnership) {
+      const agentId = agentIdForOwnership;
+      const username = createdByFallback || String(session.username || '').trim();
+      contacts = contacts.filter((c) => {
+        if (agentId) return c.salesperson_id === agentId;
+        if (!username || !c.created_by) return false;
+        return String(c.created_by).trim().toLowerCase() === username.toLowerCase();
+      });
     }
 
-    // Search in memory
+    // Deduplicate by id (search merges / chunk edges)
+    {
+      const seen = new Set<string>();
+      contacts = contacts.filter((c) => {
+        if (seen.has(c.id)) return false;
+        seen.add(c.id);
+        return true;
+      });
+    }
+
+    // Correct "Added" dates: use earliest original lead timestamp when available
+    contacts = await applyOriginalContactAddedAt(supabase, contacts);
+    contacts.sort(
+      (a, b) =>
+        (Date.parse(b.created_at) || 0) - (Date.parse(a.created_at) || 0)
+    );
+
+    // Secondary in-memory refine (DB already filtered when searchOrFilter set)
     const needle = String(search || '').trim().toLowerCase();
+    const needleDigits = needle.replace(/\D/g, '');
     if (needle) {
       contacts = contacts.filter((c) => {
         const hay = [
           c.name,
           c.email,
           c.phone,
+          c.mobile,
           c.company_name,
           c.country,
           c.lead_id_formatted,
         ]
           .map((v) => String(v || '').toLowerCase())
           .join(' ');
-        return hay.includes(needle);
+        return (
+          hay.includes(needle) ||
+          (needleDigits.length >= 3 && hay.includes(needleDigits))
+        );
       });
     }
 
@@ -984,12 +1288,40 @@ export async function createContact(input: ContactUpsertInput) {
     const payload = buildContactPayload(input);
 
     const supabase = await createAdminClient();
+    const organizationId = 'unscoped' in org ? null : org.organizationId;
+
+    // Default ownership to the logged-in sales agent when the form omits salesperson.
+    if (!payload.salesperson_id) {
+      try {
+        const { resolveCurrentSalespersonId } = await import(
+          '@/app/actions/sales/automation'
+        );
+        const agentId = await resolveCurrentSalespersonId();
+        if (agentId) payload.salesperson_id = agentId;
+      } catch {
+        // best-effort
+      }
+    }
+
+    // Global duplicate prevention (any Sales Agent, same organization).
+    const phoneForDup = payload.phone || payload.mobile;
+    const existingByPhone = await findExistingContactByPhone(
+      supabase,
+      phoneForDup,
+      { organizationId }
+    );
+    if (existingByPhone) {
+      return {
+        error: formatDuplicateContactError(existingByPhone),
+        duplicate: existingByPhone,
+      };
+    }
 
     const parentResolved = await resolveContactParentCompany(
       supabase,
       input,
       undefined,
-      'unscoped' in org ? null : org.organizationId
+      organizationId
     );
     if ('error' in parentResolved) return { error: parentResolved.error };
     payload.parent_id = parentResolved.parent_id;
@@ -1009,8 +1341,8 @@ export async function createContact(input: ContactUpsertInput) {
       created_by: s.username,
       updated_at: new Date().toISOString(),
     };
-    if (!('unscoped' in org)) {
-      insertRow.organization_id = org.organizationId;
+    if (organizationId) {
+      insertRow.organization_id = organizationId;
     }
 
     let leadIdColumnAvailable = await isContactLeadIdColumnAvailable(supabase);
@@ -1047,6 +1379,13 @@ export async function createContact(input: ContactUpsertInput) {
         pendingLeadId = await allocateContactLeadIdFormatted(supabase);
         insertRow.lead_id_formatted = pendingLeadId;
         continue;
+      }
+      const triggerDup = parseDuplicateContactTriggerError(error?.message);
+      if (triggerDup) {
+        return {
+          error: formatDuplicateContactError(triggerDup),
+          duplicate: triggerDup,
+        };
       }
       return { error: error?.message || 'Failed to create contact.' };
     }
@@ -1167,11 +1506,25 @@ export async function updateContact(input: ContactUpsertInput) {
       return { error: existingErr?.message || 'Contact not found.' };
     }
 
+    const organizationId = 'unscoped' in org ? null : org.organizationId;
+    const phoneForDup = payload.phone || payload.mobile;
+    const existingByPhone = await findExistingContactByPhone(
+      supabase,
+      phoneForDup,
+      { organizationId, excludeContactId: id }
+    );
+    if (existingByPhone) {
+      return {
+        error: formatDuplicateContactError(existingByPhone),
+        duplicate: existingByPhone,
+      };
+    }
+
     const parentResolved = await resolveContactParentCompany(
       supabase,
       input,
       id,
-      'unscoped' in org ? null : org.organizationId
+      organizationId
     );
     if ('error' in parentResolved) return { error: parentResolved.error };
     payload.parent_id = parentResolved.parent_id;
@@ -1227,10 +1580,19 @@ export async function updateContact(input: ContactUpsertInput) {
       .from('contacts')
       .update(updateBody)
       .eq('id', id);
-    if (!('unscoped' in org)) {
-      updateQuery = updateQuery.eq('organization_id', org.organizationId);
+    if (organizationId) {
+      updateQuery = updateQuery.eq('organization_id', organizationId);
     }
     const { data, error } = await updateQuery.select('*').single();
+    if (error) {
+      const triggerDup = parseDuplicateContactTriggerError(error.message);
+      if (triggerDup) {
+        return {
+          error: formatDuplicateContactError(triggerDup),
+          duplicate: triggerDup,
+        };
+      }
+    }
 
     if (error || !data) return { error: error?.message || 'Failed to update contact.' };
 
@@ -1656,32 +2018,36 @@ export async function searchCustomerContacts(
       }
     }
 
-    try {
-      const {
-        resolveSalesAccessRole,
-        salesRoleSeesAllOrgRecords,
-      } = await import('@/lib/sales-roles');
-      const role = resolveSalesAccessRole(session as never);
-      if (role && !salesRoleSeesAllOrgRecords(role)) {
-        const { resolveCurrentSalespersonId } = await import(
-          '@/app/actions/sales/automation'
-        );
-        const agentId = await resolveCurrentSalespersonId();
-        const username = String(session.username || '').trim();
-        rows = rows.filter((c) => {
-          if (agentId && c.salesperson_id === agentId) return true;
-          if (
-            username &&
-            c.created_by &&
-            String(c.created_by).trim().toLowerCase() === username.toLowerCase()
-          ) {
-            return true;
-          }
-          return false;
-        });
+    // Empty browse: own-documents agents see only their contacts.
+    // Active search: org-wide so existing customers can be located (duplicate UX).
+    if (!needle) {
+      try {
+        const {
+          resolveSalesAccessRole,
+          salesRoleSeesAllOrgRecords,
+        } = await import('@/lib/sales-roles');
+        const role = resolveSalesAccessRole(session as never);
+        if (role && !salesRoleSeesAllOrgRecords(role)) {
+          const { resolveCurrentSalespersonId } = await import(
+            '@/app/actions/sales/automation'
+          );
+          const agentId = await resolveCurrentSalespersonId();
+          const username = String(session.username || '').trim();
+          rows = rows.filter((c) => {
+            if (agentId && c.salesperson_id === agentId) return true;
+            if (
+              username &&
+              c.created_by &&
+              String(c.created_by).trim().toLowerCase() === username.toLowerCase()
+            ) {
+              return true;
+            }
+            return false;
+          });
+        }
+      } catch {
+        // ownership filter is best-effort
       }
-    } catch {
-      // ownership filter is best-effort
     }
 
     rows = await mergeContactLeadIdsForPicker(supabase, rows);

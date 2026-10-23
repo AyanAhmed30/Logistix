@@ -53,6 +53,33 @@ function formatSentAt(value: string | null) {
   });
 }
 
+function formatActivityAt(value: string) {
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return "—";
+  return d.toLocaleString(undefined, {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
+
+function activityDotClass(key: string): string {
+  switch (key) {
+    case "sales_submitted":
+      return "bg-amber-500";
+    case "ops_submitted":
+      return "bg-sky-500";
+    case "admin_approved":
+      return "bg-emerald-500";
+    case "admin_rejected":
+      return "bg-rose-500";
+    default:
+      return "bg-slate-400";
+  }
+}
+
 export function CrmAllInquiriesView() {
   const router = useRouter();
   const { switchVersion } = useAdminOrganization();
@@ -165,24 +192,60 @@ export function CrmAllInquiriesView() {
                       {formatSentAt(row.sent_at)}
                     </TableCell>
                     <TableCell>
-                      {row.workflow.isReadyForQuotation ? (
-                        <button
-                          type="button"
-                          className={`inline-flex items-center rounded-sm border px-2 py-0.5 text-xs font-medium underline-offset-2 hover:underline ${workflowBadgeClass(row.workflow.key)}`}
-                          onClick={(event) => {
-                            event.stopPropagation();
-                            router.push(inquiryQuotationHref(row.id));
-                          }}
-                        >
-                          {row.workflow.label}
-                        </button>
-                      ) : (
-                        <span
-                          className={`inline-flex items-center rounded-sm border px-2 py-0.5 text-xs font-medium ${workflowBadgeClass(row.workflow.key)}`}
-                        >
-                          {row.workflow.label}
-                        </span>
-                      )}
+                      <div className="flex flex-col gap-2 min-w-[240px] max-w-[320px] py-1">
+                        {row.workflow.isReadyForQuotation ? (
+                          <button
+                            type="button"
+                            className={`inline-flex w-fit items-center rounded-sm border px-2 py-0.5 text-xs font-medium underline-offset-2 hover:underline ${workflowBadgeClass(row.workflow.key)}`}
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              router.push(inquiryQuotationHref(row.id));
+                            }}
+                          >
+                            {row.workflow.label}
+                          </button>
+                        ) : (
+                          <span
+                            className={`inline-flex w-fit items-center rounded-sm border px-2 py-0.5 text-xs font-medium ${workflowBadgeClass(row.workflow.key)}`}
+                          >
+                            {row.workflow.label}
+                          </span>
+                        )}
+                        {(row.activity || []).length > 0 ? (
+                          <ol className="relative space-y-2 border-l border-slate-200 ml-1.5 pl-3">
+                            {(row.activity || []).map((event) => {
+                              const when = formatActivityAt(event.at);
+                              return (
+                                <li
+                                  key={`${event.key}-${event.at}`}
+                                  className="relative"
+                                >
+                                  <span
+                                    className={`absolute -left-[17px] top-1.5 h-2 w-2 rounded-full ring-2 ring-white ${activityDotClass(event.key)}`}
+                                    aria-hidden
+                                  />
+                                  <p className="text-[11px] font-medium leading-snug text-primary-dark">
+                                    {event.label}
+                                    {event.actor ? (
+                                      <span className="font-normal text-secondary-muted">
+                                        {" "}
+                                        · {event.actor}
+                                      </span>
+                                    ) : null}
+                                  </p>
+                                  <p className="text-[10px] text-slate-500 whitespace-nowrap">
+                                    {when}
+                                  </p>
+                                </li>
+                              );
+                            })}
+                          </ol>
+                        ) : (
+                          <p className="text-[11px] text-secondary-muted">
+                            No activity logged yet
+                          </p>
+                        )}
+                      </div>
                     </TableCell>
                   </TableRow>
                 ))}

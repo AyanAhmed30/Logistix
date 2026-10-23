@@ -145,6 +145,7 @@ async function loadMobileUsersAndContacts() {
   const { data: usersData, error: usersError } = await supabase
     .from('users')
     .select('id, phone, email, first_name, last_name, created_at')
+    .is('deleted_at', null)
     .order('created_at', { ascending: false })
     .limit(2000);
 
@@ -363,8 +364,9 @@ export async function getApplicationUserDetail(userId: string) {
     const supabase = await createAdminClient();
     const { data: user, error } = await supabase
       .from('users')
-      .select('id, phone, email, first_name, last_name, created_at')
+      .select('id, phone, email, first_name, last_name, created_at, deleted_at')
       .eq('id', id)
+      .is('deleted_at', null)
       .maybeSingle();
 
     if (error) return { error: error.message };
@@ -443,6 +445,7 @@ export async function reassignApplicationUserSalesAgent(input: {
       .from('users')
       .select('id, phone, email, first_name, last_name')
       .eq('id', userId)
+      .is('deleted_at', null)
       .maybeSingle();
 
     if (userErr || !mobileUser) {
@@ -607,6 +610,76 @@ export async function reassignApplicationUserSalesAgent(input: {
     return {
       error:
         err instanceof Error ? err.message : 'Failed to reassign Sales Agent',
+    };
+  }
+}
+
+/**
+ * Soft-delete a mobile application user (admin only).
+ * - Sets deleted_at
+ * - Revokes all active sessions
+ * - Scrambles password and frees phone/email unique slots for re-registration
+ * Login / session RPCs reject deleted accounts at the database layer.
+ */
+export async function deleteApplicationUser(userId: string) {
+  try {
+    const session = await requireAdminSession();
+    if (!session) return { error: 'Unauthorized' as const };
+
+    const id = String(userId || '').trim();
+    if (!id) return { error: 'User id is required.' };
+
+    const supabase = await createAdminClient();
+
+    const { data: existing, error: fetchError } = await supabase
+      .from('users')
+      .select('id, phone, email, deleted_at')
+      .eq('id', id)
+      .maybeSingle();
+
+    if (fetchError) return { error: fetchError.message };
+    if (!existing) return { error: 'Application user not found.' };
+    if (existing.deleted_at) {
+      return { error: 'This application user is already deleted.' };
+    }
+
+    const deletedAt = new Date().toISOString();
+    // Free unique phone/email so a new account can register with the same credentials later.
+    const phoneSuffix = `del:${id}:${String(existing.phone || '')}`;
+    const emailSuffix = `del:${id}:${String(existing.email || 'none').toLowerCase()}`;
+
+    const { error: updateError } = await supabase
+      .from('users')
+      .update({
+        deleted_at: deletedAt,
+        phone: phoneSuffix.slice(0, 255),
+        email: emailSuffix.slice(0, 255),
+      })
+      .eq('id', id)
+      .is('deleted_at', null);
+
+    if (updateError) return { error: updateError.message };
+
+    // Invalidate all active sessions / tokens for this user.
+    await supabase
+      .from('user_sessions')
+      .update({ revoked_at: deletedAt })
+      .eq('user_id', id)
+      .is('revoked_at', null);
+
+    await supabase
+      .from('password_reset_tokens')
+      .update({ used_at: deletedAt })
+      .eq('user_id', id)
+      .is('used_at', null);
+
+    // Do not revalidatePath here — it remounts the Admin dashboard.
+    // The Application Users panel refreshes its own client list state.
+    return { success: true as const };
+  } catch (err) {
+    return {
+      error:
+        err instanceof Error ? err.message : 'Failed to delete application user',
     };
   }
 }

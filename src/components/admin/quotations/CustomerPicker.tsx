@@ -417,7 +417,21 @@ function CreateContactDialog({
         company_name: companyName.trim() || null,
       });
       if ("error" in res && res.error) {
-        toast.error(res.error);
+        const dup =
+          "duplicate" in res && res.duplicate
+            ? (res.duplicate as {
+                name?: string;
+                lead_id_formatted?: string | null;
+              })
+            : null;
+        if (dup) {
+          toast.error("This customer already exists in the system.", {
+            description: `Customer Name: ${dup.name || "—"}\nCustomer ID / Lead Number: ${dup.lead_id_formatted || "—"}\n\nPlease search for this customer instead of creating a duplicate.`,
+            duration: 10_000,
+          });
+        } else {
+          toast.error(res.error);
+        }
         return;
       }
       if ("contact" in res && res.contact) {

@@ -770,6 +770,20 @@ export async function approveInquiryConfirmation(confirmationId: string) {
       })
       .eq('id', data.inquiry_id);
 
+    await supabase.from('inquiry_logs').insert([
+      {
+        inquiry_id: data.inquiry_id,
+        action: 'admin_approved',
+        previous_values: null,
+        new_values: {
+          confirmation_id: data.id,
+          status: 'approved',
+          reviewed_at: data.reviewed_at,
+        },
+        performed_by: session.username || 'admin',
+      },
+    ]);
+
     // Admin → Customer: create quotation (if needed) and send PDF without Sales handoff.
     let quotationSentToCustomer = false;
     let quotationSendError: string | null = null;
@@ -924,6 +938,21 @@ export async function rejectInquiryConfirmation(confirmationId: string, rejectio
         updated_at: new Date().toISOString(),
       })
       .eq('id', data.inquiry_id);
+
+    await supabase.from('inquiry_logs').insert([
+      {
+        inquiry_id: data.inquiry_id,
+        action: 'admin_rejected',
+        previous_values: null,
+        new_values: {
+          confirmation_id: data.id,
+          status: 'rejected',
+          rejection_reason: reason,
+          reviewed_at: data.reviewed_at,
+        },
+        performed_by: session.username || 'admin',
+      },
+    ]);
 
     try {
       const [leadContext, opsRecipients] = await Promise.all([

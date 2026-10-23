@@ -1159,15 +1159,45 @@ export function OperationsLeadsInquiryPanel({
   }
 
   async function handleDownloadLeadManagementPdf() {
-    if (!leadManagementPdfRef.current) {
+    if (!selectedInquiry) {
       toast.error("PDF content is not ready yet.");
       return;
     }
+
+    const parseNum = (v: string | null | undefined) => {
+      const n = parseFloat(String(v ?? "").replace(/,/g, ""));
+      return Number.isFinite(n) ? n : 0;
+    };
+
+    const inquiryQuantity =
+      (isEditing ? editQuantity : selectedInquiry.quantity)?.trim() || "0";
+    const quantityFallback = formQuantity.trim() || inquiryQuantity;
+    const totalWeightKg =
+      parseNum(formWeight) ||
+      parseNum(isEditing ? editWeight : selectedInquiry.total_weight);
+    const cbmValue =
+      parseNum(formCbm) || parseNum(isEditing ? editCbm : selectedInquiry.cbm);
+
+    const pdfCalculators = calculators.map((calcValues, index) =>
+      withDerivedInvValue({
+        ...calcValues,
+        quantity:
+          calcValues.quantity?.trim() ||
+          (index === 0 ? formQuantity || inquiryQuantity : inquiryQuantity) ||
+          "0",
+      })
+    );
+
     setIsDownloadingPdf(true);
     try {
-      await downloadLeadManagementPdf(leadManagementPdfRef.current, {
-        leadNumber: selectedInquiry?.leads?.lead_id_formatted,
+      await downloadLeadManagementPdf({
+        leadNumber: selectedInquiry.leads?.lead_id_formatted,
         productName: formProductName,
+        totalWeightKg,
+        cbm: cbmValue,
+        quantityFallback,
+        pricingConfig,
+        calculators: pdfCalculators,
       });
     } catch (error) {
       console.error("Lead management PDF export failed:", error);

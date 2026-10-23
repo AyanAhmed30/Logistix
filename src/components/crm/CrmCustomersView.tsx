@@ -18,6 +18,7 @@ import type { ContactWithRelations } from "@/app/actions/contacts";
 import { useAdminOrganization } from "@/contexts/AdminOrganizationContext";
 import { useCrmShell } from "@/components/crm/CrmShell";
 import { CrmEmptyState, CrmPageSkeleton } from "@/components/crm/CrmSkeleton";
+import { useDebouncedValue } from "@/hooks/useDebouncedValue";
 
 const PAGE_SIZE = 40;
 
@@ -31,6 +32,8 @@ export function CrmCustomersView() {
   const [customers, setCustomers] = useState<ContactWithRelations[]>([]);
   const [loading, setLoading] = useState(true);
   const [page, setPage] = useState(1);
+  const liveQuery = (urlQuery || searchQuery).trim();
+  const debouncedQuery = useDebouncedValue(liveQuery, 250);
 
   useEffect(() => {
     if (urlQuery) setSearchQuery(urlQuery);
@@ -39,8 +42,9 @@ export function CrmCustomersView() {
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
-    const query = (urlQuery || searchQuery).trim();
-    void getCrmCustomers(query || undefined).then((res) => {
+    setPage(1);
+    // Debounced DB-backed search via getContacts (name / Customer ID / phone).
+    void getCrmCustomers(debouncedQuery || undefined).then((res) => {
       if (cancelled) return;
       if ("error" in res && res.error) {
         toast.error(res.error);
@@ -53,7 +57,7 @@ export function CrmCustomersView() {
     return () => {
       cancelled = true;
     };
-  }, [urlQuery, searchQuery, switchVersion]);
+  }, [debouncedQuery, switchVersion]);
 
   const filtered = useMemo(() => {
     if (activeFilterId !== "all") return customers;

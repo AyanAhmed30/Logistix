@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState, useTransition } from "react";
 import { toast } from "sonner";
 import {
+  deleteApplicationUser,
   getApplicationUserAgentCounts,
   getApplicationUserDetail,
   listApplicationUsers,
@@ -38,7 +39,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { ArrowLeft, Filter, Search, Smartphone, Users } from "lucide-react";
+import { ArrowLeft, Filter, Search, Smartphone, Trash2, Users } from "lucide-react";
 
 type ViewMode = "list" | "detail";
 
@@ -56,9 +57,12 @@ export function ApplicationUsersPanel() {
   const [detailAgentId, setDetailAgentId] = useState<string>("none");
   const [pending, startTransition] = useTransition();
   const [confirmOpen, setConfirmOpen] = useState(false);
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<ApplicationUserListItem | null>(null);
 
-  const loadList = useCallback(async () => {
-    setLoading(true);
+  const loadList = useCallback(async (opts?: { quiet?: boolean }) => {
+    const quiet = Boolean(opts?.quiet);
+    if (!quiet) setLoading(true);
     const [listRes, countRes, agentsRes] = await Promise.all([
       listApplicationUsers({
         salesAgentId: agentFilter === "all" ? null : agentFilter,
@@ -89,7 +93,7 @@ export function ApplicationUsersPanel() {
       setAgents(agentsRes.salesAgents as SalesAgent[]);
     }
 
-    setLoading(false);
+    if (!quiet) setLoading(false);
   }, [agentFilter, search]);
 
   useEffect(() => {
@@ -151,30 +155,75 @@ export function ApplicationUsersPanel() {
     });
   }
 
+  function openDeleteDialog(
+    user: ApplicationUserListItem,
+    e?: { stopPropagation: () => void }
+  ) {
+    e?.stopPropagation();
+    setDeleteTarget(user);
+    setDeleteOpen(true);
+  }
+
+  function confirmDelete() {
+    if (!deleteTarget) return;
+    const deletedId = deleteTarget.userId;
+    startTransition(async () => {
+      const res = await deleteApplicationUser(deletedId);
+      if ("error" in res && res.error) {
+        toast.error(res.error);
+        return;
+      }
+      toast.success("Application user deleted");
+      setDeleteOpen(false);
+      setDeleteTarget(null);
+      // Optimistic local update — avoid full-table loading flash / page remount.
+      setUsers((prev) => prev.filter((u) => u.userId !== deletedId));
+      setTotal((n) => Math.max(0, n - 1));
+      if (detail?.userId === deletedId) {
+        setView("list");
+        setDetail(null);
+      }
+      await loadList({ quiet: true });
+    });
+  }
+
   if (view === "detail" && detail) {
     return (
       <div className="space-y-6">
-        <div className="flex flex-wrap items-center gap-3">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex flex-wrap items-center gap-3">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="gap-2"
+              onClick={() => {
+                setView("list");
+                setDetail(null);
+              }}
+            >
+              <ArrowLeft className="h-4 w-4" />
+              Back to list
+            </Button>
+            <div>
+              <h3 className="text-lg font-semibold text-primary-dark">{detail.name}</h3>
+              <p className="text-xs text-secondary-muted">
+                Mobile application customer
+                {detail.leadIdFormatted ? ` · ID ${detail.leadIdFormatted}` : ""}
+              </p>
+            </div>
+          </div>
           <Button
             type="button"
-            variant="outline"
+            variant="destructive"
             size="sm"
             className="gap-2"
-            onClick={() => {
-              setView("list");
-              setDetail(null);
-            }}
+            onClick={() => openDeleteDialog(detail)}
+            disabled={pending}
           >
-            <ArrowLeft className="h-4 w-4" />
-            Back to list
+            <Trash2 className="h-4 w-4" />
+            Delete user
           </Button>
-          <div>
-            <h3 className="text-lg font-semibold text-primary-dark">{detail.name}</h3>
-            <p className="text-xs text-secondary-muted">
-              Mobile application customer
-              {detail.leadIdFormatted ? ` · ID ${detail.leadIdFormatted}` : ""}
-            </p>
-          </div>
         </div>
 
         <div className="grid gap-4 sm:grid-cols-2">
@@ -240,6 +289,14 @@ export function ApplicationUsersPanel() {
             </DialogFooter>
           </DialogContent>
         </Dialog>
+
+        <DeleteConfirmDialog
+          open={deleteOpen}
+          onOpenChange={setDeleteOpen}
+          target={deleteTarget}
+          pending={pending}
+          onConfirm={confirmDelete}
+        />
       </div>
     );
   }
@@ -293,18 +350,21 @@ export function ApplicationUsersPanel() {
               <TableHead className="font-semibold text-primary-dark">
                 Assigned Sales Agent
               </TableHead>
+              <TableHead className="font-semibold text-primary-dark w-[80px] text-right">
+                Actions
+              </TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {loading ? (
               <TableRow>
-                <TableCell colSpan={4} className="py-10 text-center text-secondary-muted">
+                <TableCell colSpan={5} className="py-10 text-center text-secondary-muted">
                   Loading application users…
                 </TableCell>
               </TableRow>
             ) : users.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={4} className="py-16 text-center">
+                <TableCell colSpan={5} className="py-16 text-center">
                   <div className="flex flex-col items-center gap-2 text-secondary-muted">
                     <Smartphone className="h-10 w-10 text-slate-300" />
                     <p className="text-sm font-medium">No mobile application users yet</p>
@@ -334,13 +394,80 @@ export function ApplicationUsersPanel() {
                   <TableCell className="text-secondary-muted">
                     {u.salespersonName || "Unassigned"}
                   </TableCell>
+                  <TableCell className="text-right">
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      className="h-8 w-8 text-slate-500 hover:text-red-600 hover:bg-red-50"
+                      aria-label={`Delete ${u.name}`}
+                      onClick={(e) => openDeleteDialog(u, e)}
+                      disabled={pending}
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
+                  </TableCell>
                 </TableRow>
               ))
             )}
           </TableBody>
         </Table>
       </div>
+
+      <DeleteConfirmDialog
+        open={deleteOpen}
+        onOpenChange={setDeleteOpen}
+        target={deleteTarget}
+        pending={pending}
+        onConfirm={confirmDelete}
+      />
     </div>
+  );
+}
+
+function DeleteConfirmDialog({
+  open,
+  onOpenChange,
+  target,
+  pending,
+  onConfirm,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  target: ApplicationUserListItem | null;
+  pending: boolean;
+  onConfirm: () => void;
+}) {
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Delete application user</DialogTitle>
+          <DialogDescription>
+            Delete {target?.name || "this user"}
+            {target?.phone ? ` (${target.phone})` : ""}? They will no longer be able to sign in
+            to the mobile app. This cannot be undone.
+          </DialogDescription>
+        </DialogHeader>
+        <DialogFooter>
+          <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
+            Cancel
+          </Button>
+          <Button
+            type="button"
+            variant="destructive"
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              onConfirm();
+            }}
+            disabled={pending}
+          >
+            {pending ? "Deleting…" : "Delete"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 

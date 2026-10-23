@@ -141,11 +141,16 @@ function vrKindFromUrl(url: string | null | undefined): "image" | "pdf" | null {
 function formatStatus(status: string) {
   switch (status) {
     case "pending": return "Pending";
+    case "calculated_by_admin": return "Calculated by Admin";
     case "in_progress": return "In Progress";
     case "quotation_sent": return "Quotation Sent";
     case "completed": return "Completed";
     case "approved": return "Approved";
     case "rejected": return "Rejected";
+    case "approved_by_admin_calculated":
+      return "Approved by Admin — Calculated by Admin";
+    case "rejected_by_admin_calculated":
+      return "Rejected by Admin — Calculated by Admin";
     default: return status;
   }
 }
@@ -153,36 +158,68 @@ function formatStatus(status: string) {
 function statusColor(status: string) {
   switch (status) {
     case "pending": return "bg-yellow-50 text-yellow-700 border-yellow-300";
+    case "calculated_by_admin":
+      return "bg-violet-50 text-violet-700 border-violet-300";
     case "in_progress": return "bg-blue-50 text-blue-700 border-blue-300";
     case "quotation_sent": return "bg-green-50 text-green-700 border-green-300";
     case "completed": return "bg-slate-50 text-slate-700 border-slate-300";
-    case "approved": return "bg-emerald-50 text-emerald-700 border-emerald-300";
-    case "rejected": return "bg-red-50 text-red-700 border-red-300";
+    case "approved":
+    case "approved_by_admin_calculated":
+      return "bg-emerald-50 text-emerald-700 border-emerald-300";
+    case "rejected":
+    case "rejected_by_admin_calculated":
+      return "bg-red-50 text-red-700 border-red-300";
     default: return "";
   }
 }
 
 function confirmationStatusIcon(status: string) {
   switch (status) {
-    case "approved": return <CheckCircle2 className="h-4 w-4 text-emerald-600" />;
-    case "rejected": return <XCircle className="h-4 w-4 text-red-600" />;
-    case "pending": return <Clock className="h-4 w-4 text-yellow-600" />;
+    case "approved":
+    case "approved_by_admin_calculated":
+      return <CheckCircle2 className="h-4 w-4 text-emerald-600" />;
+    case "rejected":
+    case "rejected_by_admin_calculated":
+      return <XCircle className="h-4 w-4 text-red-600" />;
+    case "pending":
+      return <Clock className="h-4 w-4 text-yellow-600" />;
+    case "calculated_by_admin":
+      return <Clock className="h-4 w-4 text-violet-600" />;
     default: return null;
   }
 }
 
 /**
- * Get the latest confirmation status for an inquiry from its confirmations array.
- * Returns the status of the most recent confirmation, or null if none exist.
+ * Display status for Operations list/detail.
+ * Admin-direct calculation must show "Calculated by Admin" (not plain Pending).
  */
 function getLatestConfirmationStatus(inquiry: LeadInquiryWithLead): string | null {
   const confs = inquiry.inquiry_confirmations;
-  if (!confs || confs.length === 0) return null;
-  // Sort by created_at descending and return the latest status
+  if (!confs || confs.length === 0) {
+    if (String(inquiry.approval_status || "") === "calculated_by_admin") {
+      return "calculated_by_admin";
+    }
+    return null;
+  }
+
   const sorted = [...confs].sort(
     (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
   );
-  return sorted[0].status;
+  const latest = sorted[0];
+  const role = String(latest.submitted_by_role || "").toLowerCase();
+  const calculatedByAdmin =
+    role === "admin" || String(inquiry.approval_status || "") === "calculated_by_admin";
+
+  if (latest.status === "pending" && calculatedByAdmin) {
+    return "calculated_by_admin";
+  }
+  if (latest.status === "approved" && calculatedByAdmin) {
+    return "approved_by_admin_calculated";
+  }
+  if (latest.status === "rejected" && calculatedByAdmin) {
+    return "rejected_by_admin_calculated";
+  }
+  return latest.status;
 }
 
 // ─── Main Component ──────────────────────────────────────────────────
@@ -1350,6 +1387,7 @@ export function OperationsLeadsInquiryPanel({
         operations_additional_image_urls: operationsImageUrls,
         additional_image_1_url: operationsImageUrls[0] || null,
         additional_image_2_url: operationsImageUrls[1] || null,
+        asAdminCalculator: adminCalculatorMode,
       });
 
       if (!result || "error" in result) {
@@ -1360,7 +1398,11 @@ export function OperationsLeadsInquiryPanel({
         return;
       }
 
-      toast.success("Inquiry sent for confirmation! Status: Pending");
+      toast.success(
+        adminCalculatorMode
+          ? "Calculation submitted. Status: Calculated by Admin"
+          : "Inquiry sent for confirmation! Status: Pending"
+      );
       setOperationsAttachments([createOperationsAttachment()]);
       setActiveAttachmentId(null);
       hydrateLeadManagementForm(inquirySnapshot);
@@ -1372,17 +1414,33 @@ export function OperationsLeadsInquiryPanel({
             status: confirmation.status,
             created_at: confirmation.created_at,
             original_image_url: confirmation.original_image_url || null,
+            submitted_by_role:
+              confirmation.submitted_by_role ||
+              (adminCalculatorMode ? "admin" : "operations"),
           },
           ...(inquirySnapshot.inquiry_confirmations || []),
         ];
+        const nextApprovalStatus = adminCalculatorMode
+          ? ("calculated_by_admin" as const)
+          : ("sent_to_admin" as const);
         setSelectedInquiry((prev) =>
           prev && prev.id === inquirySnapshot.id
-            ? { ...prev, inquiry_confirmations: nextConfs }
+            ? {
+                ...prev,
+                inquiry_confirmations: nextConfs,
+                approval_status: nextApprovalStatus,
+              }
             : prev
         );
         setInquiries((prev) =>
           prev.map((row) =>
-            row.id === inquirySnapshot.id ? { ...row, inquiry_confirmations: nextConfs } : row
+            row.id === inquirySnapshot.id
+              ? {
+                  ...row,
+                  inquiry_confirmations: nextConfs,
+                  approval_status: nextApprovalStatus,
+                }
+              : row
           )
         );
       }
@@ -2309,7 +2367,9 @@ export function OperationsLeadsInquiryPanel({
                         ) : (
                           <Send className="h-4 w-4" />
                         )}
-                        Send for Confirmation
+                        {adminCalculatorMode
+                          ? "Submit to Admin Approval"
+                          : "Send for Confirmation"}
                       </Button>
                     </div>
                   </div>
@@ -2690,25 +2750,41 @@ export function OperationsLeadsInquiryPanel({
                 Confirmation History
               </h3>
               <div className="space-y-2">
-                {confirmations.map((conf) => (
+                {confirmations.map((conf) => {
+                  const calculatedByAdmin =
+                    String(conf.submitted_by_role || "").toLowerCase() === "admin";
+                  const displayStatus =
+                    conf.status === "pending" && calculatedByAdmin
+                      ? "calculated_by_admin"
+                      : conf.status === "approved" && calculatedByAdmin
+                        ? "approved_by_admin_calculated"
+                        : conf.status === "rejected" && calculatedByAdmin
+                          ? "rejected_by_admin_calculated"
+                          : conf.status;
+                  return (
                   <div
                     key={conf.id}
                     className={`flex items-center justify-between p-3 rounded-lg border ${
-                      conf.status === "approved"
+                      displayStatus === "approved" ||
+                      displayStatus === "approved_by_admin_calculated"
                         ? "bg-emerald-50 border-emerald-200"
-                        : conf.status === "rejected"
+                        : displayStatus === "rejected" ||
+                            displayStatus === "rejected_by_admin_calculated"
                         ? "bg-red-50 border-red-200"
+                        : displayStatus === "calculated_by_admin"
+                        ? "bg-violet-50 border-violet-200"
                         : "bg-yellow-50 border-yellow-200"
                     }`}
                   >
                     <div className="flex items-center gap-3">
-                      {confirmationStatusIcon(conf.status)}
+                      {confirmationStatusIcon(displayStatus)}
                       <div>
                         <p className="text-sm font-medium text-slate-800">
                           {conf.product_name} — Customer ID {conf.lead_number}
                         </p>
                         <p className="text-xs text-slate-500">
-                          Submitted by {conf.submitted_by} on{" "}
+                          Submitted by {conf.submitted_by}
+                          {calculatedByAdmin ? " (Admin)" : ""} on{" "}
                           {new Date(conf.created_at).toLocaleString()}
                         </p>
                         {conf.status === "rejected" && conf.rejection_reason ? (
@@ -2718,11 +2794,12 @@ export function OperationsLeadsInquiryPanel({
                         ) : null}
                       </div>
                     </div>
-                    <Badge variant="outline" className={`text-xs ${statusColor(conf.status)}`}>
-                      {formatStatus(conf.status)}
+                    <Badge variant="outline" className={`text-xs ${statusColor(displayStatus)}`}>
+                      {formatStatus(displayStatus)}
                     </Badge>
                   </div>
-                ))}
+                  );
+                })}
               </div>
             </CardContent>
           </Card>

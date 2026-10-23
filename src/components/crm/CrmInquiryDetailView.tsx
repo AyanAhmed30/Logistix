@@ -32,6 +32,8 @@ function workflowBadgeClass(key: InquiryWorkflowStatusKey): string {
   switch (key) {
     case "ready_for_quotation":
       return "border-emerald-300 bg-emerald-50 text-emerald-800";
+    case "calculated_by_admin":
+      return "border-violet-300 bg-violet-50 text-violet-800";
     case "send_to_admin":
       return "border-sky-300 bg-sky-50 text-sky-800";
     case "send_to_operation":

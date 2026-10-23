@@ -122,8 +122,149 @@ function scheduleOpportunityCreatedSideEffects(input: {
   });
 }
 
+function escapePostgrestFilterValue(value: string) {
+  const v = String(value || '');
+  if (/[\s,().]/.test(v) || v.includes('"')) {
+    return `"${v.replace(/"/g, '\\"')}"`;
+  }
+  return v;
+}
+
+/**
+ * Resolve contact ids that match pipeline search (Customer ID / phone / name)
+ * so the board can filter opportunities in SQL instead of enriching every row.
+ */
+async function findContactIdsForPipelineSearch(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  supabase: any,
+  organizationId: string | null,
+  rawQuery: string
+): Promise<string[]> {
+  const needle = String(rawQuery || '').trim();
+  if (!needle) return [];
+
+  const withoutHash = needle.replace(/^#+/, '').trim();
+  const digits = needle.replace(/\D/g, '');
+  const last10 =
+    digits.length >= 10
+      ? digits.slice(-10)
+      : digits.length >= 7
+        ? digits
+        : null;
+  const text = withoutHash
+    .replace(/[%_,.()]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  const parts: string[] = [];
+  if (text) {
+    const esc = escapePostgrestFilterValue(text);
+    parts.push(`name.ilike.%${esc}%`);
+    parts.push(`company_name.ilike.%${esc}%`);
+    parts.push(`email.ilike.%${esc}%`);
+    parts.push(`phone.ilike.%${esc}%`);
+    parts.push(`mobile.ilike.%${esc}%`);
+    parts.push(`lead_id_formatted.ilike.%${esc}%`);
+  }
+
+  const leadToken = withoutHash.replace(/\s/g, '');
+  if (/^\d{3,}$/.test(leadToken)) {
+    parts.push(`lead_id_formatted.eq.${leadToken}`);
+    parts.push(`lead_id_formatted.ilike.%${leadToken}%`);
+  }
+
+  if (last10) {
+    parts.push(`phone.ilike.%${last10}%`);
+    parts.push(`mobile.ilike.%${last10}%`);
+  } else if (digits.length >= 3) {
+    parts.push(`phone.ilike.%${digits}%`);
+    parts.push(`mobile.ilike.%${digits}%`);
+  }
+
+  if (!parts.length) return [];
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let cq: any = supabase
+    .from('contacts')
+    .select('id')
+    .or(parts.join(','))
+    .limit(200);
+  if (organizationId) {
+    cq = cq.eq('organization_id', organizationId);
+  }
+
+  const { data, error } = await cq;
+  if (error) {
+    console.error('[findContactIdsForPipelineSearch]', error.message);
+    return [];
+  }
+  return (data || []).map((row: { id: string }) => String(row.id));
+}
+
+/**
+ * Narrow the opportunities query for search before enrich (phone / Customer ID / name).
+ * Returns forceEmpty when nothing can match.
+ */
+async function applyPipelineSearchToOpportunityQuery(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  query: any,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  supabase: any,
+  organizationId: string | null,
+  rawSearch: string
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+): Promise<{ query: any; forceEmpty: boolean }> {
+  const needle = String(rawSearch || '').trim();
+  if (!needle) return { query, forceEmpty: false };
+
+  const withoutHash = needle.replace(/^#+/, '').trim();
+  const digits = needle.replace(/\D/g, '');
+  const last10 =
+    digits.length >= 10
+      ? digits.slice(-10)
+      : digits.length >= 7
+        ? digits
+        : null;
+  const text = withoutHash
+    .replace(/[%_,.()]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  const contactIds = await findContactIdsForPipelineSearch(
+    supabase,
+    organizationId,
+    needle
+  );
+
+  const oppParts: string[] = [];
+  if (text) {
+    const esc = escapePostgrestFilterValue(text);
+    oppParts.push(`name.ilike.%${esc}%`);
+    oppParts.push(`email.ilike.%${esc}%`);
+    oppParts.push(`phone.ilike.%${esc}%`);
+    oppParts.push(`mobile.ilike.%${esc}%`);
+  }
+  if (last10) {
+    oppParts.push(`phone.ilike.%${last10}%`);
+    oppParts.push(`mobile.ilike.%${last10}%`);
+  } else if (digits.length >= 3) {
+    oppParts.push(`phone.ilike.%${digits}%`);
+    oppParts.push(`mobile.ilike.%${digits}%`);
+  }
+  if (contactIds.length) {
+    oppParts.push(`contact_id.in.(${contactIds.join(',')})`);
+  }
+
+  if (!oppParts.length) {
+    return { query, forceEmpty: true };
+  }
+
+  return { query: query.or(oppParts.join(',')), forceEmpty: false };
+}
+
 async function enrichOpportunities(
-  rows: Record<string, unknown>[]
+  rows: Record<string, unknown>[],
+  options?: { skipLeadIdBackfill?: boolean }
 ): Promise<CrmOpportunityCard[]> {
   if (rows.length === 0) return [];
 
@@ -208,7 +349,8 @@ async function enrichOpportunities(
   }
 
   const missingLeadIds = contactIdList.filter((id) => !customerLeadIdMap.has(id));
-  if (missingLeadIds.length) {
+  // Skip expensive lead-id backfill during search — only stored Customer IDs are needed.
+  if (missingLeadIds.length && !options?.skipLeadIdBackfill) {
     const { fetchContactLeadIds } = await import('@/lib/contact-lead-id');
     const metaById = new Map(
       contactsData.map((c) => [
@@ -232,11 +374,21 @@ async function enrichOpportunities(
     }
   }
 
+  const contactPhoneMap = new Map(
+    contactsData.map((c) => [
+      String(c.id),
+      String(c.phone || c.mobile || '').trim() || null,
+    ])
+  );
+
   return rows.map((row) => {
     const base = mapRow(row);
     const customerId = base.contact_id;
+    const contactPhone = customerId ? contactPhoneMap.get(customerId) || null : null;
     return {
       ...base,
+      // Prefer opportunity phone; fall back to linked contact phone for search/display.
+      phone: base.phone || contactPhone,
       customer_name: customerId ? contactMap.get(customerId) || null : null,
       customer_lead_id: customerId ? customerLeadIdMap.get(customerId) || null : null,
       contact_person_name: base.contact_person_id
@@ -258,6 +410,43 @@ function validateOpportunityInput(input: CrmOpportunityUpsertInput) {
   const revenue = Number(input.expected_revenue ?? 0);
   if (!Number.isFinite(revenue) || revenue < 0) return 'Expected revenue cannot be negative.';
   return null;
+}
+
+/** Match CRM pipeline cards by name, Customer ID (# optional), phone digits. */
+function opportunityMatchesPipelineSearch(
+  opp: CrmOpportunityCard,
+  rawQuery: string
+): boolean {
+  const raw = String(rawQuery || '').trim();
+  if (!raw) return true;
+
+  const query = raw.toLowerCase();
+  const withoutHash = query.replace(/^#+/, '');
+  const queryDigits = raw.replace(/\D/g, '');
+  const last10 = queryDigits.length >= 10 ? queryDigits.slice(-10) : queryDigits;
+
+  const leadId = String(opp.customer_lead_id || '').toLowerCase();
+  const phoneDigits = `${opp.phone || ''}${opp.mobile || ''}`.replace(/\D/g, '');
+  const hay = [
+    opp.name,
+    opp.customer_name,
+    opp.customer_lead_id,
+    opp.email,
+    opp.phone,
+    opp.mobile,
+    opp.organization_name,
+  ]
+    .map((v) => String(v || '').toLowerCase())
+    .join(' ');
+
+  if (hay.includes(query) || hay.includes(withoutHash)) return true;
+  if (leadId && (leadId === withoutHash || leadId.includes(withoutHash))) return true;
+  if (last10.length >= 7) {
+    if (phoneDigits.includes(last10) || phoneDigits.endsWith(last10)) return true;
+  } else if (queryDigits.length >= 3 && phoneDigits.includes(queryDigits)) {
+    return true;
+  }
+  return false;
 }
 
 /**
@@ -323,19 +512,22 @@ export async function ensureAutoOpportunityForNewContact(input: {
     }
 
     const { resolveSalesAgentForSession } = await import('@/lib/legacy-user-bridge');
-    const { resolveCrmVisibilityScope } = await import('@/lib/crm-visibility');
     const { getSession } = await import('@/lib/auth/session');
     const session = await getSession();
 
-    let salespersonId = input.salespersonId || null;
+    // Always assign a salesperson so the card appears under My Pipeline
+    // (visibility filters by salesperson_id / created_by for sales agents).
+    let salespersonId = input.salespersonId ? String(input.salespersonId) : null;
     if (session) {
       const agent = await resolveSalesAgentForSession(supabase, session);
-      const visibility = await resolveCrmVisibilityScope(session);
-      if (visibility.mode === 'assigned' && agent?.id) {
-        salespersonId = agent.id;
-      } else if (!salespersonId && agent?.id) {
-        salespersonId = agent.id;
+      if (agent?.id) {
+        salespersonId = salespersonId || String(agent.id);
       }
+    }
+    if (!salespersonId) {
+      console.error(
+        '[ensureAutoOpportunityForNewContact] missing salesperson_id; opportunity may be hidden from My Pipeline'
+      );
     }
 
     const { probabilityForStageName, computeLeadScore } = await import(
@@ -432,6 +624,15 @@ export async function ensureAutoOpportunityForNewContact(input: {
       contactId,
     });
 
+    try {
+      const { revalidatePath } = await import('next/cache');
+      revalidatePath('/crm/pipeline');
+      revalidatePath('/crm');
+      revalidatePath('/admin/dashboard');
+    } catch {
+      // revalidate is best-effort
+    }
+
     return { opportunityId };
   } catch (err) {
     return {
@@ -481,6 +682,20 @@ export async function getCrmPipelineBoard(filters: CrmPipelineBoardFilters = {})
     if (filters.salespersonId) query = query.eq('salesperson_id', filters.salespersonId);
     if (filters.contactId) query = query.eq('contact_id', filters.contactId);
 
+    const needle = String(filters.search || '').trim();
+    if (needle) {
+      const narrowed = await applyPipelineSearchToOpportunityQuery(
+        query,
+        supabase,
+        null,
+        needle
+      );
+      if (narrowed.forceEmpty) {
+        return { stages, opportunities: [], isGlobalAdminView: true as const };
+      }
+      query = narrowed.query;
+    }
+
     const sortBy = filters.sortBy === 'expected_revenue' ? 'expected_revenue' : 'created_at';
     const ascending = filters.sortDir === 'asc';
     query = query.order(sortBy, { ascending });
@@ -488,7 +703,10 @@ export async function getCrmPipelineBoard(filters: CrmPipelineBoardFilters = {})
     const { data: oppRows, error: oppError } = await query;
     if (oppError) return { error: oppError.message };
 
-    let opportunities = await enrichOpportunities((oppRows || []) as Record<string, unknown>[]);
+    let opportunities = await enrichOpportunities(
+      (oppRows || []) as Record<string, unknown>[],
+      { skipLeadIdBackfill: Boolean(needle) }
+    );
     opportunities = (await attachNextActivitiesToOpportunities(
       opportunities
     )) as CrmOpportunityCard[];
@@ -502,13 +720,10 @@ export async function getCrmPipelineBoard(filters: CrmPipelineBoardFilters = {})
       }
     }
 
-    const needle = String(filters.search || '').trim().toLowerCase();
     if (needle) {
-      opportunities = opportunities.filter((opp) => {
-        const hay =
-          `${opp.name} ${opp.customer_name || ''} ${opp.customer_lead_id || ''} ${opp.email || ''} ${opp.organization_name || ''}`.toLowerCase();
-        return hay.includes(needle);
-      });
+      opportunities = opportunities.filter((opp) =>
+        opportunityMatchesPipelineSearch(opp, needle)
+      );
     }
 
     return { stages, opportunities, isGlobalAdminView: true as const };
@@ -541,6 +756,37 @@ export async function getCrmPipelineBoard(filters: CrmPipelineBoardFilters = {})
   if (filters.salespersonId) query = query.eq('salesperson_id', filters.salespersonId);
   if (filters.contactId) query = query.eq('contact_id', filters.contactId);
 
+  const mappedStages = (stageRows || []).map((row) => ({
+    id: String(row.id),
+    organization_id: String(row.organization_id),
+    name: String(row.name || ''),
+    sequence: Number(row.sequence) || 0,
+    is_won: Boolean(row.is_won),
+    is_lost: Boolean(row.is_lost),
+    is_folded: Boolean(row.is_folded),
+    default_probability: Number(row.default_probability ?? 10),
+    created_at: String(row.created_at || ''),
+    updated_at: String(row.updated_at || ''),
+  }));
+
+  const needle = String(filters.search || '').trim();
+  if (needle) {
+    const narrowed = await applyPipelineSearchToOpportunityQuery(
+      query,
+      supabase,
+      scope.organizationId,
+      needle
+    );
+    if (narrowed.forceEmpty) {
+      return {
+        stages: mappedStages,
+        opportunities: [],
+        isGlobalAdminView: false as const,
+      };
+    }
+    query = narrowed.query;
+  }
+
   const sortBy = filters.sortBy === 'expected_revenue' ? 'expected_revenue' : 'created_at';
   const ascending = filters.sortDir === 'asc';
   query = query.order(sortBy, { ascending });
@@ -548,32 +794,22 @@ export async function getCrmPipelineBoard(filters: CrmPipelineBoardFilters = {})
   const { data: oppRows, error: oppError } = await query;
   if (oppError) return { error: oppError.message };
 
-  let opportunities = await enrichOpportunities((oppRows || []) as Record<string, unknown>[]);
+  let opportunities = await enrichOpportunities(
+    (oppRows || []) as Record<string, unknown>[],
+    { skipLeadIdBackfill: Boolean(needle) }
+  );
   opportunities = (await attachNextActivitiesToOpportunities(
     opportunities
   )) as CrmOpportunityCard[];
 
-  const needle = String(filters.search || '').trim().toLowerCase();
   if (needle) {
-    opportunities = opportunities.filter((opp) => {
-      const hay = `${opp.name} ${opp.customer_name || ''} ${opp.customer_lead_id || ''} ${opp.email || ''}`.toLowerCase();
-      return hay.includes(needle);
-    });
+    opportunities = opportunities.filter((opp) =>
+      opportunityMatchesPipelineSearch(opp, needle)
+    );
   }
 
   return {
-    stages: (stageRows || []).map((row) => ({
-      id: String(row.id),
-      organization_id: String(row.organization_id),
-      name: String(row.name || ''),
-      sequence: Number(row.sequence) || 0,
-      is_won: Boolean(row.is_won),
-      is_lost: Boolean(row.is_lost),
-      is_folded: Boolean(row.is_folded),
-      default_probability: Number(row.default_probability ?? 10),
-      created_at: String(row.created_at || ''),
-      updated_at: String(row.updated_at || ''),
-    })),
+    stages: mappedStages,
     opportunities,
     isGlobalAdminView: false as const,
   };

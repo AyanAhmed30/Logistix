@@ -14,6 +14,7 @@ type Props = {
   onSearchChange: (value: string) => void;
   onSearchSubmit?: () => void;
   searchInputRef?: RefObject<HTMLInputElement | null>;
+  searchLoading?: boolean;
   activeFilterId: string;
   onFilterChange: (filterId: string) => void;
   /** Extra actions on the right (e.g. Manage Stages) */
@@ -26,6 +27,7 @@ export function CrmControlPanel({
   onSearchChange,
   onSearchSubmit,
   searchInputRef,
+  searchLoading = false,
   activeFilterId,
   onFilterChange,
   actions,
@@ -87,6 +89,7 @@ export function CrmControlPanel({
               onChange={onSearchChange}
               onSubmit={onSearchSubmit}
               inputRef={searchInputRef}
+              loading={searchLoading}
               shortcutTarget
               placeholder={meta.searchPlaceholder || "Search…"}
               className="flex-1 min-w-[180px] max-w-2xl"

@@ -1,36 +1,43 @@
 /**
  * Shared Sales → Operations → Admin → Quotation inquiry workflow.
  * Stored on `lead_inquiries.approval_status` and derived for legacy rows.
+ * Calculation origin comes from inquiry_confirmations.submitted_by_role.
  */
 
 export type InquiryApprovalStatus =
   | "draft"
   | "sent"
   | "sent_to_admin"
+  | "calculated_by_admin"
   | "approved"
   | "rejected";
 
 export type InquiryWorkflowStatusKey =
   | "send_to_operation"
   | "send_to_admin"
+  | "calculated_by_admin"
   | "ready_for_quotation"
   | "rejected"
   | "draft";
+
+export type CalculationSubmitterRole = "operations" | "admin";
 
 export const INQUIRY_WORKFLOW_LABELS: Record<
   Exclude<InquiryWorkflowStatusKey, "draft">,
   string
 > = {
-  send_to_operation: "Send to Operation",
-  send_to_admin: "Send to Admin",
-  ready_for_quotation: "Ready for Quotation",
-  rejected: "Rejected",
+  send_to_operation: "Sent to Operations",
+  send_to_admin: "Sent to Admin",
+  calculated_by_admin: "Calculated by Admin",
+  ready_for_quotation: "Approved by Admin",
+  rejected: "Rejected by Admin",
 };
 
 export const INQUIRY_APPROVAL_STATUS_LABELS: Record<InquiryApprovalStatus, string> = {
   draft: "Draft",
   sent: INQUIRY_WORKFLOW_LABELS.send_to_operation,
   sent_to_admin: INQUIRY_WORKFLOW_LABELS.send_to_admin,
+  calculated_by_admin: INQUIRY_WORKFLOW_LABELS.calculated_by_admin,
   approved: INQUIRY_WORKFLOW_LABELS.ready_for_quotation,
   rejected: INQUIRY_WORKFLOW_LABELS.rejected,
 };
@@ -38,6 +45,7 @@ export const INQUIRY_APPROVAL_STATUS_LABELS: Record<InquiryApprovalStatus, strin
 export type InquiryConfirmationStatusLite = {
   status?: string | null;
   created_at?: string | null;
+  submitted_by_role?: string | null;
 };
 
 export type InquiryWorkflowInput = {
@@ -51,6 +59,7 @@ export type InquiryWorkflowStatus = {
   label: string;
   approvalStatus: InquiryApprovalStatus;
   isReadyForQuotation: boolean;
+  calculatedByAdmin: boolean;
 };
 
 function latestConfirmation(
@@ -70,12 +79,53 @@ function normalizeApprovalStatus(raw: string | null | undefined): InquiryApprova
     value === "draft" ||
     value === "sent" ||
     value === "sent_to_admin" ||
+    value === "calculated_by_admin" ||
     value === "approved" ||
     value === "rejected"
   ) {
     return value;
   }
   return null;
+}
+
+function normalizeSubmitterRole(raw: string | null | undefined): CalculationSubmitterRole | null {
+  const value = String(raw || "").trim().toLowerCase();
+  if (value === "admin" || value === "operations") return value;
+  return null;
+}
+
+/** True when the latest meaningful confirmation was submitted by Admin. */
+export function wasCalculatedByAdmin(
+  confirmations: InquiryConfirmationStatusLite[] | null | undefined,
+  approvalStatus?: string | null
+): boolean {
+  if (normalizeApprovalStatus(approvalStatus) === "calculated_by_admin") {
+    return true;
+  }
+  const latest = latestConfirmation(confirmations);
+  if (!latest) return false;
+  return normalizeSubmitterRole(latest.submitted_by_role) === "admin";
+}
+
+export function formatInquiryApprovalDisplayLabel(input: {
+  approvalStatus: InquiryApprovalStatus;
+  calculatedByAdmin?: boolean;
+}): string {
+  const { approvalStatus, calculatedByAdmin } = input;
+  if (approvalStatus === "approved") {
+    return calculatedByAdmin
+      ? "Approved by Admin — Calculated by Admin"
+      : INQUIRY_WORKFLOW_LABELS.ready_for_quotation;
+  }
+  if (approvalStatus === "rejected") {
+    return calculatedByAdmin
+      ? "Rejected by Admin — Calculated by Admin"
+      : INQUIRY_WORKFLOW_LABELS.rejected;
+  }
+  if (approvalStatus === "calculated_by_admin") {
+    return INQUIRY_WORKFLOW_LABELS.calculated_by_admin;
+  }
+  return INQUIRY_APPROVAL_STATUS_LABELS[approvalStatus] || approvalStatus;
 }
 
 /**
@@ -88,6 +138,7 @@ export function resolveInquiryWorkflowStatus(
   const stored = normalizeApprovalStatus(input.approval_status);
   const latest = latestConfirmation(input.confirmations);
   const latestStatus = String(latest?.status || "").trim().toLowerCase();
+  const calculatedByAdmin = wasCalculatedByAdmin(input.confirmations, input.approval_status);
   const hasApprovedConfirmation =
     latestStatus === "approved" ||
     (input.confirmations || []).some((c) => String(c.status || "").toLowerCase() === "approved");
@@ -99,18 +150,39 @@ export function resolveInquiryWorkflowStatus(
   if (stored === "rejected" || (hasRejectedConfirmation && !hasApprovedConfirmation && !hasPendingConfirmation)) {
     return {
       key: "rejected",
-      label: INQUIRY_WORKFLOW_LABELS.rejected,
+      label: formatInquiryApprovalDisplayLabel({
+        approvalStatus: "rejected",
+        calculatedByAdmin,
+      }),
       approvalStatus: "rejected",
       isReadyForQuotation: false,
+      calculatedByAdmin,
     };
   }
 
   if (stored === "approved" || hasApprovedConfirmation) {
     return {
       key: "ready_for_quotation",
-      label: INQUIRY_WORKFLOW_LABELS.ready_for_quotation,
+      label: formatInquiryApprovalDisplayLabel({
+        approvalStatus: "approved",
+        calculatedByAdmin,
+      }),
       approvalStatus: "approved",
       isReadyForQuotation: true,
+      calculatedByAdmin,
+    };
+  }
+
+  if (
+    stored === "calculated_by_admin" ||
+    (hasPendingConfirmation && calculatedByAdmin)
+  ) {
+    return {
+      key: "calculated_by_admin",
+      label: INQUIRY_WORKFLOW_LABELS.calculated_by_admin,
+      approvalStatus: "calculated_by_admin",
+      isReadyForQuotation: false,
+      calculatedByAdmin: true,
     };
   }
 
@@ -120,6 +192,7 @@ export function resolveInquiryWorkflowStatus(
       label: INQUIRY_WORKFLOW_LABELS.send_to_admin,
       approvalStatus: "sent_to_admin",
       isReadyForQuotation: false,
+      calculatedByAdmin: false,
     };
   }
 
@@ -129,6 +202,7 @@ export function resolveInquiryWorkflowStatus(
       label: INQUIRY_WORKFLOW_LABELS.send_to_operation,
       approvalStatus: "sent",
       isReadyForQuotation: false,
+      calculatedByAdmin: false,
     };
   }
 
@@ -137,6 +211,7 @@ export function resolveInquiryWorkflowStatus(
     label: "Draft",
     approvalStatus: "draft",
     isReadyForQuotation: false,
+    calculatedByAdmin: false,
   };
 }
 

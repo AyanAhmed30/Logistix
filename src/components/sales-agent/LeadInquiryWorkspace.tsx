@@ -63,6 +63,7 @@ import {
   validateInquiryProductInfoForSend,
   type InquiryProductFieldErrors,
 } from "@/lib/inquiry-form-validation";
+import { resolveInquiryWorkflowStatus } from "@/lib/inquiry-workflow";
 import {
   getCachedLeadInquiries,
   invalidateCachedLeadInquiries,
@@ -2683,7 +2684,13 @@ export function LeadInquiryWorkspace({
                                         : "bg-amber-100 text-amber-800"
                                     }`}
                                   >
-                                    {isApproved ? "Approved" : "Pending"}
+                                    {
+                                      resolveInquiryWorkflowStatus({
+                                        sent_to_accounting: inq.sent_to_accounting,
+                                        approval_status: inq.approval_status,
+                                        confirmations: inq.inquiry_confirmations,
+                                      }).label
+                                    }
                                   </Badge>
                                 </div>
                                 

@@ -152,6 +152,7 @@ type InquiryConfirmationLite = {
   id: string;
   status: string;
   created_at: string;
+  submitted_by_role?: string | null;
 };
 
 /** Fields required by the sales-agent inquiry workspace list/detail UI (excludes heavy JSON blobs). */
@@ -181,7 +182,8 @@ const SALES_AGENT_LEAD_INQUIRIES_SELECT = `
   inquiry_confirmations (
     id,
     status,
-    created_at
+    created_at,
+    submitted_by_role
   ),
   inquiry_flags (
     id,
@@ -304,7 +306,13 @@ export type LeadInquiry = {
   sent_to_accounting: boolean;
   sent_to_operations: boolean;
   sent_at: string | null;
-  approval_status?: 'draft' | 'sent' | 'sent_to_admin' | 'approved' | 'rejected';
+  approval_status?:
+    | 'draft'
+    | 'sent'
+    | 'sent_to_admin'
+    | 'calculated_by_admin'
+    | 'approved'
+    | 'rejected';
   approved_at?: string | null;
   calculator_values: Record<string, string> | Record<string, unknown> | null;
   organization_id?: string | null;
@@ -318,6 +326,7 @@ export type LeadInquiry = {
     id: string;
     status: string;
     created_at: string;
+    submitted_by_role?: string | null;
   }[];
   inquiry_flags?: InquiryFlag[];
 };
@@ -345,6 +354,7 @@ export type LeadInquiryWithLead = LeadInquiry & {
     id: string;
     status: string;
     created_at: string;
+    submitted_by_role?: string | null;
   }[];
   inquiry_flags?: InquiryFlag[];
 };
@@ -1332,10 +1342,11 @@ export async function getInquiryTrackingForSalesAgent() {
           sales_agent_id
         ),
         inquiry_confirmations (
-          id,
-          status,
-          created_at
-        )
+    id,
+    status,
+    created_at,
+    submitted_by_role
+  )
       `)
       .eq('leads.sales_agent_id', salesAgent.id);
 
@@ -1348,7 +1359,14 @@ export async function getInquiryTrackingForSalesAgent() {
       lead_id: string;
       version_number?: number | null;
       status: string;
-      approval_status?: 'draft' | 'sent' | 'sent_to_admin' | 'approved' | 'rejected' | null;
+      approval_status?:
+        | 'draft'
+        | 'sent'
+        | 'sent_to_admin'
+        | 'calculated_by_admin'
+        | 'approved'
+        | 'rejected'
+        | null;
       created_at: string | null;
       sent_to_accounting: boolean;
       sent_at: string | null;
@@ -1402,7 +1420,11 @@ export async function getInquiryTrackingForSalesAgent() {
         approvedCountByLead.set(inq.lead_id, (approvedCountByLead.get(inq.lead_id) || 0) + 1);
       }
 
-      if (approvalStatus === 'sent' || approvalStatus === 'sent_to_admin') {
+      if (
+        approvalStatus === 'sent' ||
+        approvalStatus === 'sent_to_admin' ||
+        approvalStatus === 'calculated_by_admin'
+      ) {
         pendingCountByLead.set(inq.lead_id, (pendingCountByLead.get(inq.lead_id) || 0) + 1);
       }
       const candidateActivity = inq.updated_at || inq.created_at || null;
@@ -1511,10 +1533,11 @@ export async function getAllInquiriesForSalesAgent() {
           )
         ),
         inquiry_confirmations (
-          id,
-          status,
-          created_at
-        )
+    id,
+    status,
+    created_at,
+    submitted_by_role
+  )
       `)
       .eq('leads.sales_agent_id', salesAgent.id)
       .order('created_at', { ascending: false });
@@ -1755,10 +1778,11 @@ export async function getAllInquiriesForAccounting() {
           )
         ),
         inquiry_confirmations (
-          id,
-          status,
-          created_at
-        )
+    id,
+    status,
+    created_at,
+    submitted_by_role
+  )
       `)
       .eq('sent_to_accounting', true)
       .order('sent_at', { ascending: false });
@@ -1793,7 +1817,8 @@ const OPERATIONS_LIST_INQUIRY_SELECT = `
   inquiry_confirmations (
     id,
     status,
-    created_at
+    created_at,
+    submitted_by_role
   ),
   inquiry_flags (
     id,
@@ -1821,7 +1846,8 @@ const OPERATIONS_LIST_INQUIRY_SELECT_LEGACY = `
   inquiry_confirmations (
     id,
     status,
-    created_at
+    created_at,
+    submitted_by_role
   )
 `;
 
@@ -1863,7 +1889,8 @@ const OPERATIONS_DETAIL_INQUIRY_SELECT = `
   inquiry_confirmations (
     id,
     status,
-    created_at
+    created_at,
+    submitted_by_role
   ),
   inquiry_flags (
     id,
@@ -1912,7 +1939,8 @@ const OPERATIONS_DETAIL_INQUIRY_SELECT_LEGACY = `
   inquiry_confirmations (
     id,
     status,
-    created_at
+    created_at,
+    submitted_by_role
   )
 `;
 

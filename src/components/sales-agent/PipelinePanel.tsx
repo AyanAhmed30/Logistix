@@ -80,6 +80,36 @@ const NORMAL_BOARDS: LeadStatus[] = ["Leads", "Inquiry Received", "Quotation Sen
 // Boards where the dropdown shows the normal board options
 const SPECIAL_BOARDS: LeadStatus[] = ["Follow up", "Lose"];
 
+/** Match lead by name, lead number (# optional), phone (formatted / digits). */
+function leadMatchesPipelineSearch(lead: Lead, rawQuery: string): boolean {
+  const raw = String(rawQuery || "").trim();
+  if (!raw) return true;
+
+  const query = raw.toLowerCase();
+  const withoutHash = query.replace(/^#+/, "");
+  const queryDigits = raw.replace(/\D/g, "");
+  const last10 = queryDigits.length >= 10 ? queryDigits.slice(-10) : queryDigits;
+
+  const name = String(lead.name || "").toLowerCase();
+  const source = String(lead.source || "").toLowerCase();
+  const number = String(lead.number || "").toLowerCase();
+  const leadId = String(lead.lead_id_formatted || "").toLowerCase();
+  const phoneDigits = String(lead.number || "").replace(/\D/g, "");
+
+  if (name.includes(query) || name.includes(withoutHash)) return true;
+  if (source.includes(query)) return true;
+  if (number.includes(query) || number.includes(withoutHash)) return true;
+  if (leadId && (leadId === withoutHash || leadId.includes(withoutHash) || `#${leadId}`.includes(query))) {
+    return true;
+  }
+  if (last10.length >= 7) {
+    if (phoneDigits.includes(last10) || phoneDigits.endsWith(last10)) return true;
+  } else if (queryDigits.length >= 3 && phoneDigits.includes(queryDigits)) {
+    return true;
+  }
+  return false;
+}
+
 function LeadCard({
   lead,
   onOpenComments,
@@ -532,21 +562,15 @@ function KanbanColumn({
   
   // Apply global search filter if search query exists
   if (searchQuery && searchQuery.trim()) {
-    const query = searchQuery.toLowerCase().trim();
     filteredLeads = filteredLeads.filter((lead) =>
-      lead.name.toLowerCase().includes(query) ||
-      lead.number.toLowerCase().includes(query) ||
-      lead.source.toLowerCase().includes(query)
+      leadMatchesPipelineSearch(lead, searchQuery)
     );
   }
 
   // Apply column-specific search filter
   if (columnSearchQuery && columnSearchQuery.trim()) {
-    const query = columnSearchQuery.toLowerCase().trim();
     filteredLeads = filteredLeads.filter((lead) =>
-      lead.name.toLowerCase().includes(query) ||
-      lead.number.toLowerCase().includes(query) ||
-      lead.source.toLowerCase().includes(query)
+      leadMatchesPipelineSearch(lead, columnSearchQuery)
     );
   }
   

@@ -31,6 +31,9 @@ type CrmShellContextValue = {
   setSearchQuery: (value: string) => void;
   activeFilterId: string;
   setActiveFilterId: (value: string) => void;
+  /** True while pipeline (or similar) search debounce/fetch is in flight. */
+  searchBusy: boolean;
+  setSearchBusy: (busy: boolean) => void;
 };
 
 const CrmShellContext = createContext<CrmShellContextValue | null>(null);
@@ -52,6 +55,7 @@ export function CrmShell({ access, children }: Props) {
   const router = useRouter();
   const { switchVersion, isAdminContext } = useAdminOrganization();
   const [searchQuery, setSearchQuery] = useState("");
+  const [searchBusy, setSearchBusy] = useState(false);
   const [activeFilterId, setActiveFilterId] = useState("all");
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [navigating, setNavigating] = useState(false);
@@ -104,8 +108,15 @@ export function CrmShell({ access, children }: Props) {
   }, [activeFilterId]);
 
   const shellContext = useMemo(
-    () => ({ searchQuery, setSearchQuery, activeFilterId, setActiveFilterId }),
-    [searchQuery, activeFilterId]
+    () => ({
+      searchQuery,
+      setSearchQuery,
+      activeFilterId,
+      setActiveFilterId,
+      searchBusy,
+      setSearchBusy,
+    }),
+    [searchQuery, activeFilterId, searchBusy]
   );
 
   const handleSearchSubmit = useCallback(() => {
@@ -190,6 +201,7 @@ export function CrmShell({ access, children }: Props) {
             onSearchChange={setSearchQuery}
             onSearchSubmit={handleSearchSubmit}
             searchInputRef={searchInputRef}
+            searchLoading={searchBusy}
             activeFilterId={activeFilterId}
             onFilterChange={setActiveFilterId}
           />

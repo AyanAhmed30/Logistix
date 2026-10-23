@@ -315,22 +315,27 @@ function inquiryApprovalBadge(status: string | null | undefined): {
   switch (status) {
     case "approved":
       return {
-        label: "Ready for Quotation",
+        label: "Approved by Admin",
         className: "border-emerald-300 bg-emerald-100 text-emerald-800",
       };
     case "rejected":
       return {
-        label: "Rejected",
+        label: "Rejected by Admin",
         className: "border-rose-300 bg-rose-100 text-rose-800",
+      };
+    case "calculated_by_admin":
+      return {
+        label: "Calculated by Admin",
+        className: "border-violet-300 bg-violet-100 text-violet-800",
       };
     case "sent_to_admin":
       return {
-        label: "Send to Admin",
+        label: "Sent to Admin",
         className: "border-sky-300 bg-sky-100 text-sky-800",
       };
     case "sent":
       return {
-        label: "Send to Operation",
+        label: "Sent to Operations",
         className: "border-amber-300 bg-amber-100 text-amber-800",
       };
     default:

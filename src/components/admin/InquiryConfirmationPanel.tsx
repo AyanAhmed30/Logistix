@@ -66,6 +66,8 @@ import {
 
 // ─── Helpers ─────────────────────────────────────────────────────────
 
+type ConfirmationStatusFilter = "pending" | "approved" | "rejected";
+
 function formatStatus(status: string) {
   switch (status) {
     case "pending": return "Pending";
@@ -157,6 +159,7 @@ export function InquiryConfirmationPanel({
   const [detailListItem, setDetailListItem] = useState<InquiryConfirmationListItem | null>(null);
   const [isDetailLoading, setIsDetailLoading] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
+  const [statusFilter, setStatusFilter] = useState<"all" | ConfirmationStatusFilter>("all");
   const [isActioning, setIsActioning] = useState(false);
   const [imagePreview, setImagePreview] = useState<{
     url: string;
@@ -205,19 +208,34 @@ export function InquiryConfirmationPanel({
     void fetchConfirmations();
   }, [fetchConfirmations]);
 
+  const statusCounts = useMemo(() => {
+    let pending = 0;
+    let approved = 0;
+    let rejected = 0;
+    for (const row of confirmations) {
+      if (row.status === "pending") pending += 1;
+      else if (row.status === "approved") approved += 1;
+      else if (row.status === "rejected") rejected += 1;
+    }
+    return { pending, approved, rejected, total: confirmations.length };
+  }, [confirmations]);
+
   const filteredConfirmations = useMemo(() => {
     const query = searchQuery.trim().toLowerCase();
-    if (!query) return confirmations;
 
-    return confirmations.filter((c) =>
-      (c.leads?.name || "").toLowerCase().includes(query) ||
-      c.lead_number.toLowerCase().includes(query) ||
-      c.product_name.toLowerCase().includes(query) ||
-      c.submitted_by.toLowerCase().includes(query) ||
-      c.status.toLowerCase().includes(query) ||
-      (c.leads?.sales_agents?.name || "").toLowerCase().includes(query)
-    );
-  }, [confirmations, searchQuery]);
+    return confirmations.filter((c) => {
+      if (statusFilter !== "all" && c.status !== statusFilter) return false;
+      if (!query) return true;
+      return (
+        (c.leads?.name || "").toLowerCase().includes(query) ||
+        c.lead_number.toLowerCase().includes(query) ||
+        c.product_name.toLowerCase().includes(query) ||
+        c.submitted_by.toLowerCase().includes(query) ||
+        c.status.toLowerCase().includes(query) ||
+        (c.leads?.sales_agents?.name || "").toLowerCase().includes(query)
+      );
+    });
+  }, [confirmations, searchQuery, statusFilter]);
 
   const loadPricingConfig = useCallback(async () => {
     if (pricingConfigFetched.current) return;
@@ -751,7 +769,14 @@ export function InquiryConfirmationPanel({
             <div className="grid grid-cols-1 md:grid-cols-3 gap-x-8 gap-y-3">
               <div>
                 <label className="text-xs text-slate-500 font-medium">Submitted By</label>
-                <div className="text-slate-700 mt-0.5">{c.submitted_by || "-"}</div>
+                <div className="text-slate-700 mt-0.5">
+                  {c.submitted_by || "-"}
+                  {c.submitted_by_role === "admin"
+                    ? " (Admin)"
+                    : c.submitted_by_role === "operations"
+                      ? " (Operations)"
+                      : ""}
+                </div>
               </div>
               <div>
                 <label className="text-xs text-slate-500 font-medium">Submitted At</label>
@@ -875,6 +900,10 @@ export function InquiryConfirmationPanel({
 
   const showEmptyState = !isLoading && filteredConfirmations.length === 0;
 
+  function toggleStatusFilter(next: ConfirmationStatusFilter) {
+    setStatusFilter((prev) => (prev === next ? "all" : next));
+  }
+
   return (
     <div className="space-y-4">
       {/* Header */}
@@ -893,6 +922,17 @@ export function InquiryConfirmationPanel({
               className="pl-9 w-60"
             />
           </div>
+          {statusFilter !== "all" ? (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setStatusFilter("all")}
+              className="gap-1"
+            >
+              <XCircle className="h-3.5 w-3.5" />
+              Clear filter
+            </Button>
+          ) : null}
           <Button variant="outline" size="sm" onClick={handleRefresh} disabled={isLoading}>
             <RefreshCcw className={`h-4 w-4 mr-1 ${isLoading ? "animate-spin" : ""}`} />
             Refresh
@@ -905,13 +945,94 @@ export function InquiryConfirmationPanel({
         </div>
       </div>
 
+      {/* Status summary cards */}
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+        <button
+          type="button"
+          onClick={() => toggleStatusFilter("pending")}
+          className={`rounded-lg border p-4 text-left transition-all ${
+            statusFilter === "pending"
+              ? "border-amber-400 bg-amber-50 ring-2 ring-amber-200 shadow-sm"
+              : "border-slate-200 bg-white hover:border-amber-300 hover:bg-amber-50/50"
+          }`}
+        >
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2 text-sm font-semibold text-amber-800">
+              <Clock className="h-4 w-4" />
+              Pending
+            </div>
+            {statusFilter === "pending" ? (
+              <Badge variant="outline" className="text-[10px] border-amber-300 text-amber-700">
+                Active
+              </Badge>
+            ) : null}
+          </div>
+          <div className="mt-2 text-3xl font-bold text-amber-700">{statusCounts.pending}</div>
+          <p className="mt-1 text-xs text-amber-700/80">Awaiting Admin approval</p>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => toggleStatusFilter("approved")}
+          className={`rounded-lg border p-4 text-left transition-all ${
+            statusFilter === "approved"
+              ? "border-emerald-400 bg-emerald-50 ring-2 ring-emerald-200 shadow-sm"
+              : "border-slate-200 bg-white hover:border-emerald-300 hover:bg-emerald-50/50"
+          }`}
+        >
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2 text-sm font-semibold text-emerald-800">
+              <CheckCircle2 className="h-4 w-4" />
+              Approved
+            </div>
+            {statusFilter === "approved" ? (
+              <Badge variant="outline" className="text-[10px] border-emerald-300 text-emerald-700">
+                Active
+              </Badge>
+            ) : null}
+          </div>
+          <div className="mt-2 text-3xl font-bold text-emerald-700">{statusCounts.approved}</div>
+          <p className="mt-1 text-xs text-emerald-700/80">Approved by Admin</p>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => toggleStatusFilter("rejected")}
+          className={`rounded-lg border p-4 text-left transition-all ${
+            statusFilter === "rejected"
+              ? "border-rose-400 bg-rose-50 ring-2 ring-rose-200 shadow-sm"
+              : "border-slate-200 bg-white hover:border-rose-300 hover:bg-rose-50/50"
+          }`}
+        >
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2 text-sm font-semibold text-rose-800">
+              <XCircle className="h-4 w-4" />
+              Rejected
+            </div>
+            {statusFilter === "rejected" ? (
+              <Badge variant="outline" className="text-[10px] border-rose-300 text-rose-700">
+                Active
+              </Badge>
+            ) : null}
+          </div>
+          <div className="mt-2 text-3xl font-bold text-rose-700">{statusCounts.rejected}</div>
+          <p className="mt-1 text-xs text-rose-700/80">Rejected by Admin</p>
+        </button>
+      </div>
+
+      {statusFilter !== "all" ? (
+        <p className="text-xs text-slate-500">
+          Showing {formatStatus(statusFilter)} confirmations only. Click the card again or Clear filter to show all.
+        </p>
+      ) : null}
+
       {/* Table */}
       <Card className="border shadow-sm">
         <CardContent className="p-0">
           {showEmptyState ? (
             <div className="py-16 text-center text-slate-400">
-              {searchQuery
-                ? "No confirmations match your search."
+              {searchQuery || statusFilter !== "all"
+                ? "No confirmations match your filters."
                 : "No inquiry confirmations yet."}
             </div>
           ) : (

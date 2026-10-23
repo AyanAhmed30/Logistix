@@ -1,7 +1,7 @@
 "use client";
 
 import type { RefObject } from "react";
-import { ChevronDown, Search } from "lucide-react";
+import { ChevronDown, Loader2, Search } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 import type { CrmSearchScope } from "@/lib/crm-navigation";
@@ -13,6 +13,7 @@ type Props = {
   placeholder?: string;
   scope?: CrmSearchScope;
   disabled?: boolean;
+  loading?: boolean;
   inputRef?: RefObject<HTMLInputElement | null>;
   shortcutTarget?: boolean;
   className?: string;
@@ -25,6 +26,7 @@ export function CrmSearchBar({
   onSubmit,
   placeholder = "Search…",
   disabled = false,
+  loading = false,
   inputRef,
   shortcutTarget = true,
   className,
@@ -38,10 +40,17 @@ export function CrmSearchBar({
       }}
       role="search"
     >
-      <Search
-        className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-secondary-muted pointer-events-none"
-        aria-hidden
-      />
+      {loading ? (
+        <Loader2
+          className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-[#017e84] animate-spin pointer-events-none"
+          aria-hidden
+        />
+      ) : (
+        <Search
+          className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-secondary-muted pointer-events-none"
+          aria-hidden
+        />
+      )}
       <Input
         ref={inputRef}
         data-crm-search={shortcutTarget ? true : undefined}
@@ -51,6 +60,7 @@ export function CrmSearchBar({
         disabled={disabled}
         className="h-8 pl-8 pr-8 bg-white border-slate-200 rounded-sm text-sm focus-visible:ring-[#017e84]/25 focus-visible:border-[#017e84]"
         aria-label="Search"
+        aria-busy={loading || undefined}
         autoComplete="off"
       />
       <ChevronDown

@@ -1,6 +1,5 @@
 'use server';
 
-import { after } from 'next/server';
 import { revalidatePath } from 'next/cache';
 import { getSession } from '@/lib/auth/session';
 import { createAdminClient } from '@/utils/supabase/server';
@@ -205,30 +204,65 @@ function escapePostgrestFilterValue(value: string): string {
   return v;
 }
 
+/**
+ * Normalize a Contacts search token for Lead/Customer ID + phone matching.
+ * Keeps stored values untouched — only the query/comparison is normalized.
+ */
+function normalizeContactsSearchToken(rawQuery: string): {
+  text: string;
+  leadIdToken: string | null;
+  phoneDigits: string;
+  phoneLast10: string | null;
+} {
+  const text = String(rawQuery || '')
+    .trim()
+    .replace(/[%_,.()]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  // Strip leading # so "#674810" matches lead_id_formatted "674810"
+  const withoutHash = text.replace(/^#+/, '').trim();
+  const phoneDigits = String(rawQuery || '').replace(/\D/g, '');
+  const leadIdToken = /^\d{3,}$/.test(withoutHash.replace(/\s/g, ''))
+    ? withoutHash.replace(/\s/g, '')
+    : phoneDigits.length >= 3 && /^\d+$/.test(phoneDigits)
+      ? phoneDigits
+      : null;
+  const phoneLast10 =
+    phoneDigits.length >= 10 ? phoneDigits.slice(-10) : phoneDigits.length >= 7 ? phoneDigits : null;
+  return { text, leadIdToken, phoneDigits, phoneLast10 };
+}
+
 /** PostgREST `.or(...)` for name / phone / Customer ID search (DB-side). */
 function buildContactsSearchOrFilter(rawQuery: string): string | null {
-  const needle = String(rawQuery || '').trim();
-  if (!needle) return null;
-  const escaped = needle.replace(/[%_,.()]/g, ' ').replace(/\s+/g, ' ').trim();
-  if (!escaped) return null;
-  const phoneDigits = needle.replace(/\D/g, '');
-  const parts = [
-    `name.ilike.%${escaped}%`,
-    `company_name.ilike.%${escaped}%`,
-    `email.ilike.%${escaped}%`,
-    `phone.ilike.%${escaped}%`,
-    `mobile.ilike.%${escaped}%`,
-    `lead_id_formatted.ilike.%${escaped}%`,
-  ];
-  if (phoneDigits.length >= 3) {
+  const { text, leadIdToken, phoneDigits, phoneLast10 } = normalizeContactsSearchToken(rawQuery);
+  if (!text && !phoneDigits) return null;
+
+  const parts: string[] = [];
+  if (text) {
+    const escaped = text.replace(/^#+/, '').trim() || text;
+    parts.push(`name.ilike.%${escaped}%`);
+    parts.push(`company_name.ilike.%${escaped}%`);
+    parts.push(`email.ilike.%${escaped}%`);
+    parts.push(`phone.ilike.%${escaped}%`);
+    parts.push(`mobile.ilike.%${escaped}%`);
+    parts.push(`lead_id_formatted.ilike.%${escaped}%`);
+  }
+
+  if (leadIdToken) {
+    parts.push(`lead_id_formatted.eq.${leadIdToken}`);
+    parts.push(`lead_id_formatted.ilike.%${leadIdToken}%`);
+  }
+
+  // Phone columns store formatted values (+92 312…). Match by last 10 digits.
+  if (phoneLast10) {
+    parts.push(`phone.ilike.%${phoneLast10}%`);
+    parts.push(`mobile.ilike.%${phoneLast10}%`);
+  } else if (phoneDigits.length >= 3) {
     parts.push(`phone.ilike.%${phoneDigits}%`);
     parts.push(`mobile.ilike.%${phoneDigits}%`);
   }
-  // Exact / prefix Customer ID tokens (digits only)
-  if (/^\d{3,}$/.test(phoneDigits) && phoneDigits === escaped.replace(/\s/g, '')) {
-    parts.push(`lead_id_formatted.eq.${phoneDigits}`);
-  }
-  return parts.join(',');
+
+  return parts.length > 0 ? parts.join(',') : null;
 }
 
 export type DuplicateContactInfo = {
@@ -336,89 +370,6 @@ function parseDuplicateContactTriggerError(
   };
 }
 
-function earlierIsoTimestamp(
-  a: string | null | undefined,
-  b: string | null | undefined
-): string | null {
-  const aMs = a ? Date.parse(a) : NaN;
-  const bMs = b ? Date.parse(b) : NaN;
-  if (Number.isFinite(aMs) && Number.isFinite(bMs)) {
-    return aMs <= bMs ? String(a) : String(b);
-  }
-  if (Number.isFinite(aMs)) return String(a);
-  if (Number.isFinite(bMs)) return String(b);
-  return null;
-}
-
-/**
- * Prefer the original lead created_at for "Added" when contacts were
- * migrated/merged with a later batch timestamp.
- */
-async function applyOriginalContactAddedAt(
-  supabase: Awaited<ReturnType<typeof createAdminClient>>,
-  contacts: Contact[]
-): Promise<Contact[]> {
-  if (!contacts.length) return contacts;
-
-  const earliestByContact = new Map<string, string>();
-  const note = (contactId: string, ts: string | null | undefined) => {
-    if (!contactId || !ts) return;
-    const prev = earliestByContact.get(contactId);
-    const next = earlierIsoTimestamp(prev, ts);
-    if (next) earliestByContact.set(contactId, next);
-  };
-
-  for (const c of contacts) {
-    note(c.id, c.created_at);
-  }
-
-  const legacyIds = [
-    ...new Set(
-      contacts
-        .map((c) => String(c.legacy_lead_id || '').trim())
-        .filter(Boolean)
-    ),
-  ];
-  const contactIds = contacts.map((c) => c.id);
-  const CHUNK = 150;
-
-  for (let i = 0; i < legacyIds.length; i += CHUNK) {
-    const chunk = legacyIds.slice(i, i + CHUNK);
-    const { data } = await supabase
-      .from('leads')
-      .select('id, contact_id, created_at')
-      .in('id', chunk);
-    for (const lead of data || []) {
-      const ts = lead.created_at ? String(lead.created_at) : null;
-      const legacyMatches = contacts.filter(
-        (c) => String(c.legacy_lead_id || '') === String(lead.id)
-      );
-      for (const c of legacyMatches) note(c.id, ts);
-      if (lead.contact_id) note(String(lead.contact_id), ts);
-    }
-  }
-
-  for (let i = 0; i < contactIds.length; i += CHUNK) {
-    const chunk = contactIds.slice(i, i + CHUNK);
-    const { data } = await supabase
-      .from('leads')
-      .select('contact_id, created_at')
-      .in('contact_id', chunk)
-      .not('created_at', 'is', null);
-    for (const lead of data || []) {
-      if (lead.contact_id) {
-        note(String(lead.contact_id), lead.created_at ? String(lead.created_at) : null);
-      }
-    }
-  }
-
-  return contacts.map((c) => {
-    const added = earliestByContact.get(c.id);
-    if (!added || added === c.created_at) return c;
-    return { ...c, created_at: added };
-  });
-}
-
 function resolveContactDisplayName(
   input: ContactUpsertInput,
   payload: { name: string; phone: string | null; mobile: string | null },
@@ -486,9 +437,24 @@ async function resolveContactsOrganizationId(
 // Queries
 // =============================================================
 
-export async function getContacts(search?: string) {
+export type GetContactsOptions = {
+  search?: string;
+  /** Inclusive UTC ISO lower bound on contacts.created_at */
+  createdAtGte?: string | null;
+  /** Exclusive UTC ISO upper bound on contacts.created_at */
+  createdAtLt?: string | null;
+};
+
+export async function getContacts(searchOrOptions?: string | GetContactsOptions) {
   try {
     const session = ensureAuth(await getSession());
+    const options: GetContactsOptions =
+      typeof searchOrOptions === 'string'
+        ? { search: searchOrOptions }
+        : searchOrOptions || {};
+    const search = options.search;
+    const createdAtGte = String(options.createdAtGte || '').trim() || null;
+    const createdAtLt = String(options.createdAtLt || '').trim() || null;
 
     const {
       applyOrganizationFilter,
@@ -580,6 +546,15 @@ export async function getContacts(search?: string) {
             pageQuery = applyOrganizationFilter(pageQuery, organizationId);
           }
           pageQuery = pageQuery.or(CONTACTS_LIST_OR_FILTER);
+        }
+
+        // Date-range filter on the persisted contacts.created_at column
+        // (start inclusive / end exclusive — see contact-date-range helpers).
+        if (createdAtGte) {
+          pageQuery = pageQuery.gte('created_at', createdAtGte);
+        }
+        if (createdAtLt) {
+          pageQuery = pageQuery.lt('created_at', createdAtLt);
         }
 
         pageQuery = pageQuery
@@ -692,18 +667,26 @@ export async function getContacts(search?: string) {
       });
     }
 
-    // Correct "Added" dates: use earliest original lead timestamp when available
-    contacts = await applyOriginalContactAddedAt(supabase, contacts);
-    contacts.sort(
-      (a, b) =>
-        (Date.parse(b.created_at) || 0) - (Date.parse(a.created_at) || 0)
-    );
+    // Sort by actual contact.created_at (newest first). Do not overwrite with
+    // linked lead timestamps — that broke new-contact dates and newest-first order.
+    // Legacy backfill lives in migration 048 on the DB column itself.
+    contacts.sort((a, b) => {
+      const diff =
+        (Date.parse(b.created_at) || 0) - (Date.parse(a.created_at) || 0);
+      if (diff !== 0) return diff;
+      return String(b.id).localeCompare(String(a.id));
+    });
 
     // Secondary in-memory refine (DB already filtered when searchOrFilter set)
-    const needle = String(search || '').trim().toLowerCase();
-    const needleDigits = needle.replace(/\D/g, '');
-    if (needle) {
+    const rawNeedle = String(search || '').trim();
+    if (rawNeedle) {
+      const { text, leadIdToken, phoneDigits, phoneLast10 } =
+        normalizeContactsSearchToken(rawNeedle);
+      const needleLower = text.toLowerCase().replace(/^#+/, '');
       contacts = contacts.filter((c) => {
+        const leadId = String(c.lead_id_formatted || '').toLowerCase();
+        const phoneDig = String(c.phone || '').replace(/\D/g, '');
+        const mobileDig = String(c.mobile || '').replace(/\D/g, '');
         const hay = [
           c.name,
           c.email,
@@ -715,10 +698,25 @@ export async function getContacts(search?: string) {
         ]
           .map((v) => String(v || '').toLowerCase())
           .join(' ');
-        return (
-          hay.includes(needle) ||
-          (needleDigits.length >= 3 && hay.includes(needleDigits))
-        );
+
+        if (needleLower && hay.includes(needleLower)) return true;
+        if (leadIdToken && (leadId === leadIdToken || leadId.includes(leadIdToken))) {
+          return true;
+        }
+        if (phoneLast10) {
+          if (phoneDig.endsWith(phoneLast10) || mobileDig.endsWith(phoneLast10)) {
+            return true;
+          }
+          if (phoneDig.includes(phoneLast10) || mobileDig.includes(phoneLast10)) {
+            return true;
+          }
+        }
+        if (phoneDigits.length >= 3) {
+          if (phoneDig.includes(phoneDigits) || mobileDig.includes(phoneDigits)) {
+            return true;
+          }
+        }
+        return false;
       });
     }
 
@@ -795,7 +793,13 @@ export async function getContacts(search?: string) {
       children: [],
     }));
 
-    return { contacts: enriched };
+    return {
+      contacts: enriched,
+      /** Matching rows for the same search + date + access filters (all pages). */
+      totalCount: enriched.length,
+      createdAtGte,
+      createdAtLt,
+    };
   } catch (err) {
     return { error: err instanceof Error ? err.message : 'Failed to load contacts' };
   }
@@ -1336,10 +1340,13 @@ export async function createContact(input: ContactUpsertInput) {
     }
     payload.name = displayName;
 
+    const nowIso = new Date().toISOString();
     const insertRow: Record<string, unknown> = {
       ...payload,
       created_by: s.username,
-      updated_at: new Date().toISOString(),
+      // Explicit creation timestamp (UTC) — list displays Asia/Karachi via formatter.
+      created_at: nowIso,
+      updated_at: nowIso,
     };
     if (organizationId) {
       insertRow.organization_id = organizationId;
@@ -1433,9 +1440,9 @@ export async function createContact(input: ContactUpsertInput) {
       },
     ]);
 
-    // Odoo-style: silently create one CRM Opportunity in Pipeline → New.
+    // Odoo-style: create one CRM Opportunity in My Pipeline → New immediately
+    // so the card is visible as soon as the contact save returns.
     // Skip child/related contacts (parent_id set) and org-less rows.
-    // Manual CRM → New create remains unchanged.
     const autoOrgId = data.organization_id
       ? String(data.organization_id)
       : !('unscoped' in org)
@@ -1443,30 +1450,34 @@ export async function createContact(input: ContactUpsertInput) {
         : '';
     const isChildContact = Boolean(data.parent_id);
     if (autoOrgId && !isChildContact) {
-      const snapshot = {
-        contactId: String(data.id),
-        contactName: String(data.name || ''),
-        organizationId: autoOrgId,
-        email: data.email ? String(data.email) : null,
-        phone: data.phone ? String(data.phone) : null,
-        mobile: data.mobile ? String(data.mobile) : null,
-        website: data.website ? String(data.website) : null,
-        salespersonId: data.salesperson_id ? String(data.salesperson_id) : null,
-        createdBy: s.username,
-        customerLeadId: data.lead_id_formatted
-          ? String(data.lead_id_formatted)
-          : null,
-      };
-      after(async () => {
-        try {
-          const { ensureAutoOpportunityForNewContact } = await import(
-            '@/app/actions/crm/opportunities'
+      try {
+        const { ensureAutoOpportunityForNewContact } = await import(
+          '@/app/actions/crm/opportunities'
+        );
+        const autoResult = await ensureAutoOpportunityForNewContact({
+          contactId: String(data.id),
+          contactName: String(data.name || ''),
+          organizationId: autoOrgId,
+          email: data.email ? String(data.email) : null,
+          phone: data.phone ? String(data.phone) : null,
+          mobile: data.mobile ? String(data.mobile) : null,
+          website: data.website ? String(data.website) : null,
+          salespersonId: data.salesperson_id ? String(data.salesperson_id) : null,
+          createdBy: s.username,
+          customerLeadId: data.lead_id_formatted
+            ? String(data.lead_id_formatted)
+            : null,
+        });
+        if (autoResult?.error) {
+          console.error(
+            '[createContact] auto pipeline opportunity failed:',
+            autoResult.error
           );
-          await ensureAutoOpportunityForNewContact(snapshot);
-        } catch {
-          // Never block or surface errors on Contact create
         }
-      });
+      } catch (autoErr) {
+        // Never block Contact create if pipeline auto-create fails.
+        console.error('[createContact] auto pipeline opportunity error:', autoErr);
+      }
     }
 
     return { contact: data as Contact };
@@ -1950,16 +1961,23 @@ export async function searchCustomerContacts(
     }
 
     if (needle && !idQuery) {
-      const escaped = needle.replace(/[%_,.()]/g, ' ').trim();
+      const escaped = needle.replace(/[%_,.()]/g, ' ').replace(/^#+/, '').trim();
       const phoneDigits = needle.replace(/\D/g, '');
+      const phoneLast10 =
+        phoneDigits.length >= 10 ? phoneDigits.slice(-10) : phoneDigits.length >= 7 ? phoneDigits : '';
       const orParts = [
         `name.ilike.%${escaped}%`,
         `company_name.ilike.%${escaped}%`,
         `email.ilike.%${escaped}%`,
         `phone.ilike.%${escaped}%`,
+        `mobile.ilike.%${escaped}%`,
       ];
-      if (phoneDigits.length >= 3) {
+      if (phoneLast10) {
+        orParts.push(`phone.ilike.%${phoneLast10}%`);
+        orParts.push(`mobile.ilike.%${phoneLast10}%`);
+      } else if (phoneDigits.length >= 3) {
         orParts.push(`phone.ilike.%${phoneDigits}%`);
+        orParts.push(`mobile.ilike.%${phoneDigits}%`);
       }
       const columnOk = await isContactLeadIdColumnAvailable(supabase);
       if (columnOk && idTokens.length) {

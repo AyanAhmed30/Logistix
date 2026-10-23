@@ -59,6 +59,7 @@ const LIST_SELECT = `
     status,
     created_at,
     submitted_by,
+    submitted_by_role,
     reviewed_by,
     reviewed_at
   )
@@ -120,6 +121,7 @@ const DETAIL_SELECT = `
     operations_additional_image_urls,
     calculator_values,
     submitted_by,
+    submitted_by_role,
     reviewed_by,
     reviewed_at,
     rejection_reason
@@ -135,7 +137,12 @@ const DETAIL_SELECT = `
 `;
 
 export type InquiryActivityEvent = {
-  key: 'sales_submitted' | 'ops_submitted' | 'admin_approved' | 'admin_rejected';
+  key:
+    | 'sales_submitted'
+    | 'ops_submitted'
+    | 'admin_calculated'
+    | 'admin_approved'
+    | 'admin_rejected';
   label: string;
   at: string;
   actor: string | null;
@@ -259,6 +266,7 @@ function confirmationsFromRow(row: Record<string, unknown>): Array<{
   status?: string;
   created_at?: string;
   submitted_by?: string | null;
+  submitted_by_role?: string | null;
   reviewed_by?: string | null;
   reviewed_at?: string | null;
 }> {
@@ -269,10 +277,15 @@ function confirmationsFromRow(row: Record<string, unknown>): Array<{
         status?: string;
         created_at?: string;
         submitted_by?: string | null;
+        submitted_by_role?: string | null;
         reviewed_by?: string | null;
         reviewed_at?: string | null;
       }>)
     : [];
+}
+
+function isAdminCalculationSubmitter(role: string | null | undefined): boolean {
+  return String(role || '').trim().toLowerCase() === 'admin';
 }
 
 type InquiryLogRow = {
@@ -331,6 +344,7 @@ function buildInquiryActivityTimeline(
         actor: actor || salesActor,
       });
     } else if (action === 'send_for_confirmation') {
+      // Prefer confirmation row role when available; logs alone stay Operations for legacy.
       put({
         key: 'ops_submitted',
         label: 'Operations submitted inquiry to Admin',
@@ -340,14 +354,14 @@ function buildInquiryActivityTimeline(
     } else if (action === 'admin_approved') {
       put({
         key: 'admin_approved',
-        label: 'Admin approved',
+        label: 'Approved by Admin',
         at,
         actor,
       });
     } else if (action === 'admin_rejected') {
       put({
         key: 'admin_rejected',
-        label: 'Admin rejected',
+        label: 'Rejected by Admin',
         at,
         actor,
       });
@@ -365,19 +379,30 @@ function buildInquiryActivityTimeline(
   }
 
   const confirmations = confirmationsFromRow(row);
-  const opsSubmit = [...confirmations]
+  const calcSubmit = [...confirmations]
     .filter((c) => c.created_at)
     .sort(
       (a, b) =>
         Date.parse(String(a.created_at)) - Date.parse(String(b.created_at))
     )[0];
-  if (opsSubmit?.created_at) {
-    put({
-      key: 'ops_submitted',
-      label: 'Operations submitted inquiry to Admin',
-      at: String(opsSubmit.created_at),
-      actor: opsSubmit.submitted_by ? String(opsSubmit.submitted_by) : null,
-    });
+  if (calcSubmit?.created_at) {
+    if (isAdminCalculationSubmitter(calcSubmit.submitted_by_role)) {
+      put({
+        key: 'admin_calculated',
+        label: 'Calculated by Admin',
+        at: String(calcSubmit.created_at),
+        actor: calcSubmit.submitted_by ? String(calcSubmit.submitted_by) : null,
+      });
+      // Remove legacy ops_submitted if it was set from a generic log for the same admin submit.
+      byKey.delete('ops_submitted');
+    } else {
+      put({
+        key: 'ops_submitted',
+        label: 'Operations submitted inquiry to Admin',
+        at: String(calcSubmit.created_at),
+        actor: calcSubmit.submitted_by ? String(calcSubmit.submitted_by) : null,
+      });
+    }
   }
 
   const reviewed = [...confirmations]
@@ -390,17 +415,25 @@ function buildInquiryActivityTimeline(
         Date.parse(String(b.reviewed_at)) - Date.parse(String(a.reviewed_at))
     )[0];
 
+  const calculatedByAdmin = confirmations.some((c) =>
+    isAdminCalculationSubmitter(c.submitted_by_role)
+  );
+
   if (reviewed?.reviewed_at && reviewed.status === 'approved') {
     put({
       key: 'admin_approved',
-      label: 'Admin approved',
+      label: calculatedByAdmin
+        ? 'Approved by Admin — Calculated by Admin'
+        : 'Approved by Admin',
       at: String(reviewed.reviewed_at),
       actor: reviewed.reviewed_by ? String(reviewed.reviewed_by) : null,
     });
   } else if (reviewed?.reviewed_at && reviewed.status === 'rejected') {
     put({
       key: 'admin_rejected',
-      label: 'Admin rejected',
+      label: calculatedByAdmin
+        ? 'Rejected by Admin — Calculated by Admin'
+        : 'Rejected by Admin',
       at: String(reviewed.reviewed_at),
       actor: reviewed.reviewed_by ? String(reviewed.reviewed_by) : null,
     });
@@ -410,7 +443,9 @@ function buildInquiryActivityTimeline(
   ) {
     put({
       key: 'admin_approved',
-      label: 'Admin approved',
+      label: calculatedByAdmin
+        ? 'Approved by Admin — Calculated by Admin'
+        : 'Approved by Admin',
       at: String(row.approved_at),
       actor: null,
     });
@@ -425,17 +460,35 @@ function buildInquiryActivityTimeline(
     if (rejectedConf?.reviewed_at) {
       put({
         key: 'admin_rejected',
-        label: 'Admin rejected',
+        label: calculatedByAdmin
+          ? 'Rejected by Admin — Calculated by Admin'
+          : 'Rejected by Admin',
         at: String(rejectedConf.reviewed_at),
         actor: rejectedConf.reviewed_by
           ? String(rejectedConf.reviewed_by)
           : null,
       });
     }
+  } else if (String(row.approval_status || '') === 'calculated_by_admin') {
+    const adminCalc = [...confirmations]
+      .filter((c) => isAdminCalculationSubmitter(c.submitted_by_role) && c.created_at)
+      .sort(
+        (a, b) =>
+          Date.parse(String(b.created_at)) - Date.parse(String(a.created_at))
+      )[0];
+    if (adminCalc?.created_at) {
+      put({
+        key: 'admin_calculated',
+        label: 'Calculated by Admin',
+        at: String(adminCalc.created_at),
+        actor: adminCalc.submitted_by ? String(adminCalc.submitted_by) : null,
+      });
+    }
   }
 
   const order: InquiryActivityEvent['key'][] = [
     'sales_submitted',
+    'admin_calculated',
     'ops_submitted',
     'admin_approved',
     'admin_rejected',

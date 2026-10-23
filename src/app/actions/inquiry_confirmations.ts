@@ -2,8 +2,16 @@
 
 import { createAdminClient } from '@/utils/supabase/server';
 import { getSession } from '@/lib/auth/session';
-import { sessionHasOperationsAccess, isSalesPortalActor, requireChildModule } from '@/lib/auth/require-access';
+import {
+  sessionHasOperationsAccess,
+  isSalesPortalActor,
+  isOperationsPortalActor,
+  requireChildModule,
+} from '@/lib/auth/require-access';
+import { canAccessAdminDashboard } from '@/lib/auth/portal-access';
+import { isSuperAdminSession } from '@/lib/auth/super-admin';
 import { revalidatePath } from 'next/cache';
+import type { CalculationSubmitterRole } from '@/lib/inquiry-workflow';
 import {
   buildApprovedInquiryPricing,
   coerceCalculatorRaw,
@@ -54,6 +62,8 @@ export type InquiryConfirmation = {
   rejection_reason?: string | null;
   status: ConfirmationStatus;
   submitted_by: string;
+  /** Who performed the calculation submission — persisted, not inferred later. */
+  submitted_by_role?: CalculationSubmitterRole | null;
   reviewed_by: string | null;
   reviewed_at: string | null;
   created_at: string;
@@ -86,6 +96,7 @@ export type InquiryConfirmationListItem = {
   quantity: string;
   status: ConfirmationStatus;
   submitted_by: string;
+  submitted_by_role?: CalculationSubmitterRole | null;
   created_at: string;
   leads: {
     name: string;
@@ -102,6 +113,7 @@ const ADMIN_CONFIRMATION_LIST_SELECT = `
   quantity,
   status,
   submitted_by,
+  submitted_by_role,
   created_at,
   leads (
     name,
@@ -205,6 +217,10 @@ function normalizeAdminConfirmationListRow(row: Record<string, unknown>): Inquir
     ? (rawLead.sales_agents[0] as Record<string, unknown> | undefined)
     : (rawLead?.sales_agents as Record<string, unknown> | undefined);
 
+  const roleRaw = String(row.submitted_by_role || '').trim().toLowerCase();
+  const submittedByRole: CalculationSubmitterRole | null =
+    roleRaw === 'admin' || roleRaw === 'operations' ? roleRaw : null;
+
   return {
     id: String(row.id || ''),
     lead_number: String(row.lead_number || ''),
@@ -214,6 +230,7 @@ function normalizeAdminConfirmationListRow(row: Record<string, unknown>): Inquir
     quantity: String(row.quantity || ''),
     status: (row.status as ConfirmationStatus) || 'pending',
     submitted_by: String(row.submitted_by || ''),
+    submitted_by_role: submittedByRole,
     created_at: String(row.created_at || ''),
     leads: rawLead
       ? {
@@ -224,6 +241,25 @@ function normalizeAdminConfirmationListRow(row: Record<string, unknown>): Inquir
         }
       : null,
   };
+}
+
+function resolveCalculationSubmitterRole(
+  session: NonNullable<Awaited<ReturnType<typeof getSession>>>
+): CalculationSubmitterRole {
+  // Pure Operations actors stay operations even if they can open admin modules.
+  if (isOperationsPortalActor(session) && !isSuperAdminSession(session)) {
+    return 'operations';
+  }
+  if (isSuperAdminSession(session) || canAccessAdminDashboard(session)) {
+    return 'admin';
+  }
+  return 'operations';
+}
+
+function canSubmitInquiryCalculation(
+  session: NonNullable<Awaited<ReturnType<typeof getSession>>>
+): boolean {
+  return sessionHasOperationsAccess(session) || canAccessAdminDashboard(session);
 }
 
 // ─── Fetch inquiry details by 6-digit lead number ───────────────────
@@ -311,12 +347,27 @@ export async function submitInquiryForConfirmation(data: {
   operations_additional_image_urls?: string[] | null;
   additional_image_1_url?: string | null;
   additional_image_2_url?: string | null;
+  /**
+   * When true, record calculation as Admin-direct (Admin Dashboard → Lead Inquiry).
+   * Caller must be Super Admin / admin-dashboard actor.
+   */
+  asAdminCalculator?: boolean;
 }) {
   try {
     const session = await getSession();
-    if (!session || !sessionHasOperationsAccess(session)) {
+    if (!session || !canSubmitInquiryCalculation(session)) {
       return { error: 'Unauthorized' };
     }
+
+    let submitterRole = resolveCalculationSubmitterRole(session);
+    if (data.asAdminCalculator) {
+      if (!isSuperAdminSession(session) && !canAccessAdminDashboard(session)) {
+        return { error: 'Unauthorized' };
+      }
+      submitterRole = 'admin';
+    }
+    const performedBy =
+      session.username || (submitterRole === 'admin' ? 'admin' : 'operations');
 
     if (!data.product_name.trim()) {
       return { error: 'Product Name is required.' };
@@ -377,33 +428,47 @@ export async function submitInquiryForConfirmation(data: {
       additional_image_1_url: operationsImageUrls[0] || null,
       additional_image_2_url: operationsImageUrls[1] || null,
       status: 'pending' as const,
-      submitted_by: session.username || 'admin',
+      submitted_by: performedBy,
+      submitted_by_role: submitterRole,
     };
 
     let result: InquiryConfirmation | null = null;
     let error: { message: string } | null = null;
 
+    const insertWithAttachments = (base: Record<string, unknown>) =>
+      supabase
+        .from('inquiry_confirmations')
+        .insert([{
+          ...base,
+          calculator_values: data.calculator_values || {},
+          operations_additional_image_urls: operationsImageUrls,
+        }])
+        .select()
+        .single();
+
     ({
       data: result,
       error,
-    } = await supabase
-      .from('inquiry_confirmations')
-      .insert([{
-        ...insertBase,
-        calculator_values: data.calculator_values || {},
-        operations_additional_image_urls: operationsImageUrls,
-      }])
-      .select()
-      .single());
+    } = await insertWithAttachments(insertBase));
+
+    // Migration 049 may not be applied yet — retry without submitted_by_role.
+    if (error && isMissingColumnError(error.message, 'submitted_by_role')) {
+      const { submitted_by_role: _role, ...withoutRole } = insertBase;
+      ({
+        data: result,
+        error,
+      } = await insertWithAttachments(withoutRole));
+    }
 
     if (error && isMissingColumnError(error.message, 'operations_additional_image_urls')) {
+      const baseForFallback = { ...insertBase };
       ({
         data: result,
         error,
       } = await supabase
         .from('inquiry_confirmations')
         .insert([{
-          ...insertBase,
+          ...baseForFallback,
           calculator_values: withOperationsAttachmentUrls(
             data.calculator_values || {},
             operationsImageUrls
@@ -411,6 +476,24 @@ export async function submitInquiryForConfirmation(data: {
         }])
         .select()
         .single());
+
+      if (error && isMissingColumnError(error.message, 'submitted_by_role')) {
+        const { submitted_by_role: _role, ...withoutRole } = baseForFallback;
+        ({
+          data: result,
+          error,
+        } = await supabase
+          .from('inquiry_confirmations')
+          .insert([{
+            ...withoutRole,
+            calculator_values: withOperationsAttachmentUrls(
+              data.calculator_values || {},
+              operationsImageUrls
+            ),
+          }])
+          .select()
+          .single());
+      }
     }
 
     if (error || !result) {
@@ -453,7 +536,7 @@ export async function submitInquiryForConfirmation(data: {
         action: 'lead_management_form_updated',
         previous_values: previousValues,
         new_values: newValues,
-        performed_by: session.username || 'operations',
+        performed_by: performedBy,
       }]);
     }
 
@@ -466,7 +549,7 @@ export async function submitInquiryForConfirmation(data: {
         new_values: {
           operations_attachments: `${operationsImageUrls.length} file(s)`,
         },
-        performed_by: session.username || 'operations',
+        performed_by: performedBy,
       }]);
     }
 
@@ -477,13 +560,16 @@ export async function submitInquiryForConfirmation(data: {
       new_values: {
         confirmation_id: result.id,
         status: 'pending',
+        submitted_by_role: submitterRole,
       },
-      performed_by: session.username || 'operations',
+      performed_by: performedBy,
     }]);
 
+    const nextApprovalStatus =
+      submitterRole === 'admin' ? 'calculated_by_admin' : 'sent_to_admin';
     const inquiryWorkflowUpdate: Record<string, unknown> = {
       calculator_values: data.calculator_values || {},
-      approval_status: 'sent_to_admin',
+      approval_status: nextApprovalStatus,
       updated_at: new Date().toISOString(),
     };
     const { error: inquiryWorkflowError } = await supabase
@@ -492,11 +578,31 @@ export async function submitInquiryForConfirmation(data: {
       .eq('id', data.inquiry_id);
     if (
       inquiryWorkflowError &&
-      /approval_status|check constraint|sent_to_admin/i.test(inquiryWorkflowError.message)
+      /approval_status|check constraint|calculated_by_admin|sent_to_admin/i.test(
+        inquiryWorkflowError.message
+      )
     ) {
-      const withoutStatus = { ...inquiryWorkflowUpdate };
-      delete withoutStatus.approval_status;
-      await supabase.from('lead_inquiries').update(withoutStatus).eq('id', data.inquiry_id);
+      // Fall back to sent_to_admin if calculated_by_admin constraint not applied yet.
+      if (nextApprovalStatus === 'calculated_by_admin') {
+        const fallbackUpdate = {
+          ...inquiryWorkflowUpdate,
+          approval_status: 'sent_to_admin',
+        };
+        const { error: fallbackError } = await supabase
+          .from('lead_inquiries')
+          .update(fallbackUpdate)
+          .eq('id', data.inquiry_id);
+        if (
+          fallbackError &&
+          /approval_status|check constraint|sent_to_admin/i.test(fallbackError.message)
+        ) {
+          const { approval_status: _status, ...withoutStatus } = fallbackUpdate;
+          await supabase.from('lead_inquiries').update(withoutStatus).eq('id', data.inquiry_id);
+        }
+      } else {
+        const { approval_status: _status, ...withoutStatus } = inquiryWorkflowUpdate;
+        await supabase.from('lead_inquiries').update(withoutStatus).eq('id', data.inquiry_id);
+      }
     }
 
     try {
@@ -506,13 +612,15 @@ export async function submitInquiryForConfirmation(data: {
       ]);
       const leadNumber = leadContext.leadNumber || data.lead_number;
       const summary = (data.product_name || '').trim();
+      // Admin-direct submits still notify inquiry-confirmation recipients (other admins).
+      // Operations submits notify admins as before.
       await insertLifecycleNotifications(supabase, {
         eventType: 'sent_for_admin_approval',
         leadId: data.lead_id,
         inquiryId: data.inquiry_id,
         confirmationId: result.id,
-        senderRole: 'operations',
-        senderUsername: session.username || 'operations',
+        senderRole: submitterRole === 'admin' ? 'admin' : 'operations',
+        senderUsername: performedBy,
         recipients: adminRecipients,
         message: summary
           ? `${summary} is awaiting rate approval.`
@@ -525,6 +633,7 @@ export async function submitInquiryForConfirmation(data: {
           customerName: leadContext.customerName,
           salesAgent: leadContext.salesAgentName,
           summary,
+          submittedByRole: submitterRole,
         },
       });
     } catch {
@@ -552,10 +661,30 @@ export async function getAllInquiryConfirmations() {
 
     const supabase = await createAdminClient();
 
-    const { data, error } = await supabase
-      .from('inquiry_confirmations')
-      .select(ADMIN_CONFIRMATION_LIST_SELECT)
-      .order('created_at', { ascending: false });
+    let data: unknown[] | null = null;
+    let error: { message: string } | null = null;
+
+    {
+      const primary = await supabase
+        .from('inquiry_confirmations')
+        .select(ADMIN_CONFIRMATION_LIST_SELECT)
+        .order('created_at', { ascending: false });
+      data = (primary.data as unknown[] | null) || null;
+      error = primary.error;
+    }
+
+    if (error && isMissingColumnError(error.message, 'submitted_by_role')) {
+      const fallbackSelect = ADMIN_CONFIRMATION_LIST_SELECT.replace(
+        /\s*submitted_by_role,\s*/,
+        '\n  '
+      );
+      const fallback = await supabase
+        .from('inquiry_confirmations')
+        .select(fallbackSelect)
+        .order('created_at', { ascending: false });
+      data = (fallback.data as unknown[] | null) || null;
+      error = fallback.error;
+    }
 
     if (error) return { error: error.message };
 

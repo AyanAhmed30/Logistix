@@ -39,6 +39,12 @@ import {
 import { useAdminOrganization } from "@/contexts/AdminOrganizationContext";
 import { ModuleLoadingOverlay } from "@/components/ui/ModuleLoadingOverlay";
 import { useDebouncedValue } from "@/hooks/useDebouncedValue";
+import { ContactDateRangeFilter } from "@/components/admin/contacts/ContactDateRangeFilter";
+import {
+  formatContactDateRangeLabel,
+  toContactDateRangeQuery,
+  type ContactDateRangeValue,
+} from "@/lib/contact-date-range";
 
 type Props = {
   onNewContact: () => void;
@@ -87,19 +93,32 @@ export function ContactsListView({
   const [contacts, setContacts] = useState<ContactWithRelations[]>(initialContacts);
   const [search, setSearch] = useState("");
   const debouncedSearch = useDebouncedValue(search, 250);
+  const [dateRange, setDateRange] = useState<ContactDateRangeValue | null>(null);
   const [typeFilter, setTypeFilter] = useState<TypeFilter>("all");
   const [sourceFilter, setSourceFilter] = useState<SourceFilter>("all");
   const [loading, setLoading] = useState(initialContacts.length === 0);
   const [page, setPage] = useState(1);
 
+  const dateQuery = useMemo(
+    () => (dateRange ? toContactDateRangeQuery(dateRange) : null),
+    [dateRange]
+  );
+
   useEffect(() => {
     let cancelled = false;
     const needle = debouncedSearch.trim();
-    const key = `${switchVersion}:${refreshToken}`;
 
-    // Empty search: use list cache. Active search: always hit Supabase via getContacts(search).
-    if (!needle) {
-      const existing = peekContactsClientCache(key);
+    const fetchOptions = {
+      search: needle || undefined,
+      createdAtGte: dateQuery?.createdAtGte ?? null,
+      createdAtLt: dateQuery?.createdAtLt ?? null,
+    };
+
+    // Undated empty search: reuse list cache. Date filter / search always hits API.
+    const canUseUndatedCache = !needle && !dateQuery;
+    if (canUseUndatedCache) {
+      const cacheKey = `${switchVersion}:${refreshToken}`;
+      const existing = peekContactsClientCache(cacheKey);
       const hasCache =
         existing && "contacts" in existing && Array.isArray(existing.contacts);
 
@@ -111,7 +130,7 @@ export function ContactsListView({
         setLoading(true);
       }
 
-      getCachedContactsList(key, () => getContacts(), { force: !hasCache }).then(
+      getCachedContactsList(cacheKey, () => getContacts(), { force: !hasCache }).then(
         (res) => {
           if (cancelled) return;
           if ("error" in res && res.error) {
@@ -126,7 +145,7 @@ export function ContactsListView({
       );
     } else {
       setLoading(true);
-      void getContacts(needle).then((res) => {
+      void getContacts(fetchOptions).then((res) => {
         if (cancelled) return;
         if ("error" in res && res.error) {
           toast.error(res.error);
@@ -142,10 +161,10 @@ export function ContactsListView({
     return () => {
       cancelled = true;
     };
-  }, [refreshToken, switchVersion, onListLoaded, debouncedSearch]);
+  }, [refreshToken, switchVersion, onListLoaded, debouncedSearch, dateQuery]);
 
   const filtered = useMemo(() => {
-    // Name / phone / Customer ID search is DB-backed (debouncedSearch → getContacts).
+    // Name / phone / Customer ID search + date range are DB-backed.
     // Keep only type / source filters client-side.
     return contacts.filter((c) => {
       if (typeFilter !== "all" && c.company_type !== typeFilter) return false;
@@ -207,6 +226,14 @@ export function ContactsListView({
             className="pl-9 h-9 bg-slate-50 border-slate-200"
           />
         </div>
+
+        <ContactDateRangeFilter
+          value={dateRange}
+          onChange={(next) => {
+            setDateRange(next);
+            setPage(1);
+          }}
+        />
 
         <div className="flex items-center gap-2">
           <Filter className="h-4 w-4 text-secondary-muted shrink-0" aria-hidden />
@@ -277,6 +304,23 @@ export function ContactsListView({
         </div>
       </div>
 
+      {dateRange ? (
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 rounded-md border border-violet-100 bg-violet-50/70 px-3 py-2 text-sm">
+          <span className="font-semibold text-violet-900">
+            {formatContactDateRangeLabel(dateRange)}
+          </span>
+          <span className="text-violet-800">
+            Total Contacts:{" "}
+            <span className="font-semibold tabular-nums">{filtered.length}</span>
+          </span>
+          {debouncedSearch.trim() ? (
+            <span className="text-xs text-violet-700/80">
+              (with search “{debouncedSearch.trim()}”)
+            </span>
+          ) : null}
+        </div>
+      ) : null}
+
       {/* Table */}
       <div className="bg-white border rounded-lg overflow-hidden">
         <Table>
@@ -306,11 +350,21 @@ export function ContactsListView({
                 <TableCell colSpan={6} className="py-16 text-center">
                   <div className="flex flex-col items-center gap-2 text-secondary-muted">
                     <UserRound className="h-10 w-10 text-slate-300" />
-                    <p className="text-sm font-medium">No contacts yet</p>
+                    <p className="text-sm font-medium">
+                      {dateRange || debouncedSearch.trim()
+                        ? "No contacts match these filters"
+                        : "No contacts yet"}
+                    </p>
                     <p className="text-xs">
-                      Click the{" "}
-                      <span className="font-semibold text-violet-600">New</span> button to
-                      create your first contact.
+                      {dateRange || debouncedSearch.trim() ? (
+                        <>Try clearing the date range or search, or adjust filters.</>
+                      ) : (
+                        <>
+                          Click the{" "}
+                          <span className="font-semibold text-violet-600">New</span> button
+                          to create your first contact.
+                        </>
+                      )}
                     </p>
                   </div>
                 </TableCell>

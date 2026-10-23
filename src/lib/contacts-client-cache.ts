@@ -5,7 +5,12 @@
 import type { ContactWithRelations } from '@/app/actions/contacts';
 
 type ContactsListResult =
-  | { contacts: ContactWithRelations[] }
+  | {
+      contacts: ContactWithRelations[];
+      totalCount?: number;
+      createdAtGte?: string | null;
+      createdAtLt?: string | null;
+    }
   | { error: string };
 
 type CacheEntry = {

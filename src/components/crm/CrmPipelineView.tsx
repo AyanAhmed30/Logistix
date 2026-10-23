@@ -1,8 +1,10 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState, useTransition } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { toast } from "sonner";
+import { useDebouncedValue } from "@/hooks/useDebouncedValue";
+import { useCrmShell } from "@/components/crm/CrmShell";
 import {
   DndContext,
   DragOverlay,
@@ -342,11 +344,13 @@ export function CrmPipelineView() {
   const searchParams = useSearchParams();
   const contactIdFilter = searchParams.get("contactId");
   const { switchVersion } = useAdminOrganization();
+  const { setSearchBusy } = useCrmShell();
   const [stages, setStages] = useState<CrmPipelineStage[]>([]);
   const [opportunities, setOpportunities] = useState<CrmOpportunityCard[]>([]);
   const [salespersons, setSalespersons] = useState<SalespersonOption[]>([]);
   const [currentSalespersonId, setCurrentSalespersonId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [hasLoadedOnce, setHasLoadedOnce] = useState(false);
   const [orgError, setOrgError] = useState<string | null>(null);
   const [isGlobalAdminView, setIsGlobalAdminView] = useState(false);
   const [activeId, setActiveId] = useState<string | null>(null);
@@ -360,8 +364,10 @@ export function CrmPipelineView() {
     previous: CrmOpportunityCard[];
   } | null>(null);
   const [, startTransition] = useTransition();
+  const loadRequestIdRef = useRef(0);
 
   const [search, setSearch] = useState("");
+  const debouncedSearch = useDebouncedValue(search, 300);
   const [stageFilter, setStageFilter] = useState<string>("all");
   const [salespersonFilter, setSalespersonFilter] = useState<string>("all");
   const [sortBy, setSortBy] = useState<"created_at" | "expected_revenue">(() => {
@@ -373,26 +379,31 @@ export function CrmPipelineView() {
     return prefs.pipelineSortDir || "desc";
   });
 
+  const searchPending =
+    search.trim() !== debouncedSearch.trim();
+
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } })
   );
 
   const filters: CrmPipelineBoardFilters = useMemo(
     () => ({
-      search: search.trim() || undefined,
+      search: debouncedSearch.trim() || undefined,
       stageId: stageFilter !== "all" ? stageFilter : undefined,
       salespersonId: salespersonFilter !== "all" ? salespersonFilter : undefined,
       contactId: contactIdFilter || undefined,
       sortBy,
       sortDir,
     }),
-    [search, stageFilter, salespersonFilter, contactIdFilter, sortBy, sortDir]
+    [debouncedSearch, stageFilter, salespersonFilter, contactIdFilter, sortBy, sortDir]
   );
 
   const loadBoard = useCallback(async () => {
+    const requestId = ++loadRequestIdRef.current;
     setLoading(true);
     setOrgError(null);
     const result = await getCrmPipelineBoard(filters);
+    if (requestId !== loadRequestIdRef.current) return;
     if ("error" in result && result.error && !("stages" in result && result.stages?.length)) {
       toast.error(result.error);
       setOrgError(result.error);
@@ -408,6 +419,7 @@ export function CrmPipelineView() {
       setOpportunities(result.opportunities || []);
     }
     setIsGlobalAdminView(Boolean("isGlobalAdminView" in result && result.isGlobalAdminView));
+    setHasLoadedOnce(true);
     setLoading(false);
   }, [filters]);
 
@@ -415,6 +427,21 @@ export function CrmPipelineView() {
     setQuickCreateStageId(null);
     void loadBoard();
   }, [loadBoard, switchVersion]);
+
+  useEffect(() => {
+    const hasSearch = Boolean(search.trim() || debouncedSearch.trim());
+    const busy =
+      searchPending || (loading && hasLoadedOnce && hasSearch);
+    setSearchBusy(busy);
+    return () => setSearchBusy(false);
+  }, [
+    searchPending,
+    loading,
+    hasLoadedOnce,
+    search,
+    debouncedSearch,
+    setSearchBusy,
+  ]);
 
   useEffect(() => {
     function onControlSearch(e: Event) {
@@ -692,57 +719,79 @@ export function CrmPipelineView() {
         </Button>
       </div>
 
-      {loading ? (
-        <CrmKanbanSkeleton />
-      ) : stages.length === 0 ? (
-        <CrmEmptyState
-          title="No stages configured"
-          description="Open Stages to set up your pipeline and start tracking opportunities."
-        />
-      ) : (
-        <DndContext
-          sensors={sensors}
-          collisionDetection={closestCorners}
-          onDragStart={handleDragStart}
-          onDragEnd={handleDragEnd}
-        >
-          <div className="flex gap-4 overflow-x-auto pb-4">
-            {stages.map((stage) => (
-              <StageColumn
-                key={stage.id}
-                stage={stage}
-                opportunities={opportunities}
-                onOpenOpportunity={(id) => router.push(`/crm/opportunities/${id}`)}
-                onSendInquiry={(id, tab, inquiryId) => {
-                  if (sendingInquiryId) return;
-                  setSendingInquiryId(id);
-                  router.push(crmOpportunityInquiryUrl(id, tab || "create", inquiryId));
-                }}
-                sendingInquiryId={sendingInquiryId}
-                onToggleFold={handleToggleFold}
-                isGlobalAdminView={isGlobalAdminView}
-                quickCreateOpen={quickCreateStageId === stage.id}
-                onQuickCreateOpen={() => setQuickCreateStageId(stage.id)}
-                onQuickCreateClose={() => setQuickCreateStageId(null)}
-                onQuickCreateSuccess={handleQuickCreateSuccess}
-                salespersons={salespersons}
-                defaultSalespersonId={currentSalespersonId}
-              />
-            ))}
+      <div className="relative min-h-[240px]">
+        {(searchPending || (loading && hasLoadedOnce)) && !sendingInquiryId ? (
+          <div
+            className="absolute inset-0 z-20 flex items-start justify-center pt-16 bg-white/55 pointer-events-none"
+            role="status"
+            aria-live="polite"
+            aria-busy="true"
+          >
+            <div className="flex items-center gap-2 rounded-sm border border-slate-200 bg-white px-3 py-2 shadow-sm">
+              <Loader2 className="h-4 w-4 animate-spin text-[#017e84]" aria-hidden />
+              <span className="text-sm font-medium text-primary-dark">
+                {search.trim() || debouncedSearch.trim() ? "Searching…" : "Loading…"}
+              </span>
+            </div>
           </div>
-          <DragOverlay>
-            {activeOpportunity ? (
-              <div className="w-[300px] opacity-90 rotate-2">
-                <OpportunityCard
-                  opportunity={activeOpportunity}
-                  onOpen={() => {}}
-                  onSendInquiry={() => {}}
+        ) : null}
+
+        {loading && !hasLoadedOnce ? (
+          <CrmKanbanSkeleton />
+        ) : stages.length === 0 ? (
+          <CrmEmptyState
+            title="No stages configured"
+            description="Open Stages to set up your pipeline and start tracking opportunities."
+          />
+        ) : (
+          <DndContext
+            sensors={sensors}
+            collisionDetection={closestCorners}
+            onDragStart={handleDragStart}
+            onDragEnd={handleDragEnd}
+          >
+            <div
+              className={`flex gap-4 overflow-x-auto pb-4 transition-opacity ${
+                searchPending || (loading && hasLoadedOnce) ? "opacity-50" : ""
+              }`}
+            >
+              {stages.map((stage) => (
+                <StageColumn
+                  key={stage.id}
+                  stage={stage}
+                  opportunities={opportunities}
+                  onOpenOpportunity={(id) => router.push(`/crm/opportunities/${id}`)}
+                  onSendInquiry={(id, tab, inquiryId) => {
+                    if (sendingInquiryId) return;
+                    setSendingInquiryId(id);
+                    router.push(crmOpportunityInquiryUrl(id, tab || "create", inquiryId));
+                  }}
+                  sendingInquiryId={sendingInquiryId}
+                  onToggleFold={handleToggleFold}
+                  isGlobalAdminView={isGlobalAdminView}
+                  quickCreateOpen={quickCreateStageId === stage.id}
+                  onQuickCreateOpen={() => setQuickCreateStageId(stage.id)}
+                  onQuickCreateClose={() => setQuickCreateStageId(null)}
+                  onQuickCreateSuccess={handleQuickCreateSuccess}
+                  salespersons={salespersons}
+                  defaultSalespersonId={currentSalespersonId}
                 />
-              </div>
-            ) : null}
-          </DragOverlay>
-        </DndContext>
-      )}
+              ))}
+            </div>
+            <DragOverlay>
+              {activeOpportunity ? (
+                <div className="w-[300px] opacity-90 rotate-2">
+                  <OpportunityCard
+                    opportunity={activeOpportunity}
+                    onOpen={() => {}}
+                    onSendInquiry={() => {}}
+                  />
+                </div>
+              ) : null}
+            </DragOverlay>
+          </DndContext>
+        )}
+      </div>
 
       <CrmStageManagerDialog
         open={stageManagerOpen}

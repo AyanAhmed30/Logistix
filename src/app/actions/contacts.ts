@@ -445,6 +445,431 @@ export type GetContactsOptions = {
   createdAtLt?: string | null;
 };
 
+type ContactsListScope = {
+  organizationId: string | null;
+  agentIdForOwnership: string | null;
+  createdByFallback: string | null;
+};
+
+/**
+ * Who may see which contacts in the list (ownership + active organization).
+ * Returns `empty` when nothing can be shown (no org and no ownership scope).
+ */
+async function resolveContactsListScope(
+  session: { role: string; username: string }
+): Promise<ContactsListScope | { empty: true } | { error: string }> {
+  const {
+    resolveSalesAccessRole,
+    salesRoleSeesAllOrgRecords,
+  } = await import('@/lib/sales-roles');
+  const { resolveCurrentSalespersonId } = await import(
+    '@/app/actions/sales/automation'
+  );
+
+  // Contact Module ownership: if the login maps to sales_agents, always scope
+  // by salesperson_id so UI totals match the DB ownership query (e.g. muneeba 2071).
+  // Sales administrators still see the full org list. Do not OR created_by.
+  const { isSuperAdminSession } = await import('@/lib/auth/super-admin');
+  const salesRole = resolveSalesAccessRole(session as never);
+  const ownsDocumentsOnly = Boolean(salesRole && !salesRoleSeesAllOrgRecords(salesRole));
+  const isSalesAdministrator =
+    salesRole === 'administrator' || isSuperAdminSession(session as never);
+
+  // Salesperson lookup and organization scope are independent — resolve in parallel.
+  const [agentId, org] = await Promise.all([
+    isSalesAdministrator ? Promise.resolve(null) : resolveCurrentSalespersonId(),
+    resolveContactsOrganizationId(session),
+  ]);
+
+  const agentIdForOwnership: string | null = agentId;
+  let createdByFallback: string | null = null;
+  if (!isSalesAdministrator && !agentIdForOwnership && ownsDocumentsOnly) {
+    const username = String(session.username || '').trim();
+    if (username) createdByFallback = username;
+  }
+
+  if ('error' in org) return { error: org.error };
+
+  // Header "No organizations" → empty unless we can scope by salesperson / created_by.
+  if ('empty' in org && !agentIdForOwnership && !createdByFallback) {
+    return { empty: true };
+  }
+
+  return {
+    organizationId: 'unscoped' in org || 'empty' in org ? null : org.organizationId,
+    agentIdForOwnership,
+    createdByFallback,
+  };
+}
+
+/** Apply ownership / organization / search / date filters for the Contacts list. */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function applyContactsListFilters<Q extends { eq: any; or: any; gte: any; lt: any }>(
+  query: Q,
+  scope: ContactsListScope,
+  searchOrFilter: string | null,
+  dates: { createdAtGte: string | null; createdAtLt: string | null },
+  applyOrganizationFilter: (q: Q, organizationId: string | null) => Q
+): Q {
+  const { organizationId, agentIdForOwnership, createdByFallback } = scope;
+  let pageQuery = query;
+
+  // Active search: org-wide DB lookup (name / Customer ID / phone) so agents
+  // can locate an existing customer after a duplicate warning. Empty browse
+  // stays ownership-scoped for sales agents. Without an org, keep ownership.
+  if (searchOrFilter) {
+    if (organizationId) {
+      pageQuery = applyOrganizationFilter(pageQuery, organizationId);
+      pageQuery = pageQuery.or(searchOrFilter);
+    } else if (agentIdForOwnership) {
+      pageQuery = pageQuery
+        .eq('salesperson_id', agentIdForOwnership)
+        .or(searchOrFilter);
+    } else if (createdByFallback) {
+      pageQuery = pageQuery
+        .eq('created_by', createdByFallback)
+        .or(searchOrFilter);
+    } else {
+      pageQuery = pageQuery.or(searchOrFilter);
+    }
+  } else if (agentIdForOwnership) {
+    pageQuery = pageQuery.eq('salesperson_id', agentIdForOwnership);
+  } else if (createdByFallback) {
+    pageQuery = pageQuery.eq('created_by', createdByFallback);
+    if (organizationId) {
+      pageQuery = applyOrganizationFilter(pageQuery, organizationId);
+    }
+  } else {
+    if (organizationId) {
+      pageQuery = applyOrganizationFilter(pageQuery, organizationId);
+    }
+    pageQuery = pageQuery.or(CONTACTS_LIST_OR_FILTER);
+  }
+
+  // Date-range filter on the persisted contacts.created_at column
+  // (start inclusive / end exclusive — see contact-date-range helpers).
+  if (dates.createdAtGte) {
+    pageQuery = pageQuery.gte('created_at', dates.createdAtGte);
+  }
+  if (dates.createdAtLt) {
+    pageQuery = pageQuery.lt('created_at', dates.createdAtLt);
+  }
+
+  return pageQuery;
+}
+
+/** Attach tag rows to a set of contacts (chunked `in` lookups). */
+async function attachContactTags(
+  supabase: Awaited<ReturnType<typeof createAdminClient>>,
+  contacts: Contact[]
+): Promise<{ contacts: ContactWithRelations[] } | { error: string }> {
+  const contactIds = contacts.map((c) => c.id);
+
+  const tagLinks: { contact_id: string; tag_id: string }[] = [];
+  const tags: ContactTag[] = [];
+  if (contactIds.length > 0) {
+    const IN_CHUNK = 120;
+    const linkChunks: string[][] = [];
+    for (let i = 0; i < contactIds.length; i += IN_CHUNK) {
+      linkChunks.push(contactIds.slice(i, i + IN_CHUNK));
+    }
+
+    const linkResults = await Promise.all(
+      linkChunks.map((chunk) =>
+        supabase
+          .from('contact_tag_links')
+          .select('contact_id, tag_id')
+          .in('contact_id', chunk)
+      )
+    );
+
+    for (const linkRes of linkResults) {
+      if (linkRes.error) {
+        return {
+          error: `Contact tags query failed: ${linkRes.error.message}${
+            linkRes.error.details ? ` (${linkRes.error.details})` : ''
+          }`,
+        };
+      }
+      if (linkRes.data?.length) tagLinks.push(...linkRes.data);
+    }
+
+    const tagIds = Array.from(new Set(tagLinks.map((l) => l.tag_id)));
+    if (tagIds.length > 0) {
+      const tagChunks: string[][] = [];
+      for (let i = 0; i < tagIds.length; i += IN_CHUNK) {
+        tagChunks.push(tagIds.slice(i, i + IN_CHUNK));
+      }
+      const tagResults = await Promise.all(
+        tagChunks.map((chunk) =>
+          supabase.from('contact_tags').select('*').in('id', chunk)
+        )
+      );
+      for (const tagRes of tagResults) {
+        if (tagRes.error) {
+          return {
+            error: `Tags query failed: ${tagRes.error.message}${
+              tagRes.error.details ? ` (${tagRes.error.details})` : ''
+            }`,
+          };
+        }
+        if (tagRes.data?.length) tags.push(...(tagRes.data as ContactTag[]));
+      }
+    }
+  }
+
+  const tagMap = new Map<string, ContactTag>();
+  for (const t of tags) tagMap.set(t.id, t);
+
+  const tagsByContact = new Map<string, ContactTag[]>();
+  for (const link of tagLinks) {
+    const tag = tagMap.get(link.tag_id);
+    if (!tag) continue;
+    const list = tagsByContact.get(link.contact_id) || [];
+    list.push(tag);
+    tagsByContact.set(link.contact_id, list);
+  }
+
+  return {
+    contacts: contacts.map((c) => ({
+      ...(c as Contact),
+      tags: tagsByContact.get(c.id) || [],
+      children: [],
+    })),
+  };
+}
+
+export type ContactsTypeFilter = 'all' | 'person' | 'company';
+export type ContactsSourceFilter = 'all' | 'mobile_app' | 'manual';
+
+export type GetContactsPageOptions = GetContactsOptions & {
+  /** 1-based page number. */
+  page?: number;
+  pageSize?: number;
+  companyType?: ContactsTypeFilter;
+  source?: ContactsSourceFilter;
+  /** Skip the two source-count queries when the caller already has them. */
+  includeSourceCounts?: boolean;
+};
+
+export type ContactsSourceCounts = { all: number; mobile: number; manual: number };
+
+const CONTACTS_MAX_PAGE_SIZE = 100;
+const CONTACTS_LEAN_SELECT_WITHOUT_MOBILE =
+  'id, name, company_name, email, phone, country, company_type, customer_rank, vendor_rank, salesperson_id, created_by, organization_id, legacy_lead_id, source, created_at, updated_at, lead_id_formatted';
+
+/**
+ * One page of the Contacts list (server-side pagination).
+ * Same access, search and date semantics as `getContacts`, newest first with
+ * `id` as a stable tie-breaker; type / source filters and counts run in SQL.
+ */
+export async function getContactsPage(options: GetContactsPageOptions = {}) {
+  try {
+    const session = ensureAuth(await getSession());
+    const createdAtGte = String(options.createdAtGte || '').trim() || null;
+    const createdAtLt = String(options.createdAtLt || '').trim() || null;
+    const pageSize = Math.min(
+      CONTACTS_MAX_PAGE_SIZE,
+      Math.max(1, Math.floor(Number(options.pageSize) || 40))
+    );
+    const page = Math.max(1, Math.floor(Number(options.page) || 1));
+    const companyType: ContactsTypeFilter =
+      options.companyType === 'person' || options.companyType === 'company'
+        ? options.companyType
+        : 'all';
+    const source: ContactsSourceFilter =
+      options.source === 'mobile_app' || options.source === 'manual' ? options.source : 'all';
+    const includeSourceCounts = options.includeSourceCounts !== false;
+
+    const emptyResult = {
+      contacts: [] as ContactWithRelations[],
+      totalCount: 0,
+      page: 1,
+      pageSize,
+      sourceCounts: { all: 0, mobile: 0, manual: 0 } as ContactsSourceCounts | null,
+      createdAtGte,
+      createdAtLt,
+    };
+
+    const scope = await resolveContactsListScope(session);
+    if ('error' in scope) return { error: scope.error };
+    if ('empty' in scope) return emptyResult;
+
+    const {
+      applyOrganizationFilter,
+      isMissingOrganizationColumnError,
+    } = await import('@/lib/admin-organization-context');
+    const {
+      CONTACTS_LIST_SELECT,
+      isMissingLeadIdColumnError,
+      isValidContactLeadId,
+      mergeContactLeadIdsForList,
+      assignMissingContactLeadIds,
+    } = await import('@/lib/contact-lead-id');
+
+    const supabase = await createAdminClient();
+    const searchOrFilter = buildContactsSearchOrFilter(String(options.search || ''));
+    const dates = { createdAtGte, createdAtLt };
+
+    type QueryError = { message?: string; code?: string; details?: string; hint?: string };
+
+    // `withMobileColumn` = false for pre-021 DBs (no mobile_registered_at).
+    function sourceFilter<Q extends { or: (f: string) => Q; is: (c: string, v: null) => Q; eq: (c: string, v: string) => Q }>(
+      query: Q,
+      which: 'mobile_app' | 'manual',
+      withMobileColumn: boolean
+    ): Q {
+      if (which === 'mobile_app') {
+        return withMobileColumn
+          ? query.or('mobile_registered_at.not.is.null,source.eq.mobile_app')
+          : query.eq('source', 'mobile_app');
+      }
+      const manual = query.or('source.is.null,source.neq.mobile_app');
+      return withMobileColumn ? manual.is('mobile_registered_at', null) : manual;
+    }
+
+    async function runPage(selectCols: string, withMobileColumn: boolean) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      let q: any = applyContactsListFilters(
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        supabase.from('contacts').select(selectCols, { count: 'exact' }) as any,
+        scope as ContactsListScope,
+        searchOrFilter,
+        dates,
+        applyOrganizationFilter
+      );
+      if (companyType !== 'all') q = q.eq('company_type', companyType);
+      if (source !== 'all') q = sourceFilter(q, source, withMobileColumn);
+      const from = (page - 1) * pageSize;
+      q = q
+        .order('created_at', { ascending: false })
+        .order('id', { ascending: false })
+        .range(from, from + pageSize - 1);
+      const res = await q;
+      return {
+        rows: (res.data || null) as Contact[] | null,
+        count: typeof res.count === 'number' ? res.count : null,
+        error: (res.error || null) as QueryError | null,
+      };
+    }
+
+    async function runCount(which: 'all' | 'mobile_app', withMobileColumn: boolean) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      let q: any = applyContactsListFilters(
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        supabase.from('contacts').select('id', { count: 'exact', head: true }) as any,
+        scope as ContactsListScope,
+        searchOrFilter,
+        dates,
+        applyOrganizationFilter
+      );
+      if (which === 'mobile_app') q = sourceFilter(q, 'mobile_app', withMobileColumn);
+      const res = await q;
+      return {
+        count: typeof res.count === 'number' ? res.count : 0,
+        error: (res.error || null) as QueryError | null,
+      };
+    }
+
+    async function runAll(selectCols: string, withMobileColumn: boolean) {
+      return Promise.all([
+        runPage(selectCols, withMobileColumn),
+        includeSourceCounts ? runCount('all', withMobileColumn) : Promise.resolve(null),
+        includeSourceCounts ? runCount('mobile_app', withMobileColumn) : Promise.resolve(null),
+      ]);
+    }
+
+    const isMissingMobileColumns = (error: QueryError | null) =>
+      Boolean(
+        error &&
+          (String(error.message || '').includes('mobile_registered_at') ||
+            String(error.message || '').includes('mobile_user_id') ||
+            error.code === 'PGRST204' ||
+            error.code === '42703')
+      );
+
+    let withMobileColumn = true;
+    let [pageRes, allCount, mobileCount] = await runAll(
+      `${CONTACTS_LIST_SELECT}, lead_id_formatted`,
+      withMobileColumn
+    );
+
+    if (pageRes.error && isMissingLeadIdColumnError(pageRes.error)) {
+      [pageRes, allCount, mobileCount] = await runAll(CONTACTS_LIST_SELECT, withMobileColumn);
+    }
+
+    // Pre-021 DBs may lack mobile_registered_at — retry without mobile columns
+    if (isMissingMobileColumns(pageRes.error)) {
+      withMobileColumn = false;
+      [pageRes, allCount, mobileCount] = await runAll(
+        CONTACTS_LEAN_SELECT_WITHOUT_MOBILE,
+        withMobileColumn
+      );
+    }
+
+    // Requested page is past the end (e.g. rows were deleted) — report counts only.
+    const pastEnd = pageRes.error && pageRes.error.code === 'PGRST103';
+
+    if (pageRes.error && !pastEnd) {
+      const error = pageRes.error;
+      if (isMissingOrganizationColumnError(error as never)) {
+        return {
+          error:
+            'Contacts organization column is missing. Run add_organization_id_to_core_tables.sql.',
+        };
+      }
+      return {
+        error: `Contacts query failed (${error.code || '400'}): ${
+          error.message
+        }${error.details ? ` — ${error.details}` : ''}${
+          error.hint ? ` Hint: ${error.hint}` : ''
+        }`,
+      };
+    }
+
+    const countError = allCount?.error || mobileCount?.error;
+    if (countError) {
+      return { error: `Contacts count failed: ${countError.message}` };
+    }
+
+    let contacts = (pastEnd ? [] : pageRes.rows || []) as Contact[];
+
+    // 1) Read existing Customer IDs (REST/RPC)
+    contacts = (await mergeContactLeadIdsForList(supabase, contacts)) as Contact[];
+
+    // 2) Assign permanent IDs only for contacts still missing one (this page only)
+    const missing = contacts.filter((c) => !isValidContactLeadId(c.lead_id_formatted));
+    if (missing.length) {
+      contacts = (await assignMissingContactLeadIds(supabase, contacts)) as Contact[];
+    }
+
+    const withTags = await attachContactTags(supabase, contacts);
+    if ('error' in withTags) return { error: withTags.error };
+
+    const sourceCounts: ContactsSourceCounts | null =
+      allCount && mobileCount
+        ? {
+            all: allCount.count,
+            mobile: mobileCount.count,
+            manual: Math.max(0, allCount.count - mobileCount.count),
+          }
+        : null;
+
+    return {
+      contacts: withTags.contacts,
+      /** Matching rows for the same search + date + type + source + access filters. */
+      totalCount: pageRes.count ?? withTags.contacts.length,
+      page,
+      pageSize,
+      sourceCounts,
+      createdAtGte,
+      createdAtLt,
+    };
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : 'Failed to load contacts' };
+  }
+}
+
 export async function getContacts(searchOrOptions?: string | GetContactsOptions) {
   try {
     const session = ensureAuth(await getSession());
@@ -467,44 +892,13 @@ export async function getContacts(searchOrOptions?: string | GetContactsOptions)
       mergeContactLeadIdsForList,
       assignMissingContactLeadIds,
     } = await import('@/lib/contact-lead-id');
-    const {
-      resolveSalesAccessRole,
-      salesRoleSeesAllOrgRecords,
-    } = await import('@/lib/sales-roles');
-    const { resolveCurrentSalespersonId } = await import(
-      '@/app/actions/sales/automation'
-    );
 
-    // Contact Module ownership: if the login maps to sales_agents, always scope
-    // by salesperson_id so UI totals match the DB ownership query (e.g. muneeba 2071).
-    // Sales administrators still see the full org list. Do not OR created_by.
-    const { isSuperAdminSession } = await import('@/lib/auth/super-admin');
-    const salesRole = resolveSalesAccessRole(session as never);
-    const ownsDocumentsOnly = Boolean(salesRole && !salesRoleSeesAllOrgRecords(salesRole));
-    const isSalesAdministrator =
-      salesRole === 'administrator' || isSuperAdminSession(session as never);
-
-    let agentIdForOwnership: string | null = null;
-    let createdByFallback: string | null = null;
-    if (!isSalesAdministrator) {
-      agentIdForOwnership = await resolveCurrentSalespersonId();
-      if (!agentIdForOwnership && ownsDocumentsOnly) {
-        const username = String(session.username || '').trim();
-        if (username) createdByFallback = username;
-      }
-    }
-
-    const org = await resolveContactsOrganizationId(session);
-    if ('error' in org) return { error: org.error };
-
-    // Header "No organizations" → empty unless we can scope by salesperson / created_by.
-    if ('empty' in org && !agentIdForOwnership && !createdByFallback) {
-      return { contacts: [] };
-    }
+    const scope = await resolveContactsListScope(session);
+    if ('error' in scope) return { error: scope.error };
+    if ('empty' in scope) return { contacts: [] };
+    const { organizationId, agentIdForOwnership, createdByFallback } = scope;
 
     const supabase = await createAdminClient();
-    const organizationId =
-      'unscoped' in org || 'empty' in org ? null : org.organizationId;
     const searchOrFilter = buildContactsSearchOrFilter(String(search || ''));
 
     async function fetchAllContactRows(
@@ -514,48 +908,13 @@ export async function getContacts(searchOrOptions?: string | GetContactsOptions)
       let offset = 0;
 
       for (;;) {
-        let pageQuery = supabase.from('contacts').select(selectCols);
-
-        // Active search: org-wide DB lookup (name / Customer ID / phone) so agents
-        // can locate an existing customer after a duplicate warning. Empty browse
-        // stays ownership-scoped for sales agents. Without an org, keep ownership.
-        if (searchOrFilter) {
-          if (organizationId) {
-            pageQuery = applyOrganizationFilter(pageQuery, organizationId);
-            pageQuery = pageQuery.or(searchOrFilter);
-          } else if (agentIdForOwnership) {
-            pageQuery = pageQuery
-              .eq('salesperson_id', agentIdForOwnership)
-              .or(searchOrFilter);
-          } else if (createdByFallback) {
-            pageQuery = pageQuery
-              .eq('created_by', createdByFallback)
-              .or(searchOrFilter);
-          } else {
-            pageQuery = pageQuery.or(searchOrFilter);
-          }
-        } else if (agentIdForOwnership) {
-          pageQuery = pageQuery.eq('salesperson_id', agentIdForOwnership);
-        } else if (createdByFallback) {
-          pageQuery = pageQuery.eq('created_by', createdByFallback);
-          if (organizationId) {
-            pageQuery = applyOrganizationFilter(pageQuery, organizationId);
-          }
-        } else {
-          if (organizationId) {
-            pageQuery = applyOrganizationFilter(pageQuery, organizationId);
-          }
-          pageQuery = pageQuery.or(CONTACTS_LIST_OR_FILTER);
-        }
-
-        // Date-range filter on the persisted contacts.created_at column
-        // (start inclusive / end exclusive — see contact-date-range helpers).
-        if (createdAtGte) {
-          pageQuery = pageQuery.gte('created_at', createdAtGte);
-        }
-        if (createdAtLt) {
-          pageQuery = pageQuery.lt('created_at', createdAtLt);
-        }
+        let pageQuery = applyContactsListFilters(
+          supabase.from('contacts').select(selectCols),
+          scope as ContactsListScope,
+          searchOrFilter,
+          { createdAtGte, createdAtLt },
+          applyOrganizationFilter
+        );
 
         pageQuery = pageQuery
           .order('created_at', { ascending: false })
@@ -720,78 +1079,9 @@ export async function getContacts(searchOrOptions?: string | GetContactsOptions)
       });
     }
 
-    const contactIds = contacts.map((c) => c.id);
-
-    const tagLinks: { contact_id: string; tag_id: string }[] = [];
-    const tags: ContactTag[] = [];
-    if (contactIds.length > 0) {
-      const IN_CHUNK = 120;
-      const linkChunks: string[][] = [];
-      for (let i = 0; i < contactIds.length; i += IN_CHUNK) {
-        linkChunks.push(contactIds.slice(i, i + IN_CHUNK));
-      }
-
-      const linkResults = await Promise.all(
-        linkChunks.map((chunk) =>
-          supabase
-            .from('contact_tag_links')
-            .select('contact_id, tag_id')
-            .in('contact_id', chunk)
-        )
-      );
-
-      for (const linkRes of linkResults) {
-        if (linkRes.error) {
-          return {
-            error: `Contact tags query failed: ${linkRes.error.message}${
-              linkRes.error.details ? ` (${linkRes.error.details})` : ''
-            }`,
-          };
-        }
-        if (linkRes.data?.length) tagLinks.push(...linkRes.data);
-      }
-
-      const tagIds = Array.from(new Set(tagLinks.map((l) => l.tag_id)));
-      if (tagIds.length > 0) {
-        const tagChunks: string[][] = [];
-        for (let i = 0; i < tagIds.length; i += IN_CHUNK) {
-          tagChunks.push(tagIds.slice(i, i + IN_CHUNK));
-        }
-        const tagResults = await Promise.all(
-          tagChunks.map((chunk) =>
-            supabase.from('contact_tags').select('*').in('id', chunk)
-          )
-        );
-        for (const tagRes of tagResults) {
-          if (tagRes.error) {
-            return {
-              error: `Tags query failed: ${tagRes.error.message}${
-                tagRes.error.details ? ` (${tagRes.error.details})` : ''
-              }`,
-            };
-          }
-          if (tagRes.data?.length) tags.push(...(tagRes.data as ContactTag[]));
-        }
-      }
-    }
-
-    const tagMap = new Map<string, ContactTag>();
-    for (const t of tags) tagMap.set(t.id, t);
-
-    const tagsByContact = new Map<string, ContactTag[]>();
-    for (const link of tagLinks) {
-      const tag = tagMap.get(link.tag_id);
-      if (!tag) continue;
-      const list = tagsByContact.get(link.contact_id) || [];
-      list.push(tag);
-      tagsByContact.set(link.contact_id, list);
-    }
-
-    const enriched: ContactWithRelations[] = contacts.map((c) => ({
-      ...(c as Contact),
-      tags: tagsByContact.get(c.id) || [],
-      children: [],
-    }));
+    const withTags = await attachContactTags(supabase, contacts);
+    if ('error' in withTags) return { error: withTags.error };
+    const enriched: ContactWithRelations[] = withTags.contacts;
 
     return {
       contacts: enriched,

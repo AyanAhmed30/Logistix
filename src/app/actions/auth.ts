@@ -10,7 +10,6 @@ import { SUPER_ADMIN_USERNAME } from '@/lib/auth/super-admin';
 import type { SessionAppUserRole } from '@/lib/auth/session';
 import { fetchPortalUserOrganizationAssignments } from '@/lib/portal-user-organizations';
 import { migrateLegacyAccountToPortal } from '@/lib/legacy-user-bridge';
-import { authenticatePortalUser } from "@/lib/local-auth";
 
 const ADMIN_USERNAME = SUPER_ADMIN_USERNAME;
 const ADMIN_PASSWORD = 'admin123';
@@ -20,6 +19,18 @@ const DASHBOARD_BY_ROLE: Record<string, string> = {
   organization: '/organization/dashboard',
   user: '/admin/dashboard',
 };
+
+function loginFailureMessage(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error || '');
+  if (
+    message.includes('NEXT_PUBLIC_SUPABASE_URL') ||
+    message.includes('SUPABASE_SERVICE_ROLE_KEY') ||
+    message.includes('Missing')
+  ) {
+    return 'Server is missing Supabase settings in .env.local. Super Admin can still sign in with admin / admin123 after restart; other accounts need those keys.';
+  }
+  return message || 'Login failed. Please try again.';
+}
 
 async function establishSession(params: {
   username: string;
@@ -93,29 +104,22 @@ export async function login(formData: FormData) {
     if (!username || !password) {
       return { error: 'Username and password are required' };
     }
-    const cookieOptions = getSessionCookieOptions();
-    const sessionBase = { lastActivity: Date.now() };
 
-    const localUser = authenticatePortalUser(username, password);
-    if (localUser) {
-      const session = await encrypt({
-        username: localUser.username,
-        role: "user",
-        ...sessionBase,
-      });
-      (await cookies()).set("session", session, cookieOptions);
-      redirect("/welcome");
-    }
-
+    // Hardcoded Super Admin — must work even when Supabase env is missing,
+    // otherwise an empty .env.local blocks all admin sign-in.
     if (username === ADMIN_USERNAME && password === ADMIN_PASSWORD) {
-      const supabase = await createAdminClient();
-      const { data: orgs } = await supabase
-        .from('organizations')
-        .select('id, organization_name')
-        .eq('status', 'active')
-        .order('organization_name', { ascending: true });
-
-      const organizationIds = (orgs || []).map((o) => String(o.id));
+      let organizationIds: string[] = [];
+      try {
+        const supabase = await createAdminClient();
+        const { data: orgs } = await supabase
+          .from('organizations')
+          .select('id, organization_name')
+          .eq('status', 'active')
+          .order('organization_name', { ascending: true });
+        organizationIds = (orgs || []).map((o) => String(o.id));
+      } catch (error) {
+        console.warn('[login] Super Admin org load skipped:', loginFailureMessage(error));
+      }
 
       return await establishSession({
         username,
@@ -352,8 +356,9 @@ export async function login(formData: FormData) {
     }
 
     return { error: 'Invalid username or password' };
-  } catch {
-    return { error: 'Login failed. Please try again.' };
+  } catch (error) {
+    console.error('[login]', error);
+    return { error: loginFailureMessage(error) };
   }
 }
 

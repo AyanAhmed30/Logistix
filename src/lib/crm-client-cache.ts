@@ -12,7 +12,7 @@
 
 import { getCrmPipelineStages } from '@/app/actions/crm/stages';
 import { getSalespersonOptions, type SalespersonOption } from '@/app/actions/contacts';
-import type { CrmPipelineStage } from '@/app/actions/crm/types';
+import type { CrmOpportunityCard, CrmPipelineStage } from '@/app/actions/crm/types';
 
 type StagesResult = Awaited<ReturnType<typeof getCrmPipelineStages>>;
 type SalesResult = Awaited<ReturnType<typeof getSalespersonOptions>>;
@@ -23,10 +23,31 @@ let stagesCache: CrmPipelineStage[] | null = null;
 let salesCache: SalespersonOption[] | null = null;
 let currentSalespersonIdCache: string | null = null;
 
+/**
+ * Last board per org + filter key, painted instantly when returning to the
+ * pipeline and then revalidated in the background.
+ */
+export type CrmBoardSnapshot = {
+  stages: CrmPipelineStage[];
+  opportunities: CrmOpportunityCard[];
+  isGlobalAdminView: boolean;
+  orgError: string | null;
+};
+const boardCache = new Map<string, CrmBoardSnapshot>();
+
+export function peekCrmBoardCache(key: string): CrmBoardSnapshot | null {
+  return boardCache.get(key) ?? null;
+}
+
+export function rememberCrmBoardCache(key: string, snapshot: CrmBoardSnapshot) {
+  boardCache.set(key, snapshot);
+}
+
 export function invalidateCrmClientCache(part?: 'stages' | 'salespersons' | 'all') {
   if (!part || part === 'all' || part === 'stages') {
     stagesPromise = null;
     stagesCache = null;
+    boardCache.clear();
   }
   if (!part || part === 'all' || part === 'salespersons') {
     salesPromise = null;

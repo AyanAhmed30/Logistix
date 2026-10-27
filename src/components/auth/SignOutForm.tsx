@@ -3,6 +3,9 @@
 import { useRef, useState, type ReactNode } from "react";
 import { Loader2 } from "lucide-react";
 import { logout } from "@/app/actions/auth";
+import { invalidateContactsClientCache } from "@/lib/contacts-client-cache";
+import { invalidateContactPickerCache } from "@/lib/contact-picker-cache";
+import { invalidateCrmClientCache } from "@/lib/crm-client-cache";
 
 type Props = {
   children: ReactNode;
@@ -17,6 +20,11 @@ export function SignOutForm({ children, className }: Props) {
     if (submittedRef.current) return;
     submittedRef.current = true;
     setSigningOut(true);
+    // Module-level list caches survive client-side navigation; never let the
+    // next login on this tab see the previous user's rows.
+    invalidateContactsClientCache();
+    invalidateContactPickerCache();
+    invalidateCrmClientCache();
   }
 
   return (

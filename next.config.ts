@@ -1,9 +1,11 @@
+import path from "path";
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  // Configuration options
+  // Pin Turbopack to this app directory so CSS deps (tailwindcss) resolve from
+  // Logistix/node_modules — not the parent mega/ folder.
   turbopack: {
-    root: process.cwd(),
+    root: path.join(__dirname),
   },
   experimental: {
     // Helps Turbopack TLS fetches on Windows when network resources are needed.

@@ -7,14 +7,24 @@ export async function attachNextActivitiesToOpportunities<
 
   const supabase = await createAdminClient();
   const oppIds = opportunities.map((o) => o.id);
-  const { data: activities } = await supabase
-    .from('crm_activities')
-    .select('id, opportunity_id, summary, due_date, status, assigned_to')
-    .in('opportunity_id', oppIds)
-    .eq('status', 'scheduled')
-    .order('due_date', { ascending: true });
+  // Chunk the id list so large boards stay within PostgREST URL limits. Each
+  // opportunity lives in one chunk, so per-opportunity due_date order holds.
+  const ID_CHUNK = 150;
+  const chunks: string[][] = [];
+  for (let i = 0; i < oppIds.length; i += ID_CHUNK) chunks.push(oppIds.slice(i, i + ID_CHUNK));
+  const results = await Promise.all(
+    chunks.map((chunk) =>
+      supabase
+        .from('crm_activities')
+        .select('id, opportunity_id, summary, due_date, status, assigned_to')
+        .in('opportunity_id', chunk)
+        .eq('status', 'scheduled')
+        .order('due_date', { ascending: true })
+    )
+  );
+  const activities = results.flatMap((res) => res.data || []);
 
-  if (!activities?.length) return opportunities;
+  if (!activities.length) return opportunities;
 
   const agentIds = [...new Set(activities.map((a) => a.assigned_to).filter(Boolean))] as string[];
   let agentMap = new Map<string, string>();

@@ -23,7 +23,6 @@ import { invalidateContactPickerCache } from "@/lib/contact-picker-cache";
 import { getCrmPageMeta } from "@/lib/crm-navigation";
 import type { DashboardAccessState } from "@/lib/dashboard-access";
 import { toast } from "sonner";
-import { ModuleLoadingOverlay } from "@/components/ui/ModuleLoadingOverlay";
 import { AppNotificationBell } from "@/components/notifications/AppNotificationBell";
 
 type CrmShellContextValue = {
@@ -58,7 +57,6 @@ export function CrmShell({ access, children }: Props) {
   const [searchBusy, setSearchBusy] = useState(false);
   const [activeFilterId, setActiveFilterId] = useState("all");
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
-  const [navigating, setNavigating] = useState(false);
   const searchInputRef = useRef<HTMLInputElement | null>(null);
 
   const pageMeta = useMemo(
@@ -68,24 +66,12 @@ export function CrmShell({ access, children }: Props) {
   const isOpportunityForm =
     pathname.startsWith("/crm/opportunities/") ||
     pathname === "/crm/opportunities/new";
-  const isOpportunityInquiry =
-    pathname.startsWith("/crm/opportunities/") && pathname.includes("/inquiry");
 
   useEffect(() => {
     invalidateCrmClientCache();
     invalidateContactsClientCache();
     invalidateContactPickerCache();
   }, [switchVersion]);
-
-  useEffect(() => {
-    if (isOpportunityInquiry) {
-      setNavigating(false);
-      return;
-    }
-    setNavigating(true);
-    const id = window.setTimeout(() => setNavigating(false), 400);
-    return () => window.clearTimeout(id);
-  }, [pathname, isOpportunityInquiry]);
 
   useEffect(() => {
     setMobileNavOpen(false);
@@ -176,7 +162,6 @@ export function CrmShell({ access, children }: Props) {
   return (
     <CrmShellContext.Provider value={shellContext}>
       <div className="min-h-screen bg-[#f8f9fa] flex flex-col">
-        {navigating ? <ModuleLoadingOverlay label={pageMeta.title || "CRM"} /> : null}
         <header className="sticky top-0 z-50 bg-[#017e84] relative">
           <div className="h-12 px-2 sm:px-3 md:px-4 flex items-center justify-between gap-2">
             <CrmTopNav

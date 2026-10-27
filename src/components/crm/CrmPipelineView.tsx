@@ -35,6 +35,8 @@ import {
   getCachedSalespersonOptions,
   invalidateCrmClientCache,
   loadCrmUiPrefs,
+  peekCrmBoardCache,
+  rememberCrmBoardCache,
   saveCrmUiPrefs,
 } from "@/lib/crm-client-cache";
 import { type SalespersonOption } from "@/app/actions/contacts";
@@ -343,7 +345,7 @@ export function CrmPipelineView() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const contactIdFilter = searchParams.get("contactId");
-  const { switchVersion } = useAdminOrganization();
+  const { switchVersion, organizationId } = useAdminOrganization();
   const { setSearchBusy } = useCrmShell();
   const [stages, setStages] = useState<CrmPipelineStage[]>([]);
   const [opportunities, setOpportunities] = useState<CrmOpportunityCard[]>([]);
@@ -365,6 +367,7 @@ export function CrmPipelineView() {
   } | null>(null);
   const [, startTransition] = useTransition();
   const loadRequestIdRef = useRef(0);
+  const boardDataKeyRef = useRef<string | null>(null);
 
   const [search, setSearch] = useState("");
   const debouncedSearch = useDebouncedValue(search, 300);
@@ -398,35 +401,82 @@ export function CrmPipelineView() {
     [debouncedSearch, stageFilter, salespersonFilter, contactIdFilter, sortBy, sortDir]
   );
 
-  const loadBoard = useCallback(async () => {
+  const boardCacheKey = `${organizationId ?? "admin"}:${JSON.stringify(filters)}`;
+
+  const loadBoard = useCallback(async (options?: { silent?: boolean }) => {
     const requestId = ++loadRequestIdRef.current;
-    setLoading(true);
-    setOrgError(null);
+    if (!options?.silent) {
+      setLoading(true);
+      setOrgError(null);
+    }
     const result = await getCrmPipelineBoard(filters);
     if (requestId !== loadRequestIdRef.current) return;
+    let nextStages: CrmPipelineStage[];
+    let nextOpportunities: CrmOpportunityCard[];
+    let nextOrgError: string | null;
     if ("error" in result && result.error && !("stages" in result && result.stages?.length)) {
-      toast.error(result.error);
-      setOrgError(result.error);
-      setStages([]);
-      setOpportunities([]);
+      if (!options?.silent) toast.error(result.error);
+      nextOrgError = result.error;
+      nextStages = [];
+      nextOpportunities = [];
     } else if ("error" in result && result.error) {
-      setOrgError(result.error);
-      setStages(result.stages || []);
-      setOpportunities(result.opportunities || []);
+      nextOrgError = result.error;
+      nextStages = result.stages || [];
+      nextOpportunities = result.opportunities || [];
     } else {
-      setOrgError(null);
-      setStages(result.stages || []);
-      setOpportunities(result.opportunities || []);
+      nextOrgError = null;
+      nextStages = result.stages || [];
+      nextOpportunities = result.opportunities || [];
     }
-    setIsGlobalAdminView(Boolean("isGlobalAdminView" in result && result.isGlobalAdminView));
+    const nextGlobal = Boolean("isGlobalAdminView" in result && result.isGlobalAdminView);
+    boardDataKeyRef.current = boardCacheKey;
+    setOrgError(nextOrgError);
+    setStages(nextStages);
+    setOpportunities(nextOpportunities);
+    setIsGlobalAdminView(nextGlobal);
     setHasLoadedOnce(true);
     setLoading(false);
-  }, [filters]);
+    if (!nextOrgError) {
+      rememberCrmBoardCache(boardCacheKey, {
+        stages: nextStages,
+        opportunities: nextOpportunities,
+        isGlobalAdminView: nextGlobal,
+        orgError: nextOrgError,
+      });
+    }
+  }, [filters, boardCacheKey]);
 
   useEffect(() => {
     setQuickCreateStageId(null);
+    // Returning to the board: paint the last snapshot for this org + filters
+    // immediately, then refresh it in the background.
+    const cached = peekCrmBoardCache(boardCacheKey);
+    if (cached) {
+      boardDataKeyRef.current = boardCacheKey;
+      setStages(cached.stages);
+      setOpportunities(cached.opportunities);
+      setIsGlobalAdminView(cached.isGlobalAdminView);
+      setOrgError(cached.orgError);
+      setHasLoadedOnce(true);
+      setLoading(false);
+      void loadBoard({ silent: true });
+      return;
+    }
     void loadBoard();
-  }, [loadBoard, switchVersion]);
+  }, [loadBoard, boardCacheKey, switchVersion]);
+
+  // Keep the snapshot in step with optimistic edits (drag, quick create, lost).
+  // Written under the key the rows were loaded for, never the next filter's key.
+  useEffect(() => {
+    const dataKey = boardDataKeyRef.current;
+    if (!dataKey || !hasLoadedOnce || loading || orgError) return;
+    rememberCrmBoardCache(dataKey, {
+      stages,
+      opportunities,
+      isGlobalAdminView,
+      orgError,
+    });
+  }, [hasLoadedOnce, loading, orgError, stages, opportunities, isGlobalAdminView]);
 
   useEffect(() => {
     const hasSearch = Boolean(search.trim() || debouncedSearch.trim());

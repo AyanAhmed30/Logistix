@@ -29,15 +29,17 @@ import {
   Filter,
 } from "lucide-react";
 import {
-  getContacts,
+  getContactsPage,
   type ContactWithRelations,
+  type ContactsSourceCounts,
 } from "@/app/actions/contacts";
 import {
   getCachedContactsList,
   peekContactsClientCache,
+  peekContactsSourceCounts,
+  rememberContactsSourceCounts,
 } from "@/lib/contacts-client-cache";
 import { useAdminOrganization } from "@/contexts/AdminOrganizationContext";
-import { ModuleLoadingOverlay } from "@/components/ui/ModuleLoadingOverlay";
 import { useDebouncedValue } from "@/hooks/useDebouncedValue";
 import { ContactDateRangeFilter } from "@/components/admin/contacts/ContactDateRangeFilter";
 import {
@@ -84,19 +86,12 @@ export function ContactsListView({
   refreshToken,
   onListLoaded,
 }: Props) {
-  const { switchVersion } = useAdminOrganization();
-  const cacheKey = `${switchVersion}:${refreshToken}`;
-  const cached = peekContactsClientCache(cacheKey);
-  const initialContacts =
-    cached && "contacts" in cached && cached.contacts ? cached.contacts : [];
-
-  const [contacts, setContacts] = useState<ContactWithRelations[]>(initialContacts);
+  const { switchVersion, organizationId } = useAdminOrganization();
   const [search, setSearch] = useState("");
   const debouncedSearch = useDebouncedValue(search, 250);
   const [dateRange, setDateRange] = useState<ContactDateRangeValue | null>(null);
   const [typeFilter, setTypeFilter] = useState<TypeFilter>("all");
   const [sourceFilter, setSourceFilter] = useState<SourceFilter>("all");
-  const [loading, setLoading] = useState(initialContacts.length === 0);
   const [page, setPage] = useState(1);
 
   const dateQuery = useMemo(
@@ -104,92 +99,107 @@ export function ContactsListView({
     [dateRange]
   );
 
+  const needle = debouncedSearch.trim();
+  const createdAtGte = dateQuery?.createdAtGte ?? null;
+  const createdAtLt = dateQuery?.createdAtLt ?? null;
+  // Source counts depend on access + search + date only (not type / source / page).
+  const countsKey = `${organizationId ?? "none"}:${switchVersion}:${refreshToken}:${needle}:${createdAtGte ?? ""}:${createdAtLt ?? ""}`;
+  const pageKey = `${countsKey}:${typeFilter}:${sourceFilter}:${page}`;
+
+  const cached = peekContactsClientCache(pageKey);
+  const cachedPage = cached && "contacts" in cached ? cached : null;
+
+  const [contacts, setContacts] = useState<ContactWithRelations[]>(
+    cachedPage?.contacts ?? []
+  );
+  const [totalCount, setTotalCount] = useState(cachedPage?.totalCount ?? 0);
+  const [sourceCounts, setSourceCounts] = useState<ContactsSourceCounts>(
+    () => peekContactsSourceCounts(countsKey) ?? { all: 0, mobile: 0, manual: 0 }
+  );
+  const [loading, setLoading] = useState(!cachedPage);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [retryToken, setRetryToken] = useState(0);
+
   useEffect(() => {
     let cancelled = false;
-    const needle = debouncedSearch.trim();
 
-    const fetchOptions = {
-      search: needle || undefined,
-      createdAtGte: dateQuery?.createdAtGte ?? null,
-      createdAtLt: dateQuery?.createdAtLt ?? null,
-    };
+    const knownCounts = peekContactsSourceCounts(countsKey);
+    if (knownCounts) setSourceCounts(knownCounts);
 
-    // Undated empty search: reuse list cache. Date filter / search always hits API.
-    const canUseUndatedCache = !needle && !dateQuery;
-    if (canUseUndatedCache) {
-      const cacheKey = `${switchVersion}:${refreshToken}`;
-      const existing = peekContactsClientCache(cacheKey);
-      const hasCache =
-        existing && "contacts" in existing && Array.isArray(existing.contacts);
-
-      if (hasCache) {
-        setContacts(existing.contacts);
-        setLoading(false);
-        onListLoaded?.();
-      } else {
-        setLoading(true);
-      }
-
-      getCachedContactsList(cacheKey, () => getContacts(), { force: !hasCache }).then(
-        (res) => {
-          if (cancelled) return;
-          if ("error" in res && res.error) {
-            toast.error(res.error);
-            if (!hasCache) setContacts([]);
-          } else if ("contacts" in res && res.contacts) {
-            setContacts(res.contacts);
-          }
-          setLoading(false);
-          onListLoaded?.();
-        }
-      );
+    // Paint any cached page immediately, then revalidate if it has expired.
+    const existing = peekContactsClientCache(pageKey);
+    if (existing && "contacts" in existing) {
+      setContacts(existing.contacts);
+      setTotalCount(existing.totalCount ?? existing.contacts.length);
+      setLoading(false);
+      setLoadError(null);
     } else {
       setLoading(true);
-      void getContacts(fetchOptions).then((res) => {
-        if (cancelled) return;
-        if ("error" in res && res.error) {
-          toast.error(res.error);
-          setContacts([]);
-        } else if ("contacts" in res && res.contacts) {
-          setContacts(res.contacts);
-        }
-        setLoading(false);
-        onListLoaded?.();
-      });
     }
+
+    getCachedContactsList(
+      pageKey,
+      () =>
+        getContactsPage({
+          search: needle || undefined,
+          createdAtGte,
+          createdAtLt,
+          page,
+          pageSize: PAGE_SIZE,
+          companyType: typeFilter,
+          source: sourceFilter,
+          includeSourceCounts: !knownCounts,
+        }),
+      { force: retryToken > 0 && !existing }
+    ).then((res) => {
+      if (cancelled) return;
+      if ("error" in res && res.error) {
+        toast.error(res.error);
+        if (!existing) {
+          setContacts([]);
+          setTotalCount(0);
+          setLoadError(res.error);
+        }
+      } else if ("contacts" in res && res.contacts) {
+        setContacts(res.contacts);
+        setTotalCount(res.totalCount ?? res.contacts.length);
+        setLoadError(null);
+        if (res.sourceCounts) {
+          rememberContactsSourceCounts(countsKey, res.sourceCounts);
+          setSourceCounts(res.sourceCounts);
+        }
+      }
+      setLoading(false);
+      onListLoaded?.();
+    });
 
     return () => {
       cancelled = true;
     };
-  }, [refreshToken, switchVersion, onListLoaded, debouncedSearch, dateQuery]);
+  }, [
+    countsKey,
+    pageKey,
+    needle,
+    createdAtGte,
+    createdAtLt,
+    page,
+    typeFilter,
+    sourceFilter,
+    retryToken,
+    onListLoaded,
+  ]);
 
-  const filtered = useMemo(() => {
-    // Name / phone / Customer ID search + date range are DB-backed.
-    // Keep only type / source filters client-side.
-    return contacts.filter((c) => {
-      if (typeFilter !== "all" && c.company_type !== typeFilter) return false;
-      if (sourceFilter === "mobile_app" && !isMobileAppContact(c)) return false;
-      if (sourceFilter === "manual" && isMobileAppContact(c)) return false;
-      return true;
-    });
-  }, [contacts, typeFilter, sourceFilter]);
-
-  const sourceCounts = useMemo(() => {
-    let mobile = 0;
-    let manual = 0;
-    for (const c of contacts) {
-      if (isMobileAppContact(c)) mobile += 1;
-      else manual += 1;
-    }
-    return { all: contacts.length, mobile, manual };
-  }, [contacts]);
-
-  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+  const totalPages = Math.max(1, Math.ceil(totalCount / PAGE_SIZE));
   const currentPage = Math.min(page, totalPages);
   const pageStart = (currentPage - 1) * PAGE_SIZE;
-  const paged = filtered.slice(pageStart, pageStart + PAGE_SIZE);
-  const showingFrom = filtered.length === 0 ? 0 : pageStart + 1;
-  const showingTo = Math.min(pageStart + PAGE_SIZE, filtered.length);
+  const paged = contacts;
+  const showingFrom = totalCount === 0 ? 0 : pageStart + 1;
+  const showingTo = Math.min(pageStart + contacts.length, totalCount);
+
+  // Rows can disappear between loads (deletes) — step back to the last real page.
+  useEffect(() => {
+    if (!loading && page > totalPages) setPage(totalPages);
+  }, [loading, page, totalPages]);
 
   function gotoPage(next: number) {
     setPage(Math.max(1, Math.min(totalPages, next)));
@@ -197,9 +207,6 @@ export function ContactsListView({
 
   return (
     <div className="space-y-4">
-      {loading && contacts.length === 0 ? (
-        <ModuleLoadingOverlay label="Contacts" />
-      ) : null}
       {/* Toolbar */}
       <div className="flex flex-wrap items-center gap-3">
         <Button
@@ -279,7 +286,7 @@ export function ContactsListView({
 
         <div className="flex items-center gap-2 ml-auto text-xs text-secondary-muted">
           <span>
-            {showingFrom}-{showingTo} / {filtered.length}
+            {showingFrom}-{showingTo} / {totalCount}
           </span>
           <div className="flex items-center gap-0.5">
             <button
@@ -311,7 +318,7 @@ export function ContactsListView({
           </span>
           <span className="text-violet-800">
             Total Contacts:{" "}
-            <span className="font-semibold tabular-nums">{filtered.length}</span>
+            <span className="font-semibold tabular-nums">{totalCount}</span>
           </span>
           {debouncedSearch.trim() ? (
             <span className="text-xs text-violet-700/80">
@@ -322,7 +329,12 @@ export function ContactsListView({
       ) : null}
 
       {/* Table */}
-      <div className="bg-white border rounded-lg overflow-hidden">
+      <div
+        className={`bg-white border rounded-lg overflow-hidden transition-opacity ${
+          loading && contacts.length > 0 ? "opacity-60" : ""
+        }`}
+        aria-busy={loading}
+      >
         <Table>
           <TableHeader>
             <TableRow className="bg-slate-50 hover:bg-slate-50">
@@ -339,10 +351,25 @@ export function ContactsListView({
             </TableRow>
           </TableHeader>
           <TableBody>
-            {loading ? (
+            {loading && paged.length === 0 ? (
               <TableRow>
                 <TableCell colSpan={6} className="py-10 text-center text-secondary-muted">
                   Loading contacts…
+                </TableCell>
+              </TableRow>
+            ) : loadError && paged.length === 0 ? (
+              <TableRow>
+                <TableCell colSpan={6} className="py-10 text-center">
+                  <div className="flex flex-col items-center gap-2 text-secondary-muted">
+                    <p className="text-sm font-medium">Couldn&apos;t load contacts.</p>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setRetryToken((n) => n + 1)}
+                    >
+                      Retry
+                    </Button>
+                  </div>
                 </TableCell>
               </TableRow>
             ) : paged.length === 0 ? (

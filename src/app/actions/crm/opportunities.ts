@@ -122,6 +122,13 @@ function scheduleOpportunityCreatedSideEffects(input: {
   });
 }
 
+/** Split id lists for `.in()` lookups so request URLs stay bounded. */
+function chunkIds(ids: string[], size = 150): string[][] {
+  const chunks: string[][] = [];
+  for (let i = 0; i < ids.length; i += size) chunks.push(ids.slice(i, i + size));
+  return chunks;
+}
+
 function escapePostgrestFilterValue(value: string) {
   const v = String(value || '');
   if (/[\s,().]/.test(v) || v.includes('"')) {
@@ -205,15 +212,14 @@ async function findContactIdsForPipelineSearch(
  * Narrow the opportunities query for search before enrich (phone / Customer ID / name).
  * Returns forceEmpty when nothing can match.
  */
-async function applyPipelineSearchToOpportunityQuery(
+function applyPipelineSearchToOpportunityQuery(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   query: any,
+  rawSearch: string,
+  /** From `findContactIdsForPipelineSearch` (resolved up front, in parallel). */
+  contactIds: string[]
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  supabase: any,
-  organizationId: string | null,
-  rawSearch: string
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-): Promise<{ query: any; forceEmpty: boolean }> {
+): { query: any; forceEmpty: boolean } {
   const needle = String(rawSearch || '').trim();
   if (!needle) return { query, forceEmpty: false };
 
@@ -229,12 +235,6 @@ async function applyPipelineSearchToOpportunityQuery(
     .replace(/[%_,.()]/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
-
-  const contactIds = await findContactIdsForPipelineSearch(
-    supabase,
-    organizationId,
-    needle
-  );
 
   const oppParts: string[] = [];
   if (text) {
@@ -284,7 +284,7 @@ async function enrichOpportunities(
 
   const contactIdList = [...contactIds];
 
-  let contactsData: Array<{
+  type ContactLookupRow = {
     id: string;
     name?: string | null;
     company_name?: string | null;
@@ -292,26 +292,27 @@ async function enrichOpportunities(
     mobile?: string | null;
     legacy_lead_id?: string | null;
     lead_id_formatted?: string | null;
-  }> = [];
+  };
 
-  if (contactIdList.length) {
+  // Chunked so large boards stay within PostgREST URL limits.
+  async function loadContactsChunk(ids: string[]): Promise<ContactLookupRow[]> {
     const withLeadCol = await supabase
       .from('contacts')
       .select('id, name, company_name, phone, mobile, legacy_lead_id, lead_id_formatted')
-      .in('id', contactIdList);
+      .in('id', ids);
 
     if (!withLeadCol.error && withLeadCol.data) {
-      contactsData = withLeadCol.data as typeof contactsData;
-    } else {
-      const fallback = await supabase
-        .from('contacts')
-        .select('id, name, company_name, phone, mobile, legacy_lead_id')
-        .in('id', contactIdList);
-      contactsData = (fallback.data || []) as typeof contactsData;
+      return withLeadCol.data as ContactLookupRow[];
     }
+    const fallback = await supabase
+      .from('contacts')
+      .select('id, name, company_name, phone, mobile, legacy_lead_id')
+      .in('id', ids);
+    return (fallback.data || []) as ContactLookupRow[];
   }
 
-  const [salesRes, orgsRes, stagesRes] = await Promise.all([
+  const [contactChunks, salesRes, orgsRes, stagesRes] = await Promise.all([
+    Promise.all(chunkIds(contactIdList).map(loadContactsChunk)),
     salespersonIds.size
       ? supabase.from('sales_agents').select('id, name').in('id', [...salespersonIds])
       : Promise.resolve({ data: [] }),
@@ -322,6 +323,7 @@ async function enrichOpportunities(
       ? supabase.from('crm_pipeline_stages').select('id, name').in('id', [...stageIds])
       : Promise.resolve({ data: [] }),
   ]);
+  const contactsData = contactChunks.flat();
 
   // Customer name = contact.name (e.g. "id check"), not company_name ("testing company").
   const contactMap = new Map(
@@ -401,6 +403,22 @@ async function enrichOpportunities(
       stage_name: stageMap.get(base.stage_id) || null,
     };
   });
+}
+
+/** Board cards: contact / owner / stage enrichment and next activities in parallel. */
+async function enrichBoardOpportunities(
+  rows: Record<string, unknown>[],
+  needle: string
+): Promise<CrmOpportunityCard[]> {
+  const [enriched, withActivities] = await Promise.all([
+    enrichOpportunities(rows, { skipLeadIdBackfill: Boolean(needle) }),
+    attachNextActivitiesToOpportunities(rows.map((row) => ({ id: String(row.id) }))),
+  ]);
+  return enriched.map((opp, index) => ({
+    ...opp,
+    ...withActivities[index],
+    id: opp.id,
+  })) as CrmOpportunityCard[];
 }
 
 function validateOpportunityInput(input: CrmOpportunityUpsertInput) {
@@ -649,12 +667,26 @@ export async function getCrmPipelineBoard(filters: CrmPipelineBoardFilters = {})
   if ('error' in scope) return { error: scope.error, stages: [], opportunities: [] };
 
   const supabase = await createAdminClient();
+  const { resolveCrmVisibilityScope, applyCrmVisibilityFilter } = await import(
+    '@/lib/crm-visibility'
+  );
+  const needle = String(filters.search || '').trim();
 
   if (scope.isGlobalAdminView) {
-    const { data: orgRows } = await supabase.from('organizations').select('id');
-    for (const org of orgRows || []) {
-      await ensureDefaultCrmStages(String(org.id));
-    }
+    // Stage seeding, visibility and search contact lookup are independent —
+    // run them together. Virtual admin stages do not depend on the seeding.
+    const [, visibility, searchContactIds] = await Promise.all([
+      supabase
+        .from('organizations')
+        .select('id')
+        .then(({ data: orgRows }) =>
+          Promise.all(
+            (orgRows || []).map((org) => ensureDefaultCrmStages(String(org.id)))
+          )
+        ),
+      filters.salespersonId ? Promise.resolve(null) : resolveCrmVisibilityScope(scope.session),
+      needle ? findContactIdsForPipelineSearch(supabase, null, needle) : Promise.resolve([]),
+    ]);
 
     const stages = DEFAULT_CRM_PIPELINE_STAGES.map((template) => ({
       id: buildAdminVirtualStageId(template.name),
@@ -671,25 +703,15 @@ export async function getCrmPipelineBoard(filters: CrmPipelineBoardFilters = {})
 
     let query = supabase.from('crm_opportunities').select('*');
 
-    const { resolveCrmVisibilityScope, applyCrmVisibilityFilter } = await import(
-      '@/lib/crm-visibility'
-    );
-    const visibility = await resolveCrmVisibilityScope(scope.session);
-    if (!filters.salespersonId) {
+    if (!filters.salespersonId && visibility) {
       query = applyCrmVisibilityFilter(query, visibility);
     }
 
     if (filters.salespersonId) query = query.eq('salesperson_id', filters.salespersonId);
     if (filters.contactId) query = query.eq('contact_id', filters.contactId);
 
-    const needle = String(filters.search || '').trim();
     if (needle) {
-      const narrowed = await applyPipelineSearchToOpportunityQuery(
-        query,
-        supabase,
-        null,
-        needle
-      );
+      const narrowed = applyPipelineSearchToOpportunityQuery(query, needle, searchContactIds);
       if (narrowed.forceEmpty) {
         return { stages, opportunities: [], isGlobalAdminView: true as const };
       }
@@ -703,13 +725,10 @@ export async function getCrmPipelineBoard(filters: CrmPipelineBoardFilters = {})
     const { data: oppRows, error: oppError } = await query;
     if (oppError) return { error: oppError.message };
 
-    let opportunities = await enrichOpportunities(
+    let opportunities = await enrichBoardOpportunities(
       (oppRows || []) as Record<string, unknown>[],
-      { skipLeadIdBackfill: Boolean(needle) }
+      needle
     );
-    opportunities = (await attachNextActivitiesToOpportunities(
-      opportunities
-    )) as CrmOpportunityCard[];
 
     if (filters.stageId) {
       const stageName =
@@ -729,26 +748,30 @@ export async function getCrmPipelineBoard(filters: CrmPipelineBoardFilters = {})
     return { stages, opportunities, isGlobalAdminView: true as const };
   }
 
-  await ensureDefaultCrmStages(scope.organizationId);
-
-  const { data: stageRows, error: stageError } = await supabase
-    .from('crm_pipeline_stages')
-    .select('*')
-    .eq('organization_id', scope.organizationId)
-    .order('sequence', { ascending: true });
+  const organizationId = scope.organizationId;
+  const [stagesResult, visibility, searchContactIds] = await Promise.all([
+    ensureDefaultCrmStages(organizationId).then(() =>
+      supabase
+        .from('crm_pipeline_stages')
+        .select('*')
+        .eq('organization_id', organizationId)
+        .order('sequence', { ascending: true })
+    ),
+    filters.salespersonId ? Promise.resolve(null) : resolveCrmVisibilityScope(scope.session),
+    needle
+      ? findContactIdsForPipelineSearch(supabase, organizationId, needle)
+      : Promise.resolve([]),
+  ]);
+  const { data: stageRows, error: stageError } = stagesResult;
 
   if (stageError) return { error: stageError.message };
 
   let query = supabase
     .from('crm_opportunities')
     .select('*')
-    .eq('organization_id', scope.organizationId);
+    .eq('organization_id', organizationId);
 
-  const { resolveCrmVisibilityScope, applyCrmVisibilityFilter } = await import(
-    '@/lib/crm-visibility'
-  );
-  const visibility = await resolveCrmVisibilityScope(scope.session);
-  if (!filters.salespersonId) {
+  if (!filters.salespersonId && visibility) {
     query = applyCrmVisibilityFilter(query, visibility);
   }
 
@@ -769,14 +792,8 @@ export async function getCrmPipelineBoard(filters: CrmPipelineBoardFilters = {})
     updated_at: String(row.updated_at || ''),
   }));
 
-  const needle = String(filters.search || '').trim();
   if (needle) {
-    const narrowed = await applyPipelineSearchToOpportunityQuery(
-      query,
-      supabase,
-      scope.organizationId,
-      needle
-    );
+    const narrowed = applyPipelineSearchToOpportunityQuery(query, needle, searchContactIds);
     if (narrowed.forceEmpty) {
       return {
         stages: mappedStages,
@@ -794,13 +811,10 @@ export async function getCrmPipelineBoard(filters: CrmPipelineBoardFilters = {})
   const { data: oppRows, error: oppError } = await query;
   if (oppError) return { error: oppError.message };
 
-  let opportunities = await enrichOpportunities(
+  let opportunities = await enrichBoardOpportunities(
     (oppRows || []) as Record<string, unknown>[],
-    { skipLeadIdBackfill: Boolean(needle) }
+    needle
   );
-  opportunities = (await attachNextActivitiesToOpportunities(
-    opportunities
-  )) as CrmOpportunityCard[];
 
   if (needle) {
     opportunities = opportunities.filter((opp) =>

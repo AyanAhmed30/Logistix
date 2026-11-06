@@ -1,18 +1,29 @@
 "use client";
 
 import { useEffect } from "react";
-import { toast } from "sonner";
-import { getErrorMessage } from "@/lib/safe-async";
+import { showRefreshNeeded, toast } from "@/lib/app-toast";
 import { isNextControlFlowError } from "@/lib/next-errors";
+import { getErrorMessage } from "@/lib/safe-async";
+import { isStaleClientError } from "@/lib/user-facing-error";
+
+/** A failure this soon after a click or key press is treated as the user's own action. */
+const USER_ACTION_WINDOW_MS = 30_000;
 
 /**
- * Catches unhandled promise rejections so they surface as toasts instead of
- * leaving the app in a broken state.
+ * Last-resort handler for failures nothing else caught. Everything is logged, but
+ * only a failure that follows the user's own action reaches the screen, so polling
+ * and other background work can never raise a popup.
  *
  * Next.js redirect()/notFound() throw control-flow errors — those must be ignored.
  */
 export function AppRuntimeGuards() {
   useEffect(() => {
+    let lastUserAction = 0;
+
+    function onUserAction() {
+      lastUserAction = Date.now();
+    }
+
     function onUnhandledRejection(event: PromiseRejectionEvent) {
       if (isNextControlFlowError(event.reason)) {
         // Successful navigation via redirect() — do not toast or log as an error.
@@ -20,12 +31,14 @@ export function AppRuntimeGuards() {
       }
 
       event.preventDefault();
-      const message = getErrorMessage(
-        event.reason,
-        "An unexpected error occurred. Please try again."
-      );
       console.error("[unhandledrejection]", event.reason);
-      toast.error(message);
+
+      if (Date.now() - lastUserAction > USER_ACTION_WINDOW_MS) return;
+      if (isStaleClientError(event.reason)) {
+        showRefreshNeeded();
+        return;
+      }
+      toast.error(getErrorMessage(event.reason));
     }
 
     function onWindowError(event: ErrorEvent) {
@@ -35,10 +48,14 @@ export function AppRuntimeGuards() {
       console.error("[window.error]", event.error ?? event.message);
     }
 
+    window.addEventListener("pointerdown", onUserAction, { capture: true, passive: true });
+    window.addEventListener("keydown", onUserAction, { capture: true, passive: true });
     window.addEventListener("unhandledrejection", onUnhandledRejection);
     window.addEventListener("error", onWindowError);
 
     return () => {
+      window.removeEventListener("pointerdown", onUserAction, { capture: true });
+      window.removeEventListener("keydown", onUserAction, { capture: true });
       window.removeEventListener("unhandledrejection", onUnhandledRejection);
       window.removeEventListener("error", onWindowError);
     };

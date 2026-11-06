@@ -7,6 +7,7 @@ import {
   HR_MODULE_PERMISSIONS,
   normalizeStoredPermissions,
 } from "@/lib/module-permissions";
+import { actionError } from '@/lib/user-facing-error';
 
 export type HRStaff = {
   id: string;
@@ -83,7 +84,7 @@ export async function createHR(formData: FormData) {
     .maybeSingle();
 
   if (existingUserError) {
-    return { error: existingUserError.message };
+    return { error: actionError(existingUserError) };
   }
 
   if (existingUser) {
@@ -113,7 +114,7 @@ export async function createHR(formData: FormData) {
     if (authError?.code === "23505") {
       return { error: "Username already exists" };
     }
-    return { error: authError?.message || "Failed to create HR login account" };
+    return { error: actionError(authError, "Failed to create HR login account") };
   }
 
   const { data: hrStaff, error: hrError } = await supabase
@@ -154,7 +155,7 @@ export async function createHR(formData: FormData) {
       return { error: "HR staff with this username already exists" };
     }
 
-    return { error: hrError?.message || "Failed to create HR staff profile" };
+    return { error: actionError(hrError, "Failed to create HR staff profile") };
   }
 
   revalidatePath("/admin/dashboard");
@@ -205,7 +206,7 @@ export async function updateHR(formData: FormData) {
     .maybeSingle();
 
   if (existingError) {
-    return { error: existingError.message };
+    return { error: actionError(existingError) };
   }
 
   if (!existing) {
@@ -226,7 +227,7 @@ export async function updateHR(formData: FormData) {
     if (authError.code === "23505") {
       return { error: "Username already exists" };
     }
-    return { error: authError.message };
+    return { error: actionError(authError) };
   }
 
   const { data: hrStaff, error: hrError } = await supabase
@@ -249,7 +250,7 @@ export async function updateHR(formData: FormData) {
     .single();
 
   if (hrError) {
-    return { error: hrError.message };
+    return { error: actionError(hrError) };
   }
 
   revalidatePath("/admin/dashboard");
@@ -274,7 +275,7 @@ export async function deleteHR(formData: FormData) {
     .maybeSingle();
 
   if (existingError) {
-    return { error: existingError.message };
+    return { error: actionError(existingError) };
   }
 
   if (!existing) {
@@ -287,7 +288,7 @@ export async function deleteHR(formData: FormData) {
     .eq("id", existing.user_id);
 
   if (error) {
-    return { error: error.message };
+    return { error: actionError(error) };
   }
 
   revalidatePath("/admin/dashboard");
@@ -310,7 +311,7 @@ export async function getHRById(id: string) {
     .maybeSingle();
 
   if (error) {
-    return { error: error.message };
+    return { error: actionError(error) };
   }
 
   if (!data) {
@@ -338,7 +339,7 @@ export async function getAllHRs() {
     ) {
       return { hrStaff: [] as HRStaff[] };
     }
-    return { error: error.message };
+    return { error: actionError(error) };
   }
 
   return { hrStaff: (data || []) as HRStaff[] };

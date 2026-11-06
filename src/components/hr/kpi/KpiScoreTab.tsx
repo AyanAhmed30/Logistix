@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { toast } from "sonner";
+import { toast } from "@/lib/app-toast";
 import type { Employee } from "@/app/actions/employees";
 import { getGoals, type KpiGoal } from "@/app/actions/kpiGoals";
 import {

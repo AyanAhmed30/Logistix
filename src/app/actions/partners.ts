@@ -3,6 +3,7 @@
 import { revalidatePath } from 'next/cache';
 import { getSession } from '@/lib/auth/session';
 import { createAdminClient } from '@/utils/supabase/server';
+import { actionError } from '@/lib/user-facing-error';
 
 export type PartnerType = 'customer' | 'vendor' | 'agent' | 'both';
 export type PartnerStatus = 'active' | 'inactive';
@@ -77,12 +78,12 @@ export async function getPartners(type?: PartnerType | 'all', status?: PartnerSt
 
     const { data, error } = await query;
     if (error) {
-      return { error: error.message };
+      return { error: actionError(error) };
     }
 
     return { partners: (data || []) as Partner[] };
   } catch (err) {
-    return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };
+    return { error: actionError(err, 'An unexpected error occurred') };
   }
 }
 
@@ -117,7 +118,7 @@ export async function createPartner(input: UpsertPartnerInput) {
       .limit(1);
 
     if (duplicateError) {
-      return { error: duplicateError.message };
+      return { error: actionError(duplicateError) };
     }
     if ((duplicateRows || []).length > 0) {
       return { error: 'Partner with same name and type already exists.' };
@@ -140,13 +141,13 @@ export async function createPartner(input: UpsertPartnerInput) {
       .single();
 
     if (error || !data) {
-      return { error: error?.message || 'Failed to create partner.' };
+      return { error: actionError(error, 'Failed to create partner.') };
     }
 
     revalidateAccountingPaths();
     return { partner: data as Partner };
   } catch (err) {
-    return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };
+    return { error: actionError(err, 'An unexpected error occurred') };
   }
 }
 
@@ -186,7 +187,7 @@ export async function updatePartner(input: UpsertPartnerInput) {
       .single();
 
     if (existingError || !existing) {
-      return { error: existingError?.message || 'Partner not found.' };
+      return { error: actionError(existingError, 'Partner not found.') };
     }
 
     const { data: duplicateRows, error: duplicateError } = await supabase
@@ -198,7 +199,7 @@ export async function updatePartner(input: UpsertPartnerInput) {
       .limit(1);
 
     if (duplicateError) {
-      return { error: duplicateError.message };
+      return { error: actionError(duplicateError) };
     }
     if ((duplicateRows || []).length > 0) {
       return { error: 'Partner with same name and type already exists.' };
@@ -220,13 +221,13 @@ export async function updatePartner(input: UpsertPartnerInput) {
       .single();
 
     if (error || !data) {
-      return { error: error?.message || 'Failed to update partner.' };
+      return { error: actionError(error, 'Failed to update partner.') };
     }
 
     revalidateAccountingPaths();
     return { partner: data as Partner };
   } catch (err) {
-    return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };
+    return { error: actionError(err, 'An unexpected error occurred') };
   }
 }
 
@@ -255,12 +256,12 @@ export async function setPartnerStatus(partnerId: string, status: PartnerStatus)
       .single();
 
     if (error || !data) {
-      return { error: error?.message || 'Failed to update partner status.' };
+      return { error: actionError(error, 'Failed to update partner status.') };
     }
 
     revalidateAccountingPaths();
     return { partner: data as Partner };
   } catch (err) {
-    return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };
+    return { error: actionError(err, 'An unexpected error occurred') };
   }
 }

@@ -19,6 +19,7 @@ import {
   type MoneyConversionResult,
   FALLBACK_BASE_CURRENCY,
 } from '@/lib/accounting-currencies';
+import { actionError } from '@/lib/user-facing-error';
 
 export type AccountingCurrencyListItem = {
   id: string;
@@ -195,7 +196,7 @@ export async function searchAccountingCurrencies(opts?: {
       if (/currencies|does not exist/i.test(error.message)) {
         return { currencies: [] as CurrencyDef[], migrationRequired: true as const };
       }
-      return { error: error.message };
+      return { error: actionError(error) };
     }
 
     return {
@@ -205,7 +206,7 @@ export async function searchAccountingCurrencies(opts?: {
     };
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to search currencies',
+      error: actionError(err, 'Failed to search currencies'),
     };
   }
 }
@@ -255,7 +256,7 @@ export async function getAccountingConfigCurrencies(opts?: {
           migrationRequired: true as const,
         };
       }
-      return { error: error.message };
+      return { error: actionError(error) };
     }
 
     const rows = data || [];
@@ -298,7 +299,7 @@ export async function getAccountingConfigCurrencies(opts?: {
     return { currencies, total: count ?? currencies.length, page, pageSize };
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to load currencies',
+      error: actionError(err, 'Failed to load currencies'),
     };
   }
 }
@@ -316,7 +317,7 @@ export async function getAccountingConfigCurrencyDetail(currencyId: string) {
       .maybeSingle();
 
     if (error || !data) {
-      return { error: error?.message || 'Currency not found' };
+      return { error: actionError(error, 'Currency not found') };
     }
 
     const { data: rates } = await supabase
@@ -362,7 +363,7 @@ export async function getAccountingConfigCurrencyDetail(currencyId: string) {
     return { currency };
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to load currency',
+      error: actionError(err, 'Failed to load currency'),
     };
   }
 }
@@ -430,7 +431,7 @@ export async function createAccountingConfigCurrency(payload: {
       if (/unique|duplicate/i.test(error.message)) {
         return { error: 'Currency code already exists.' };
       }
-      return { error: error.message };
+      return { error: actionError(error) };
     }
 
     const currencyId = String(data.id);
@@ -456,7 +457,7 @@ export async function createAccountingConfigCurrency(payload: {
     return { currencyId };
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to create currency',
+      error: actionError(err, 'Failed to create currency'),
     };
   }
 }
@@ -487,7 +488,7 @@ export async function updateAccountingConfigCurrency(
       .eq('id', currencyId)
       .maybeSingle();
     if (findErr || !existing) {
-      return { error: findErr?.message || 'Currency not found' };
+      return { error: actionError(findErr, 'Currency not found') };
     }
 
     if (payload.is_base && !existing.is_base) {
@@ -537,11 +538,11 @@ export async function updateAccountingConfigCurrency(
       .update(patch)
       .eq('id', currencyId);
 
-    if (error) return { error: error.message };
+    if (error) return { error: actionError(error) };
     return { ok: true as const };
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to update currency',
+      error: actionError(err, 'Failed to update currency'),
     };
   }
 }
@@ -571,11 +572,11 @@ export async function archiveAccountingConfigCurrency(currencyId: string) {
       })
       .eq('id', currencyId);
 
-    if (error) return { error: error.message };
+    if (error) return { error: actionError(error) };
     return { ok: true as const };
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to archive currency',
+      error: actionError(err, 'Failed to archive currency'),
     };
   }
 }
@@ -595,11 +596,11 @@ export async function restoreAccountingConfigCurrency(currencyId: string) {
       })
       .eq('id', currencyId);
 
-    if (error) return { error: error.message };
+    if (error) return { error: actionError(error) };
     return { ok: true as const };
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to restore currency',
+      error: actionError(err, 'Failed to restore currency'),
     };
   }
 }
@@ -659,13 +660,13 @@ export async function upsertAccountingExchangeRate(payload: {
             'Run enhance_accounting_currencies_foundation.sql in Supabase first.',
         };
       }
-      return { error: error.message };
+      return { error: actionError(error) };
     }
 
     return { rateId: String(data.id) };
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to save exchange rate',
+      error: actionError(err, 'Failed to save exchange rate'),
     };
   }
 }
@@ -680,11 +681,11 @@ export async function deleteAccountingExchangeRate(rateId: string) {
       .from('exchange_rates')
       .delete()
       .eq('id', rateId);
-    if (error) return { error: error.message };
+    if (error) return { error: actionError(error) };
     return { ok: true as const };
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to delete exchange rate',
+      error: actionError(err, 'Failed to delete exchange rate'),
     };
   }
 }
@@ -721,8 +722,7 @@ export async function ensureDefaultAccountingCurrencies() {
     return { ok: true as const };
   } catch (err) {
     return {
-      error:
-        err instanceof Error ? err.message : 'Failed to ensure default currencies',
+      error: actionError(err, 'Failed to ensure default currencies'),
     };
   }
 }
@@ -759,7 +759,7 @@ export async function getBaseCurrency(): Promise<
           },
         };
       }
-      return { error: error.message };
+      return { error: actionError(error) };
     }
 
     if (!data) {
@@ -782,7 +782,7 @@ export async function getBaseCurrency(): Promise<
     return { currency: toCurrencyDef(mapCurrencyRow(data as Record<string, unknown>)) };
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to load base currency',
+      error: actionError(err, 'Failed to load base currency'),
     };
   }
 }
@@ -814,8 +814,7 @@ export async function getOrganizationCurrency(
     return { currency: toCurrencyDef(mapCurrencyRow(data as Record<string, unknown>)) };
   } catch (err) {
     return {
-      error:
-        err instanceof Error ? err.message : 'Failed to load organization currency',
+      error: actionError(err, 'Failed to load organization currency'),
     };
   }
 }
@@ -850,13 +849,12 @@ export async function setOrganizationCurrency(
             'Run enhance_accounting_currencies_foundation.sql in Supabase first.',
         };
       }
-      return { error: error.message };
+      return { error: actionError(error) };
     }
     return { ok: true as const };
   } catch (err) {
     return {
-      error:
-        err instanceof Error ? err.message : 'Failed to set organization currency',
+      error: actionError(err, 'Failed to set organization currency'),
     };
   }
 }
@@ -877,12 +875,12 @@ export async function getCurrencyByCode(code: string): Promise<
       .eq('code', normalized)
       .maybeSingle();
 
-    if (error) return { error: error.message };
+    if (error) return { error: actionError(error) };
     if (!data) return { error: `Currency ${normalized} not found.` };
     return { currency: toCurrencyDef(mapCurrencyRow(data as Record<string, unknown>)) };
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to load currency',
+      error: actionError(err, 'Failed to load currency'),
     };
   }
 }
@@ -934,7 +932,7 @@ export async function resolveExchangeRateToBase(
       .limit(1)
       .maybeSingle();
 
-    if (error) return { error: error.message };
+    if (error) return { error: actionError(error) };
     if (!rateRow) {
       return {
         error: `Exchange rate not found for ${code} on or before ${date}.`,
@@ -947,7 +945,7 @@ export async function resolveExchangeRateToBase(
     };
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to resolve exchange rate',
+      error: actionError(err, 'Failed to resolve exchange rate'),
     };
   }
 }
@@ -1024,7 +1022,7 @@ export async function convertCurrencyAmount(args: {
     });
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to convert currency',
+      error: actionError(err, 'Failed to convert currency'),
     };
   }
 }

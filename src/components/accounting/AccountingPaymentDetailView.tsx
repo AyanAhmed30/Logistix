@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { toast } from "sonner";
+import { toast } from "@/lib/app-toast";
 import { ArrowLeft, UserRound } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { getAccountingCustomerPaymentDetail } from "@/app/actions/accounting/payments";

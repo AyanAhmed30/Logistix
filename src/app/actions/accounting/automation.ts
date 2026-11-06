@@ -5,6 +5,7 @@ import { requireAccountingActionAccess } from '@/lib/accounting-page-access';
 import { getAccountingInvoiceDetail } from '@/app/actions/accounting/invoices';
 import { formatMoney } from '@/lib/sales-quotation-form';
 import { renderAccountingEmailTemplate } from '@/lib/accounting-email-templates';
+import { actionError } from '@/lib/user-facing-error';
 
 export type AccountingEmailTemplateKey =
   | 'invoice_sent'
@@ -179,7 +180,7 @@ export async function getAccountingEmailTemplates() {
           })),
         };
       }
-      return { error: error.message };
+      return { error: actionError(error) };
     }
 
     const rows = (data || []) as AccountingEmailTemplate[];
@@ -198,7 +199,7 @@ export async function getAccountingEmailTemplates() {
     return { templates: [...preferred.values()] };
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to load templates',
+      error: actionError(err, 'Failed to load templates'),
     };
   }
 }
@@ -262,7 +263,7 @@ export async function prepareAccountingTemplateEmail(opts: {
     };
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to prepare email',
+      error: actionError(err, 'Failed to prepare email'),
     };
   }
 }
@@ -349,7 +350,7 @@ export async function scheduleAccountingReminder(opts: {
               : 'Run create_accounting_reporting_automation_phase8_9.sql to enable reminders.',
         };
       }
-      return { error: error.message };
+      return { error: actionError(error) };
     }
 
     await supabase.from('accounting_invoice_logs').insert([
@@ -383,7 +384,7 @@ export async function scheduleAccountingReminder(opts: {
     return { reminderId: row?.id ? String(row.id) : null, email };
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to schedule reminder',
+      error: actionError(err, 'Failed to schedule reminder'),
     };
   }
 }
@@ -402,7 +403,7 @@ export async function getAccountingRemindersForInvoice(invoiceId: string) {
       if (/accounting_reminders|relation/i.test(error.message)) {
         return { reminders: [] as AccountingReminder[] };
       }
-      return { error: error.message };
+      return { error: actionError(error) };
     }
     return {
       reminders: (data || []).map((r) => ({
@@ -417,7 +418,7 @@ export async function getAccountingRemindersForInvoice(invoiceId: string) {
     };
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to load reminders',
+      error: actionError(err, 'Failed to load reminders'),
     };
   }
 }
@@ -473,7 +474,7 @@ export async function createAccountingActivity(opts: {
             'Run create_accounting_reporting_automation_phase8_9.sql to enable activities.',
         };
       }
-      return { error: error.message };
+      return { error: actionError(error) };
     }
 
     if (opts.invoiceId) {
@@ -503,7 +504,7 @@ export async function createAccountingActivity(opts: {
     return { activityId: data?.id ? String(data.id) : null };
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to create activity',
+      error: actionError(err, 'Failed to create activity'),
     };
   }
 }
@@ -533,7 +534,7 @@ export async function getAccountingActivities(opts: {
       if (/accounting_activities|relation/i.test(error.message)) {
         return { activities: [] as AccountingActivity[] };
       }
-      return { error: error.message };
+      return { error: actionError(error) };
     }
     return {
       activities: (data || []).map((a) => ({
@@ -550,7 +551,7 @@ export async function getAccountingActivities(opts: {
     };
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to load activities',
+      error: actionError(err, 'Failed to load activities'),
     };
   }
 }
@@ -568,11 +569,11 @@ export async function markAccountingActivityDone(activityId: string) {
         updated_at: new Date().toISOString(),
       })
       .eq('id', activityId);
-    if (error) return { error: error.message };
+    if (error) return { error: actionError(error) };
     return { ok: true as const };
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to update activity',
+      error: actionError(err, 'Failed to update activity'),
     };
   }
 }
@@ -626,7 +627,7 @@ export async function getAccountingAuditLogs(filters: {
       if (/accounting_audit_logs|relation/i.test(error.message)) {
         return { logs: [], total: 0, page, pageSize };
       }
-      return { error: error.message };
+      return { error: actionError(error) };
     }
     return {
       logs: (data || []).map((r) => ({
@@ -647,7 +648,7 @@ export async function getAccountingAuditLogs(filters: {
     };
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to load audit logs',
+      error: actionError(err, 'Failed to load audit logs'),
     };
   }
 }

@@ -33,7 +33,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Download, PlusCircle, Trash2 } from "lucide-react";
-import { toast } from "sonner";
+import { toast } from "@/lib/app-toast";
 import { OrganizationLogo } from "@/components/organization/OrganizationLogo";
 import { downloadOrganizationQuotationPdf } from "@/lib/organization-quotation-pdf";
 

@@ -7,6 +7,7 @@ import {
   getAccountingInvoiceDetail,
   type AccountingInvoiceStatus,
 } from '@/app/actions/accounting/invoices';
+import { actionError } from '@/lib/user-facing-error';
 
 export type AccountingInvoiceLog = {
   id: string;
@@ -106,7 +107,7 @@ async function loadInvoiceRow(
     .select('*')
     .eq('id', invoiceId)
     .maybeSingle();
-  if (error || !data) return { error: error?.message || 'Invoice not found' };
+  if (error || !data) return { error: actionError(error, 'Invoice not found') };
   return { invoice: data };
 }
 
@@ -334,7 +335,7 @@ export async function updateAccountingInvoice(
                     'Run create_accounting_invoice_workflow_phase2.sql migration.',
                 };
               }
-              return { error: retry.error.message };
+              return { error: actionError(retry.error) };
             }
           } else if (/customer_notes|column/i.test(retryBank.error.message)) {
             return {
@@ -342,7 +343,7 @@ export async function updateAccountingInvoice(
                 'Run create_accounting_invoice_workflow_phase2.sql migration.',
             };
           } else {
-            return { error: retryBank.error.message };
+            return { error: actionError(retryBank.error) };
           }
         }
       } else if (/payment_term_id|column/i.test(updError.message)) {
@@ -358,7 +359,7 @@ export async function updateAccountingInvoice(
                 'Run create_accounting_invoice_workflow_phase2.sql migration.',
             };
           }
-          return { error: retry.error.message };
+          return { error: actionError(retry.error) };
         }
       } else if (/customer_notes|column/i.test(updError.message)) {
         return {
@@ -366,7 +367,7 @@ export async function updateAccountingInvoice(
             'Run create_accounting_invoice_workflow_phase2.sql migration.',
         };
       } else {
-        return { error: updError.message };
+        return { error: actionError(updError) };
       }
     }
 
@@ -415,10 +416,10 @@ export async function updateAccountingInvoice(
             const bareRetry = await supabase
               .from('accounting_customer_invoice_lines')
               .insert(bare);
-            if (bareRetry.error) return { error: bareRetry.error.message };
+            if (bareRetry.error) return { error: actionError(bareRetry.error) };
           }
         } else if (lineErr) {
-          return { error: lineErr.message };
+          return { error: actionError(lineErr) };
         }
       }
     }
@@ -438,7 +439,7 @@ export async function updateAccountingInvoice(
     return getAccountingInvoiceDetail(invoiceId);
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to save invoice',
+      error: actionError(err, 'Failed to save invoice'),
     };
   }
 }
@@ -489,7 +490,7 @@ async function transitionStatus(
       .update(patch)
       .eq('id', invoiceId);
 
-    if (error) return { error: error.message };
+    if (error) return { error: actionError(error) };
 
     await appendLog(supabase, {
       invoiceId,
@@ -554,7 +555,7 @@ export async function postAccountingInvoice(invoiceId: string) {
     }
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to post invoice',
+      error: actionError(err, 'Failed to post invoice'),
     };
   }
 
@@ -681,7 +682,7 @@ export async function cancelAccountingInvoice(invoiceId: string) {
     }
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to cancel invoice',
+      error: actionError(err, 'Failed to cancel invoice'),
     };
   }
   return transitionStatus(invoiceId, 'cancelled', 'cancelled', {
@@ -819,14 +820,14 @@ export async function resetAccountingInvoiceToDraft(invoiceId: string) {
             updated_at: new Date().toISOString(),
           })
           .eq('id', invoiceId);
-        if (retry.error) return { error: retry.error.message };
+        if (retry.error) return { error: actionError(retry.error) };
         // Best-effort clear JE link separately.
         await supabase
           .from('accounting_customer_invoices')
           .update({ journal_entry_id: null })
           .eq('id', invoiceId);
       } else {
-        return { error: error.message };
+        return { error: actionError(error) };
       }
     }
 
@@ -858,8 +859,7 @@ export async function resetAccountingInvoiceToDraft(invoiceId: string) {
     return getAccountingInvoiceDetail(invoiceId);
   } catch (err) {
     return {
-      error:
-        err instanceof Error ? err.message : 'Failed to reset invoice to draft',
+      error: actionError(err, 'Failed to reset invoice to draft'),
     };
   }
 }
@@ -973,7 +973,7 @@ export async function duplicateAccountingInvoice(invoiceId: string) {
           .select('id')
           .single();
         if (retry.error || !retry.data) {
-          return { error: retry.error?.message || 'Failed to duplicate invoice' };
+          return { error: actionError(retry.error, 'Failed to duplicate invoice') };
         }
         const createdId = String(retry.data.id);
         if (source.lines.length) {
@@ -994,7 +994,7 @@ export async function duplicateAccountingInvoice(invoiceId: string) {
         }
         return { invoiceId: createdId };
       }
-      return { error: error?.message || 'Failed to duplicate invoice' };
+      return { error: actionError(error, 'Failed to duplicate invoice') };
     }
 
     if (source.lines.length) {
@@ -1035,7 +1035,7 @@ export async function duplicateAccountingInvoice(invoiceId: string) {
     return { invoiceId: String(created.id) };
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to duplicate invoice',
+      error: actionError(err, 'Failed to duplicate invoice'),
     };
   }
 }
@@ -1057,7 +1057,7 @@ export async function getAccountingInvoiceActivity(invoiceId: string) {
       if (/accounting_invoice_logs|relation/i.test(error.message)) {
         return { logs: [] as AccountingInvoiceLog[] };
       }
-      return { error: error.message };
+      return { error: actionError(error) };
     }
 
     const logs: AccountingInvoiceLog[] = (data || []).map((r) => ({
@@ -1074,7 +1074,7 @@ export async function getAccountingInvoiceActivity(invoiceId: string) {
     return { logs };
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to load activity',
+      error: actionError(err, 'Failed to load activity'),
     };
   }
 }
@@ -1100,7 +1100,7 @@ export async function postAccountingInvoiceNote(
     return getAccountingInvoiceActivity(invoiceId);
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to post note',
+      error: actionError(err, 'Failed to post note'),
     };
   }
 }
@@ -1135,7 +1135,7 @@ export async function logAccountingInvoicePreview(
     return { ok: true as const };
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to log preview',
+      error: actionError(err, 'Failed to log preview'),
     };
   }
 }
@@ -1176,7 +1176,7 @@ export async function prepareAccountingInvoiceEmail(invoiceId: string) {
     };
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to prepare email',
+      error: actionError(err, 'Failed to prepare email'),
     };
   }
 }

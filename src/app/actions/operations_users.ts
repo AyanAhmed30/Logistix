@@ -3,6 +3,7 @@
 import { createAdminClient } from '@/utils/supabase/server';
 import { getSession } from '@/lib/auth/session';
 import { revalidatePath } from 'next/cache';
+import { actionError } from '@/lib/user-facing-error';
 
 export type OperationsUser = {
   id: string;
@@ -79,13 +80,13 @@ export async function createOperationsUser(formData: FormData) {
       if (error.code === '23505') {
         return { error: 'Username already exists' };
       }
-      return { error: error.message };
+      return { error: actionError(error) };
     }
 
     revalidatePath('/admin/dashboard');
     return { success: true, operationsUser: data as OperationsUser };
   } catch (err) {
-    return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };
+    return { error: actionError(err, 'An unexpected error occurred') };
   }
 }
 
@@ -107,11 +108,11 @@ export async function getAllOperationsUsers() {
       if (error.message.includes('does not exist') || error.message.includes('relation') || error.code === '42P01') {
         return { operationsUsers: [] };
       }
-      return { error: error.message };
+      return { error: actionError(error) };
     }
     return { operationsUsers: (data || []) as OperationsUser[] };
   } catch (err) {
-    return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };
+    return { error: actionError(err, 'An unexpected error occurred') };
   }
 }
 
@@ -157,12 +158,12 @@ export async function updateOperationsUser(formData: FormData) {
       .select()
       .single();
 
-    if (error) return { error: error.message };
+    if (error) return { error: actionError(error) };
 
     revalidatePath('/admin/dashboard');
     return { success: true, operationsUser: data as OperationsUser };
   } catch (err) {
-    return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };
+    return { error: actionError(err, 'An unexpected error occurred') };
   }
 }
 
@@ -185,11 +186,11 @@ export async function deleteOperationsUser(formData: FormData) {
       .delete()
       .eq('id', id);
 
-    if (error) return { error: error.message };
+    if (error) return { error: actionError(error) };
 
     revalidatePath('/admin/dashboard');
     return { success: true };
   } catch (err) {
-    return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };
+    return { error: actionError(err, 'An unexpected error occurred') };
   }
 }

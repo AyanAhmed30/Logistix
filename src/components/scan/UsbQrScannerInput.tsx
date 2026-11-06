@@ -6,7 +6,7 @@ import { parseScanIdentifierFromScannerInput } from "@/lib/parse-scan-identifier
 import { submitCartonScan } from "@/lib/submit-carton-scan";
 import { usbScannerLog } from "@/lib/usb-scanner-debug";
 import { Button } from "@/components/ui/button";
-import { toast } from "sonner";
+import { toast } from "@/lib/app-toast";
 
 type Props = {
   enabled?: boolean;

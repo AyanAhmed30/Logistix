@@ -5,6 +5,7 @@ import { getSalesQuotationDetail, getSalesQuotationDetailForWorkflow } from '@/a
 import { getSession } from '@/lib/auth/session';
 import { requireChildModule, sessionHasSalesAccess } from '@/lib/auth/require-access';
 import { quotationLineDisplayDescription } from '@/lib/sales-quotation-form';
+import { actionError } from '@/lib/user-facing-error';
 
 export type SalesQuotationPdfPayload = {
   organization: {
@@ -242,7 +243,7 @@ export async function getSalesQuotationPdfPayload(quotationId: string) {
     return { payload };
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to build PDF payload',
+      error: actionError(err, 'Failed to build PDF payload'),
     };
   }
 }

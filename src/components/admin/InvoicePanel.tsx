@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState, useTransition } from "react";
-import { toast } from "sonner";
+import { toast } from "@/lib/app-toast";
 import { useRouter } from "next/navigation";
 import {
   getAllInvoices,

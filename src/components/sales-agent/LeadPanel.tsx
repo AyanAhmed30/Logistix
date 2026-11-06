@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { toast } from "sonner";
+import { toast } from "@/lib/app-toast";
 import { createLead, getAllLeadsForSalesAgent, updateLead, deleteLead, type Lead } from "@/app/actions/leads";
 import { normalizePakistaniPhone } from "@/lib/pakistan-phone";
 import { Button } from "@/components/ui/button";

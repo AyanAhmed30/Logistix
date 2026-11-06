@@ -8,6 +8,7 @@ import {
   salesRoleSeesAllOrgRecords,
 } from '@/lib/sales-roles';
 import { renderSalesEmailTemplate } from '@/lib/sales-email-templates';
+import { actionError } from '@/lib/user-facing-error';
 
 export type SalesEmailTemplate = {
   id: string;
@@ -133,7 +134,7 @@ export async function getSalesEmailTemplates() {
             'Run sales_automation_security_phase9_10.sql to enable stored templates.',
         };
       }
-      return { error: error.message };
+      return { error: actionError(error) };
     }
 
     const rows = (data || []) as SalesEmailTemplate[];
@@ -153,7 +154,7 @@ export async function getSalesEmailTemplates() {
     };
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to load email templates',
+      error: actionError(err, 'Failed to load email templates'),
     };
   }
 }
@@ -209,7 +210,7 @@ export async function prepareSalesQuotationEmail(
       .eq('id', quotationId)
       .maybeSingle();
 
-    if (error || !q) return { error: error?.message || 'Quotation not found' };
+    if (error || !q) return { error: actionError(error, 'Quotation not found') };
 
     const templatesRes = await getSalesEmailTemplates();
     if ('error' in templatesRes && templatesRes.error) {
@@ -280,7 +281,7 @@ export async function prepareSalesQuotationEmail(
     };
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to prepare email',
+      error: actionError(err, 'Failed to prepare email'),
     };
   }
 }
@@ -321,7 +322,7 @@ export async function processSalesQuotationExpirations(options?: {
             'Run sales_automation_security_phase9_10.sql to enable expired status.',
         };
       }
-      return { error: error.message };
+      return { error: actionError(error) };
     }
 
     const rows = data || [];
@@ -347,7 +348,7 @@ export async function processSalesQuotationExpirations(options?: {
             'Run sales_automation_security_phase9_10.sql to enable expired status.',
         };
       }
-      return { error: updError.message };
+      return { error: actionError(updError) };
     }
 
     const logs = rows.map((r) => ({
@@ -363,7 +364,7 @@ export async function processSalesQuotationExpirations(options?: {
     return { expired: ids.length };
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to process expirations',
+      error: actionError(err, 'Failed to process expirations'),
     };
   }
 }
@@ -409,12 +410,11 @@ export async function getSalesQuotationsNearingExpiration(daysAhead = 7) {
     }
 
     const { data, error } = await query;
-    if (error) return { error: error.message };
+    if (error) return { error: actionError(error) };
     return { quotations: data || [] };
   } catch (err) {
     return {
-      error:
-        err instanceof Error ? err.message : 'Failed to load expiration reminders',
+      error: actionError(err, 'Failed to load expiration reminders'),
     };
   }
 }
@@ -445,7 +445,7 @@ export async function scheduleSalesQuotationFollowUp(input: {
       .eq('id', input.quotationId)
       .maybeSingle();
 
-    if (loadError || !q) return { error: loadError?.message || 'Quotation not found' };
+    if (loadError || !q) return { error: actionError(loadError, 'Quotation not found') };
 
     let crmActivityId: string | null = null;
     const activityTypeMap: Record<string, string> = {
@@ -527,7 +527,7 @@ export async function scheduleSalesQuotationFollowUp(input: {
           message: 'Follow-up logged; run migration for full reminder scheduling.',
         };
       }
-      return { error: error.message };
+      return { error: actionError(error) };
     }
 
     await supabase.from('quotation_logs').insert([
@@ -564,7 +564,7 @@ export async function scheduleSalesQuotationFollowUp(input: {
     };
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to schedule follow-up',
+      error: actionError(err, 'Failed to schedule follow-up'),
     };
   }
 }
@@ -585,12 +585,12 @@ export async function getSalesQuotationReminders(quotationId: string) {
       if (/sales_quotation_reminders|relation/i.test(error.message)) {
         return { reminders: [] as SalesQuotationReminder[] };
       }
-      return { error: error.message };
+      return { error: actionError(error) };
     }
     return { reminders: (data || []) as SalesQuotationReminder[] };
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to load reminders',
+      error: actionError(err, 'Failed to load reminders'),
     };
   }
 }

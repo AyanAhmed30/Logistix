@@ -12,6 +12,7 @@ import {
   computeLeadScore,
 } from '@/lib/crm-automation';
 import type { CrmActivityType } from '@/app/actions/crm/types';
+import { actionError } from '@/lib/user-facing-error';
 
 export type CrmLostReason = {
   id: string;
@@ -131,7 +132,7 @@ export async function getCrmLostReasons() {
         })) as CrmLostReason[],
       };
     }
-    return { error: error.message };
+    return { error: actionError(error) };
   }
 
   return {
@@ -163,7 +164,7 @@ export async function getCrmEmailTemplates() {
     if (/does not exist|relation/i.test(error.message)) {
       return { templates: [] as CrmEmailTemplate[], comingSoon: true as const };
     }
-    return { error: error.message };
+    return { error: actionError(error) };
   }
 
   return {
@@ -210,7 +211,7 @@ export async function checkCrmOpportunityDuplicates(input: {
   }
 
   const { data, error } = await query;
-  if (error) return { error: error.message };
+  if (error) return { error: actionError(error) };
 
   const stageIds = [
     ...new Set((data || []).map((row) => row.stage_id).filter(Boolean)),

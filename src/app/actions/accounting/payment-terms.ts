@@ -15,6 +15,7 @@ import {
   type PaymentTermLineDef,
   type PaymentTermValueType,
 } from '@/lib/accounting-payment-terms';
+import { actionError } from '@/lib/user-facing-error';
 
 export type AccountingPaymentTermLine = {
   id: string;
@@ -163,12 +164,12 @@ export async function searchAccountingPaymentTerms(opts?: {
       if (/accounting_payment_terms|does not exist/i.test(error.message)) {
         return { terms: [], migrationRequired: true as const };
       }
-      return { error: error.message };
+      return { error: actionError(error) };
     }
     return { terms: data || [] };
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to search payment terms',
+      error: actionError(err, 'Failed to search payment terms'),
     };
   }
 }
@@ -181,7 +182,7 @@ export async function getAccountingPaymentTermById(termId: string) {
       .select('*')
       .eq('id', termId)
       .maybeSingle();
-    if (error || !term) return { error: error?.message || 'Payment term not found' };
+    if (error || !term) return { error: actionError(error, 'Payment term not found') };
 
     const { data: lines } = await supabase
       .from('accounting_payment_term_lines')
@@ -208,7 +209,7 @@ export async function getAccountingPaymentTermById(termId: string) {
     };
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to load payment term',
+      error: actionError(err, 'Failed to load payment term'),
     };
   }
 }
@@ -243,7 +244,7 @@ export async function computeAccountingDueDate(args: {
     return { due_date: due, schedule: [], term_name: args.paymentTermsText || null };
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to compute due date',
+      error: actionError(err, 'Failed to compute due date'),
     };
   }
 }
@@ -305,7 +306,7 @@ export async function getAccountingConfigPaymentTerms(opts?: {
           migrationRequired: true as const,
         };
       }
-      return { error: error.message };
+      return { error: actionError(error) };
     }
 
     const rows = data || [];
@@ -368,7 +369,7 @@ export async function getAccountingConfigPaymentTerms(opts?: {
     return { terms, total: count || 0, page, pageSize };
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to load payment terms',
+      error: actionError(err, 'Failed to load payment terms'),
     };
   }
 }
@@ -384,7 +385,7 @@ export async function getAccountingConfigPaymentTermDetail(termId: string) {
       .select('*')
       .eq('id', termId)
       .maybeSingle();
-    if (error || !row) return { error: error?.message || 'Payment term not found' };
+    if (error || !row) return { error: actionError(error, 'Payment term not found') };
 
     if (
       scope.organizationId &&
@@ -443,7 +444,7 @@ export async function getAccountingConfigPaymentTermDetail(termId: string) {
     return { term: detail };
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to load payment term',
+      error: actionError(err, 'Failed to load payment term'),
     };
   }
 }
@@ -541,7 +542,7 @@ export async function createAccountingConfigPaymentTerm(payload: {
       if (/unique|duplicate/i.test(error.message)) {
         return { error: 'Payment term name or code already exists' };
       }
-      return { error: error.message };
+      return { error: actionError(error) };
     }
 
     const termId = String(data.id);
@@ -557,12 +558,12 @@ export async function createAccountingConfigPaymentTerm(payload: {
           delay_type: l.delay_type,
         }))
       );
-    if (lineError) return { error: lineError.message };
+    if (lineError) return { error: actionError(lineError) };
 
     return { termId };
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to create payment term',
+      error: actionError(err, 'Failed to create payment term'),
     };
   }
 }
@@ -631,7 +632,7 @@ export async function updateAccountingConfigPaymentTerm(
       if (/unique|duplicate/i.test(error.message)) {
         return { error: 'Payment term name or code already exists' };
       }
-      return { error: error.message };
+      return { error: actionError(error) };
     }
 
     if (payload.lines) {
@@ -662,13 +663,13 @@ export async function updateAccountingConfigPaymentTerm(
             delay_type: l.delay_type,
           }))
         );
-      if (lineError) return { error: lineError.message };
+      if (lineError) return { error: actionError(lineError) };
     }
 
     return getAccountingConfigPaymentTermDetail(termId);
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to update payment term',
+      error: actionError(err, 'Failed to update payment term'),
     };
   }
 }
@@ -789,8 +790,7 @@ export async function ensureDefaultAccountingPaymentTerms() {
     return { created };
   } catch (err) {
     return {
-      error:
-        err instanceof Error ? err.message : 'Failed to ensure default payment terms',
+      error: actionError(err, 'Failed to ensure default payment terms'),
     };
   }
 }

@@ -28,6 +28,7 @@ import type {
   CrmOpportunityUpsertInput,
   CrmPipelineBoardFilters,
 } from '@/app/actions/crm/types';
+import { actionError } from '@/lib/user-facing-error';
 
 function parseTags(raw: unknown): string[] {
   if (!Array.isArray(raw)) return [];
@@ -626,11 +627,11 @@ export async function ensureAutoOpportunityForNewContact(input: {
         .limit(1)
         .maybeSingle();
       if (raced?.id) return { opportunityId: String(raced.id), skipped: true };
-      return { error: error.message };
+      return { error: actionError(error) };
     }
 
     if (error || !data) {
-      return { error: error?.message || 'Failed to create auto opportunity' };
+      return { error: actionError(error, 'Failed to create auto opportunity') };
     }
 
     const opportunityId = String(data.id);
@@ -654,7 +655,7 @@ export async function ensureAutoOpportunityForNewContact(input: {
     return { opportunityId };
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Auto opportunity failed',
+      error: actionError(err, 'Auto opportunity failed'),
     };
   }
 }
@@ -723,7 +724,7 @@ export async function getCrmPipelineBoard(filters: CrmPipelineBoardFilters = {})
     query = query.order(sortBy, { ascending });
 
     const { data: oppRows, error: oppError } = await query;
-    if (oppError) return { error: oppError.message };
+    if (oppError) return { error: actionError(oppError) };
 
     let opportunities = await enrichBoardOpportunities(
       (oppRows || []) as Record<string, unknown>[],
@@ -764,7 +765,7 @@ export async function getCrmPipelineBoard(filters: CrmPipelineBoardFilters = {})
   ]);
   const { data: stageRows, error: stageError } = stagesResult;
 
-  if (stageError) return { error: stageError.message };
+  if (stageError) return { error: actionError(stageError) };
 
   let query = supabase
     .from('crm_opportunities')
@@ -809,7 +810,7 @@ export async function getCrmPipelineBoard(filters: CrmPipelineBoardFilters = {})
   query = query.order(sortBy, { ascending });
 
   const { data: oppRows, error: oppError } = await query;
-  if (oppError) return { error: oppError.message };
+  if (oppError) return { error: actionError(oppError) };
 
   let opportunities = await enrichBoardOpportunities(
     (oppRows || []) as Record<string, unknown>[],
@@ -890,7 +891,7 @@ export async function getCrmOpportunityById(opportunityId: string) {
     }
   }
 
-  if (error) return { error: error.message };
+  if (error) return { error: actionError(error) };
   if (!data) return { error: 'Opportunity not found.' };
 
   const { resolveCrmVisibilityScope, canAccessCrmOpportunityRow } = await import(
@@ -1039,7 +1040,7 @@ export async function createCrmOpportunity(input: CrmOpportunityUpsertInput) {
         .select('*')
         .single();
       if (retry.error || !retry.data) {
-        return { error: retry.error?.message || error.message };
+        return { error: actionError(retry.error ?? error) };
       }
       const opportunity = mapCreatedOpportunityCard(retry.data as Record<string, unknown>, {
         stageName: String(stageMeta?.name || input.stage_name || ''),
@@ -1056,7 +1057,7 @@ export async function createCrmOpportunity(input: CrmOpportunityUpsertInput) {
       });
       return { opportunity };
     }
-    return { error: error?.message || 'Failed to create opportunity.' };
+    return { error: actionError(error, 'Failed to create opportunity.') };
   }
   const opportunity = mapCreatedOpportunityCard(data as Record<string, unknown>, {
     stageName: String(stageMeta?.name || input.stage_name || ''),
@@ -1130,7 +1131,7 @@ export async function updateCrmOpportunity(input: CrmOpportunityUpsertInput) {
     .select('*')
     .single();
 
-  if (error || !data) return { error: error?.message || 'Failed to update opportunity.' };
+  if (error || !data) return { error: actionError(error, 'Failed to update opportunity.') };
   const [opportunity] = await enrichOpportunities([data as Record<string, unknown>]);
   const [prevOpp] = await enrichOpportunities([existing as Record<string, unknown>]);
 
@@ -1478,7 +1479,7 @@ export async function moveCrmOpportunityStage(
   }
 
   if (error || !data) {
-    return { error: error?.message || 'Failed to move opportunity.' };
+    return { error: actionError(error, 'Failed to move opportunity.') };
   }
 
   const scopeUser = scope.session.username;

@@ -11,7 +11,7 @@ import {
   UserMinus,
 } from "lucide-react";
 import SummaryCard from "./SummaryCard";
-import { toast } from "sonner";
+import { toast } from "@/lib/app-toast";
 import { canAccessHrModule } from "@/app/actions/hr_people";
 import {
   createHR,

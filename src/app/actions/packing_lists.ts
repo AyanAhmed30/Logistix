@@ -3,6 +3,7 @@
 import { createAdminClient } from '@/utils/supabase/server';
 import { requireChildModule } from '@/lib/auth/require-access';
 import { revalidatePath } from 'next/cache';
+import { actionError } from '@/lib/user-facing-error';
 
 export type PackingListItem = {
   id: string;
@@ -183,7 +184,7 @@ export async function createPackingList(formData: FormData) {
       .single();
 
     if (packingListError) {
-      return { error: packingListError.message || 'Failed to create packing list' };
+      return { error: actionError(packingListError, 'Failed to create packing list') };
     }
 
     // Create packing list items
@@ -204,7 +205,7 @@ export async function createPackingList(formData: FormData) {
     if (itemsError) {
       // Rollback packing list if items insertion fails
       await supabase.from('packing_lists').delete().eq('id', packingListData.id);
-      return { error: itemsError.message || 'Failed to create packing list items' };
+      return { error: actionError(itemsError, 'Failed to create packing list items') };
     }
 
     // Fetch complete packing list with items
@@ -218,13 +219,13 @@ export async function createPackingList(formData: FormData) {
       .single();
 
     if (fetchError) {
-      return { error: fetchError.message || 'Failed to fetch packing list' };
+      return { error: actionError(fetchError, 'Failed to fetch packing list') };
     }
 
     revalidatePath('/admin/dashboard');
     return { success: true, packingList: completePackingList as PackingList };
   } catch (err) {
-    return { error: err instanceof Error ? err.message : 'An unexpected error occurred while creating packing list' };
+    return { error: actionError(err, 'An unexpected error occurred while creating packing list') };
   }
 }
 
@@ -246,12 +247,12 @@ export async function getAllPackingLists() {
       .order('created_at', { ascending: false });
 
     if (error) {
-      return { error: error.message || 'Failed to fetch packing lists' };
+      return { error: actionError(error, 'Failed to fetch packing lists') };
     }
 
     return { packingLists: (data || []) as PackingList[] };
   } catch (err) {
-    return { error: err instanceof Error ? err.message : 'An unexpected error occurred while fetching packing lists' };
+    return { error: actionError(err, 'An unexpected error occurred while fetching packing lists') };
   }
 }
 
@@ -274,12 +275,12 @@ export async function deletePackingList(id: string) {
       .eq('id', id);
 
     if (error) {
-      return { error: error.message || 'Failed to delete packing list' };
+      return { error: actionError(error, 'Failed to delete packing list') };
     }
 
     revalidatePath('/admin/dashboard');
     return { success: true };
   } catch (err) {
-    return { error: err instanceof Error ? err.message : 'An unexpected error occurred while deleting packing list' };
+    return { error: actionError(err, 'An unexpected error occurred while deleting packing list') };
   }
 }

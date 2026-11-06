@@ -2,7 +2,7 @@
 /* eslint-disable @next/next/no-img-element */
 
 import { useEffect, useState, useCallback, useRef, useLayoutEffect } from "react";
-import { toast } from "sonner";
+import { toast } from "@/lib/app-toast";
 import { recordInquiryOpened } from "@/app/actions/analytics/inquiries";
 import {
   getAllInquiriesForOperations,
@@ -630,7 +630,7 @@ export function OperationsLeadsInquiryPanel({
 
   const openedInquiryId = view === "detail" ? selectedInquiry?.id : undefined;
   useEffect(() => {
-    if (openedInquiryId) void recordInquiryOpened(openedInquiryId, "operations");
+    if (openedInquiryId) recordInquiryOpened(openedInquiryId, "operations").catch(console.error);
   }, [openedInquiryId]);
 
   useEffect(() => {

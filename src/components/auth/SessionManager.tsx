@@ -49,7 +49,14 @@ export function SessionManager() {
   const tryRefresh = useCallback(async () => {
     if (expiredShownRef.current) return;
 
-    const result = await refreshSession();
+    let result: Awaited<ReturnType<typeof refreshSession>>;
+    try {
+      result = await refreshSession();
+    } catch (error) {
+      // Offline or mid-deployment. The session itself is fine, so try again next tick.
+      console.error("[session-refresh]", error);
+      return;
+    }
     if ("expired" in result && result.expired) {
       showExpired();
       return;

@@ -3,6 +3,7 @@
 import { createAdminClient } from '@/utils/supabase/server';
 import { getSession } from '@/lib/auth/session';
 import { sessionHasSalesAccess } from '@/lib/auth/require-access';
+import { actionError } from '@/lib/user-facing-error';
 
 export type SalesReportFilters = {
   dateFrom?: string | null;
@@ -153,7 +154,7 @@ export async function getSalesReportsDashboard(filters: SalesReportFilters = {})
     }
 
     const { data, error } = await query.limit(5000);
-    if (error) return { error: error.message };
+    if (error) return { error: actionError(error) };
 
     let rows = data || [];
     rows = rows.filter((r) =>
@@ -294,7 +295,7 @@ export async function getSalesReportsDashboard(filters: SalesReportFilters = {})
     return { dashboard };
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to load sales reports',
+      error: actionError(err, 'Failed to load sales reports'),
     };
   }
 }

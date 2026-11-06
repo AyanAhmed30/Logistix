@@ -8,6 +8,7 @@ import {
   createAndPostJournalEntry,
   getActivePartner,
 } from '@/app/actions/accounting_posting';
+import { actionError } from '@/lib/user-facing-error';
 
 export type PaymentType = 'inbound' | 'outbound';
 export type PaymentStatus = 'draft' | 'posted' | 'reconciled' | 'reversed';
@@ -108,10 +109,10 @@ export async function getPayments(status?: PaymentStatus | 'all', type?: Payment
     if (status && status !== 'all') query = query.eq('status', status);
     if (type && type !== 'all') query = query.eq('payment_type', type);
     const { data, error } = await query;
-    if (error) return { error: error.message };
+    if (error) return { error: actionError(error) };
     return { payments: (data || []) as Payment[] };
   } catch (err) {
-    return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };
+    return { error: actionError(err, 'An unexpected error occurred') };
   }
 }
 
@@ -162,12 +163,12 @@ export async function createPayment(input: UpsertPaymentInput) {
       ])
       .select('*')
       .single();
-    if (error || !data) return { error: error?.message || 'Failed to create payment.' };
+    if (error || !data) return { error: actionError(error, 'Failed to create payment.') };
 
     revalidatePath('/admin/dashboard');
     return { payment: data as Payment };
   } catch (err) {
-    return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };
+    return { error: actionError(err, 'An unexpected error occurred') };
   }
 }
 
@@ -183,7 +184,7 @@ export async function postPayment(id: string) {
       .select('*')
       .eq('id', id)
       .single();
-    if (paymentError || !payment) return { error: paymentError?.message || 'Payment not found.' };
+    if (paymentError || !payment) return { error: actionError(paymentError, 'Payment not found.') };
     if (payment.status !== 'draft') return { error: 'Only draft payments can be posted.' };
 
     const partner = await getActivePartner(payment.partner_id);
@@ -227,12 +228,12 @@ export async function postPayment(id: string) {
       .eq('id', id)
       .select('*')
       .single();
-    if (error || !data) return { error: error?.message || 'Failed to post payment.' };
+    if (error || !data) return { error: actionError(error, 'Failed to post payment.') };
 
     revalidatePath('/admin/dashboard');
     return { payment: data as Payment, postedJournalEntryId: entryId };
   } catch (err) {
-    return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };
+    return { error: actionError(err, 'An unexpected error occurred') };
   }
 }
 
@@ -247,7 +248,7 @@ export async function reversePayment(id: string) {
       .select('*')
       .eq('id', id)
       .single();
-    if (paymentError || !payment) return { error: paymentError?.message || 'Payment not found.' };
+    if (paymentError || !payment) return { error: actionError(paymentError, 'Payment not found.') };
     if (payment.status !== 'posted' && payment.status !== 'reconciled') {
       return { error: 'Only posted/reconciled payments can be reversed.' };
     }
@@ -256,7 +257,7 @@ export async function reversePayment(id: string) {
     const { data: reversalRows, error: reversalError } = await supabase.rpc('reverse_journal_entry_strict', {
       p_original_entry_id: payment.posted_journal_entry_id,
     });
-    if (reversalError) return { error: reversalError.message || 'Failed to reverse payment journal entry.' };
+    if (reversalError) return { error: actionError(reversalError, 'Failed to reverse payment journal entry.') };
     const reversal = Array.isArray(reversalRows) ? reversalRows[0] : null;
     if (!reversal) return { error: 'Failed to reverse payment journal entry.' };
 
@@ -271,7 +272,7 @@ export async function reversePayment(id: string) {
       .eq('id', id)
       .select('*')
       .single();
-    if (error || !data) return { error: error?.message || 'Failed to mark payment reversed.' };
+    if (error || !data) return { error: actionError(error, 'Failed to mark payment reversed.') };
 
     revalidatePath('/admin/dashboard');
     return {
@@ -279,6 +280,6 @@ export async function reversePayment(id: string) {
       reversal_journal_entry_id: reversal.reversal_entry_id as string,
     };
   } catch (err) {
-    return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };
+    return { error: actionError(err, 'An unexpected error occurred') };
   }
 }

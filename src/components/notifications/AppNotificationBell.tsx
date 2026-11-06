@@ -114,7 +114,8 @@ export function AppNotificationBell({
     try {
       const result = await getMyAppNotifications(40);
       if ("error" in result) {
-        setError(result.error || "Failed to load notifications");
+        // A failed poll keeps the last good list; only a load the user can see reports it.
+        if (mode !== "poll") setError(result.error || "Failed to load notifications");
         if (mode === "initial") {
           setItems([]);
           setUnreadCount(0);
@@ -124,8 +125,9 @@ export function AppNotificationBell({
       setError(null);
       setItems(result.notifications || []);
       setUnreadCount(result.unreadCount || 0);
-    } catch {
-      setError("Failed to load notifications");
+    } catch (error) {
+      console.error("[notifications]", error);
+      if (mode !== "poll") setError("Failed to load notifications");
     } finally {
       setLoading(false);
       setRefreshing(false);

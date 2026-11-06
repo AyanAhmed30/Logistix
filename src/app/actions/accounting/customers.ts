@@ -4,6 +4,7 @@ import { getSession } from '@/lib/auth/session';
 import { createAdminClient } from '@/utils/supabase/server';
 import { sessionHasAccountingAccess } from '@/lib/accounting-page-access';
 import type { ContactWithRelations, ContactTag } from '@/app/actions/contacts';
+import { actionError } from '@/lib/user-facing-error';
 
 /**
  * Accounting Customers — same Contacts rows (customer_rank > 0).
@@ -78,7 +79,7 @@ export async function getAccountingCustomers(opts?: {
           'Contacts organization column is missing. Run add_organization_id_to_core_tables.sql.',
       };
     }
-    if (error) return { error: error.message };
+    if (error) return { error: actionError(error) };
 
     const filtered = rows || [];
     const contactIds = filtered.map((c) => c.id);
@@ -125,7 +126,7 @@ export async function getAccountingCustomers(opts?: {
     };
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to load customers',
+      error: actionError(err, 'Failed to load customers'),
     };
   }
 }

@@ -42,6 +42,7 @@ import {
   crmPipelineInquiryHref,
   customerSubmittedInquiryMessage,
 } from '@/lib/app-notifications';
+import { actionError } from '@/lib/user-facing-error';
 
 async function resolveLeadOrganizationId(
   supabase: Awaited<ReturnType<typeof createAdminClient>>,
@@ -110,7 +111,7 @@ async function getLeadIdsForOrganization(
 
   if (error) {
     if (isMissingOrganizationColumnError(error)) return null;
-    return { error: error.message };
+    return { error: actionError(error) };
   }
 
   return (data || []).map((row) => String(row.id || '')).filter(Boolean);
@@ -268,7 +269,7 @@ export async function listInquiriesForLead(
       .eq('lead_id', leadId)
       .order('version_number', { ascending: false })
       .order('created_at', { ascending: false });
-    if (retry.error) return { error: retry.error.message };
+    if (retry.error) return { error: actionError(retry.error) };
     return sanitizeInquiriesForSession(
       (retry.data || []) as unknown as (LeadInquiry & {
         inquiry_confirmations?: InquiryConfirmationLite[];
@@ -277,7 +278,7 @@ export async function listInquiriesForLead(
     );
   }
 
-  if (error) return { error: error.message };
+  if (error) return { error: actionError(error) };
 
   return sanitizeInquiriesForSession(
     (data || []) as unknown as (LeadInquiry & {
@@ -784,7 +785,7 @@ export async function saveInquiry(
         .select()
         .single();
 
-      if (error) return { error: error.message };
+      if (error) return { error: actionError(error) };
 
       if (crmOpportunityId) {
         await linkInquiryToCrmOpportunity(supabase, targetRow.id, crmOpportunityId);
@@ -890,7 +891,7 @@ export async function saveInquiry(
         .select()
         .single();
 
-      if (error) return { error: error.message };
+      if (error) return { error: actionError(error) };
 
       if (crmOpportunityId && result?.id) {
         await linkInquiryToCrmOpportunity(supabase, String(result.id), crmOpportunityId);
@@ -961,7 +962,7 @@ export async function saveInquiry(
       return { success: true, inquiry: result as LeadInquiry };
     }
   } catch (err) {
-    return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };
+    return { error: actionError(err, 'An unexpected error occurred') };
   }
 }
 
@@ -1038,7 +1039,7 @@ export async function sendInquiryToAccounting(
       .select()
       .single();
 
-    if (error) return { error: error.message };
+    if (error) return { error: actionError(error) };
 
     const wasAlreadySent = Boolean(inquiry.sent_to_accounting);
     const action = wasAlreadySent ? 'inquiry_resent' : 'inquiry_sent';
@@ -1133,7 +1134,7 @@ export async function sendInquiryToAccounting(
 
     return { success: true, inquiry: data as LeadInquiry };
   } catch (err) {
-    return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };
+    return { error: actionError(err, 'An unexpected error occurred') };
   }
 }
 
@@ -1242,7 +1243,7 @@ export async function createInquiryDraft(
       .select()
       .single();
 
-    if (error) return { error: error.message };
+    if (error) return { error: actionError(error) };
 
     await supabase.from('inquiry_logs').insert([{
       inquiry_id: result.id,
@@ -1273,7 +1274,7 @@ export async function createInquiryDraft(
     revalidatePath('/sales-agent/dashboard');
     return { success: true, inquiry: result as LeadInquiry };
   } catch (err) {
-    return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };
+    return { error: actionError(err, 'An unexpected error occurred') };
   }
 }
 
@@ -1486,7 +1487,7 @@ export async function getInquiryTrackingForSalesAgent() {
 
     return { tracking };
   } catch (err) {
-    return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };
+    return { error: actionError(err, 'An unexpected error occurred') };
   }
 }
 
@@ -1542,7 +1543,7 @@ export async function getAllInquiriesForSalesAgent() {
       .eq('leads.sales_agent_id', salesAgent.id)
       .order('created_at', { ascending: false });
 
-    if (error) return { error: error.message };
+    if (error) return { error: actionError(error) };
 
     const sanitized = ((data || []) as LeadInquiryWithLead[]).map((inq) => ({
       ...inq,
@@ -1550,7 +1551,7 @@ export async function getAllInquiriesForSalesAgent() {
     }));
     return { inquiries: sanitized };
   } catch (err) {
-    return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };
+    return { error: actionError(err, 'An unexpected error occurred') };
   }
 }
 
@@ -1569,10 +1570,10 @@ export async function getInquiryForLead(leadId: string) {
       .limit(1)
       .maybeSingle();
 
-    if (error) return { error: error.message };
+    if (error) return { error: actionError(error) };
     return { inquiry: (data as LeadInquiry) || null };
   } catch (err) {
-    return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };
+    return { error: actionError(err, 'An unexpected error occurred') };
   }
 }
 
@@ -1617,7 +1618,7 @@ export async function getInquiriesForLead(
     }
     return result;
   } catch (err) {
-    return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };
+    return { error: actionError(err, 'An unexpected error occurred') };
   }
 }
 
@@ -1657,7 +1658,7 @@ export async function getInquiryAvailabilityForLead(leadId: string) {
       .eq('lead_id', leadId)
       .limit(1);
 
-    if (error) return { error: error.message };
+    if (error) return { error: actionError(error) };
 
     const hasInquiry = Boolean(data && data.length > 0);
     if (!hasInquiry) {
@@ -1677,7 +1678,7 @@ export async function getInquiryAvailabilityForLead(leadId: string) {
       inquiries: inquiryResult.inquiries || [],
     };
   } catch (err) {
-    return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };
+    return { error: actionError(err, 'An unexpected error occurred') };
   }
 }
 
@@ -1722,10 +1723,10 @@ export async function getInquiryHistoryForLead(leadId: string) {
       .order('version_number', { ascending: false })
       .order('created_at', { ascending: false });
 
-    if (error) return { error: error.message };
+    if (error) return { error: actionError(error) };
     return { inquiries: (data || []) as LeadInquiry[] };
   } catch (err) {
-    return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };
+    return { error: actionError(err, 'An unexpected error occurred') };
   }
 }
 
@@ -1742,10 +1743,10 @@ export async function getQuotationsForLead(leadId: string) {
       .eq('lead_id', leadId)
       .order('version', { ascending: false });
 
-    if (error) return { error: error.message };
+    if (error) return { error: actionError(error) };
     return { quotations: (data || []) as InquiryQuotation[] };
   } catch (err) {
-    return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };
+    return { error: actionError(err, 'An unexpected error occurred') };
   }
 }
 
@@ -1787,10 +1788,10 @@ export async function getAllInquiriesForAccounting() {
       .eq('sent_to_accounting', true)
       .order('sent_at', { ascending: false });
 
-    if (error) return { error: error.message };
+    if (error) return { error: actionError(error) };
     return { inquiries: (data || []) as LeadInquiryWithLead[] };
   } catch (err) {
-    return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };
+    return { error: actionError(err, 'An unexpected error occurred') };
   }
 }
 
@@ -2099,7 +2100,7 @@ async function queryOperationsInquiriesPage(
   }
 
   const { data, error } = pageResult;
-  if (error) return { error: error.message };
+  if (error) return { error: actionError(error) };
 
   const normalized = ((data || []) as Array<Record<string, unknown>>).map(
     normalizeOperationsInquiryRow
@@ -2189,7 +2190,7 @@ export async function getAllInquiriesForOperations(input?: {
     writeOperationsInquiriesCache(cacheKey, result);
     return result;
   } catch (err) {
-    return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };
+    return { error: actionError(err, 'An unexpected error occurred') };
   }
 }
 
@@ -2232,7 +2233,7 @@ export async function getInquiryForOperations(inquiryId: string) {
       error = fallback.error;
     }
 
-    if (error) return { error: error.message };
+    if (error) return { error: actionError(error) };
     if (!data) return { error: 'Inquiry not found' };
 
     const inquiry = normalizeOperationsInquiryRow(data as Record<string, unknown>);
@@ -2254,7 +2255,7 @@ export async function getInquiryForOperations(inquiryId: string) {
 
     return { inquiry };
   } catch (err) {
-    return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };
+    return { error: actionError(err, 'An unexpected error occurred') };
   }
 }
 
@@ -2313,7 +2314,7 @@ export async function raiseInquiryFlag(inquiryId: string, message: string) {
       if (/inquiry_flags|could not find the/i.test(flagError.message || '')) {
         return { error: 'Inquiry flags are not available on this database yet.' };
       }
-      return { error: flagError.message };
+      return { error: actionError(flagError) };
     }
 
     const flag = normalizeInquiryFlags([flagRow])[0];
@@ -2385,7 +2386,7 @@ export async function raiseInquiryFlag(inquiryId: string, message: string) {
     revalidatePath('/operations/dashboard');
     return { success: true as const, flag };
   } catch (err) {
-    return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };
+    return { error: actionError(err, 'An unexpected error occurred') };
   }
 }
 
@@ -2451,7 +2452,7 @@ export async function getOperationsInquiriesBootstrap(input?: {
     }
 
     if (calculatorResult.error) {
-      return { error: calculatorResult.error.message };
+      return { error: actionError(calculatorResult.error) };
     }
 
     const values =
@@ -2464,7 +2465,7 @@ export async function getOperationsInquiriesBootstrap(input?: {
       calculatorValues: sanitizeCalculatorValues(values),
     };
   } catch (err) {
-    return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };
+    return { error: actionError(err, 'An unexpected error occurred') };
   }
 }
 
@@ -2546,7 +2547,7 @@ export async function updateInquiryForAccounting(
       .select()
       .single();
 
-    if (error) return { error: error.message };
+    if (error) return { error: actionError(error) };
 
     // Log the change
     const previousValues: Record<string, unknown> = {};
@@ -2623,7 +2624,7 @@ export async function updateInquiryForAccounting(
     invalidateOperationsInquiriesCache();
     return { success: true, inquiry: data as LeadInquiry };
   } catch (err) {
-    return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };
+    return { error: actionError(err, 'An unexpected error occurred') };
   }
 }
 
@@ -2654,7 +2655,7 @@ export async function deleteInquiry(inquiryId: string) {
       .delete()
       .eq('id', inquiryId);
 
-    if (error) return { error: error.message };
+    if (error) return { error: actionError(error) };
 
     revalidatePath('/admin/dashboard');
     revalidatePath('/sales-agent/dashboard');
@@ -2662,7 +2663,7 @@ export async function deleteInquiry(inquiryId: string) {
     invalidateOperationsInquiriesCache();
     return { success: true };
   } catch (err) {
-    return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };
+    return { error: actionError(err, 'An unexpected error occurred') };
   }
 }
 
@@ -2715,7 +2716,7 @@ export async function deleteInquiryForSalesAgent(inquiryId: string) {
       .from('lead_inquiries')
       .delete()
       .eq('id', inquiryId);
-    if (error) return { error: error.message };
+    if (error) return { error: actionError(error) };
 
     revalidatePath('/sales-agent/dashboard');
     revalidatePath('/admin/dashboard');
@@ -2723,7 +2724,7 @@ export async function deleteInquiryForSalesAgent(inquiryId: string) {
     invalidateOperationsInquiriesCache();
     return { success: true };
   } catch (err) {
-    return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };
+    return { error: actionError(err, 'An unexpected error occurred') };
   }
 }
 
@@ -2740,7 +2741,7 @@ export async function getLatestQuotationPricingByInquiryIds(inquiryIds: string[]
       .select('inquiry_id, quotation_number, unit_price, total_amount, notes, version')
       .in('inquiry_id', ids)
       .order('version', { ascending: false });
-    if (error) return { error: error.message };
+    if (error) return { error: actionError(error) };
 
     const pricing: Record<string, { quotation_number: string; unit_price: number; total_amount: number; notes: string | null }> = {};
     for (const row of data || []) {
@@ -2755,7 +2756,7 @@ export async function getLatestQuotationPricingByInquiryIds(inquiryIds: string[]
     }
     return { pricing };
   } catch (err) {
-    return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };
+    return { error: actionError(err, 'An unexpected error occurred') };
   }
 }
 
@@ -2772,10 +2773,10 @@ export async function getInquiryLogs(inquiryId: string) {
       .eq('inquiry_id', inquiryId)
       .order('performed_at', { ascending: false });
 
-    if (error) return { error: error.message };
+    if (error) return { error: actionError(error) };
     return { logs: (data || []) as InquiryLog[] };
   } catch (err) {
-    return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };
+    return { error: actionError(err, 'An unexpected error occurred') };
   }
 }
 
@@ -2805,7 +2806,7 @@ export async function recordInquiryViewed(inquiryId: string) {
 
     return { success: true };
   } catch (err) {
-    return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };
+    return { error: actionError(err, 'An unexpected error occurred') };
   }
 }
 
@@ -2842,10 +2843,10 @@ export async function getLeadActivityTimeline(leadId: string) {
       .eq('lead_id', leadId)
       .order('performed_at', { ascending: false });
 
-    if (error) return { error: error.message };
+    if (error) return { error: actionError(error) };
     return { logs: (data || []) as LeadActivityLog[] };
   } catch (err) {
-    return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };
+    return { error: actionError(err, 'An unexpected error occurred') };
   }
 }
 
@@ -2885,7 +2886,7 @@ export async function getInquiryLogsForLead(leadId: string, inquiryId?: string) 
           .select('id')
           .eq('lead_id', leadId);
 
-    if (inquiryErr) return { error: inquiryErr.message };
+    if (inquiryErr) return { error: actionError(inquiryErr) };
 
     const inquiryIds = inquiryId
       ? [inquiryId]
@@ -2898,10 +2899,10 @@ export async function getInquiryLogsForLead(leadId: string, inquiryId?: string) 
       .in('inquiry_id', inquiryIds)
       .order('performed_at', { ascending: true });
 
-    if (error) return { error: error.message };
+    if (error) return { error: actionError(error) };
     return { logs: (data || []) as InquiryLog[] };
   } catch (err) {
-    return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };
+    return { error: actionError(err, 'An unexpected error occurred') };
   }
 }
 
@@ -2932,13 +2933,13 @@ export async function addInquiryLogNote(inquiryId: string, note: string) {
         performed_by: scopeResult.session.username || 'operations',
       }]);
 
-    if (error) return { error: error.message };
+    if (error) return { error: actionError(error) };
 
     revalidatePath('/admin/dashboard');
     revalidatePath('/operations/dashboard');
     return { success: true };
   } catch (err) {
-    return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };
+    return { error: actionError(err, 'An unexpected error occurred') };
   }
 }
 
@@ -2976,13 +2977,13 @@ export async function addInquiryActivity(
         performed_by: scopeResult.session.username || 'operations',
       }]);
 
-    if (error) return { error: error.message };
+    if (error) return { error: actionError(error) };
 
     revalidatePath('/admin/dashboard');
     revalidatePath('/operations/dashboard');
     return { success: true };
   } catch (err) {
-    return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };
+    return { error: actionError(err, 'An unexpected error occurred') };
   }
 }
 
@@ -3022,13 +3023,13 @@ export async function addInquiryCalculatorFieldLog(
         performed_by: scopeResult.session.username || 'operations',
       }]);
 
-    if (error) return { error: error.message };
+    if (error) return { error: actionError(error) };
 
     revalidatePath('/admin/dashboard');
     revalidatePath('/operations/dashboard');
     return { success: true };
   } catch (err) {
-    return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };
+    return { error: actionError(err, 'An unexpected error occurred') };
   }
 }
 
@@ -3064,7 +3065,7 @@ export async function saveInquiryCalculatorField(
       .maybeSingle();
 
     if (fetchError) {
-      return { error: fetchError.message };
+      return { error: actionError(fetchError) };
     }
 
     const existingRaw =
@@ -3095,7 +3096,7 @@ export async function saveInquiryCalculatorField(
       })
       .eq('id', inquiryId);
 
-    if (updateError) return { error: updateError.message };
+    if (updateError) return { error: actionError(updateError) };
 
     // Keep shared admin rate defaults in sync only for shared rate keys
     // (does not store inquiry-specific fields like unit_value / hs_code).
@@ -3128,7 +3129,7 @@ export async function saveInquiryCalculatorField(
     revalidatePath('/operations/dashboard');
     return { success: true, calculatorValues: nextPayload };
   } catch (err) {
-    return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };
+    return { error: actionError(err, 'An unexpected error occurred') };
   }
 }
 
@@ -3155,13 +3156,13 @@ export async function saveInquiryCalculatorPayload(
       })
       .eq('id', inquiryId);
 
-    if (error) return { error: error.message };
+    if (error) return { error: actionError(error) };
 
     revalidatePath('/admin/dashboard');
     revalidatePath('/operations/dashboard');
     return { success: true };
   } catch (err) {
-    return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };
+    return { error: actionError(err, 'An unexpected error occurred') };
   }
 }
 
@@ -3179,7 +3180,7 @@ export async function getSharedInquiryCalculatorValues() {
       .eq('id', 'shared')
       .maybeSingle();
 
-    if (error) return { error: error.message };
+    if (error) return { error: actionError(error) };
     const values = sanitizeCalculatorValues(
       data?.values && typeof data.values === 'object'
         ? (data.values as Record<string, unknown>)
@@ -3187,7 +3188,7 @@ export async function getSharedInquiryCalculatorValues() {
     );
     return { values };
   } catch (err) {
-    return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };
+    return { error: actionError(err, 'An unexpected error occurred') };
   }
 }
 
@@ -3219,10 +3220,10 @@ export async function getLeadChatMessages(leadId: string, inquiryId?: string) {
       error = fallback.error;
     }
 
-    if (error) return { error: error.message };
+    if (error) return { error: actionError(error) };
     return { messages: (data || []) as LeadChatMessage[] };
   } catch (err) {
-    return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };
+    return { error: actionError(err, 'An unexpected error occurred') };
   }
 }
 
@@ -3275,7 +3276,7 @@ export async function sendLeadChatMessage(leadId: string, message: string, inqui
       error = fallback.error;
     }
 
-    if (error || !data) return { error: error?.message || 'Failed to send message' };
+    if (error || !data) return { error: actionError(error, 'Failed to send message') };
 
     // Create recipient notifications based on sender role.
     if (senderRole === 'sales_agent') {
@@ -3366,7 +3367,7 @@ export async function sendLeadChatMessage(leadId: string, message: string, inqui
     revalidatePath('/operations/dashboard');
     return { message: data as LeadChatMessage };
   } catch (err) {
-    return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };
+    return { error: actionError(err, 'An unexpected error occurred') };
   }
 }
 
@@ -3423,7 +3424,7 @@ export async function markLeadChatNotificationRead(notificationId: string) {
       .eq('recipient_role', recipientRole)
       .eq('recipient_username', session.username);
 
-    if (error) return { error: error.message };
+    if (error) return { error: actionError(error) };
 
     // Also mark inquiry lifecycle notification as read if the id belongs there.
     await supabase
@@ -3436,7 +3437,7 @@ export async function markLeadChatNotificationRead(notificationId: string) {
     // Ignore "no rows updated" style outcomes; only fail on hard DB errors.
     return { success: true };
   } catch (err) {
-    return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };
+    return { error: actionError(err, 'An unexpected error occurred') };
   }
 }
 
@@ -3490,7 +3491,7 @@ export async function createInquiryQuotation(
       .select()
       .single();
 
-    if (error) return { error: error.message };
+    if (error) return { error: actionError(error) };
 
     // Update inquiry status
     await supabase
@@ -3505,7 +3506,7 @@ export async function createInquiryQuotation(
     revalidatePath('/sales-agent/dashboard');
     return { success: true, quotation: data as InquiryQuotation };
   } catch (err) {
-    return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };
+    return { error: actionError(err, 'An unexpected error occurred') };
   }
 }
 
@@ -3522,7 +3523,7 @@ export async function getQuotationsForInquiry(inquiryId: string) {
       .eq('id', inquiryId)
       .maybeSingle();
 
-    if (inqErr) return { error: inqErr.message };
+    if (inqErr) return { error: actionError(inqErr) };
     if (!inquiryRow) return { error: 'Inquiry not found' };
 
     if (isSalesPortalActor(session)) {
@@ -3550,10 +3551,10 @@ export async function getQuotationsForInquiry(inquiryId: string) {
       .eq('inquiry_id', inquiryId)
       .order('version', { ascending: false });
 
-    if (error) return { error: error.message };
+    if (error) return { error: actionError(error) };
     return { quotations: (data || []) as InquiryQuotation[] };
   } catch (err) {
-    return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };
+    return { error: actionError(err, 'An unexpected error occurred') };
   }
 }
 
@@ -3577,12 +3578,12 @@ export async function markQuotationSentToClient(quotationId: string) {
       .select()
       .single();
 
-    if (error) return { error: error.message };
+    if (error) return { error: actionError(error) };
 
     revalidatePath('/admin/dashboard');
     return { success: true, quotation: data as InquiryQuotation };
   } catch (err) {
-    return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };
+    return { error: actionError(err, 'An unexpected error occurred') };
   }
 }
 
@@ -3606,13 +3607,13 @@ export async function markQuotationSentToAgent(quotationId: string) {
       .select()
       .single();
 
-    if (error) return { error: error.message };
+    if (error) return { error: actionError(error) };
 
     revalidatePath('/admin/dashboard');
     revalidatePath('/sales-agent/dashboard');
     return { success: true, quotation: data as InquiryQuotation };
   } catch (err) {
-    return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };
+    return { error: actionError(err, 'An unexpected error occurred') };
   }
 }
 
@@ -3643,7 +3644,7 @@ export async function uploadInquiryAttachment(leadId: string, file: File) {
 
     return { success: true, url: upload.url };
   } catch (err) {
-    return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };
+    return { error: actionError(err, 'An unexpected error occurred') };
   }
 }
 

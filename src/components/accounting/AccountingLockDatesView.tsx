@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState, useTransition, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
-import { toast } from "sonner";
+import { toast } from "@/lib/app-toast";
 import {
   BookOpen,
   Calendar,

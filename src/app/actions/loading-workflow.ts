@@ -12,6 +12,7 @@ import {
   resolveLoadingConsoleById,
 } from "@/lib/loading-workflow-server";
 import { lookupCartonByScanIdentifier } from "@/lib/lookup-carton-by-scan-identifier";
+import { actionError } from '@/lib/user-facing-error';
 
 type AdminSupabase = Awaited<ReturnType<typeof createAdminClient>>;
 
@@ -197,7 +198,7 @@ async function updateConsolePhase(supabase: AdminSupabase, consoleId: string, ph
         "Database is missing loading_phase on consoles. Apply migration add_console_loading_workflow.sql on Supabase.",
     };
   }
-  if (error) return { error: error.message };
+  if (error) return { error: actionError(error) };
   return { success: true as const };
 }
 
@@ -292,7 +293,7 @@ export async function recordCartonReInwardScan(scanIdentifier: string, consoleId
   } | null;
 
   if (lookup.error || !carton) {
-    return { error: lookup.error?.message || "Carton not found" };
+    return { error: actionError(lookup.error, "Carton not found") };
   }
 
   const ordersValue = carton.orders;
@@ -381,7 +382,7 @@ export async function releaseOrdersFromConsole(
         "Database is missing console_order_loading. Apply migration add_console_loading_workflow.sql on Supabase.",
     };
   }
-  if (error) return { error: error.message };
+  if (error) return { error: actionError(error) };
 
   await logConsoleLoadingEvent(supabase, {
     consoleId,

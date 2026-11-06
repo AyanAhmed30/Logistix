@@ -5,6 +5,7 @@ import { getSession } from '@/lib/auth/session';
 import { canViewEmployee, resolveAnalyticsAccess } from '@/lib/analytics/access';
 import type { SessionPayload } from '@/lib/auth/session';
 import { applyCrmVisibilityFilter } from '@/lib/crm-visibility';
+import { actionError } from '@/lib/user-facing-error';
 
 export type AnalyticsPeriod = { from: string; to: string };
 
@@ -102,7 +103,7 @@ async function fetchMetrics(
     p_to: period?.to ?? null,
     p_sales_agent_id: agentId,
   });
-  if (error) return { error: error.message };
+  if (error) return { error: actionError(error) };
   return { rows: ((data || []) as SalesAgentMetrics[]).map(toCounts) };
 }
 
@@ -164,7 +165,7 @@ export async function getSalesEmployees() {
     supabase.from('sales_agents').select('id, name, username, app_user_id').order('name'),
   ]);
   if ('error' in metrics) return { error: metrics.error };
-  if (agentsResult.error) return { error: agentsResult.error.message };
+  if (agentsResult.error) return { error: actionError(agentsResult.error) };
 
   const agents = (agentsResult.data || []).map((a) => ({
     id: String(a.id),
@@ -382,7 +383,7 @@ export async function getAgentContacts(
   }
 
   const { data, error, count } = await query;
-  if (error) return { error: error.message };
+  if (error) return { error: actionError(error) };
   const contacts = data || [];
   const ids = contacts.map((c) => String(c.id));
 
@@ -564,7 +565,7 @@ export async function getAgentInquiries(
   }
 
   const { data, error, count } = await query;
-  if (error) return { error: error.message };
+  if (error) return { error: actionError(error) };
 
   const rows = await attachTimings(supabase, (data || []).map(toInquiryBase));
   return { rows, total: count ?? 0, page, pageSize: PAGE_SIZE } satisfies PagedResult<AgentInquiryRow>;
@@ -599,7 +600,7 @@ export async function getContactInquiryHistory(agentId: string, contactId: strin
   if (organizationId) query = query.eq('organization_id', organizationId);
 
   const { data, error } = await query;
-  if (error) return { error: error.message };
+  if (error) return { error: actionError(error) };
   return { rows: await attachTimings(supabase, (data || []).map(toInquiryBase)) };
 }
 

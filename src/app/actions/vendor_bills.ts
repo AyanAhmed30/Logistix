@@ -9,6 +9,7 @@ import {
   getActivePartner,
 } from '@/app/actions/accounting_posting';
 import { reverseJournalEntry } from '@/app/actions/journal_entries';
+import { actionError } from '@/lib/user-facing-error';
 
 export type VendorBillStatus = 'draft' | 'approved' | 'posted' | 'partially_paid' | 'paid' | 'cancelled';
 
@@ -78,10 +79,10 @@ export async function getVendorBills(status?: VendorBillStatus | 'all') {
       query = query.eq('status', status);
     }
     const { data, error } = await query;
-    if (error) return { error: error.message };
+    if (error) return { error: actionError(error) };
     return { bills: (data || []) as VendorBill[] };
   } catch (err) {
-    return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };
+    return { error: actionError(err, 'An unexpected error occurred') };
   }
 }
 
@@ -109,7 +110,7 @@ export async function createVendorBill(input: UpsertVendorBillInput) {
       .select('id, type, is_active')
       .eq('id', input.expense_account_id)
       .single();
-    if (expenseError || !expenseAccount) return { error: expenseError?.message || 'Expense account not found.' };
+    if (expenseError || !expenseAccount) return { error: actionError(expenseError, 'Expense account not found.') };
     if (!expenseAccount.is_active || (expenseAccount.type !== 'expense' && expenseAccount.type !== 'asset')) {
       return { error: 'Expense account must be active expense/asset account.' };
     }
@@ -119,7 +120,7 @@ export async function createVendorBill(input: UpsertVendorBillInput) {
       .select('id, type, is_active, allow_reconciliation')
       .eq('id', input.payable_account_id)
       .single();
-    if (payableError || !payableAccount) return { error: payableError?.message || 'Payable account not found.' };
+    if (payableError || !payableAccount) return { error: actionError(payableError, 'Payable account not found.') };
     if (!payableAccount.is_active || payableAccount.type !== 'liability' || !payableAccount.allow_reconciliation) {
       return { error: 'Payable account must be active reconciliation-enabled liability account.' };
     }
@@ -145,11 +146,11 @@ export async function createVendorBill(input: UpsertVendorBillInput) {
       ])
       .select('*')
       .single();
-    if (error || !data) return { error: error?.message || 'Failed to create vendor bill.' };
+    if (error || !data) return { error: actionError(error, 'Failed to create vendor bill.') };
     revalidatePath('/admin/dashboard');
     return { bill: data as VendorBill };
   } catch (err) {
-    return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };
+    return { error: actionError(err, 'An unexpected error occurred') };
   }
 }
 
@@ -170,7 +171,7 @@ export async function updateVendorBill(input: UpsertVendorBillInput) {
       .select('*')
       .eq('id', id)
       .single();
-    if (existingError || !existing) return { error: existingError?.message || 'Vendor bill not found.' };
+    if (existingError || !existing) return { error: actionError(existingError, 'Vendor bill not found.') };
     if (existing.status === 'posted' || existing.status === 'partially_paid' || existing.status === 'paid') {
       return { error: 'Posted/Paid bills cannot be modified.' };
     }
@@ -188,7 +189,7 @@ export async function updateVendorBill(input: UpsertVendorBillInput) {
       .select('id, type, is_active')
       .eq('id', input.expense_account_id)
       .single();
-    if (expenseError || !expenseAccount) return { error: expenseError?.message || 'Expense account not found.' };
+    if (expenseError || !expenseAccount) return { error: actionError(expenseError, 'Expense account not found.') };
     if (!expenseAccount.is_active || (expenseAccount.type !== 'expense' && expenseAccount.type !== 'asset')) {
       return { error: 'Expense account must be active expense/asset account.' };
     }
@@ -198,7 +199,7 @@ export async function updateVendorBill(input: UpsertVendorBillInput) {
       .select('id, type, is_active, allow_reconciliation')
       .eq('id', input.payable_account_id)
       .single();
-    if (payableError || !payableAccount) return { error: payableError?.message || 'Payable account not found.' };
+    if (payableError || !payableAccount) return { error: actionError(payableError, 'Payable account not found.') };
     if (!payableAccount.is_active || payableAccount.type !== 'liability' || !payableAccount.allow_reconciliation) {
       return { error: 'Payable account must be active reconciliation-enabled liability account.' };
     }
@@ -218,11 +219,11 @@ export async function updateVendorBill(input: UpsertVendorBillInput) {
       .eq('id', id)
       .select('*')
       .single();
-    if (error || !data) return { error: error?.message || 'Failed to update vendor bill.' };
+    if (error || !data) return { error: actionError(error, 'Failed to update vendor bill.') };
     revalidatePath('/admin/dashboard');
     return { bill: data as VendorBill };
   } catch (err) {
-    return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };
+    return { error: actionError(err, 'An unexpected error occurred') };
   }
 }
 
@@ -233,7 +234,7 @@ export async function approveVendorBill(id: string) {
     if (!id) return { error: 'Bill id is required.' };
     const supabase = await createAdminClient();
     const { data: bill, error: billError } = await supabase.from('vendor_bills').select('*').eq('id', id).single();
-    if (billError || !bill) return { error: billError?.message || 'Vendor bill not found.' };
+    if (billError || !bill) return { error: actionError(billError, 'Vendor bill not found.') };
     if (bill.status !== 'draft') return { error: 'Only draft bills can be approved.' };
     const { data, error } = await supabase
       .from('vendor_bills')
@@ -246,11 +247,11 @@ export async function approveVendorBill(id: string) {
       .eq('id', id)
       .select('*')
       .single();
-    if (error || !data) return { error: error?.message || 'Failed to approve vendor bill.' };
+    if (error || !data) return { error: actionError(error, 'Failed to approve vendor bill.') };
     revalidatePath('/admin/dashboard');
     return { bill: data as VendorBill };
   } catch (err) {
-    return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };
+    return { error: actionError(err, 'An unexpected error occurred') };
   }
 }
 
@@ -261,7 +262,7 @@ export async function postVendorBill(id: string) {
     if (!id) return { error: 'Bill id is required.' };
     const supabase = await createAdminClient();
     const { data: bill, error: billError } = await supabase.from('vendor_bills').select('*').eq('id', id).single();
-    if (billError || !bill) return { error: billError?.message || 'Vendor bill not found.' };
+    if (billError || !bill) return { error: actionError(billError, 'Vendor bill not found.') };
     if (bill.status !== 'approved' && bill.status !== 'draft') return { error: 'Only approved bills can be posted.' };
 
     const posting = await buildVendorBillPosting({
@@ -290,12 +291,12 @@ export async function postVendorBill(id: string) {
       .eq('id', id)
       .select('*')
       .single();
-    if (error || !data) return { error: error?.message || 'Failed to post vendor bill.' };
+    if (error || !data) return { error: actionError(error, 'Failed to post vendor bill.') };
 
     revalidatePath('/admin/dashboard');
     return { bill: data as VendorBill, postedJournalEntryId: postedEntryId };
   } catch (err) {
-    return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };
+    return { error: actionError(err, 'An unexpected error occurred') };
   }
 }
 
@@ -306,7 +307,7 @@ export async function cancelVendorBill(id: string) {
     if (!id) return { error: 'Bill id is required.' };
     const supabase = await createAdminClient();
     const { data: bill, error: billError } = await supabase.from('vendor_bills').select('*').eq('id', id).single();
-    if (billError || !bill) return { error: billError?.message || 'Vendor bill not found.' };
+    if (billError || !bill) return { error: actionError(billError, 'Vendor bill not found.') };
     if (bill.status === 'posted' || bill.status === 'partially_paid' || bill.status === 'paid') {
       return { error: 'Posted bills must be cancelled via reversal.' };
     }
@@ -321,11 +322,11 @@ export async function cancelVendorBill(id: string) {
       .eq('id', id)
       .select('*')
       .single();
-    if (error || !data) return { error: error?.message || 'Failed to cancel vendor bill.' };
+    if (error || !data) return { error: actionError(error, 'Failed to cancel vendor bill.') };
     revalidatePath('/admin/dashboard');
     return { bill: data as VendorBill };
   } catch (err) {
-    return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };
+    return { error: actionError(err, 'An unexpected error occurred') };
   }
 }
 
@@ -336,7 +337,7 @@ export async function reverseVendorBill(id: string) {
     if (!id) return { error: 'Bill id is required.' };
     const supabase = await createAdminClient();
     const { data: bill, error: billError } = await supabase.from('vendor_bills').select('*').eq('id', id).single();
-    if (billError || !bill) return { error: billError?.message || 'Vendor bill not found.' };
+    if (billError || !bill) return { error: actionError(billError, 'Vendor bill not found.') };
     if (bill.status !== 'posted' && bill.status !== 'partially_paid' && bill.status !== 'paid') {
       return { error: 'Only posted bills can be reversed.' };
     }
@@ -356,7 +357,7 @@ export async function reverseVendorBill(id: string) {
       .eq('id', id)
       .select('*')
       .single();
-    if (error || !data) return { error: error?.message || 'Failed to mark vendor bill cancelled.' };
+    if (error || !data) return { error: actionError(error, 'Failed to mark vendor bill cancelled.') };
 
     revalidatePath('/admin/dashboard');
     return {
@@ -364,6 +365,6 @@ export async function reverseVendorBill(id: string) {
       reversal_journal_entry_id: reversal.reversal_entry_id,
     };
   } catch (err) {
-    return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };
+    return { error: actionError(err, 'An unexpected error occurred') };
   }
 }

@@ -12,6 +12,7 @@ import type {
   PagedResult,
   TimelineItem,
 } from '@/app/actions/analytics/sales';
+import { actionError } from '@/lib/user-facing-error';
 
 export type OperationsEmployeeMetrics = {
   actor: string;
@@ -108,7 +109,7 @@ export async function getOperationsEmployees() {
       : Promise.resolve({ data: null }),
   ]);
 
-  if (opsUsers.error) return { error: opsUsers.error.message };
+  if (opsUsers.error) return { error: actionError(opsUsers.error) };
 
   const memberIds = members.data ? new Set(members.data.map((m) => String(m.user_id))) : null;
   const inScope = (appUserId: unknown) => !memberIds || (Boolean(appUserId) && memberIds.has(String(appUserId)));
@@ -197,7 +198,7 @@ export async function getOperationsEmployeeDetail(username: string, period: Anal
     timings().eq('approval_status', 'sent').lt('first_submitted_at', overdueBefore),
   ]);
 
-  if (employee.error) return { error: employee.error.message };
+  if (employee.error) return { error: actionError(employee.error) };
 
   const row = (employee.data as Array<Record<string, unknown>> | null)?.[0];
   const queues = normalizeOverview(overview.data?.[0]);
@@ -276,7 +277,7 @@ export async function getOperationsInquiries(options: {
   }
 
   const { data, error, count } = await query;
-  if (error) return { error: error.message };
+  if (error) return { error: actionError(error) };
 
   const timings = data || [];
   const inquiryIds = timings.map((t) => String(t.inquiry_id));
@@ -342,7 +343,7 @@ export async function getOperationsActivity(username: string, period: AnalyticsP
   if (access.organizationId) query = query.eq('organization_id', access.organizationId);
 
   const { data, error, count } = await query;
-  if (error) return { error: error.message };
+  if (error) return { error: actionError(error) };
 
   const inquiryIds = [...new Set((data || []).map((e) => String(e.inquiry_id)))];
   const { data: refs } = inquiryIds.length
@@ -394,7 +395,7 @@ export async function getOperationsAdminSummary(period: AnalyticsPeriod) {
     }),
     calculated,
   ]);
-  if (overview.error) return { error: overview.error.message };
+  if (overview.error) return { error: actionError(overview.error) };
 
   const row = normalizeOverview(overview.data?.[0]);
   return {
@@ -460,7 +461,7 @@ export async function getOperationsAdminInquiries(options: {
   }
 
   const { data, error, count } = await query;
-  if (error) return { error: error.message };
+  if (error) return { error: actionError(error) };
 
   const timings = data || [];
   const inquiryIds = timings.map((t) => String(t.inquiry_id));

@@ -25,6 +25,7 @@ import {
   type AppNotificationSource,
   type NotificationViewerContext,
 } from '@/lib/app-notifications';
+import { actionError } from '@/lib/user-facing-error';
 
 type LifecycleRow = {
   id: string;
@@ -375,7 +376,7 @@ export async function getMyAppNotifications(limit = 40): Promise<
       lifecycleUnreadQuery,
     ]);
 
-    if (chatResult.error) return { error: chatResult.error.message };
+    if (chatResult.error) return { error: actionError(chatResult.error) };
     if (lifecycleResult.error) {
       // Older DBs may not have title/href/payload yet — retry a slimmer select.
       const fallbackQuery = supabase
@@ -407,7 +408,7 @@ export async function getMyAppNotifications(limit = 40): Promise<
       }
       const fallback = await fallbackQuery;
 
-      if (fallback.error) return { error: fallback.error.message };
+      if (fallback.error) return { error: actionError(fallback.error) };
 
       const chatItems = ((chatResult.data || []) as unknown as ChatRow[]).map((row) =>
         mapChatRow({ ...row, leads: asLead(row.leads) }, ctx)
@@ -448,7 +449,7 @@ export async function getMyAppNotifications(limit = 40): Promise<
       unreadCount: (chatUnread.count || 0) + (lifecycleUnread.count || 0),
     };
   } catch (err) {
-    return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };
+    return { error: actionError(err, 'An unexpected error occurred') };
   }
 }
 
@@ -489,7 +490,7 @@ export async function markAppNotificationRead(
 
     return { success: true };
   } catch (err) {
-    return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };
+    return { error: actionError(err, 'An unexpected error occurred') };
   }
 }
 
@@ -528,6 +529,6 @@ export async function markAllAppNotificationsRead(): Promise<
 
     return { success: true };
   } catch (err) {
-    return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };
+    return { error: actionError(err, 'An unexpected error occurred') };
   }
 }

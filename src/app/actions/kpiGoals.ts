@@ -7,6 +7,7 @@ import {
   assertHrAccess,
   assertHrChildPermission,
 } from "@/lib/hr-auth";
+import { actionError } from '@/lib/user-facing-error';
 
 export type KpiGoalStatus =
   | "not_started"
@@ -156,7 +157,7 @@ async function findDuplicateGoal(params: {
 
   const { data, error } = await query;
   if (error) {
-    return { error: error.message };
+    return { error: actionError(error) };
   }
 
   const normalizedTitle = params.goal.trim().toLowerCase();
@@ -218,7 +219,7 @@ export async function createGoal(formData: FormData) {
       };
     }
 
-    return { error: error?.message || "Failed to create goal" };
+    return { error: actionError(error, "Failed to create goal") };
   }
 
   revalidateGoalPaths();
@@ -257,7 +258,7 @@ export async function updateGoal(formData: FormData) {
     .maybeSingle();
 
   if (existingError) {
-    return { error: existingError.message };
+    return { error: actionError(existingError) };
   }
 
   if (!existing) {
@@ -281,7 +282,7 @@ export async function updateGoal(formData: FormData) {
           "A goal with the same title already exists for this employee in the selected month",
       };
     }
-    return { error: error.message };
+    return { error: actionError(error) };
   }
 
   revalidateGoalPaths();
@@ -305,7 +306,7 @@ export async function deleteGoal(formData: FormData) {
     .maybeSingle();
 
   if (existingError) {
-    return { error: existingError.message };
+    return { error: actionError(existingError) };
   }
 
   if (!existing) {
@@ -315,7 +316,7 @@ export async function deleteGoal(formData: FormData) {
   const { error } = await supabase.from("employee_kpi_goals").delete().eq("id", id);
 
   if (error) {
-    return { error: error.message };
+    return { error: actionError(error) };
   }
 
   revalidateGoalPaths();
@@ -345,7 +346,7 @@ export async function getGoals(employeeId: string) {
     ) {
       return { goals: [] as KpiGoal[] };
     }
-    return { error: error.message };
+    return { error: actionError(error) };
   }
 
   return { goals: sortGoalsByMonth((data || []) as KpiGoal[]) };

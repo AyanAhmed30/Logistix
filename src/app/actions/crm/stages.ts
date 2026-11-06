@@ -5,6 +5,7 @@ import { requireAnyChildModule, isAccessDenied } from '@/lib/auth/require-access
 import { requireCrmOrganizationScope, revalidateCrmPipelinePaths } from '@/app/actions/crm/shared';
 import { DEFAULT_CRM_PIPELINE_STAGES } from '@/lib/crm-pipeline-utils';
 import type { CrmPipelineStage } from '@/app/actions/crm/types';
+import { actionError } from '@/lib/user-facing-error';
 
 function mapStage(row: Record<string, unknown>): CrmPipelineStage {
   return {
@@ -251,7 +252,7 @@ export async function getCrmPipelineStages() {
     .eq('organization_id', scope.organizationId)
     .order('sequence', { ascending: true });
 
-  if (error) return { error: error.message };
+  if (error) return { error: actionError(error) };
   return { stages: (data || []).map(mapStage) };
 }
 
@@ -298,7 +299,7 @@ export async function createCrmPipelineStage(input: {
     .select('*')
     .single();
 
-  if (error || !data) return { error: error?.message || 'Failed to create stage.' };
+  if (error || !data) return { error: actionError(error, 'Failed to create stage.') };
   await revalidateCrmPipelinePaths();
   return { stage: mapStage(data as Record<string, unknown>) };
 }
@@ -335,7 +336,7 @@ export async function updateCrmPipelineStage(
     .select('*')
     .single();
 
-  if (error || !data) return { error: error?.message || 'Failed to update stage.' };
+  if (error || !data) return { error: actionError(error, 'Failed to update stage.') };
   await revalidateCrmPipelinePaths();
   return { stage: mapStage(data as Record<string, unknown>) };
 }
@@ -365,7 +366,7 @@ export async function deleteCrmPipelineStage(stageId: string) {
     .eq('id', stageId)
     .eq('organization_id', scope.organizationId);
 
-  if (error) return { error: error.message };
+  if (error) return { error: actionError(error) };
   await revalidateCrmPipelinePaths();
   return { success: true as const };
 }
@@ -387,7 +388,7 @@ export async function reorderCrmPipelineStages(orderedStageIds: string[]) {
       .update({ sequence: (i + 1) * 10, updated_at: now })
       .eq('id', id)
       .eq('organization_id', scope.organizationId);
-    if (error) return { error: error.message };
+    if (error) return { error: actionError(error) };
   }
 
   await revalidateCrmPipelinePaths();

@@ -137,12 +137,19 @@ export function UserScanProgressPanel({ refreshKey, username }: Props) {
   const fetchDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const fetchProgress = useCallback(async (options?: { background?: boolean }) => {
-    const result = await getOrderScanProgressForUser();
+    let result: Awaited<ReturnType<typeof getOrderScanProgressForUser>>;
+    try {
+      result = await getOrderScanProgressForUser();
+    } catch (error) {
+      console.error("[scan-progress]", error);
+      if (!options?.background) setError("Unable to load scan progress");
+      return;
+    }
     if ("error" in result) {
+      // A failed background refresh keeps the last good data on screen.
+      if (options?.background) return;
       setError(result.error ?? "Unable to load scan progress");
-      if (!options?.background) {
-        setOrders([]);
-      }
+      setOrders([]);
       return;
     }
     setError(null);

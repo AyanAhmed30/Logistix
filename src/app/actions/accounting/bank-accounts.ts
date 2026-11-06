@@ -3,6 +3,7 @@
 import { createAdminClient } from '@/utils/supabase/server';
 import { getSession } from '@/lib/auth/session';
 import { sessionHasAccountingAccess } from '@/lib/accounting-page-access';
+import { actionError } from '@/lib/user-facing-error';
 
 export type OrganizationBankAccount = {
   id: string;
@@ -171,7 +172,7 @@ export async function listOrganizationBankAccounts(opts?: {
             .in('code', ['1200', '1002', '1010'])
             .order('code', { ascending: true })
             .limit(limit);
-          if (byCode.error) return { error: byCode.error.message };
+          if (byCode.error) return { error: actionError(byCode.error) };
           return {
             accounts: (byCode.data || []).map((r) =>
               mapBankRow({ ...r, bank_account_number: null, bank_currency: 'PKR' })
@@ -186,13 +187,13 @@ export async function listOrganizationBankAccounts(opts?: {
           migrationRequired: true as const,
         };
       }
-      return { error: error.message };
+      return { error: actionError(error) };
     }
 
     return { accounts: (data || []).map((r) => mapBankRow(r as Record<string, unknown>)) };
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to load bank accounts',
+      error: actionError(err, 'Failed to load bank accounts'),
     };
   }
 }
@@ -228,7 +229,7 @@ export async function getOrganizationBankAccountById(accountId: string) {
           }),
         };
       }
-      return { error: error.message };
+      return { error: actionError(error) };
     }
     if (!data) return { account: null };
 
@@ -244,7 +245,7 @@ export async function getOrganizationBankAccountById(accountId: string) {
     return { account: mapBankRow(data as Record<string, unknown>) };
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to load bank account',
+      error: actionError(err, 'Failed to load bank account'),
     };
   }
 }

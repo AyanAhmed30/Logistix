@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, useTransition, useRef } from "react";
-import { toast } from "sonner";
+import { toast } from "@/lib/app-toast";
 import jsPDF from "jspdf";
 import QRCode from "qrcode";
 import { getNextCartonSerial, createOrderWithCartons } from "@/app/actions/orders";

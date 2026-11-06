@@ -4,6 +4,7 @@ import { createAdminClient } from '@/utils/supabase/server';
 import { getSession } from '@/lib/auth/session';
 import { sessionHasAccountingAccess } from '@/lib/accounting-page-access';
 import { documentPaymentSnapshot, appliedPaymentAmount } from '@/lib/accounting-payments';
+import { actionError } from '@/lib/user-facing-error';
 
 export type CustomerBalanceSummary = {
   contact_id: string;
@@ -108,7 +109,7 @@ export async function getCustomerAccountingBalance(contactId: string) {
       contactQuery = contactQuery.eq('organization_id', scope.organizationId);
     }
     const { data: contact, error: cErr } = await contactQuery.maybeSingle();
-    if (cErr || !contact) return { error: cErr?.message || 'Customer not found' };
+    if (cErr || !contact) return { error: actionError(cErr, 'Customer not found') };
 
     let invQuery = supabase
       .from('accounting_customer_invoices')
@@ -270,7 +271,7 @@ export async function getCustomerAccountingBalance(contactId: string) {
     return { balance };
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to load customer balance',
+      error: actionError(err, 'Failed to load customer balance'),
     };
   }
 }
@@ -469,7 +470,7 @@ export async function getCustomerLedger(
     return { entries, total, page, pageSize, closing_balance: running };
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to load ledger',
+      error: actionError(err, 'Failed to load ledger'),
     };
   }
 }
@@ -497,7 +498,7 @@ export async function getCustomerStatement(contactId: string) {
     };
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to load statement',
+      error: actionError(err, 'Failed to load statement'),
     };
   }
 }
@@ -524,7 +525,7 @@ export async function getCustomerAccountingInvoices(
     query = query.order('invoice_date', { ascending: false });
 
     const { data, error } = await query;
-    if (error) return { error: error.message };
+    if (error) return { error: actionError(error) };
 
     const rows = (data || []).map((r) => {
       const computed = documentPaymentSnapshot({
@@ -564,7 +565,7 @@ export async function getCustomerAccountingInvoices(
     return { invoices: filtered };
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to load invoices',
+      error: actionError(err, 'Failed to load invoices'),
     };
   }
 }
@@ -739,7 +740,7 @@ export async function getCustomerAccountingTimeline(contactId: string) {
     return { events };
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to load timeline',
+      error: actionError(err, 'Failed to load timeline'),
     };
   }
 }
@@ -790,7 +791,7 @@ export async function getCustomerTransactionHistory(
     return { transactions: slice, total, page, pageSize };
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to load transactions',
+      error: actionError(err, 'Failed to load transactions'),
     };
   }
 }

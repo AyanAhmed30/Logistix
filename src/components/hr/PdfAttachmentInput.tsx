@@ -2,7 +2,7 @@
 
 import { useId } from "react";
 import { FileText, X } from "lucide-react";
-import { toast } from "sonner";
+import { toast } from "@/lib/app-toast";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import {

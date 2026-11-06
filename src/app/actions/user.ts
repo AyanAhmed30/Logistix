@@ -19,6 +19,7 @@ import {
   type PortalUserAuditSnapshot,
 } from '@/lib/portal-user-audit';
 import { normalizeUserProfilePhone } from '@/lib/user-profile-phone';
+import { actionError } from '@/lib/user-facing-error';
 
 export type PortalUserRole = 'user' | 'admin';
 
@@ -361,7 +362,7 @@ export async function getPortalUserActivityLogs(userId: string, input?: { limit?
     if (error.message.includes('portal_user_activity_logs') && error.message.includes('does not exist')) {
       return { logs: [] as PortalUserActivityLog[], total: 0, hasMore: false };
     }
-    return { error: error.message };
+    return { error: actionError(error) };
   }
 
   const logs = (data || []) as PortalUserActivityLog[];
@@ -628,10 +629,10 @@ async function loadUsersWithCompanies(
           });
         }
       } else if (primary.error) {
-        return { error: primary.error.message };
+        return { error: actionError(primary.error) };
       }
     } else if (primary.error) {
-      return { error: primary.error.message };
+      return { error: actionError(primary.error) };
     }
   }
 
@@ -803,7 +804,7 @@ export async function updatePortalUserPhone(phone: string) {
     if (error.message.toLowerCase().includes('phone')) {
       return { error: 'Phone number is not available on this database yet.' };
     }
-    return { error: error.message };
+    return { error: actionError(error) };
   }
 
   // Keep sales_agents.phone_number in sync so mobile Support / CRM see the same number
@@ -870,7 +871,7 @@ export async function updatePortalUserPassword(password: string) {
     .update({ password: next })
     .eq('id', session.appUserId);
 
-  if (error) return { error: error.message };
+  if (error) return { error: actionError(error) };
 
   revalidatePath('/admin/dashboard');
   return { success: true as const };
@@ -1252,7 +1253,7 @@ export async function deletePortalUser(formData: FormData) {
   }
 
   const { error } = await supabase.from('app_users').delete().eq('id', id);
-  if (error) return { error: error.message };
+  if (error) return { error: actionError(error) };
 
   revalidatePath('/admin/dashboard');
   return { success: true as const, removedSalesAgents: linkedAgentIds.size };
@@ -1327,7 +1328,7 @@ export async function updateUser(formData: FormData) {
     .update({ username, password })
     .eq('id', id);
 
-  if (error) return { error: error.message };
+  if (error) return { error: actionError(error) };
 
   revalidatePath('/admin/dashboard');
   return { success: true };

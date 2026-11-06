@@ -2,6 +2,7 @@
 
 import { revalidatePath } from 'next/cache';
 import { requireOrganizationContext } from '@/lib/organization-auth';
+import { actionError } from '@/lib/user-facing-error';
 
 export type OrganizationCustomer = {
   id: string;
@@ -62,12 +63,12 @@ export async function getOrganizationCustomers(options?: { status?: 'active' | '
       if (error.message.includes('does not exist') || error.code === '42P01') {
         return { customers: [] };
       }
-      return { error: error.message };
+      return { error: actionError(error) };
     }
 
     return { customers: (data || []) as OrganizationCustomer[] };
   } catch (err) {
-    return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };
+    return { error: actionError(err, 'An unexpected error occurred') };
   }
 }
 
@@ -115,14 +116,14 @@ export async function createOrganizationCustomer(formData: FormData) {
       if (error.message.includes('does not exist') || error.code === '42P01') {
         return { error: 'Organization customers table does not exist. Please run the SQL migration in Supabase.' };
       }
-      return { error: error.message };
+      return { error: actionError(error) };
     }
 
     revalidatePath('/organization/dashboard');
     revalidatePath('/user/dashboard');
     return { success: true, customer: data as OrganizationCustomer };
   } catch (err) {
-    return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };
+    return { error: actionError(err, 'An unexpected error occurred') };
   }
 }
 
@@ -168,14 +169,14 @@ export async function updateOrganizationCustomer(formData: FormData) {
       .select(CUSTOMER_SELECT)
       .single();
 
-    if (error) return { error: error.message };
+    if (error) return { error: actionError(error) };
     if (!data) return { error: 'Customer not found' };
 
     revalidatePath('/organization/dashboard');
     revalidatePath('/user/dashboard');
     return { success: true, customer: data as OrganizationCustomer };
   } catch (err) {
-    return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };
+    return { error: actionError(err, 'An unexpected error occurred') };
   }
 }
 
@@ -196,13 +197,13 @@ export async function archiveOrganizationCustomer(formData: FormData) {
       .eq('id', id)
       .eq('organization_id', ctx.organization.id);
 
-    if (error) return { error: error.message };
+    if (error) return { error: actionError(error) };
 
     revalidatePath('/organization/dashboard');
     revalidatePath('/user/dashboard');
     return { success: true };
   } catch (err) {
-    return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };
+    return { error: actionError(err, 'An unexpected error occurred') };
   }
 }
 
@@ -224,12 +225,12 @@ export async function restoreOrganizationCustomer(formData: FormData) {
       .eq('organization_id', ctx.organization.id)
       .eq('status', 'archived');
 
-    if (error) return { error: error.message };
+    if (error) return { error: actionError(error) };
 
     revalidatePath('/organization/dashboard');
     revalidatePath('/user/dashboard');
     return { success: true };
   } catch (err) {
-    return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };
+    return { error: actionError(err, 'An unexpected error occurred') };
   }
 }

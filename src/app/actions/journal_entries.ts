@@ -11,6 +11,7 @@ import {
   buildReversalLines,
   validateJournalEntry as validateJournalEntryCore,
 } from '@/lib/accounting/journalEngine';
+import { actionError } from '@/lib/user-facing-error';
 
 export type JournalEntryStatus = 'draft' | 'posted' | 'reversed';
 
@@ -522,7 +523,7 @@ export async function getJournalEntries(status?: JournalEntryStatus | 'all') {
     };
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'An unexpected error occurred',
+      error: actionError(err, 'An unexpected error occurred'),
     };
   }
 }
@@ -551,7 +552,7 @@ export async function createJournalEntry(input: UpsertJournalEntryInput) {
       .single();
 
     if (error || !data) {
-      return { error: error?.message || 'Failed to create journal entry.' };
+      return { error: actionError(error, 'Failed to create journal entry.') };
     }
 
     try {
@@ -570,7 +571,7 @@ export async function createJournalEntry(input: UpsertJournalEntryInput) {
     return { entry: data as JournalEntryRow };
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'An unexpected error occurred',
+      error: actionError(err, 'An unexpected error occurred'),
     };
   }
 }
@@ -594,7 +595,7 @@ export async function updateJournalEntry(input: UpsertJournalEntryInput) {
     try {
       assertMutableEntry(existing.status);
     } catch (err) {
-      return { error: err instanceof Error ? err.message : 'Posted entries cannot be modified. Use reversal.' };
+      return { error: actionError(err, 'Posted entries cannot be modified. Use reversal.') };
     }
 
     const validation = validateJournalEntryInput(input, journals, accounts, partners);
@@ -624,7 +625,7 @@ export async function updateJournalEntry(input: UpsertJournalEntryInput) {
       .single();
 
     if (error || !data) {
-      return { error: error?.message || 'Failed to update journal entry.' };
+      return { error: actionError(error, 'Failed to update journal entry.') };
     }
 
     try {
@@ -667,7 +668,7 @@ export async function updateJournalEntry(input: UpsertJournalEntryInput) {
     return { entry: data as JournalEntryRow };
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'An unexpected error occurred',
+      error: actionError(err, 'An unexpected error occurred'),
     };
   }
 }
@@ -691,7 +692,7 @@ export async function postJournalEntry(entryId: string) {
     try {
       assertDraftForPosting(existing.status);
     } catch (err) {
-      return { error: err instanceof Error ? err.message : 'Only draft entries can be posted' };
+      return { error: actionError(err, 'Only draft entries can be posted') };
     }
 
     const mappedEntry = formatJournalEntries([existing], lines, journals, accounts)[0];
@@ -703,7 +704,7 @@ export async function postJournalEntry(entryId: string) {
         })),
       });
     } catch (err) {
-      return { error: err instanceof Error ? err.message : 'Failed to validate journal entry' };
+      return { error: actionError(err, 'Failed to validate journal entry') };
     }
 
     const { data: postedRows, error } = await supabase.rpc('post_journal_entry_strict', {
@@ -711,7 +712,7 @@ export async function postJournalEntry(entryId: string) {
     });
 
     if (error) {
-      return { error: error.message || 'Failed to post journal entry.' };
+      return { error: actionError(error, 'Failed to post journal entry.') };
     }
 
     const posted = Array.isArray(postedRows) ? postedRows[0] : null;
@@ -732,7 +733,7 @@ export async function postJournalEntry(entryId: string) {
     };
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'An unexpected error occurred',
+      error: actionError(err, 'An unexpected error occurred'),
     };
   }
 }
@@ -767,7 +768,7 @@ export async function reverseJournalEntry(entryId: string) {
     try {
       validateJournalEntryCore({ lines: reversalPreview });
     } catch (err) {
-      return { error: err instanceof Error ? err.message : 'Failed to validate reversal entry' };
+      return { error: actionError(err, 'Failed to validate reversal entry') };
     }
 
     const { data: reversalRows, error } = await supabase.rpc('reverse_journal_entry_strict', {
@@ -775,7 +776,7 @@ export async function reverseJournalEntry(entryId: string) {
     });
 
     if (error) {
-      return { error: error.message || 'Failed to reverse journal entry.' };
+      return { error: actionError(error, 'Failed to reverse journal entry.') };
     }
 
     const reversal = Array.isArray(reversalRows) ? reversalRows[0] : null;
@@ -791,7 +792,7 @@ export async function reverseJournalEntry(entryId: string) {
     };
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'An unexpected error occurred',
+      error: actionError(err, 'An unexpected error occurred'),
     };
   }
 }
@@ -818,14 +819,14 @@ export async function deleteJournalEntry(entryId: string) {
 
     const { error } = await supabase.from('journal_entries').delete().eq('id', normalizedId);
     if (error) {
-      return { error: error.message };
+      return { error: actionError(error) };
     }
 
     revalidateAccountingPaths();
     return { success: true };
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'An unexpected error occurred',
+      error: actionError(err, 'An unexpected error occurred'),
     };
   }
 }

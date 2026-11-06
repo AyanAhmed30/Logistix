@@ -6,6 +6,7 @@ import {
   formatVendorAddress,
   resolveVendorAccountingScope,
 } from '@/lib/accounting-vendor-scope';
+import { actionError } from '@/lib/user-facing-error';
 
 export type AccountingBillStatus = 'draft' | 'posted' | 'cancelled' | 'paid';
 
@@ -243,7 +244,7 @@ export async function createManualAccountingBill() {
             'Run create_accounting_vendors_module.sql migration to enable Vendor Bills.',
         };
       }
-      return { error: error?.message || 'Failed to create bill' };
+      return { error: actionError(error, 'Failed to create bill') };
     }
 
     await supabase.from('accounting_vendor_bill_lines').insert([
@@ -278,7 +279,7 @@ export async function createManualAccountingBill() {
     return { billId: String(bill.id) };
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to create bill',
+      error: actionError(err, 'Failed to create bill'),
     };
   }
 }
@@ -338,7 +339,7 @@ export async function getAccountingVendorBills(filters: {
       if (/accounting_vendor_bills|relation|schema cache/i.test(error.message)) {
         return { bills: [] as AccountingBillListItem[], total: 0, page, pageSize };
       }
-      return { error: error.message };
+      return { error: actionError(error) };
     }
 
     const rows = data || [];
@@ -378,7 +379,7 @@ export async function getAccountingVendorBills(filters: {
     return { bills, total: count ?? bills.length, page, pageSize };
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to load bills',
+      error: actionError(err, 'Failed to load bills'),
     };
   }
 }
@@ -399,7 +400,7 @@ export async function getAccountingBillDetail(billId: string) {
       if (error && /accounting_vendor_bills|relation/i.test(error.message)) {
         return { error: 'Run create_accounting_vendors_module.sql migration.' };
       }
-      return { error: error?.message || 'Bill not found' };
+      return { error: actionError(error, 'Bill not found') };
     }
 
     if (
@@ -469,7 +470,7 @@ export async function getAccountingBillDetail(billId: string) {
     return { bill: mapBill(row as Record<string, unknown>, lines, orgMeta) };
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to load bill',
+      error: actionError(err, 'Failed to load bill'),
     };
   }
 }

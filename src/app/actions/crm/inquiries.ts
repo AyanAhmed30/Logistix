@@ -14,6 +14,7 @@ import { normalizeLeadSource } from '@/lib/lead-source';
 import type { Lead } from '@/app/actions/leads';
 import type { LeadInquiry } from '@/app/actions/inquiries';
 import { listInquiriesForLead } from '@/app/actions/inquiries';
+import { actionError } from '@/lib/user-facing-error';
 
 export type CrmOpportunityInquirySummary = {
   total: number;
@@ -125,7 +126,7 @@ async function fetchOpportunityById(
     error = retry.error;
   }
 
-  if (error) return { data: null, error: error.message || 'Failed to load opportunity.' };
+  if (error) return { data: null, error: actionError(error, 'Failed to load opportunity.') };
   return { data: (data as OpportunityRow | null) || null, error: null };
 }
 
@@ -624,7 +625,7 @@ async function resolveLeadForCrmOpportunityWithContext(
     .single();
 
   if (error || !created) {
-    return { error: error?.message || 'Failed to create inquiry bridge lead.' };
+    return { error: actionError(error, 'Failed to create inquiry bridge lead.') };
   }
 
   return { lead: mapLeadRow(created as Record<string, unknown>) };
@@ -759,7 +760,7 @@ export async function getCrmOpportunityInquirySummary(
         .select('id, status, approval_status, product_name, sent_at, created_at')
         .eq('lead_id', leadId)
         .order('created_at', { ascending: false });
-      if (fallback.error) return { error: fallback.error.message };
+      if (fallback.error) return { error: actionError(fallback.error) };
       const rows = fallback.data || [];
       const latest = rows[0];
       return {
@@ -774,7 +775,7 @@ export async function getCrmOpportunityInquirySummary(
         },
       };
     }
-    return { error: error.message };
+    return { error: actionError(error) };
   }
 
   const rows = data || [];

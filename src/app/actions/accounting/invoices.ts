@@ -4,6 +4,7 @@ import { createAdminClient } from '@/utils/supabase/server';
 import { getSession } from '@/lib/auth/session';
 import { sessionHasSalesAccess } from '@/lib/auth/require-access';
 import { sessionHasAccountingAccess } from '@/lib/accounting-page-access';
+import { actionError } from '@/lib/user-facing-error';
 
 export type AccountingInvoiceStatus = 'draft' | 'posted' | 'cancelled' | 'paid';
 
@@ -213,7 +214,7 @@ export async function createAccountingInvoiceFromOrder(quotationId: string) {
       .maybeSingle();
 
     if (loadError || !order) {
-      return { error: loadError?.message || 'Sales order not found' };
+      return { error: actionError(loadError, 'Sales order not found') };
     }
 
     if (
@@ -460,7 +461,7 @@ export async function createAccountingInvoiceFromOrder(quotationId: string) {
             'Run create_accounting_module_phase1.sql migration to enable Accounting invoices.',
         };
       }
-      return { error: invError?.message || 'Failed to create invoice' };
+      return { error: actionError(invError, 'Failed to create invoice') };
     }
 
     if (lineRows.length) {
@@ -543,8 +544,7 @@ export async function createAccountingInvoiceFromOrder(quotationId: string) {
     return { invoiceId: String(invoice.id), alreadyExists: false as const };
   } catch (err) {
     return {
-      error:
-        err instanceof Error ? err.message : 'Failed to create accounting invoice',
+      error: actionError(err, 'Failed to create accounting invoice'),
     };
   }
 }
@@ -653,7 +653,7 @@ export async function createManualAccountingInvoice() {
       if (invError && /duplicate|unique|invoice_number/i.test(invError.message)) {
         return { error: 'Invoice number conflict — please try again.' };
       }
-      return { error: invError?.message || 'Failed to create invoice' };
+      return { error: actionError(invError, 'Failed to create invoice') };
     }
 
     // One blank product line so the form is ready to edit (Odoo-like)
@@ -701,8 +701,7 @@ export async function createManualAccountingInvoice() {
     return { invoiceId: String(invoice.id) };
   } catch (err) {
     return {
-      error:
-        err instanceof Error ? err.message : 'Failed to create accounting invoice',
+      error: actionError(err, 'Failed to create accounting invoice'),
     };
   }
 }
@@ -722,7 +721,7 @@ export async function getAccountingInvoiceIdForOrder(quotationId: string) {
     return { invoiceId: data?.id ? String(data.id) : null };
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to resolve invoice',
+      error: actionError(err, 'Failed to resolve invoice'),
     };
   }
 }
@@ -796,7 +795,7 @@ export async function getAccountingCustomerInvoices(filters: {
         pageSize,
       };
     }
-    if (error) return { error: error.message };
+    if (error) return { error: actionError(error) };
 
     const rows = data || [];
     const orgIds = [
@@ -876,7 +875,7 @@ export async function getAccountingCustomerInvoices(filters: {
     return { invoices, total: count ?? invoices.length, page, pageSize };
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to load invoices',
+      error: actionError(err, 'Failed to load invoices'),
     };
   }
 }
@@ -893,7 +892,7 @@ export async function getAccountingInvoiceDetail(invoiceId: string) {
       .eq('id', invoiceId)
       .maybeSingle();
 
-    if (error || !inv) return { error: error?.message || 'Invoice not found' };
+    if (error || !inv) return { error: actionError(error, 'Invoice not found') };
 
     if (
       scope.organizationId &&
@@ -1053,7 +1052,7 @@ export async function getAccountingInvoiceDetail(invoiceId: string) {
     return { invoice: detail };
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to load invoice',
+      error: actionError(err, 'Failed to load invoice'),
     };
   }
 }
@@ -1229,7 +1228,7 @@ export async function getAccountingDashboardStats() {
     };
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to load dashboard',
+      error: actionError(err, 'Failed to load dashboard'),
     };
   }
 }

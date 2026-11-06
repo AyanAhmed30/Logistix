@@ -22,6 +22,7 @@ import {
 } from '@/lib/accounting/financial-reporting/annual-report';
 import type { AnnualReportFiscalYear } from '@/lib/accounting/financial-reporting/annual-report';
 import { resolveDatePeriod } from '@/lib/accounting/financial-reporting/periods';
+import { actionError } from '@/lib/user-facing-error';
 
 function round2(n: number) {
   return Math.round((Number(n) || 0) * 100) / 100;
@@ -457,10 +458,10 @@ export async function getAccountingJournalItemsForReview(filters?: {
           fallbackQ = fallbackQ.or(`label.ilike.${like},partner_name.ilike.${like}`);
         }
         const retry = await fallbackQ.limit(12000);
-        if (retry.error) return { error: retry.error.message };
+        if (retry.error) return { error: actionError(retry.error) };
         rawLines = (retry.data || []) as Record<string, unknown>[];
       } else {
-        return { error: lineErr.message };
+        return { error: actionError(lineErr) };
       }
     } else {
       rawLines = (lines || []) as Record<string, unknown>[];
@@ -593,8 +594,7 @@ export async function getAccountingJournalItemsForReview(filters?: {
     };
   } catch (err) {
     return {
-      error:
-        err instanceof Error ? err.message : 'Failed to load journal items',
+      error: actionError(err, 'Failed to load journal items'),
     };
   }
 }
@@ -654,7 +654,7 @@ export async function getAccountingJournalAuditEvents(filters?: {
       if (/accounting_journal_entry_logs|relation/i.test(error.message)) {
         return { events: [], total: 0, page, pageSize };
       }
-      return { error: error.message };
+      return { error: actionError(error) };
     }
 
     const rows = data || [];
@@ -717,8 +717,7 @@ export async function getAccountingJournalAuditEvents(filters?: {
     return { events, total: count ?? 0, page, pageSize };
   } catch (err) {
     return {
-      error:
-        err instanceof Error ? err.message : 'Failed to load journal audit',
+      error: actionError(err, 'Failed to load journal audit'),
     };
   }
 }
@@ -805,10 +804,10 @@ export async function getAccountingReviewAuditTrail(filters?: {
       await Promise.all([jeLogQ, auditQ]);
 
     if (jeErr && !/relation|does not exist/i.test(jeErr.message)) {
-      return { error: jeErr.message };
+      return { error: actionError(jeErr) };
     }
     if (auditErr && !/relation|does not exist/i.test(auditErr.message)) {
-      return { error: auditErr.message };
+      return { error: actionError(auditErr) };
     }
 
     const skipAssetLoan =
@@ -850,14 +849,14 @@ export async function getAccountingReviewAuditTrail(filters?: {
       if (!moduleFilter || moduleFilter === 'all' || moduleFilter === 'asset') {
         const { data, error } = await assetQ;
         if (error && !/relation|does not exist/i.test(error.message)) {
-          return { error: error.message };
+          return { error: actionError(error) };
         }
         assetLogs = (data || []) as Record<string, unknown>[];
       }
       if (!moduleFilter || moduleFilter === 'all' || moduleFilter === 'loan') {
         const { data, error } = await loanQ;
         if (error && !/relation|does not exist/i.test(error.message)) {
-          return { error: error.message };
+          return { error: actionError(error) };
         }
         loanLogs = (data || []) as Record<string, unknown>[];
       }
@@ -1046,8 +1045,7 @@ export async function getAccountingReviewAuditTrail(filters?: {
     return { entries: pagedEntries, total, page, pageSize };
   } catch (err) {
     return {
-      error:
-        err instanceof Error ? err.message : 'Failed to load audit trail',
+      error: actionError(err, 'Failed to load audit trail'),
     };
   }
 }
@@ -1098,7 +1096,7 @@ export async function getAccountingJournalAuditReport(filters?: {
     }
 
     const { data: entries, error } = await q.limit(10000);
-    if (error) return { error: error.message };
+    if (error) return { error: actionError(error) };
 
     const journalIds = [
       ...new Set((entries || []).map((e) => String(e.journal_id)).filter(Boolean)),
@@ -1167,8 +1165,7 @@ export async function getAccountingJournalAuditReport(filters?: {
     };
   } catch (err) {
     return {
-      error:
-        err instanceof Error ? err.message : 'Failed to build journal audit report',
+      error: actionError(err, 'Failed to build journal audit report'),
     };
   }
 }
@@ -1222,8 +1219,7 @@ export async function getAccountingReviewFilterOptions() {
     };
   } catch (err) {
     return {
-      error:
-        err instanceof Error ? err.message : 'Failed to load filter options',
+      error: actionError(err, 'Failed to load filter options'),
     };
   }
 }
@@ -1435,7 +1431,7 @@ export async function getAccountingDepreciationScheduleForReview(opts?: {
           migrationRequired: true as const,
         };
       }
-      return { error: error.message };
+      return { error: actionError(error) };
     }
 
     const rows = data || [];
@@ -1523,10 +1519,7 @@ export async function getAccountingDepreciationScheduleForReview(opts?: {
     };
   } catch (err) {
     return {
-      error:
-        err instanceof Error
-          ? err.message
-          : 'Failed to load depreciation schedule',
+      error: actionError(err, 'Failed to load depreciation schedule'),
     };
   }
 }
@@ -1632,7 +1625,7 @@ export async function getAccountingLoansAnalysisForReview(opts?: {
           migrationRequired: true as const,
         };
       }
-      return { error: error.message };
+      return { error: actionError(error) };
     }
 
     const rows = data || [];
@@ -1725,7 +1718,7 @@ export async function getAccountingLoansAnalysisForReview(opts?: {
     return { loans, total: count || 0, page, pageSize, totals };
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to load loans analysis',
+      error: actionError(err, 'Failed to load loans analysis'),
     };
   }
 }
@@ -1804,7 +1797,7 @@ export async function getAccountingInvoicesToBeIssuedForReview(opts?: {
             'Run sales_to_invoice_phase.sql migration to enable Invoices To Be Issued.',
         };
       }
-      return { error: orderErr.message };
+      return { error: actionError(orderErr) };
     }
 
     const orderRows = orders || [];
@@ -1846,7 +1839,7 @@ export async function getAccountingInvoicesToBeIssuedForReview(opts?: {
         : Promise.resolve({ data: [] as { id: string; organization_name: string }[] }),
     ]);
 
-    if (linesRes.error) return { error: linesRes.error.message };
+    if (linesRes.error) return { error: actionError(linesRes.error) };
 
     const salesMap = new Map(
       (salesRes.data || []).map((s) => [String(s.id), String(s.name || '')])
@@ -1892,8 +1885,7 @@ export async function getAccountingInvoicesToBeIssuedForReview(opts?: {
     return { lines: flatLines, total: count || 0, page, pageSize };
   } catch (err) {
     return {
-      error:
-        err instanceof Error ? err.message : 'Failed to load invoices to be issued',
+      error: actionError(err, 'Failed to load invoices to be issued'),
     };
   }
 }
@@ -1937,7 +1929,7 @@ async function finishInvoicedNotDelivered(
     if (/sales_order_line_id/i.test(linesRes.error.message)) {
       return { lines: [] as ReviewInvoicedNotDeliveredLine[], total: 0, page, pageSize };
     }
-    return { error: linesRes.error.message };
+    return { error: actionError(linesRes.error) };
   }
 
   const deliveredMap = new Map(
@@ -2083,7 +2075,7 @@ export async function getAccountingInvoicedNotDeliveredForReview(opts?: {
           );
         }
         const retryRes = await retry;
-        if (retryRes.error) return { error: retryRes.error.message };
+        if (retryRes.error) return { error: actionError(retryRes.error) };
         return finishInvoicedNotDelivered(
           (retryRes.data || []) as Record<string, unknown>[],
           supabase,
@@ -2092,7 +2084,7 @@ export async function getAccountingInvoicedNotDeliveredForReview(opts?: {
           pageSize
         );
       }
-      return { error: invErr.message };
+      return { error: actionError(invErr) };
     }
     return finishInvoicedNotDelivered(
       (invoices || []) as Record<string, unknown>[],
@@ -2103,10 +2095,7 @@ export async function getAccountingInvoicedNotDeliveredForReview(opts?: {
     );
   } catch (err) {
     return {
-      error:
-        err instanceof Error
-          ? err.message
-          : 'Failed to load invoiced not delivered',
+      error: actionError(err, 'Failed to load invoiced not delivered'),
     };
   }
 }
@@ -2162,7 +2151,7 @@ export async function getAccountingWorkingFilesForReview(opts?: {
 
       const { data, error } = await q;
       if (error && !/accounting_working_files|relation/i.test(error.message)) {
-        return { error: error.message };
+        return { error: actionError(error) };
       }
 
       const rows = data || [];
@@ -2274,7 +2263,7 @@ export async function getAccountingWorkingFilesForReview(opts?: {
     return { files: pageFiles, total, page, pageSize };
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to load working files',
+      error: actionError(err, 'Failed to load working files'),
     };
   }
 }
@@ -2369,13 +2358,13 @@ export async function createAccountingWorkingFile(opts: {
           error: 'Run create_accounting_working_files.sql migration in Supabase first.',
         };
       }
-      return { error: error.message };
+      return { error: actionError(error) };
     }
 
     return { fileId: String(data.id) };
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to create working file',
+      error: actionError(err, 'Failed to create working file'),
     };
   }
 }
@@ -2397,7 +2386,7 @@ export async function getAccountingWorkingFileDetail(fileId: string) {
       if (/accounting_working_files|relation/i.test(error.message)) {
         return { error: 'Run create_accounting_working_files.sql migration first.' };
       }
-      return { error: error.message };
+      return { error: actionError(error) };
     }
     if (!row) return { error: 'Working file not found.' };
 
@@ -2438,7 +2427,7 @@ export async function getAccountingWorkingFileDetail(fileId: string) {
     };
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to load working file',
+      error: actionError(err, 'Failed to load working file'),
     };
   }
 }
@@ -2495,8 +2484,7 @@ export async function getAccountingDeferredRevenuesForReview(opts?: {
     return { report };
   } catch (err) {
     return {
-      error:
-        err instanceof Error ? err.message : 'Failed to load deferred revenues',
+      error: actionError(err, 'Failed to load deferred revenues'),
     };
   }
 }
@@ -2536,8 +2524,7 @@ export async function getAccountingDeferredExpensesForReview(opts?: {
     return { report };
   } catch (err) {
     return {
-      error:
-        err instanceof Error ? err.message : 'Failed to load deferred expenses',
+      error: actionError(err, 'Failed to load deferred expenses'),
     };
   }
 }
@@ -2594,7 +2581,7 @@ export async function getAccountingAnnualReportForReview(opts?: {
     return { report, fiscalYears };
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to build annual report',
+      error: actionError(err, 'Failed to build annual report'),
     };
   }
 }
@@ -2677,14 +2664,13 @@ export async function createAccountingAnnualReportWorkingFile(opts: {
             'Working Files table is missing. Run create_accounting_working_files.sql in the Supabase SQL editor, then click New again.',
         };
       }
-      return { error: error.message };
+      return { error: actionError(error) };
     }
 
     return { fileId: String(data.id) };
   } catch (err) {
     return {
-      error:
-        err instanceof Error ? err.message : 'Failed to create annual report file',
+      error: actionError(err, 'Failed to create annual report file'),
     };
   }
 }

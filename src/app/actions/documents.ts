@@ -6,6 +6,7 @@ import {
   assertHrAccess,
   assertHrChildPermission,
 } from "@/lib/hr-auth";
+import { actionError } from '@/lib/user-facing-error';
 
 export type EmployeeDocument = {
   id: string;
@@ -90,7 +91,7 @@ export async function createDocument(formData: FormData) {
     .maybeSingle();
 
   if (employeeError) {
-    return { error: employeeError.message };
+    return { error: actionError(employeeError) };
   }
 
   if (!employee) {
@@ -120,7 +121,7 @@ export async function createDocument(formData: FormData) {
         error: "Employee documents table does not exist. Please run the SQL migration in Supabase.",
       };
     }
-    return { error: error.message || "Failed to create document" };
+    return { error: actionError(error, "Failed to create document") };
   }
 
   revalidatePath("/hr");
@@ -146,7 +147,7 @@ export async function getDocuments(employeeId?: string) {
     if (error.message.includes("does not exist") || error.message.includes("relation") || error.code === "42P01") {
       return { documents: [] as EmployeeDocument[] };
     }
-    return { error: error.message };
+    return { error: actionError(error) };
   }
 
   return { documents: (data || []) as EmployeeDocument[] };
@@ -203,7 +204,7 @@ export async function updateDocument(formData: FormData) {
     .maybeSingle();
 
   if (existingError) {
-    return { error: existingError.message };
+    return { error: actionError(existingError) };
   }
 
   if (!existing) {
@@ -228,7 +229,7 @@ export async function updateDocument(formData: FormData) {
     .single();
 
   if (error) {
-    return { error: error.message };
+    return { error: actionError(error) };
   }
 
   revalidatePath("/hr");
@@ -254,7 +255,7 @@ export async function deleteDocument(formData: FormData) {
     .maybeSingle();
 
   if (existingError) {
-    return { error: existingError.message };
+    return { error: actionError(existingError) };
   }
 
   if (!existing) {
@@ -264,7 +265,7 @@ export async function deleteDocument(formData: FormData) {
   const { error } = await supabase.from("employee_documents").delete().eq("id", id);
 
   if (error) {
-    return { error: error.message };
+    return { error: actionError(error) };
   }
 
   revalidatePath("/hr");

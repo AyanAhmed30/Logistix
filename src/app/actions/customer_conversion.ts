@@ -5,6 +5,7 @@ import { getSession } from '@/lib/auth/session';
 import { isSalesPortalActor } from '@/lib/auth/require-access';
 import { isSuperAdminSession } from '@/lib/auth/super-admin';
 import { revalidatePath } from 'next/cache';
+import { actionError } from '@/lib/user-facing-error';
 
 export type ConvertedCustomer = {
   id: string;
@@ -125,7 +126,7 @@ export async function convertLeadToCustomer(leadId: string) {
       .single();
 
     if (customerError) {
-      return { error: customerError.message };
+      return { error: actionError(customerError) };
     }
 
     // Mark lead as converted
@@ -144,7 +145,7 @@ export async function convertLeadToCustomer(leadId: string) {
     revalidatePath('/admin/dashboard');
     return { success: true, customer: customer as ConvertedCustomer };
   } catch (err) {
-    return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };
+    return { error: actionError(err, 'An unexpected error occurred') };
   }
 }
 
@@ -229,7 +230,7 @@ export async function getAllConvertedCustomersForSalesAgent() {
     }
 
     if (error) {
-      return { error: error.message };
+      return { error: actionError(error) };
     }
 
     type SupabaseCustomerResponse = {
@@ -264,7 +265,7 @@ export async function getAllConvertedCustomersForSalesAgent() {
 
     return { customers };
   } catch (err) {
-    return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };
+    return { error: actionError(err, 'An unexpected error occurred') };
   }
 }
 
@@ -310,7 +311,7 @@ export async function getAllConvertedCustomersForAdmin() {
     }
 
     if (customersError) {
-      return { error: customersError.message };
+      return { error: actionError(customersError) };
     }
 
     if (!customersData || customersData.length === 0) {
@@ -370,6 +371,6 @@ export async function getAllConvertedCustomersForAdmin() {
 
     return { customers };
   } catch (err) {
-    return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };
+    return { error: actionError(err, 'An unexpected error occurred') };
   }
 }

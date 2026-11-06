@@ -13,7 +13,7 @@ import {
   BarChart3,
 } from "lucide-react";
 import SummaryCard from "@/components/admin/SummaryCard";
-import { toast } from "sonner";
+import { toast } from "@/lib/app-toast";
 import { canAccessHrModule } from "@/app/actions/hr_people";
 import {
   createEmployee,

@@ -15,6 +15,7 @@ import {
   type LoadingInstructionDashboardSummary,
   type OrderLoadingProgressRow,
 } from "@/lib/loading-instruction-progress";
+import { actionError } from '@/lib/user-facing-error';
 
 type OrderRow = {
   id: string;
@@ -123,7 +124,7 @@ export async function getLoadingInstructionDashboardForUser() {
       .neq("loading_phase", "closed")
       .order("created_at", { ascending: false });
 
-    if (cErr) return { error: cErr.message };
+    if (cErr) return { error: actionError(cErr) };
 
     const activeConsoles = consoles || [];
     if (!activeConsoles.length) {
@@ -137,7 +138,7 @@ export async function getLoadingInstructionDashboardForUser() {
       .select("console_id, order_id")
       .in("console_id", consoleIds);
 
-    if (linksErr) return { error: linksErr.message };
+    if (linksErr) return { error: actionError(linksErr) };
 
     const orderIdsByConsole = new Map<string, string[]>();
     const allOrderIdSet = new Set<string>();
@@ -176,7 +177,7 @@ export async function getLoadingInstructionDashboardForUser() {
       ordErr = legacy.error;
     }
 
-    if (ordErr) return { error: ordErr.message };
+    if (ordErr) return { error: actionError(ordErr) };
 
     const ordersById = new Map<string, OrderRow>();
     for (const o of ordRows || []) {
@@ -255,7 +256,7 @@ export async function getLoadingInstructionDashboardForUser() {
     return { instructions, summary, orders: allProgressRows };
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : "Unable to load loading instruction dashboard",
+      error: actionError(err, "Unable to load loading instruction dashboard"),
     };
   }
 }
@@ -355,8 +356,7 @@ export async function getLoadingInstructionDashboardForAdmin() {
     };
   } catch (err) {
     return {
-      error:
-        err instanceof Error ? err.message : "Unable to load admin loading instruction dashboard",
+      error: actionError(err, "Unable to load admin loading instruction dashboard"),
     };
   }
 }

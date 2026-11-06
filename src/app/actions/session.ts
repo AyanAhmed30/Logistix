@@ -8,6 +8,7 @@ import {
     isSessionInactive,
     type SessionPayload,
 } from '@/lib/auth/session';
+import { actionError } from '@/lib/user-facing-error';
 
 export type RefreshSessionResult =
     | { success: true }
@@ -52,7 +53,7 @@ export async function refreshSession(): Promise<RefreshSessionResult> {
         return { success: true };
     } catch (err) {
         return {
-            error: err instanceof Error ? err.message : 'Unable to refresh session',
+            error: actionError(err, 'Unable to refresh session'),
         };
     }
 }

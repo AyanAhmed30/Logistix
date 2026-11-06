@@ -6,6 +6,7 @@ import {
   assertHrAccess,
   assertHrChildPermission,
 } from "@/lib/hr-auth";
+import { actionError } from '@/lib/user-facing-error';
 
 export type EmploymentStatus =
   | "active"
@@ -296,7 +297,7 @@ export async function createEmployee(formData: FormData) {
       return { error: "Employee with this username already exists" };
     }
 
-    return { error: error?.message || "Failed to create employee" };
+    return { error: actionError(error, "Failed to create employee") };
   }
 
   revalidatePath("/hr");
@@ -328,7 +329,7 @@ export async function updateEmployee(formData: FormData) {
     .maybeSingle();
 
   if (existingError) {
-    return { error: existingError.message };
+    return { error: actionError(existingError) };
   }
 
   if (!existing) {
@@ -349,7 +350,7 @@ export async function updateEmployee(formData: FormData) {
     if (error.code === "23505") {
       return { error: "Employee with this username already exists" };
     }
-    return { error: error.message };
+    return { error: actionError(error) };
   }
 
   revalidatePath("/hr");
@@ -376,7 +377,7 @@ export async function deleteEmployee(formData: FormData) {
     .maybeSingle();
 
   if (existingError) {
-    return { error: existingError.message };
+    return { error: actionError(existingError) };
   }
 
   if (!existing) {
@@ -386,7 +387,7 @@ export async function deleteEmployee(formData: FormData) {
   const { error } = await supabase.from("employees").delete().eq("id", id);
 
   if (error) {
-    return { error: error.message };
+    return { error: actionError(error) };
   }
 
   revalidatePath("/hr");
@@ -415,7 +416,7 @@ export async function getEmployeeById(id: string) {
     .maybeSingle();
 
   if (error) {
-    return { error: error.message };
+    return { error: actionError(error) };
   }
 
   if (!data) {
@@ -442,7 +443,7 @@ export async function getAllEmployees() {
     ) {
       return { employees: [] as Employee[] };
     }
-    return { error: error.message };
+    return { error: actionError(error) };
   }
 
   return { employees: (data || []) as Employee[] };

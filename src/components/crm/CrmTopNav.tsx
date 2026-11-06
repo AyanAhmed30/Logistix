@@ -18,7 +18,7 @@ import {
   visibleCrmModuleTabs,
   type DashboardAccessState,
 } from "@/lib/dashboard-access";
-import { toast } from "sonner";
+import { toast } from "@/lib/app-toast";
 
 type Props = {
   access: DashboardAccessState;

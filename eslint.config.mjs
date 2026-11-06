@@ -17,6 +17,23 @@ const eslintConfig = defineConfig([
     ".claude/**",
   ]),
   {
+    ignores: ["src/lib/app-toast.ts", "src/components/ui/sonner.tsx"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          paths: [
+            {
+              name: "sonner",
+              importNames: ["toast"],
+              message: "Import toast from @/lib/app-toast so technical errors never reach users.",
+            },
+          ],
+        },
+      ],
+    },
+  },
+  {
     rules: {
       // Legitimate patterns (mount data loads, dialog form reset, route sync)
       // trip this React Compiler rule across the ERP UI. Keep as advisory only.

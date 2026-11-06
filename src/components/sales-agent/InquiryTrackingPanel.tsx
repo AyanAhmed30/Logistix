@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
-import { toast } from "sonner";
+import { toast } from "@/lib/app-toast";
 import {
   getAllInquiriesForSalesAgent,
   type LeadInquiryWithLead,

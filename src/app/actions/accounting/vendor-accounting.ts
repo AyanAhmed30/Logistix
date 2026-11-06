@@ -3,6 +3,7 @@
 import { createAdminClient } from '@/utils/supabase/server';
 import { documentPaymentSnapshot } from '@/lib/accounting-payments';
 import { resolveVendorAccountingScope } from '@/lib/accounting-vendor-scope';
+import { actionError } from '@/lib/user-facing-error';
 
 export type VendorBalanceSummary = {
   contact_id: string;
@@ -98,7 +99,7 @@ export async function getVendorAccountingBalance(contactId: string) {
           } satisfies VendorBalanceSummary,
         };
       }
-      return { error: error.message };
+      return { error: actionError(error) };
     }
 
     const billRows = bills || [];
@@ -214,7 +215,7 @@ export async function getVendorAccountingBalance(contactId: string) {
     return { balance };
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to load balance',
+      error: actionError(err, 'Failed to load balance'),
     };
   }
 }
@@ -238,7 +239,7 @@ export async function getVendorLedger(contactId: string) {
       if (/accounting_vendor_bills|relation/i.test(error.message)) {
         return { entries: [] as VendorLedgerEntry[] };
       }
-      return { error: error.message };
+      return { error: actionError(error) };
     }
 
     const billRows = bills || [];
@@ -320,7 +321,7 @@ export async function getVendorLedger(contactId: string) {
     return { entries };
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to load ledger',
+      error: actionError(err, 'Failed to load ledger'),
     };
   }
 }
@@ -373,7 +374,7 @@ export async function getVendorAccountingTimeline(contactId: string) {
     return { events };
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to load timeline',
+      error: actionError(err, 'Failed to load timeline'),
     };
   }
 }

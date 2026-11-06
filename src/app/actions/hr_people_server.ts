@@ -16,6 +16,7 @@ import {
   HR_MODULE_PERMISSIONS,
   normalizeStoredPermissions,
 } from "@/lib/module-permissions";
+import { actionError } from '@/lib/user-facing-error';
 
 export type HrPersonServerResult =
   | { success: true; hrPerson?: unknown }
@@ -91,7 +92,7 @@ export async function createHrPersonUserAction(formData: FormData) {
   ]);
 
   if (insertError) {
-    return { success: false as const, error: insertError.message };
+    return { success: false as const, error: actionError(insertError) };
   }
 
   const hrCreateResult = createHrPerson({

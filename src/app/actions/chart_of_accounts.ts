@@ -3,6 +3,7 @@
 import { revalidatePath } from 'next/cache';
 import { getSession } from '@/lib/auth/session';
 import { createAdminClient } from '@/utils/supabase/server';
+import { actionError } from '@/lib/user-facing-error';
 
 export type ChartOfAccountType =
   | 'asset'
@@ -305,7 +306,7 @@ export async function getChartOfAccounts() {
     return { accounts: buildHierarchy(accounts) };
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'An unexpected error occurred',
+      error: actionError(err, 'An unexpected error occurred'),
     };
   }
 }
@@ -333,14 +334,14 @@ export async function createChartOfAccount(input: UpsertChartOfAccountInput) {
       .single();
 
     if (error || !data) {
-      return { error: error?.message || 'Failed to create account.' };
+      return { error: actionError(error, 'Failed to create account.') };
     }
 
     revalidateAccountingPaths();
     return { account: data as ChartOfAccountRow };
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'An unexpected error occurred',
+      error: actionError(err, 'An unexpected error occurred'),
     };
   }
 }
@@ -383,14 +384,14 @@ export async function updateChartOfAccount(input: UpsertChartOfAccountInput) {
       .single();
 
     if (error || !data) {
-      return { error: error?.message || 'Failed to update account.' };
+      return { error: actionError(error, 'Failed to update account.') };
     }
 
     revalidateAccountingPaths();
     return { account: data as ChartOfAccountRow };
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'An unexpected error occurred',
+      error: actionError(err, 'An unexpected error occurred'),
     };
   }
 }
@@ -433,14 +434,14 @@ export async function setChartOfAccountActiveState(accountId: string, isActive: 
       .single();
 
     if (error || !data) {
-      return { error: error?.message || 'Failed to update account status.' };
+      return { error: actionError(error, 'Failed to update account status.') };
     }
 
     revalidateAccountingPaths();
     return { account: data as ChartOfAccountRow };
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'An unexpected error occurred',
+      error: actionError(err, 'An unexpected error occurred'),
     };
   }
 }

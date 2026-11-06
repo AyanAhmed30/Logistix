@@ -4,6 +4,7 @@ import { revalidatePath } from 'next/cache';
 import { getSession } from '@/lib/auth/session';
 import { createAdminClient } from '@/utils/supabase/server';
 import type { ChartOfAccountType } from '@/app/actions/chart_of_accounts';
+import { actionError } from '@/lib/user-facing-error';
 
 export type JournalType = 'sales' | 'purchase' | 'bank' | 'cash' | 'general';
 
@@ -261,7 +262,7 @@ export async function getJournals(type?: JournalType | 'all') {
     };
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'An unexpected error occurred',
+      error: actionError(err, 'An unexpected error occurred'),
     };
   }
 }
@@ -289,14 +290,14 @@ export async function createJournal(input: UpsertJournalInput) {
       .single();
 
     if (error || !data) {
-      return { error: error?.message || 'Failed to create journal.' };
+      return { error: actionError(error, 'Failed to create journal.') };
     }
 
     revalidateAccountingPaths();
     return { journal: data as JournalRow };
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'An unexpected error occurred',
+      error: actionError(err, 'An unexpected error occurred'),
     };
   }
 }
@@ -340,14 +341,14 @@ export async function updateJournal(input: UpsertJournalInput) {
       .single();
 
     if (error || !data) {
-      return { error: error?.message || 'Failed to update journal.' };
+      return { error: actionError(error, 'Failed to update journal.') };
     }
 
     revalidateAccountingPaths();
     return { journal: data as JournalRow };
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'An unexpected error occurred',
+      error: actionError(err, 'An unexpected error occurred'),
     };
   }
 }
@@ -379,14 +380,14 @@ export async function setJournalActiveState(journalId: string, isActive: boolean
       .single();
 
     if (error || !data) {
-      return { error: error?.message || 'Failed to update journal status.' };
+      return { error: actionError(error, 'Failed to update journal status.') };
     }
 
     revalidateAccountingPaths();
     return { journal: data as JournalRow };
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'An unexpected error occurred',
+      error: actionError(err, 'An unexpected error occurred'),
     };
   }
 }

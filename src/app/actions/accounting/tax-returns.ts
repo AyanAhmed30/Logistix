@@ -12,6 +12,7 @@ import {
   type TaxReturnStatus,
 } from '@/lib/accounting-tax-returns';
 import type { AutoPostingLine } from '@/lib/accounting-journal-posting';
+import { actionError } from '@/lib/user-facing-error';
 
 export type AccountingTaxReturnListItem = {
   id: string;
@@ -680,7 +681,7 @@ export async function getAccountingTaxDashboard(opts?: {
     };
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to load tax dashboard',
+      error: actionError(err, 'Failed to load tax dashboard'),
     };
   }
 }
@@ -735,7 +736,7 @@ export async function getAccountingTaxReturns(opts?: {
           migrationRequired: true as const,
         };
       }
-      return { error: error.message };
+      return { error: actionError(error) };
     }
 
     const rows = data || [];
@@ -752,7 +753,7 @@ export async function getAccountingTaxReturns(opts?: {
     return { returns, total: count || 0, page, pageSize };
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to load tax returns',
+      error: actionError(err, 'Failed to load tax returns'),
     };
   }
 }
@@ -768,7 +769,7 @@ export async function getAccountingTaxReturnDetail(returnId: string) {
       .select('*')
       .eq('id', returnId)
       .maybeSingle();
-    if (error || !row) return { error: error?.message || 'Tax return not found' };
+    if (error || !row) return { error: actionError(error, 'Tax return not found') };
 
     if (
       scope.organizationId &&
@@ -857,7 +858,7 @@ export async function getAccountingTaxReturnDetail(returnId: string) {
     return { taxReturn: detail };
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to load tax return',
+      error: actionError(err, 'Failed to load tax return'),
     };
   }
 }
@@ -919,7 +920,7 @@ export async function createAccountingTaxReturn(opts?: {
           error: 'Run create_accounting_tax_returns_module.sql in Supabase first.',
         };
       }
-      return { error: error.message };
+      return { error: actionError(error) };
     }
 
     await appendLog(supabase, {
@@ -935,7 +936,7 @@ export async function createAccountingTaxReturn(opts?: {
     return { returnId: String(data.id) };
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to create tax return',
+      error: actionError(err, 'Failed to create tax return'),
     };
   }
 }
@@ -1038,7 +1039,7 @@ export async function generateAccountingTaxReturn(returnId: string) {
     return getAccountingTaxReturnDetail(returnId);
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to generate tax return',
+      error: actionError(err, 'Failed to generate tax return'),
     };
   }
 }
@@ -1083,7 +1084,7 @@ export async function confirmAccountingTaxReturn(returnId: string) {
     return getAccountingTaxReturnDetail(returnId);
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to confirm tax return',
+      error: actionError(err, 'Failed to confirm tax return'),
     };
   }
 }
@@ -1226,7 +1227,7 @@ export async function fileAccountingTaxReturn(returnId: string) {
     return getAccountingTaxReturnDetail(returnId);
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to file tax return',
+      error: actionError(err, 'Failed to file tax return'),
     };
   }
 }
@@ -1271,7 +1272,7 @@ export async function cancelAccountingTaxReturn(returnId: string) {
     return getAccountingTaxReturnDetail(returnId);
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to cancel tax return',
+      error: actionError(err, 'Failed to cancel tax return'),
     };
   }
 }
@@ -1336,12 +1337,12 @@ export async function updateAccountingTaxReturn(
       .from('accounting_tax_returns')
       .update(patch)
       .eq('id', returnId);
-    if (error) return { error: error.message };
+    if (error) return { error: actionError(error) };
 
     return getAccountingTaxReturnDetail(returnId);
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to update tax return',
+      error: actionError(err, 'Failed to update tax return'),
     };
   }
 }
@@ -1395,7 +1396,7 @@ export async function lockAccountingTaxPeriod(opts: {
     return { periodId: String(period.id), locked: true };
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to lock tax period',
+      error: actionError(err, 'Failed to lock tax period'),
     };
   }
 }
@@ -1444,7 +1445,7 @@ export async function unlockAccountingTaxPeriod(periodId: string, returnId?: str
     return { periodId, locked: false };
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to unlock tax period',
+      error: actionError(err, 'Failed to unlock tax period'),
     };
   }
 }
@@ -1517,7 +1518,7 @@ export async function getAccountingTaxReport(opts?: {
     }};
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to load tax report',
+      error: actionError(err, 'Failed to load tax report'),
     };
   }
 }
@@ -1539,7 +1540,7 @@ export async function getAccountingTaxReturnActivity(returnId: string) {
       if (/accounting_tax_return_logs|relation/i.test(error.message)) {
         return { logs: [] as AccountingTaxReturnLog[] };
       }
-      return { error: error.message };
+      return { error: actionError(error) };
     }
 
     const logs: AccountingTaxReturnLog[] = (data || []).map((r) => ({
@@ -1557,7 +1558,7 @@ export async function getAccountingTaxReturnActivity(returnId: string) {
     return { logs };
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to load activity',
+      error: actionError(err, 'Failed to load activity'),
     };
   }
 }
@@ -1580,7 +1581,7 @@ export async function getAccountingTaxPeriods() {
       if (/accounting_tax_periods|relation/i.test(error.message)) {
         return { periods: [] as AccountingTaxPeriod[] };
       }
-      return { error: error.message };
+      return { error: actionError(error) };
     }
 
     const periods: AccountingTaxPeriod[] = (data || []).map((p) => ({
@@ -1597,7 +1598,7 @@ export async function getAccountingTaxPeriods() {
     return { periods };
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to load periods',
+      error: actionError(err, 'Failed to load periods'),
     };
   }
 }

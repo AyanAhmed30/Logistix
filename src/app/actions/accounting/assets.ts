@@ -10,6 +10,7 @@ import {
   type AssetMethodPeriod,
 } from '@/lib/accounting-assets';
 import type { AutoPostingLine } from '@/lib/accounting-journal-posting';
+import { actionError } from '@/lib/user-facing-error';
 
 export type AccountingAssetStatus =
   | 'draft'
@@ -361,12 +362,12 @@ export async function getAccountingAssetCategories() {
       if (/accounting_asset_categories|relation/i.test(error.message)) {
         return { categories: [] as AccountingAssetCategory[] };
       }
-      return { error: error.message };
+      return { error: actionError(error) };
     }
     return { categories: (data || []).map((r) => mapCategory(r as Record<string, unknown>)) };
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to load categories',
+      error: actionError(err, 'Failed to load categories'),
     };
   }
 }
@@ -415,7 +416,7 @@ export async function saveAccountingAssetCategory(input: {
         .from('accounting_asset_categories')
         .update(payload)
         .eq('id', input.id);
-      if (error) return { error: error.message };
+      if (error) return { error: actionError(error) };
       return { categoryId: String(input.id) };
     }
 
@@ -424,11 +425,11 @@ export async function saveAccountingAssetCategory(input: {
       .insert([{ ...payload, created_by: scope.session.username }])
       .select('id')
       .single();
-    if (error || !data) return { error: error?.message || 'Failed to create category' };
+    if (error || !data) return { error: actionError(error, 'Failed to create category') };
     return { categoryId: String(data.id) };
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to save category',
+      error: actionError(err, 'Failed to save category'),
     };
   }
 }
@@ -487,7 +488,7 @@ export async function getAccountingAssets(filters?: {
           migrationRequired: true as const,
         };
       }
-      return { error: error.message };
+      return { error: actionError(error) };
     }
 
     const rows = data || [];
@@ -527,7 +528,7 @@ export async function getAccountingAssets(filters?: {
     return { assets, total: count || 0, page, pageSize };
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to load assets',
+      error: actionError(err, 'Failed to load assets'),
     };
   }
 }
@@ -543,7 +544,7 @@ export async function getAccountingAssetDetail(assetId: string) {
       .select('*')
       .eq('id', assetId)
       .maybeSingle();
-    if (error || !row) return { error: error?.message || 'Asset not found' };
+    if (error || !row) return { error: actionError(error, 'Asset not found') };
 
     if (
       scope.organizationId &&
@@ -639,7 +640,7 @@ export async function getAccountingAssetDetail(assetId: string) {
     return { asset };
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to load asset',
+      error: actionError(err, 'Failed to load asset'),
     };
   }
 }
@@ -737,7 +738,7 @@ export async function createAccountingAsset(input?: {
             'Run create_accounting_assets_module.sql migration to enable Assets.',
         };
       }
-      return { error: error?.message || 'Failed to create asset' };
+      return { error: actionError(error, 'Failed to create asset') };
     }
 
     await appendLog(supabase, {
@@ -752,7 +753,7 @@ export async function createAccountingAsset(input?: {
     return { assetId: String(data.id) };
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to create asset',
+      error: actionError(err, 'Failed to create asset'),
     };
   }
 }
@@ -877,7 +878,7 @@ export async function updateAccountingAsset(
       .from('accounting_assets')
       .update(patch)
       .eq('id', assetId);
-    if (error) return { error: error.message };
+    if (error) return { error: actionError(error) };
 
     const { data: refreshed } = await supabase
       .from('accounting_assets')
@@ -913,7 +914,7 @@ export async function updateAccountingAsset(
     return getAccountingAssetDetail(assetId);
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to update asset',
+      error: actionError(err, 'Failed to update asset'),
     };
   }
 }
@@ -1064,7 +1065,7 @@ export async function confirmAccountingAsset(assetId: string) {
     return getAccountingAssetDetail(assetId);
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to confirm asset',
+      error: actionError(err, 'Failed to confirm asset'),
     };
   }
 }
@@ -1162,8 +1163,7 @@ export async function postAccountingAssetDepreciation(depreciationId: string) {
       if ('journalEntryId' in je) journalEntryId = je.journalEntryId ?? null;
     } catch (err) {
       return {
-        error:
-          err instanceof Error ? err.message : 'Failed to create depreciation journal entry',
+        error: actionError(err, 'Failed to create depreciation journal entry'),
       };
     }
 
@@ -1224,7 +1224,7 @@ export async function postAccountingAssetDepreciation(depreciationId: string) {
     };
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to post depreciation',
+      error: actionError(err, 'Failed to post depreciation'),
     };
   }
 }
@@ -1259,7 +1259,7 @@ export async function postDueAccountingAssetDepreciations(assetId?: string) {
     return { posted };
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to post due depreciations',
+      error: actionError(err, 'Failed to post due depreciations'),
     };
   }
 }
@@ -1462,7 +1462,7 @@ export async function disposeAccountingAsset(
     return getAccountingAssetDetail(assetId);
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to dispose asset',
+      error: actionError(err, 'Failed to dispose asset'),
     };
   }
 }
@@ -1484,7 +1484,7 @@ export async function getAccountingAssetActivity(assetId: string) {
       if (/accounting_asset_logs|relation/i.test(error.message)) {
         return { logs: [] as AccountingAssetLog[] };
       }
-      return { error: error.message };
+      return { error: actionError(error) };
     }
 
     return {
@@ -1503,7 +1503,7 @@ export async function getAccountingAssetActivity(assetId: string) {
     };
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to load activity',
+      error: actionError(err, 'Failed to load activity'),
     };
   }
 }
@@ -1546,7 +1546,7 @@ export async function getAccountingAssetReports() {
     };
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to load asset reports',
+      error: actionError(err, 'Failed to load asset reports'),
     };
   }
 }

@@ -13,6 +13,7 @@ import {
   type TaxMasterType,
   type TaxScope,
 } from '@/lib/accounting-tax-engine';
+import { actionError } from '@/lib/user-facing-error';
 
 export type AccountingTaxListItem = {
   id: string;
@@ -252,15 +253,15 @@ export async function searchAccountingTaxes(opts?: {
           .eq('is_active', true)
           .order('name', { ascending: true })
           .limit(80);
-        if (legacy.error) return { error: legacy.error.message };
+        if (legacy.error) return { error: actionError(legacy.error) };
         return { taxes: legacy.data || [] };
       }
-      return { error: error.message };
+      return { error: actionError(error) };
     }
     return { taxes: data || [] };
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to search taxes',
+      error: actionError(err, 'Failed to search taxes'),
     };
   }
 }
@@ -288,12 +289,12 @@ export async function getAccountingTaxGroups() {
       if (/tax_groups|does not exist/i.test(error.message)) {
         return { groups: [] as AccountingTaxGroupItem[], migrationRequired: true as const };
       }
-      return { error: error.message };
+      return { error: actionError(error) };
     }
     return { groups: (data || []) as AccountingTaxGroupItem[] };
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to load tax groups',
+      error: actionError(err, 'Failed to load tax groups'),
     };
   }
 }
@@ -354,14 +355,14 @@ export async function getAccountingConfigTaxes(opts?: {
           migrationRequired: true as const,
         };
       }
-      return { error: error.message };
+      return { error: actionError(error) };
     }
 
     const taxes = await enrichTaxes(supabase, (data || []) as Record<string, unknown>[]);
     return { taxes, total: count || 0, page, pageSize };
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to load taxes',
+      error: actionError(err, 'Failed to load taxes'),
     };
   }
 }
@@ -377,7 +378,7 @@ export async function getAccountingConfigTaxDetail(taxId: string) {
       .select('*')
       .eq('id', taxId)
       .maybeSingle();
-    if (error || !row) return { error: error?.message || 'Tax not found' };
+    if (error || !row) return { error: actionError(error, 'Tax not found') };
 
     if (
       scope.organizationId &&
@@ -398,7 +399,7 @@ export async function getAccountingConfigTaxDetail(taxId: string) {
     return { tax: detail };
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to load tax',
+      error: actionError(err, 'Failed to load tax'),
     };
   }
 }
@@ -516,13 +517,13 @@ export async function createAccountingConfigTax(payload: {
       if (/unique|duplicate/i.test(error.message)) {
         return { error: 'Tax code must be unique within the organization' };
       }
-      return { error: error.message };
+      return { error: actionError(error) };
     }
 
     return { taxId: String(data.id) };
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to create tax',
+      error: actionError(err, 'Failed to create tax'),
     };
   }
 }
@@ -649,13 +650,13 @@ export async function updateAccountingConfigTax(
       if (/unique|duplicate/i.test(error.message)) {
         return { error: 'Tax code must be unique within the organization' };
       }
-      return { error: error.message };
+      return { error: actionError(error) };
     }
 
     return getAccountingConfigTaxDetail(taxId);
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to update tax',
+      error: actionError(err, 'Failed to update tax'),
     };
   }
 }
@@ -692,12 +693,12 @@ export async function createAccountingTaxGroup(name: string) {
       if (/unique|duplicate/i.test(error.message)) {
         return { error: 'Tax group already exists' };
       }
-      return { error: error.message };
+      return { error: actionError(error) };
     }
     return { groupId: String(data.id) };
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to create tax group',
+      error: actionError(err, 'Failed to create tax group'),
     };
   }
 }
@@ -822,7 +823,7 @@ export async function ensureDefaultAccountingTaxes() {
     return { created };
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to ensure default taxes',
+      error: actionError(err, 'Failed to ensure default taxes'),
     };
   }
 }
@@ -870,7 +871,7 @@ export async function exportAccountingConfigTaxesCsv() {
     return { csv: lines.join('\n') };
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to export taxes',
+      error: actionError(err, 'Failed to export taxes'),
     };
   }
 }

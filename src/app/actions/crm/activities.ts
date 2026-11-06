@@ -22,6 +22,7 @@ import {
   CRM_CONTACT_MEETING_ACTIVITY_TYPES,
   resolveOpportunityIdsForContact,
 } from '@/lib/crm-contact-opportunities';
+import { actionError } from '@/lib/user-facing-error';
 
 const ACTIVITY_TYPES: CrmActivityType[] = ['call', 'meeting', 'email', 'follow-up', 'todo'];
 
@@ -128,7 +129,7 @@ export async function getCrmActivitiesSummary(): Promise<
   }
 
   const { data, error } = await query;
-  if (error) return { error: error.message };
+  if (error) return { error: actionError(error) };
 
   const rows = data || [];
   const scheduled_count = rows.length;
@@ -199,7 +200,7 @@ export async function getCrmActivities(filters: CrmActivityListFilters = {}) {
   }
 
   const { data, error } = await query;
-  if (error) return { error: error.message };
+  if (error) return { error: actionError(error) };
 
   let activities = await enrichActivities((data || []) as Record<string, unknown>[]);
 
@@ -250,7 +251,7 @@ export async function getCrmActivitiesForOpportunity(opportunityId: string) {
   }
 
   const { data, error } = await query;
-  if (error) return { error: error.message };
+  if (error) return { error: actionError(error) };
 
   const activities = await enrichActivities((data || []) as Record<string, unknown>[]);
   const next = activities.find((a) => a.status === 'scheduled') || null;
@@ -298,7 +299,7 @@ export async function createCrmActivity(input: CrmActivityUpsertInput) {
     .select('*')
     .single();
 
-  if (error || !data) return { error: error?.message || 'Failed to schedule activity.' };
+  if (error || !data) return { error: actionError(error, 'Failed to schedule activity.') };
 
   await logOpportunityChatterAudit({
     opportunityId: input.opportunity_id,
@@ -343,7 +344,7 @@ export async function updateCrmActivity(input: CrmActivityUpsertInput) {
     .select('*')
     .single();
 
-  if (error || !data) return { error: error?.message || 'Failed to update activity.' };
+  if (error || !data) return { error: actionError(error, 'Failed to update activity.') };
 
   const [activity] = await enrichActivities([data as Record<string, unknown>]);
   await revalidateCrmPipelinePaths();
@@ -365,7 +366,7 @@ export async function deleteCrmActivity(activityId: string) {
     .eq('id', activityId)
     .eq('organization_id', scope.organizationId);
 
-  if (error) return { error: error.message };
+  if (error) return { error: actionError(error) };
   await revalidateCrmPipelinePaths();
   revalidatePath('/crm/activities');
   return { success: true as const };
@@ -388,7 +389,7 @@ export async function markCrmActivityDone(activityId: string) {
     .select('*')
     .single();
 
-  if (error || !data) return { error: error?.message || 'Failed to complete activity.' };
+  if (error || !data) return { error: actionError(error, 'Failed to complete activity.') };
 
   await logOpportunityChatterAudit({
     opportunityId: String(data.opportunity_id),
@@ -425,7 +426,7 @@ export async function rescheduleCrmActivity(activityId: string, dueDate: string)
     .select('*')
     .single();
 
-  if (error || !data) return { error: error?.message || 'Failed to reschedule activity.' };
+  if (error || !data) return { error: actionError(error, 'Failed to reschedule activity.') };
 
   const [activity] = await enrichActivities([data as Record<string, unknown>]);
   await revalidateCrmPipelinePaths();

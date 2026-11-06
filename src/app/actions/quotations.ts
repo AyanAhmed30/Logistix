@@ -5,6 +5,7 @@ import { getSession } from '@/lib/auth/session';
 import { sessionHasSalesAccess, isSalesPortalActor } from '@/lib/auth/require-access';
 import { revalidatePath } from 'next/cache';
 import { sendWhatsAppDocument } from '@/lib/whatsapp';
+import { actionError } from '@/lib/user-facing-error';
 
 export type QuotationStatus = 'quotation' | 'quotation_sent' | 'sales_order';
 
@@ -185,7 +186,7 @@ export async function createQuotation(formData: FormData) {
       .single();
 
     if (error || !data) {
-      return { error: error?.message || 'Failed to create quotation' };
+      return { error: actionError(error, 'Failed to create quotation') };
     }
 
     // Log the creation
@@ -226,7 +227,7 @@ export async function getAllQuotations(status?: QuotationStatus) {
     const { data, error } = await query;
 
     if (error) {
-      return { error: error.message };
+      return { error: actionError(error) };
     }
 
     return { quotations: (data || []) as Quotation[] };
@@ -260,7 +261,7 @@ export async function getAllQuotationsForSalesAgent(status?: QuotationStatus) {
     const { data, error } = await query;
 
     if (error) {
-      return { error: error.message };
+      return { error: actionError(error) };
     }
 
     return { quotations: (data || []) as Quotation[] };
@@ -305,7 +306,7 @@ export async function getQuotationsByContact(contactId: string) {
 
     const { data, error } = await query;
 
-    if (error) return { error: error.message };
+    if (error) return { error: actionError(error) };
     return { quotations: (data || []) as Quotation[] };
   } catch (err) {
     const message = err instanceof Error ? err.message : 'An unexpected error occurred';
@@ -402,7 +403,7 @@ export async function updateQuotation(formData: FormData) {
       .single();
 
     if (error || !data) {
-      return { error: error?.message || 'Failed to update quotation' };
+      return { error: actionError(error, 'Failed to update quotation') };
     }
 
     // Log the update with previous and new values
@@ -468,7 +469,7 @@ export async function deleteQuotation(id: string) {
     const { error } = await supabase.from('quotations').delete().eq('id', id);
 
     if (error) {
-      return { error: error.message };
+      return { error: actionError(error) };
     }
 
     // Log the deletion
@@ -527,7 +528,7 @@ export async function sendQuotation(formData: FormData) {
       .single();
 
     if (fetchError || !currentQuotation) {
-      return { error: fetchError?.message || 'Quotation not found' };
+      return { error: actionError(fetchError, 'Quotation not found') };
     }
 
     // ── Try sending via WhatsApp Business Cloud API (if configured) ──
@@ -579,7 +580,7 @@ export async function sendQuotation(formData: FormData) {
         .single();
 
       if (error || !data) {
-        return { error: error?.message || 'Failed to update quotation status' };
+        return { error: actionError(error, 'Failed to update quotation status') };
       }
       updatedData = data;
     }
@@ -686,7 +687,7 @@ export async function confirmOrder(id: string) {
       .single();
 
     if (fetchError || !currentQuotation) {
-      return { error: fetchError?.message || 'Quotation not found' };
+      return { error: actionError(fetchError, 'Quotation not found') };
     }
 
     if (currentQuotation.status !== 'quotation_sent' && currentQuotation.status !== 'quotation') {
@@ -704,7 +705,7 @@ export async function confirmOrder(id: string) {
       .single();
 
     if (error || !data) {
-      return { error: error?.message || 'Failed to confirm order' };
+      return { error: actionError(error, 'Failed to confirm order') };
     }
 
     // Log the status change
@@ -748,7 +749,7 @@ export async function getQuotationLogs(quotationId: string) {
       .order('performed_at', { ascending: false });
 
     if (error) {
-      return { error: error.message };
+      return { error: actionError(error) };
     }
 
     return { logs: (data || []) as QuotationLog[] };

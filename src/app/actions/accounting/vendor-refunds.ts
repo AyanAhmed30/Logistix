@@ -6,6 +6,7 @@ import {
   computeBillTotals,
   resolveVendorAccountingScope,
 } from '@/lib/accounting-vendor-scope';
+import { actionError } from '@/lib/user-facing-error';
 
 export type VendorRefundStatus = 'draft' | 'posted' | 'cancelled';
 export type VendorRefundType =
@@ -165,7 +166,7 @@ export async function createVendorRefundFromBill(
           error: 'Run create_accounting_vendors_module.sql migration.',
         };
       }
-      return { error: error?.message || 'Failed to create refund' };
+      return { error: actionError(error, 'Failed to create refund') };
     }
 
     await supabase.from('accounting_vendor_refund_lines').insert(
@@ -206,7 +207,7 @@ export async function createVendorRefundFromBill(
     return { refundId: String(refund.id) };
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to create refund',
+      error: actionError(err, 'Failed to create refund'),
     };
   }
 }
@@ -252,7 +253,7 @@ export async function getAccountingVendorRefunds(filters: {
       if (/accounting_vendor_refunds|relation/i.test(error.message)) {
         return { refunds: [], total: 0, page, pageSize };
       }
-      return { error: error.message };
+      return { error: actionError(error) };
     }
 
     const rows = data || [];
@@ -291,7 +292,7 @@ export async function getAccountingVendorRefunds(filters: {
     };
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to load refunds',
+      error: actionError(err, 'Failed to load refunds'),
     };
   }
 }
@@ -308,7 +309,7 @@ export async function getAccountingVendorRefundDetail(refundId: string) {
       .eq('id', refundId)
       .maybeSingle();
 
-    if (error || !row) return { error: error?.message || 'Refund not found' };
+    if (error || !row) return { error: actionError(error, 'Refund not found') };
     if (
       scope.organizationId &&
       !scope.isGlobalAdminView &&
@@ -383,7 +384,7 @@ export async function getAccountingVendorRefundDetail(refundId: string) {
     return { refund };
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to load refund',
+      error: actionError(err, 'Failed to load refund'),
     };
   }
 }
@@ -431,7 +432,7 @@ export async function postAccountingVendorRefund(refundId: string) {
       })
       .eq('id', refundId);
 
-    if (error) return { error: error.message };
+    if (error) return { error: actionError(error) };
 
     if (row.bill_id) {
       const { refreshBillPaymentState } = await import(
@@ -535,7 +536,7 @@ export async function postAccountingVendorRefund(refundId: string) {
     return getAccountingVendorRefundDetail(refundId);
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to post refund',
+      error: actionError(err, 'Failed to post refund'),
     };
   }
 }
@@ -599,7 +600,7 @@ export async function cancelAccountingVendorRefund(refundId: string) {
       })
       .eq('id', refundId);
 
-    if (error) return { error: error.message };
+    if (error) return { error: actionError(error) };
 
     if (row.bill_id) {
       const { refreshBillPaymentState } = await import(
@@ -637,7 +638,7 @@ export async function cancelAccountingVendorRefund(refundId: string) {
     return getAccountingVendorRefundDetail(refundId);
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to cancel refund',
+      error: actionError(err, 'Failed to cancel refund'),
     };
   }
 }

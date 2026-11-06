@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useTransition } from "react";
 import jsPDF from "jspdf";
-import { toast } from "sonner";
+import { toast } from "@/lib/app-toast";
 import { useRouter } from "next/navigation";
 import {
   createAdminInvoice,

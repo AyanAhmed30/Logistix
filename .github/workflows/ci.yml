@@ -5,10 +5,18 @@ on:
     branches:
       - main
       - master
+      - testing
   pull_request:
     branches:
       - main
       - master
+      - testing
+
+# A newer push replaces a check still running on the same branch. Production
+# branches queue instead, so a release already under way is never cancelled.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' && github.ref != 'refs/heads/master' }}
 
 jobs:
   build-and-test:
@@ -42,6 +50,10 @@ jobs:
         run: npm run type-check
         continue-on-error: false
 
+      - name: Error handling tests
+        run: npm run test:errors
+        continue-on-error: false
+
       - name: Build application
         run: npm run build
         continue-on-error: false
@@ -53,6 +65,8 @@ jobs:
   deploy-to-vercel:
     name: Deploy to Vercel (Production)
     runs-on: ubuntu-latest
+    # The only route to Production. vercel.json turns off Vercel's own deploy on push
+    # for these branches, so code that fails build-and-test never goes live.
     needs: build-and-test
     if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
     env:

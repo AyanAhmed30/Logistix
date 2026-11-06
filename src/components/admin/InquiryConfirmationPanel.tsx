@@ -2,7 +2,7 @@
 /* eslint-disable @next/next/no-img-element */
 
 import { useEffect, useState, useCallback, useMemo, useRef } from "react";
-import { toast } from "sonner";
+import { toast } from "@/lib/app-toast";
 import { recordInquiryOpened } from "@/app/actions/analytics/inquiries";
 import {
   getAllInquiryConfirmations,
@@ -268,7 +268,7 @@ export function InquiryConfirmationPanel({
       }
 
       setSelected(detailResult.confirmation);
-      void recordInquiryOpened(detailResult.confirmation.inquiry_id, "admin");
+      recordInquiryOpened(detailResult.confirmation.inquiry_id, "admin").catch(console.error);
     } catch {
       toast.error("An unexpected error occurred");
       setView("list");

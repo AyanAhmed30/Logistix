@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { toast } from "sonner";
+import { toast } from "@/lib/app-toast";
 import { createManualAccountingCreditNote } from "@/app/actions/accounting/credit-notes";
 import { AccountingFormSkeleton } from "@/components/accounting/AccountingSkeleton";
 import { useAdminOrganizationOptional } from "@/contexts/AdminOrganizationContext";

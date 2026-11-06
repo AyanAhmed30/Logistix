@@ -40,6 +40,7 @@ import {
 import { quotationFromInquiryHref } from '@/lib/app-notifications';
 import { ensureQuotationForApprovedInquiry } from '@/app/actions/sales/quotation-form';
 import { sendQuotationToCustomerAfterAdminApproval } from '@/app/actions/sales/quotation-customer-send';
+import { actionError } from '@/lib/user-facing-error';
 
 export type ConfirmationStatus = 'pending' | 'approved' | 'rejected';
 
@@ -296,7 +297,7 @@ export async function getInquiryByLeadNumber(leadNumber: string) {
       .eq('lead_id_formatted', leadNumber.trim())
       .maybeSingle();
 
-    if (leadError) return { error: leadError.message };
+    if (leadError) return { error: actionError(leadError) };
     if (!lead) return { error: 'No lead found with this number.' };
 
     // Find the inquiry for this lead
@@ -309,7 +310,7 @@ export async function getInquiryByLeadNumber(leadNumber: string) {
       .limit(1)
       .maybeSingle();
 
-    if (inquiryError) return { error: inquiryError.message };
+    if (inquiryError) return { error: actionError(inquiryError) };
     if (!inquiry) return { error: 'No inquiry found for this lead.' };
 
     return {
@@ -325,7 +326,7 @@ export async function getInquiryByLeadNumber(leadNumber: string) {
       },
     };
   } catch (err) {
-    return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };
+    return { error: actionError(err, 'An unexpected error occurred') };
   }
 }
 
@@ -497,7 +498,7 @@ export async function submitInquiryForConfirmation(data: {
     }
 
     if (error || !result) {
-      return { error: error?.message || 'Failed to create confirmation.' };
+      return { error: actionError(error, 'Failed to create confirmation.') };
     }
 
     const previousValues: Record<string, unknown> = {};
@@ -646,7 +647,7 @@ export async function submitInquiryForConfirmation(data: {
     revalidatePath('/sales-agent/dashboard');
     return { success: true, confirmation: result as InquiryConfirmation };
   } catch (err) {
-    return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };
+    return { error: actionError(err, 'An unexpected error occurred') };
   }
 }
 
@@ -686,7 +687,7 @@ export async function getAllInquiryConfirmations() {
       error = fallback.error;
     }
 
-    if (error) return { error: error.message };
+    if (error) return { error: actionError(error) };
 
     return {
       confirmations: (data || []).map((row) =>
@@ -694,7 +695,7 @@ export async function getAllInquiryConfirmations() {
       ),
     };
   } catch (err) {
-    return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };
+    return { error: actionError(err, 'An unexpected error occurred') };
   }
 }
 
@@ -717,7 +718,7 @@ export async function getInquiryConfirmationDetail(confirmationId: string) {
       .eq('id', confirmationId.trim())
       .maybeSingle();
 
-    if (error) return { error: error.message };
+    if (error) return { error: actionError(error) };
     if (!data) return { error: 'Confirmation not found.' };
 
     const row = data as InquiryConfirmationWithLead;
@@ -747,7 +748,7 @@ export async function getInquiryConfirmationDetail(confirmationId: string) {
       confirmation: merged,
     };
   } catch (err) {
-    return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };
+    return { error: actionError(err, 'An unexpected error occurred') };
   }
 }
 
@@ -798,7 +799,7 @@ export async function getConfirmationsForInquiry(inquiryId: string) {
       .order('created_at', { ascending: false });
 
 
-    if (error) return { error: error.message };
+    if (error) return { error: actionError(error) };
     const rows = (data || []) as InquiryConfirmation[];
     const { data: inquiry } = await supabase
       .from('lead_inquiries')
@@ -828,7 +829,7 @@ export async function getConfirmationsForInquiry(inquiryId: string) {
 
     return { confirmations };
   } catch (err) {
-    return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };
+    return { error: actionError(err, 'An unexpected error occurred') };
   }
 }
 
@@ -852,7 +853,7 @@ export async function approveInquiryConfirmation(confirmationId: string) {
       .single();
 
     if (fetchError || !confirmationData) {
-      return { error: fetchError?.message || 'Inquiry confirmation not found' };
+      return { error: actionError(fetchError, 'Inquiry confirmation not found') };
     }
 
     // Update the confirmation status
@@ -868,7 +869,7 @@ export async function approveInquiryConfirmation(confirmationId: string) {
       .select()
       .single();
 
-    if (error) return { error: error.message };
+    if (error) return { error: actionError(error) };
 
     const approvedCalculatorValues =
       confirmationData.calculator_values && typeof confirmationData.calculator_values === 'object'
@@ -1025,7 +1026,7 @@ export async function approveInquiryConfirmation(confirmationId: string) {
       quotationSendError,
     };
   } catch (err) {
-    return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };
+    return { error: actionError(err, 'An unexpected error occurred') };
   }
 }
 
@@ -1057,7 +1058,7 @@ export async function rejectInquiryConfirmation(confirmationId: string, rejectio
       .select()
       .single();
 
-    if (error) return { error: error.message };
+    if (error) return { error: actionError(error) };
 
     await supabase
       .from('lead_inquiries')
@@ -1118,7 +1119,7 @@ export async function rejectInquiryConfirmation(confirmationId: string, rejectio
     revalidatePath('/crm/inquiries');
     return { success: true, confirmation: data as InquiryConfirmation };
   } catch (err) {
-    return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };
+    return { error: actionError(err, 'An unexpected error occurred') };
   }
 }
 
@@ -1144,7 +1145,7 @@ export async function getApprovedPricingForInquiryIds(inquiryIds: string[]) {
       .eq('status', 'approved')
       .order('created_at', { ascending: false });
 
-    if (error) return { error: error.message };
+    if (error) return { error: actionError(error) };
 
     const { data: configRow } = await supabase
       .from('inquiry_calculator_config')
@@ -1176,7 +1177,7 @@ export async function getApprovedPricingForInquiryIds(inquiryIds: string[]) {
 
     return { pricing };
   } catch (err) {
-    return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };
+    return { error: actionError(err, 'An unexpected error occurred') };
   }
 }
 
@@ -1209,6 +1210,6 @@ export async function uploadConfirmationImage(file: File, label: string) {
 
     return { success: true, url: upload.url };
   } catch (err) {
-    return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };
+    return { error: actionError(err, 'An unexpected error occurred') };
   }
 }

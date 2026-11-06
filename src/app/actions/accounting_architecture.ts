@@ -20,6 +20,7 @@ import {
   getActiveTaxes,
   post_tax_entries as postTaxEntriesEngine,
 } from '@/lib/accounting/taxEngine';
+import { actionError } from '@/lib/user-facing-error';
 
 function ensureAdmin(session: { role: string } | null) {
   if (!session || session.role !== 'admin') throw new Error('Unauthorized');
@@ -32,7 +33,7 @@ export async function publishAccountingEvent(event: AccountingEvent) {
     const result = await processAccountingEvent(event);
     return { result };
   } catch (err) {
-    return { error: err instanceof Error ? err.message : 'Failed to process accounting event' };
+    return { error: actionError(err, 'Failed to process accounting event') };
   }
 }
 
@@ -429,7 +430,7 @@ export async function validateIntegratedBusinessFlow(entityId: string, type: 'sh
     await validateBusinessFlow(entityId, type);
     return { success: true };
   } catch (err) {
-    return { error: err instanceof Error ? err.message : 'Flow validation failed' };
+    return { error: actionError(err, 'Flow validation failed') };
   }
 }
 
@@ -558,6 +559,6 @@ export async function getFinancialReports(input: {
         return { error: 'Unsupported report type' };
     }
   } catch (err) {
-    return { error: err instanceof Error ? err.message : 'Failed to load report' };
+    return { error: actionError(err, 'Failed to load report') };
   }
 }

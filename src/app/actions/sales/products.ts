@@ -11,6 +11,7 @@ import {
   productVendorTaxPercent,
   type ProductTaxLike,
 } from '@/lib/product-accounting';
+import { actionError } from '@/lib/user-facing-error';
 
 export type SalesProductTaxRef = ProductTaxLike & {
   id: string;
@@ -398,7 +399,7 @@ export async function getSalesProducts(filters: SalesProductListFilters = {}) {
           error: 'Products table not found. Run sales_products_and_pdf_phase5_6.sql',
         };
       }
-      return { error: error.message };
+      return { error: actionError(error) };
     }
 
     const rows = (data || []) as Record<string, unknown>[];
@@ -411,7 +412,7 @@ export async function getSalesProducts(filters: SalesProductListFilters = {}) {
       pageSize,
     };
   } catch (err) {
-    return { error: err instanceof Error ? err.message : 'Failed to load products' };
+    return { error: actionError(err, 'Failed to load products') };
   }
 }
 
@@ -476,7 +477,7 @@ export async function searchSalesProductsForQuotation(
       if (/relation|does not exist/i.test(error.message)) {
         return { products: [] as SalesProduct[] };
       }
-      return { error: error.message };
+      return { error: actionError(error) };
     }
 
     const products = await enrichProductsWithAccounting(
@@ -485,7 +486,7 @@ export async function searchSalesProductsForQuotation(
     );
     return { products };
   } catch (err) {
-    return { error: err instanceof Error ? err.message : 'Failed to search products' };
+    return { error: actionError(err, 'Failed to search products') };
   }
 }
 
@@ -496,14 +497,14 @@ export async function getSalesProductById(id: string) {
 
     const supabase = await createAdminClient();
     const { data, error } = await supabase.from('products').select('*').eq('id', id).maybeSingle();
-    if (error || !data) return { error: error?.message || 'Product not found' };
+    if (error || !data) return { error: actionError(error, 'Product not found') };
 
     const [product] = await enrichProductsWithAccounting(supabase, [
       data as Record<string, unknown>,
     ]);
     return { product };
   } catch (err) {
-    return { error: err instanceof Error ? err.message : 'Failed to load product' };
+    return { error: actionError(err, 'Failed to load product') };
   }
 }
 
@@ -563,13 +564,13 @@ export async function createSalesProduct(input: SalesProductUpsertInput) {
       error = retry.error;
     }
 
-    if (error || !data) return { error: error?.message || 'Failed to create product' };
+    if (error || !data) return { error: actionError(error, 'Failed to create product') };
     const [product] = await enrichProductsWithAccounting(supabase, [
       data as Record<string, unknown>,
     ]);
     return { product };
   } catch (err) {
-    return { error: err instanceof Error ? err.message : 'Failed to create product' };
+    return { error: actionError(err, 'Failed to create product') };
   }
 }
 
@@ -631,13 +632,13 @@ export async function updateSalesProduct(id: string, input: SalesProductUpsertIn
       error = retry.error;
     }
 
-    if (error || !data) return { error: error?.message || 'Failed to update product' };
+    if (error || !data) return { error: actionError(error, 'Failed to update product') };
     const [product] = await enrichProductsWithAccounting(supabase, [
       data as Record<string, unknown>,
     ]);
     return { product };
   } catch (err) {
-    return { error: err instanceof Error ? err.message : 'Failed to update product' };
+    return { error: actionError(err, 'Failed to update product') };
   }
 }
 
@@ -652,13 +653,13 @@ export async function setSalesProductActive(id: string, active: boolean) {
       .eq('id', id)
       .select('*')
       .single();
-    if (error || !data) return { error: error?.message || 'Failed to update product' };
+    if (error || !data) return { error: actionError(error, 'Failed to update product') };
     const [product] = await enrichProductsWithAccounting(supabase, [
       data as Record<string, unknown>,
     ]);
     return { product };
   } catch (err) {
-    return { error: err instanceof Error ? err.message : 'Failed to archive product' };
+    return { error: actionError(err, 'Failed to archive product') };
   }
 }
 
@@ -685,7 +686,7 @@ export async function uploadSalesProductImage(productId: string, formData: FormD
 
     return { url: uploaded.url };
   } catch (err) {
-    return { error: err instanceof Error ? err.message : 'Failed to upload image' };
+    return { error: actionError(err, 'Failed to upload image') };
   }
 }
 
@@ -713,7 +714,7 @@ export async function getSalesProductCategories() {
       if (/relation|does not exist/i.test(error.message)) {
         return { categories: [] as SalesProductCategory[] };
       }
-      return { error: error.message };
+      return { error: actionError(error) };
     }
 
     return {
@@ -727,7 +728,7 @@ export async function getSalesProductCategories() {
       })),
     };
   } catch (err) {
-    return { error: err instanceof Error ? err.message : 'Failed to load categories' };
+    return { error: actionError(err, 'Failed to load categories') };
   }
 }
 
@@ -758,7 +759,7 @@ export async function upsertSalesProductCategory(input: {
         .eq('id', input.id)
         .select('*')
         .single();
-      if (error || !data) return { error: error?.message || 'Failed to update category' };
+      if (error || !data) return { error: actionError(error, 'Failed to update category') };
       return {
         category: {
           id: String(data.id),
@@ -782,7 +783,7 @@ export async function upsertSalesProductCategory(input: {
       ])
       .select('*')
       .single();
-    if (error || !data) return { error: error?.message || 'Failed to create category' };
+    if (error || !data) return { error: actionError(error, 'Failed to create category') };
     return {
       category: {
         id: String(data.id),
@@ -794,7 +795,7 @@ export async function upsertSalesProductCategory(input: {
       } as SalesProductCategory,
     };
   } catch (err) {
-    return { error: err instanceof Error ? err.message : 'Failed to save category' };
+    return { error: actionError(err, 'Failed to save category') };
   }
 }
 
@@ -804,10 +805,10 @@ export async function deleteSalesProductCategory(id: string) {
     if ('error' in scope && scope.error) return { error: scope.error };
     const supabase = await createAdminClient();
     const { error } = await supabase.from('product_categories').delete().eq('id', id);
-    if (error) return { error: error.message };
+    if (error) return { error: actionError(error) };
     return { success: true };
   } catch (err) {
-    return { error: err instanceof Error ? err.message : 'Failed to delete category' };
+    return { error: actionError(err, 'Failed to delete category') };
   }
 }
 
@@ -842,7 +843,7 @@ export async function getSalesProductUoms() {
           ] as SalesProductUom[],
         };
       }
-      return { error: error.message };
+      return { error: actionError(error) };
     }
 
     return {
@@ -855,6 +856,6 @@ export async function getSalesProductUoms() {
       })),
     };
   } catch (err) {
-    return { error: err instanceof Error ? err.message : 'Failed to load UOMs' };
+    return { error: actionError(err, 'Failed to load UOMs') };
   }
 }

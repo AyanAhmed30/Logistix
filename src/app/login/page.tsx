@@ -66,7 +66,7 @@ export default function LoginPage() {
                         />
                     </div>
                     <CardDescription className="text-center text-secondary-muted font-medium text-lg">
-                        Logistics Portal Login
+                        Logistix Portal Login
                     </CardDescription>
                     <p className="text-center text-sm text-secondary-muted/80">
                         Use your assigned credentials to continue.

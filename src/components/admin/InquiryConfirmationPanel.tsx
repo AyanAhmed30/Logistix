@@ -3,6 +3,7 @@
 
 import { useEffect, useState, useCallback, useMemo, useRef } from "react";
 import { toast } from "sonner";
+import { recordInquiryOpened } from "@/app/actions/analytics/inquiries";
 import {
   getAllInquiryConfirmations,
   getInquiryConfirmationDetail,
@@ -267,6 +268,7 @@ export function InquiryConfirmationPanel({
       }
 
       setSelected(detailResult.confirmation);
+      void recordInquiryOpened(detailResult.confirmation.inquiry_id, "admin");
     } catch {
       toast.error("An unexpected error occurred");
       setView("list");

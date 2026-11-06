@@ -27,7 +27,8 @@ import {
   getSidebarItemsForModule,
 } from "@/lib/admin-navigation";
 import { AdminModuleCards } from "@/components/admin/AdminModuleCards";
-import { AdminAnalyticsPlaceholder } from "@/components/admin/AdminAnalyticsPlaceholder";
+import { AnalyticsLanding } from "@/components/analytics/AnalyticsLanding";
+import { MyAnalytics } from "@/components/analytics/MyAnalytics";
 import { AdminSettingsLayout } from "@/components/admin/AdminSettingsLayout";
 import { ClientErrorBoundary } from "@/components/error/ClientErrorBoundary";
 import { OrderTrackingPanel } from "@/components/admin/OrderTrackingPanel";
@@ -358,7 +359,11 @@ export function AdminUserManager({
           )
         ) : activeTab === "dashboard" ? (
           activeModule === "analytics" ? (
-            <AdminAnalyticsPlaceholder />
+            access.isSuperAdmin || access.isOrganizationAdmin ? (
+              <AnalyticsLanding />
+            ) : (
+              <MyAnalytics />
+            )
           ) : (
             <AdminModuleCards onModuleSelect={onModuleSelect} access={access} />
           )

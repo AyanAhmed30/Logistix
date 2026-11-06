@@ -63,6 +63,7 @@ export async function middleware(request: NextRequest) {
   const requiresAuth =
     pathname.startsWith('/admin') ||
     pathname.startsWith('/crm') ||
+    pathname.startsWith('/analytics') ||
     pathname.startsWith('/sales') ||
     pathname.startsWith('/hr') ||
     pathname.startsWith('/user') ||

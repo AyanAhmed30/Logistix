@@ -3,6 +3,7 @@
 
 import { useEffect, useState, useCallback, useRef, useLayoutEffect } from "react";
 import { toast } from "sonner";
+import { recordInquiryOpened } from "@/app/actions/analytics/inquiries";
 import {
   getAllInquiriesForOperations,
   getOperationsInquiriesBootstrap,
@@ -626,6 +627,11 @@ export function OperationsLeadsInquiryPanel({
       // Polling failures should not break the page.
     }
   }, []);
+
+  const openedInquiryId = view === "detail" ? selectedInquiry?.id : undefined;
+  useEffect(() => {
+    if (openedInquiryId) void recordInquiryOpened(openedInquiryId, "operations");
+  }, [openedInquiryId]);
 
   useEffect(() => {
     if (view !== "detail" || !selectedInquiry) return;

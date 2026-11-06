@@ -6,6 +6,7 @@ import {
   assertHrAccess,
   assertHrChildPermission,
 } from "@/lib/hr-auth";
+import { actionError } from '@/lib/user-facing-error';
 
 export type LeaveRequest = {
   id: string;
@@ -69,7 +70,7 @@ export async function createLeaveRequest(formData: FormData) {
     .maybeSingle();
 
   if (employeeError) {
-    return { error: employeeError.message };
+    return { error: actionError(employeeError) };
   }
 
   if (!employee) {
@@ -97,7 +98,7 @@ export async function createLeaveRequest(formData: FormData) {
         error: "Leave requests table does not exist. Please run the SQL migration in Supabase.",
       };
     }
-    return { error: error.message || "Failed to create leave request" };
+    return { error: actionError(error, "Failed to create leave request") };
   }
 
   revalidatePath("/hr");
@@ -123,7 +124,7 @@ export async function getLeaveRequests(employeeId?: string) {
     if (error.message.includes("does not exist") || error.message.includes("relation") || error.code === "42P01") {
       return { leaveRequests: [] as LeaveRequest[] };
     }
-    return { error: error.message };
+    return { error: actionError(error) };
   }
 
   return { leaveRequests: (data || []) as LeaveRequest[] };
@@ -167,7 +168,7 @@ export async function updateLeaveRequest(formData: FormData) {
     .maybeSingle();
 
   if (existingError) {
-    return { error: existingError.message };
+    return { error: actionError(existingError) };
   }
 
   if (!existing) {
@@ -190,7 +191,7 @@ export async function updateLeaveRequest(formData: FormData) {
     .single();
 
   if (error) {
-    return { error: error.message };
+    return { error: actionError(error) };
   }
 
   revalidatePath("/hr");
@@ -216,7 +217,7 @@ export async function deleteLeaveRequest(formData: FormData) {
     .maybeSingle();
 
   if (existingError) {
-    return { error: existingError.message };
+    return { error: actionError(existingError) };
   }
 
   if (!existing) {
@@ -226,7 +227,7 @@ export async function deleteLeaveRequest(formData: FormData) {
   const { error } = await supabase.from("leave_requests").delete().eq("id", id);
 
   if (error) {
-    return { error: error.message };
+    return { error: actionError(error) };
   }
 
   revalidatePath("/hr");

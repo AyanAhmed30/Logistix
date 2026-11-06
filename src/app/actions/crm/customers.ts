@@ -2,6 +2,7 @@
 
 import { requireAnyChildModule, isAccessDenied } from '@/lib/auth/require-access';
 import type { ContactWithRelations } from '@/app/actions/contacts';
+import { actionError } from '@/lib/user-facing-error';
 
 /**
  * CRM Customers — reuses the main Contacts list API so CRM and Admin stay in sync.
@@ -17,7 +18,7 @@ export async function getCrmCustomers(search?: string) {
 
     return { customers: (result.contacts ?? []) as ContactWithRelations[] };
   } catch (err) {
-    return { error: err instanceof Error ? err.message : 'Failed to load CRM customers' };
+    return { error: actionError(err, 'Failed to load CRM customers') };
   }
 }
 
@@ -38,6 +39,6 @@ export async function getCrmCustomerById(contactId: string) {
 
     return { contact: result.contact };
   } catch (err) {
-    return { error: err instanceof Error ? err.message : 'Failed to load customer' };
+    return { error: actionError(err, 'Failed to load customer') };
   }
 }

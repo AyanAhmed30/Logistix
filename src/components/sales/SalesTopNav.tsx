@@ -16,7 +16,7 @@ import {
 import { SALES_TOP_MENUS, type SalesMenuLink } from "@/lib/sales-navigation";
 import type { DashboardAccessState } from "@/lib/dashboard-access";
 import { hasDepartmentAccess, hasModulePermission } from "@/lib/module-permissions";
-import { toast } from "sonner";
+import { toast } from "@/lib/app-toast";
 
 type Props = {
   access: DashboardAccessState;

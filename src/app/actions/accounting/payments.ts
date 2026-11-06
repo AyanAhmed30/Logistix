@@ -16,6 +16,7 @@ import {
   invoiceOpenAmount,
   sumPostedCreditNotesForInvoice,
 } from '@/lib/accounting-document-outstanding';
+import { actionError } from '@/lib/user-facing-error';
 
 export type AccountingInvoicePayment = {
   id: string;
@@ -201,7 +202,7 @@ export async function registerAccountingPayment(
       .eq('id', invoiceId)
       .maybeSingle();
 
-    if (loadError || !inv) return { error: loadError?.message || 'Invoice not found' };
+    if (loadError || !inv) return { error: actionError(loadError, 'Invoice not found') };
 
     if (
       scope.organizationId &&
@@ -330,7 +331,7 @@ export async function registerAccountingPayment(
                 'Run create_accounting_payments_phase4.sql migration to enable payments.',
             };
           }
-          return { error: retry.error?.message || 'Failed to register payment' };
+          return { error: actionError(retry.error, 'Failed to register payment') };
         }
         // Continue with retry.data as payment
         const totals = await applyPaymentTotals(
@@ -382,7 +383,7 @@ export async function registerAccountingPayment(
             'Run create_accounting_payments_phase4.sql migration to enable payments.',
         };
       }
-      return { error: payError?.message || 'Failed to register payment' };
+      return { error: actionError(payError, 'Failed to register payment') };
     }
 
     const totals = await applyPaymentTotals(
@@ -508,7 +509,7 @@ export async function registerAccountingPayment(
     return getAccountingInvoiceDetail(invoiceId);
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to register payment',
+      error: actionError(err, 'Failed to register payment'),
     };
   }
 }
@@ -574,7 +575,7 @@ export async function getAccountingInvoicePayments(
       if (/accounting_invoice_payments|relation/i.test(error.message)) {
         return { payments: [] as AccountingInvoicePayment[], total: 0, page, pageSize };
       }
-      return { error: error.message };
+      return { error: actionError(error) };
     }
 
     const rows = data || [];
@@ -614,7 +615,7 @@ export async function getAccountingInvoicePayments(
     return { payments, total: count ?? payments.length, page, pageSize };
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to load payments',
+      error: actionError(err, 'Failed to load payments'),
     };
   }
 }
@@ -718,7 +719,7 @@ export async function getAccountingCustomerPayments(filters: {
           pageSize,
         };
       }
-      return { error: error.message };
+      return { error: actionError(error) };
     }
 
     const rows = data || [];
@@ -811,7 +812,7 @@ export async function getAccountingCustomerPayments(filters: {
     };
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to load payments',
+      error: actionError(err, 'Failed to load payments'),
     };
   }
 }
@@ -828,7 +829,7 @@ export async function getAccountingCustomerPaymentDetail(paymentId: string) {
       .eq('id', paymentId)
       .maybeSingle();
 
-    if (error || !row) return { error: error?.message || 'Payment not found' };
+    if (error || !row) return { error: actionError(error, 'Payment not found') };
 
     if (
       scope.organizationId &&
@@ -901,7 +902,7 @@ export async function getAccountingCustomerPaymentDetail(paymentId: string) {
     };
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to load payment',
+      error: actionError(err, 'Failed to load payment'),
     };
   }
 }

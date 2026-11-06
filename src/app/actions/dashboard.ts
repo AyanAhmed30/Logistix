@@ -4,6 +4,7 @@ import { createAdminClient } from '@/utils/supabase/server';
 import { getSession } from '@/lib/auth/session';
 import { isSalesPortalActor } from '@/lib/auth/require-access';
 import { isSuperAdminSession } from '@/lib/auth/super-admin';
+import { actionError } from '@/lib/user-facing-error';
 
 export async function getDashboardStats() {
   try {
@@ -34,7 +35,7 @@ export async function getDashboardStats() {
       .eq('role', 'user');
 
     if (usersError) {
-      return { error: usersError.message };
+      return { error: actionError(usersError) };
     }
 
     // Get all orders with cartons
@@ -45,7 +46,7 @@ export async function getDashboardStats() {
       );
 
     if (ordersError) {
-      return { error: ordersError.message };
+      return { error: actionError(ordersError) };
     }
 
     // Get assigned order IDs
@@ -54,7 +55,7 @@ export async function getDashboardStats() {
       .select('order_id');
 
     if (assignedError) {
-      return { error: assignedError.message };
+      return { error: actionError(assignedError) };
     }
 
     const assignedOrderIds = new Set(assignedOrdersData?.map((co) => co.order_id) || []);
@@ -100,7 +101,7 @@ export async function getDashboardStats() {
       .select('id, total_cartons, total_cbm, max_cbm, status');
 
     if (consolesError) {
-      return { error: consolesError.message };
+      return { error: actionError(consolesError) };
     }
 
     const totalConsoles = consoles?.length || 0;
@@ -179,7 +180,7 @@ export async function getSalesAgentDashboardStats() {
         .range(from, from + pageSize - 1);
 
       if (leadsError) {
-        return { error: leadsError.message };
+        return { error: actionError(leadsError) };
       }
 
       const batch = (leadsData || []) as Array<{
@@ -204,7 +205,7 @@ export async function getSalesAgentDashboardStats() {
       .not('lead_id', 'is', null);
 
     if (customersError) {
-      return { error: customersError.message };
+      return { error: actionError(customersError) };
     }
 
     const totalLeads = leads.length;
@@ -270,6 +271,6 @@ export async function getSalesAgentDashboardStats() {
 
     return { stats };
   } catch (err) {
-    return { error: err instanceof Error ? err.message : 'Unable to load sales dashboard statistics' };
+    return { error: actionError(err, 'Unable to load sales dashboard statistics') };
   }
 }

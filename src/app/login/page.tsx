@@ -6,7 +6,8 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader } from '@/components/ui/card';
 import { Label } from '@/components/ui/label';
-import { toast } from 'sonner';
+import { toast } from '@/lib/app-toast';
+import { getErrorMessage } from '@/lib/safe-async';
 import Image from 'next/image';
 
 export default function LoginPage() {
@@ -41,8 +42,8 @@ export default function LoginPage() {
 
             toast.error('Login failed. Please try again.');
             setIsLoading(false);
-        } catch {
-            toast.error('Login failed. Please try again.');
+        } catch (error) {
+            toast.error(getErrorMessage(error, 'Login failed. Please try again.'));
             setIsLoading(false);
         }
     }

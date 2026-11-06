@@ -3,6 +3,7 @@
 import { createAdminClient } from "@/utils/supabase/server";
 import { revalidatePath } from "next/cache";
 import { assertHrChildPermission } from "@/lib/hr-auth";
+import { actionError } from '@/lib/user-facing-error';
 
 export type GeneratedReport = {
   id: string;
@@ -98,7 +99,7 @@ export async function createReport(formData: FormData) {
       .maybeSingle();
 
     if (employeeError) {
-      return { error: employeeError.message };
+      return { error: actionError(employeeError) };
     }
 
     if (!employee) {
@@ -142,7 +143,7 @@ export async function createReport(formData: FormData) {
           "Generated reports table is missing required columns. Please run supabase/HR-migrations/202608030002_add_report_content_to_generated_reports.sql in Supabase.",
       };
     }
-    return { error: error.message || "Failed to create report" };
+    return { error: actionError(error, "Failed to create report") };
   }
 
   revalidateReportPaths();
@@ -172,7 +173,7 @@ export async function getReports(reportType?: string) {
     ) {
       return { reports: [] as GeneratedReport[] };
     }
-    return { error: error.message };
+    return { error: actionError(error) };
   }
 
   return { reports: (data || []) as GeneratedReport[] };
@@ -195,7 +196,7 @@ export async function deleteReport(formData: FormData) {
     .maybeSingle();
 
   if (existingError) {
-    return { error: existingError.message };
+    return { error: actionError(existingError) };
   }
 
   if (!existing) {
@@ -208,7 +209,7 @@ export async function deleteReport(formData: FormData) {
     .eq("id", id);
 
   if (error) {
-    return { error: error.message };
+    return { error: actionError(error) };
   }
 
   revalidateReportPaths();

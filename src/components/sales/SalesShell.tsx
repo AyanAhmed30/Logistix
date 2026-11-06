@@ -18,7 +18,7 @@ import { SalesUserMenu } from "@/components/sales/SalesUserMenu";
 import { useAdminOrganization } from "@/contexts/AdminOrganizationContext";
 import { getSalesPageMeta } from "@/lib/sales-navigation";
 import type { DashboardAccessState } from "@/lib/dashboard-access";
-import { toast } from "sonner";
+import { toast } from "@/lib/app-toast";
 import { useSalesKeyboardShortcuts } from "@/hooks/useSalesKeyboardShortcuts";
 import { AppNotificationBell } from "@/components/notifications/AppNotificationBell";
 

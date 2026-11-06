@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useState, useTransition } from "react";
 import Link from "next/link";
 import { useSearchParams, useRouter } from "next/navigation";
-import { toast } from "sonner";
+import { toast } from "@/lib/app-toast";
 import {
   CalendarCheck,
   Check,

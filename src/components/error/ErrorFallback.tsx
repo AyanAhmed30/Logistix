@@ -7,7 +7,6 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 type ErrorFallbackProps = {
   title?: string;
   description?: string;
-  errorMessage?: string | null;
   onRetry?: () => void;
   onGoHome?: () => void;
   compact?: boolean;
@@ -16,7 +15,6 @@ type ErrorFallbackProps = {
 export function ErrorFallback({
   title = "Something went wrong",
   description = "An unexpected error occurred. You can try again or return to your dashboard.",
-  errorMessage,
   onRetry,
   onGoHome,
   compact = false,
@@ -41,11 +39,6 @@ export function ErrorFallback({
         </div>
       </CardHeader>
       <CardContent className="space-y-4">
-        {errorMessage ? (
-          <p className="rounded-md border border-amber-200 bg-white px-3 py-2 text-sm text-slate-600">
-            {errorMessage}
-          </p>
-        ) : null}
         <div className="flex flex-wrap gap-2">
           {onRetry ? (
             <Button type="button" onClick={onRetry} className="gap-2">

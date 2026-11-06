@@ -25,6 +25,7 @@ import {
   insertLifecycleNotifications,
   resolveLeadSalesAgentRecipient,
 } from '@/lib/notify-lifecycle';
+import { actionError } from '@/lib/user-facing-error';
 
 export type SendQuotationToCustomerResult =
   | {
@@ -220,7 +221,7 @@ async function deliverQuotationPdfToCustomer(input: {
   }
 
   if (uploadError) {
-    return { error: uploadError.message || 'Failed to store quotation PDF' };
+    return { error: actionError(uploadError, 'Failed to store quotation PDF') };
   }
 
   const { data: urlData } = supabase.storage
@@ -266,7 +267,7 @@ async function deliverQuotationPdfToCustomer(input: {
     .single();
 
   if (updateError || !updated) {
-    return { error: updateError?.message || 'Failed to mark quotation as sent to customer' };
+    return { error: actionError(updateError, 'Failed to mark quotation as sent to customer') };
   }
 
   await supabase
@@ -489,7 +490,7 @@ export async function sendSalesQuotationToCustomer(
     });
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to send quotation to customer',
+      error: actionError(err, 'Failed to send quotation to customer'),
     };
   }
 }
@@ -523,7 +524,7 @@ export async function sendQuotationToCustomerAfterAdminApproval(
     });
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to send quotation to customer',
+      error: actionError(err, 'Failed to send quotation to customer'),
     };
   }
 }
@@ -550,7 +551,7 @@ export async function getSalesQuotationCustomerSendState(quotationId: string) {
     };
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to load send state',
+      error: actionError(err, 'Failed to load send state'),
     };
   }
 }

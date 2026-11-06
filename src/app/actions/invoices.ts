@@ -8,6 +8,7 @@ import {
   buildInvoicePosting,
   createAndPostJournalEntry,
 } from '@/app/actions/accounting_posting';
+import { actionError } from '@/lib/user-facing-error';
 
 export type InvoiceStatus = 'draft' | 'approved' | 'confirmed' | 'posted' | 'partially_paid' | 'paid' | 'cancelled';
 export type PaymentStatus = 'unpaid' | 'paid' | 'partial';
@@ -229,7 +230,7 @@ async function resolveCustomerPartnerForQuotation(
     .single();
 
   if (createErr || !createdPartner) {
-    return { error: createErr?.message || 'Failed to create customer partner.' };
+    return { error: actionError(createErr, 'Failed to create customer partner.') };
   }
 
   return { partner: createdPartner };
@@ -347,7 +348,7 @@ export async function createInvoiceFromSalesOrder(quotationId: string) {
       .single();
 
     if (error || !data) {
-      return { error: error?.message || 'Failed to create invoice' };
+      return { error: actionError(error, 'Failed to create invoice') };
     }
 
     // Log the creation
@@ -448,7 +449,7 @@ export async function createManualInvoice(formData: FormData) {
       .single();
 
     if (qErr || !quote) {
-      return { error: qErr?.message || 'Failed to create source sales order.' };
+      return { error: actionError(qErr, 'Failed to create source sales order.') };
     }
 
     // Reuse the canonical invoice creation path.
@@ -484,7 +485,7 @@ export async function createManualInvoice(formData: FormData) {
     return created;
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to create invoice',
+      error: actionError(err, 'Failed to create invoice'),
     };
   }
 }
@@ -507,7 +508,7 @@ export async function getAllInvoices(status?: InvoiceStatus) {
     const { data, error } = await query;
 
     if (error) {
-      return { error: error.message };
+      return { error: actionError(error) };
     }
 
     return { invoices: (data || []) as Invoice[] };
@@ -541,7 +542,7 @@ export async function getAllInvoicesForSalesAgent(status?: InvoiceStatus) {
     const { data, error } = await query;
 
     if (error) {
-      return { error: error.message };
+      return { error: actionError(error) };
     }
 
     return { invoices: (data || []) as Invoice[] };
@@ -576,7 +577,7 @@ export async function getInvoiceByQuotationId(quotationId: string) {
         // No invoice found
         return { invoice: null };
       }
-      return { error: error.message };
+      return { error: actionError(error) };
     }
 
     return { invoice: data as Invoice };
@@ -606,7 +607,7 @@ export async function getInvoiceById(invoiceId: string) {
       .single();
 
     if (error || !data) {
-      return { error: error?.message || 'Invoice not found' };
+      return { error: actionError(error, 'Invoice not found') };
     }
 
     return { invoice: data as Invoice };
@@ -644,7 +645,7 @@ export async function getInvoicesByContact(contactId: string) {
       : qQuery.eq('contact_id', contactId);
 
     const { data: quoteRows, error: qErr } = await qQuery;
-    if (qErr) return { error: qErr.message };
+    if (qErr) return { error: actionError(qErr) };
 
     const quotationIds = (quoteRows || []).map((q) => q.id);
     if (quotationIds.length === 0) return { invoices: [] as Invoice[] };
@@ -654,7 +655,7 @@ export async function getInvoicesByContact(contactId: string) {
       .select('*')
       .in('quotation_id', quotationIds)
       .order('created_at', { ascending: false });
-    if (invErr) return { error: invErr.message };
+    if (invErr) return { error: actionError(invErr) };
 
     return { invoices: (invoices || []) as Invoice[] };
   } catch (err) {
@@ -729,7 +730,7 @@ export async function updateInvoice(formData: FormData) {
       .single();
 
     if (error || !data) {
-      return { error: error?.message || 'Failed to update invoice' };
+      return { error: actionError(error, 'Failed to update invoice') };
     }
 
     // Log the update
@@ -799,7 +800,7 @@ export async function deleteInvoice(id: string) {
     const { error } = await supabase.from('invoices').delete().eq('id', id);
 
     if (error) {
-      return { error: error.message };
+      return { error: actionError(error) };
     }
 
     // Log the deletion (before the record is deleted)
@@ -853,7 +854,7 @@ export async function confirmInvoice(id: string) {
       .single();
 
     if (fetchError || !currentInvoice) {
-      return { error: fetchError?.message || 'Invoice not found' };
+      return { error: actionError(fetchError, 'Invoice not found') };
     }
 
     if (currentInvoice.invoice_status !== 'draft') {
@@ -873,7 +874,7 @@ export async function confirmInvoice(id: string) {
       .single();
 
     if (error || !data) {
-      return { error: error?.message || 'Failed to confirm invoice' };
+      return { error: actionError(error, 'Failed to confirm invoice') };
     }
 
     // Log the status change
@@ -922,7 +923,7 @@ export async function postInvoice(id: string) {
       .single();
 
     if (fetchError || !currentInvoice) {
-      return { error: fetchError?.message || 'Invoice not found' };
+      return { error: actionError(fetchError, 'Invoice not found') };
     }
 
     if (currentInvoice.invoice_status !== 'approved' && currentInvoice.invoice_status !== 'confirmed') {
@@ -965,7 +966,7 @@ export async function postInvoice(id: string) {
       .single();
 
     if (error || !data) {
-      return { error: error?.message || 'Failed to post invoice' };
+      return { error: actionError(error, 'Failed to post invoice') };
     }
 
     // Log the posting
@@ -1016,7 +1017,7 @@ export async function cancelInvoice(id: string) {
       .eq('id', id)
       .single();
     if (fetchError || !invoice) {
-      return { error: fetchError?.message || 'Invoice not found' };
+      return { error: actionError(fetchError, 'Invoice not found') };
     }
     if (invoice.invoice_status === 'posted' || invoice.invoice_status === 'partially_paid' || invoice.invoice_status === 'paid') {
       return { error: 'Posted invoices must be cancelled via reversal.' };
@@ -1037,7 +1038,7 @@ export async function cancelInvoice(id: string) {
       .select('*')
       .single();
     if (error || !data) {
-      return { error: error?.message || 'Failed to cancel invoice' };
+      return { error: actionError(error, 'Failed to cancel invoice') };
     }
 
     await logInvoiceAction(
@@ -1072,7 +1073,7 @@ export async function reverseInvoice(id: string) {
       .select('*')
       .eq('id', id)
       .single();
-    if (fetchError || !invoice) return { error: fetchError?.message || 'Invoice not found' };
+    if (fetchError || !invoice) return { error: actionError(fetchError, 'Invoice not found') };
     if (invoice.invoice_status !== 'posted' && invoice.invoice_status !== 'partially_paid' && invoice.invoice_status !== 'paid') {
       return { error: 'Only posted invoices can be reversed' };
     }
@@ -1083,7 +1084,7 @@ export async function reverseInvoice(id: string) {
     const { data: reversalRows, error: reversalError } = await supabase.rpc('reverse_journal_entry_strict', {
       p_original_entry_id: invoice.posted_journal_entry_id,
     });
-    if (reversalError) return { error: reversalError.message || 'Failed to reverse invoice journal entry' };
+    if (reversalError) return { error: actionError(reversalError, 'Failed to reverse invoice journal entry') };
     const reversal = Array.isArray(reversalRows) ? reversalRows[0] : null;
     if (!reversal) return { error: 'Failed to reverse invoice journal entry' };
 
@@ -1112,7 +1113,7 @@ export async function reverseInvoice(id: string) {
       ])
       .select('*')
       .single();
-    if (insertError || !reversalInvoice) return { error: insertError?.message || 'Failed to create reversal invoice record' };
+    if (insertError || !reversalInvoice) return { error: actionError(insertError, 'Failed to create reversal invoice record') };
 
     const { error: updateError } = await supabase
       .from('invoices')
@@ -1124,7 +1125,7 @@ export async function reverseInvoice(id: string) {
         updated_at: new Date().toISOString(),
       })
       .eq('id', id);
-    if (updateError) return { error: updateError.message || 'Failed to update original invoice status' };
+    if (updateError) return { error: actionError(updateError, 'Failed to update original invoice status') };
 
     await logInvoiceAction(
       supabase,
@@ -1174,7 +1175,7 @@ export async function getInvoiceLogs(invoiceId: string) {
       .order('performed_at', { ascending: false });
 
     if (error) {
-      return { error: error.message };
+      return { error: actionError(error) };
     }
 
     return { logs: (data || []) as InvoiceLog[] };
@@ -1258,7 +1259,7 @@ export async function addInvoiceLogNote(invoiceId: string, note: string) {
     revalidatePath('/sales-agent/dashboard');
     return { success: true };
   } catch (err) {
-    return { error: err instanceof Error ? err.message : 'Failed to add note' };
+    return { error: actionError(err, 'Failed to add note') };
   }
 }
 
@@ -1290,7 +1291,7 @@ export async function addInvoiceMessage(invoiceId: string, message: string) {
     revalidatePath('/sales-agent/dashboard');
     return { success: true };
   } catch (err) {
-    return { error: err instanceof Error ? err.message : 'Failed to add message' };
+    return { error: actionError(err, 'Failed to add message') };
   }
 }
 
@@ -1330,7 +1331,7 @@ export async function addInvoiceActivity(
     revalidatePath('/sales-agent/dashboard');
     return { success: true };
   } catch (err) {
-    return { error: err instanceof Error ? err.message : 'Failed to add activity' };
+    return { error: actionError(err, 'Failed to add activity') };
   }
 }
 
@@ -1341,6 +1342,6 @@ export async function getCurrentInvoiceUsername() {
     if (!session) return { error: 'Unauthorized' };
     return { username: session.username || '' };
   } catch (err) {
-    return { error: err instanceof Error ? err.message : 'Unable to resolve current user' };
+    return { error: actionError(err, 'Unable to resolve current user') };
   }
 }

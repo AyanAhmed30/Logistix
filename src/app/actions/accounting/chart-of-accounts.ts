@@ -15,6 +15,7 @@ import {
   type CoaAccountType,
   type CoaClassification,
 } from '@/lib/accounting-chart-of-accounts';
+import { actionError } from '@/lib/user-facing-error';
 
 export type AccountingCoaListItem = {
   id: string;
@@ -210,7 +211,7 @@ export async function getAccountingCoaAccounts(opts?: {
           migrationRequired: true as const,
         };
       }
-      return { error: error.message };
+      return { error: actionError(error) };
     }
 
     const rows = data || [];
@@ -250,7 +251,7 @@ export async function getAccountingCoaAccounts(opts?: {
     return { accounts, total: count || 0, page, pageSize };
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to load chart of accounts',
+      error: actionError(err, 'Failed to load chart of accounts'),
     };
   }
 }
@@ -297,11 +298,11 @@ export async function searchAccountingPostableAccounts(opts?: {
     }
 
     const { data, error } = await q;
-    if (error) return { error: error.message };
+    if (error) return { error: actionError(error) };
     return { accounts: data || [] };
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to search accounts',
+      error: actionError(err, 'Failed to search accounts'),
     };
   }
 }
@@ -317,7 +318,7 @@ export async function getAccountingCoaAccountDetail(accountId: string) {
       .select('*')
       .eq('id', accountId)
       .maybeSingle();
-    if (error || !row) return { error: error?.message || 'Account not found' };
+    if (error || !row) return { error: actionError(error, 'Account not found') };
 
     if (
       scope.organizationId &&
@@ -371,7 +372,7 @@ export async function getAccountingCoaAccountDetail(accountId: string) {
     return { account: detail };
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to load account',
+      error: actionError(err, 'Failed to load account'),
     };
   }
 }
@@ -401,11 +402,11 @@ export async function getAccountingCoaParentOptions(opts?: {
     if (opts?.excludeId) q = q.neq('id', opts.excludeId);
 
     const { data, error } = await q;
-    if (error) return { error: error.message };
+    if (error) return { error: actionError(error) };
     return { parents: data || [] };
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to load parents',
+      error: actionError(err, 'Failed to load parents'),
     };
   }
 }
@@ -564,7 +565,7 @@ export async function createAccountingCoaAccount(payload: {
           if (/unique|duplicate/i.test(retry.error.message)) {
             return { error: 'Account code must be unique within the organization' };
           }
-          return { error: retry.error.message };
+          return { error: actionError(retry.error) };
         }
         return { accountId: String(retry.data.id) };
       }
@@ -577,13 +578,13 @@ export async function createAccountingCoaAccount(payload: {
       if (/unique|duplicate/i.test(error.message)) {
         return { error: 'Account code must be unique within the organization' };
       }
-      return { error: error.message };
+      return { error: actionError(error) };
     }
 
     return { accountId: String(data.id) };
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to create account',
+      error: actionError(err, 'Failed to create account'),
     };
   }
 }
@@ -724,19 +725,19 @@ export async function updateAccountingCoaAccount(
           if (/unique|duplicate/i.test(retry.error.message)) {
             return { error: 'Account code must be unique within the organization' };
           }
-          return { error: retry.error.message };
+          return { error: actionError(retry.error) };
         }
       } else if (/unique|duplicate/i.test(error.message)) {
         return { error: 'Account code must be unique within the organization' };
       } else {
-        return { error: error.message };
+        return { error: actionError(error) };
       }
     }
 
     return getAccountingCoaAccountDetail(accountId);
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to update account',
+      error: actionError(err, 'Failed to update account'),
     };
   }
 }
@@ -772,7 +773,7 @@ export async function exportAccountingCoaAccountsCsv() {
     return { csv };
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to export accounts',
+      error: actionError(err, 'Failed to export accounts'),
     };
   }
 }
@@ -873,7 +874,7 @@ export async function importAccountingCoaAccountsCsv(csvText: string) {
     return { created, updated, errors };
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to import accounts',
+      error: actionError(err, 'Failed to import accounts'),
     };
   }
 }

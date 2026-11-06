@@ -16,6 +16,7 @@ import {
 } from '@/lib/auth/super-admin';
 import { fetchPortalUserOrganizationAssignments } from '@/lib/portal-user-organizations';
 import { isPortalAccountSession } from '@/lib/auth/portal-access';
+import { actionError } from '@/lib/user-facing-error';
 
 export type OrganizationSwitcherItem = {
   id: string;
@@ -312,7 +313,7 @@ export async function switchAdminOrganization(organizationId: string) {
     };
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Unable to switch organization',
+      error: actionError(err, 'Unable to switch organization'),
     };
   }
 }
@@ -360,7 +361,7 @@ export async function switchToAdminContext() {
     };
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Unable to switch to Admin context',
+      error: actionError(err, 'Unable to switch to Admin context'),
     };
   }
 }
@@ -398,7 +399,7 @@ export async function getPortalOrganizationProfile(organizationId?: string) {
       .eq('id', id)
       .maybeSingle();
 
-    if (error) return { error: error.message };
+    if (error) return { error: actionError(error) };
     if (!data || data.status === 'inactive') {
       return { error: 'Organization not found' as const };
     }
@@ -417,7 +418,7 @@ export async function getPortalOrganizationProfile(organizationId?: string) {
     };
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Unable to load organization',
+      error: actionError(err, 'Unable to load organization'),
     };
   }
 }

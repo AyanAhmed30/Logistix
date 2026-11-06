@@ -11,7 +11,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { toast } from "sonner";
+import { toast } from "@/lib/app-toast";
 import { CRM_CONTROL_FILTERS } from "@/lib/crm-navigation";
 
 export const CRM_FAVORITES_STORAGE_KEY = "crm_favorites_v1";

@@ -11,6 +11,7 @@ import {
   resolveVendorAccountingScope,
 } from '@/lib/accounting-vendor-scope';
 import { computeBillLineTotal } from '@/lib/accounting-bill-math';
+import { actionError } from '@/lib/user-facing-error';
 
 export type AccountingBillLog = {
   id: string;
@@ -94,7 +95,7 @@ export async function updateAccountingBill(
       .eq('id', billId)
       .maybeSingle();
 
-    if (loadError || !row) return { error: loadError?.message || 'Bill not found' };
+    if (loadError || !row) return { error: actionError(loadError, 'Bill not found') };
     if (String(row.status) !== 'draft') {
       return { error: 'Only draft bills can be edited' };
     }
@@ -196,7 +197,7 @@ export async function updateAccountingBill(
       })
       .eq('id', billId);
 
-    if (updError) return { error: updError.message };
+    if (updError) return { error: actionError(updError) };
 
     if (lines) {
       await supabase.from('accounting_vendor_bill_lines').delete().eq('bill_id', billId);
@@ -238,9 +239,9 @@ export async function updateAccountingBill(
           const retry = await supabase
             .from('accounting_vendor_bill_lines')
             .insert(bare);
-          if (retry.error) return { error: retry.error.message };
+          if (retry.error) return { error: actionError(retry.error) };
         } else if (lineErr) {
-          return { error: lineErr.message };
+          return { error: actionError(lineErr) };
         }
       }
     }
@@ -260,7 +261,7 @@ export async function updateAccountingBill(
     return getAccountingBillDetail(billId);
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to save bill',
+      error: actionError(err, 'Failed to save bill'),
     };
   }
 }
@@ -281,7 +282,7 @@ async function transitionStatus(
       .select('*')
       .eq('id', billId)
       .maybeSingle();
-    if (error || !row) return { error: error?.message || 'Bill not found' };
+    if (error || !row) return { error: actionError(error, 'Bill not found') };
 
     const from = String(row.status) as AccountingBillStatus;
     if (opts?.allowFrom && !opts.allowFrom.includes(from)) {
@@ -312,7 +313,7 @@ async function transitionStatus(
       .from('accounting_vendor_bills')
       .update(patch)
       .eq('id', billId);
-    if (updError) return { error: updError.message };
+    if (updError) return { error: actionError(updError) };
 
     await appendLog(supabase, {
       billId,
@@ -379,7 +380,7 @@ export async function postAccountingBill(billId: string) {
     }
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to post bill',
+      error: actionError(err, 'Failed to post bill'),
     };
   }
 
@@ -490,7 +491,7 @@ export async function cancelAccountingBill(billId: string) {
     }
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to cancel bill',
+      error: actionError(err, 'Failed to cancel bill'),
     };
   }
   return transitionStatus(billId, 'cancelled', 'cancelled', {
@@ -551,7 +552,7 @@ export async function resetAccountingBillToDraft(billId: string) {
       .eq('id', billId);
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to reset bill',
+      error: actionError(err, 'Failed to reset bill'),
     };
   }
   return transitionStatus(billId, 'draft', 'reset_to_draft', {
@@ -611,7 +612,7 @@ export async function duplicateAccountingBill(billId: string) {
       .select('id')
       .single();
 
-    if (error || !bill) return { error: error?.message || 'Failed to duplicate' };
+    if (error || !bill) return { error: actionError(error, 'Failed to duplicate') };
 
     if (source.lines.length) {
       await supabase.from('accounting_vendor_bill_lines').insert(
@@ -652,7 +653,7 @@ export async function duplicateAccountingBill(billId: string) {
     return { billId: String(bill.id) };
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to duplicate bill',
+      error: actionError(err, 'Failed to duplicate bill'),
     };
   }
 }
@@ -674,7 +675,7 @@ export async function getAccountingBillActivity(billId: string) {
       if (/accounting_vendor_bill_logs|relation/i.test(error.message)) {
         return { logs: [] as AccountingBillLog[] };
       }
-      return { error: error.message };
+      return { error: actionError(error) };
     }
 
     const logs: AccountingBillLog[] = (data || []).map((r) => ({
@@ -691,7 +692,7 @@ export async function getAccountingBillActivity(billId: string) {
     return { logs };
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to load activity',
+      error: actionError(err, 'Failed to load activity'),
     };
   }
 }
@@ -713,7 +714,7 @@ export async function postAccountingBillNote(billId: string, note: string) {
     return getAccountingBillActivity(billId);
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to post note',
+      error: actionError(err, 'Failed to post note'),
     };
   }
 }
@@ -734,7 +735,7 @@ export async function logAccountingBillPdfAction(
     return { ok: true as const };
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to log action',
+      error: actionError(err, 'Failed to log action'),
     };
   }
 }

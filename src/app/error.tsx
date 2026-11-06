@@ -2,6 +2,7 @@
 
 import { useEffect } from "react";
 import { ErrorFallback } from "@/components/error/ErrorFallback";
+import { reloadIfStaleClient } from "@/lib/client-recovery";
 
 export default function AppError({
   error,
@@ -12,6 +13,7 @@ export default function AppError({
 }) {
   useEffect(() => {
     console.error("[route-error]", error);
+    reloadIfStaleClient(error);
   }, [error]);
 
   return (
@@ -19,7 +21,6 @@ export default function AppError({
       <ErrorFallback
         title="This page ran into a problem"
         description="Something went wrong while loading this section. You can try again or return to your dashboard."
-        errorMessage={error.message}
         onRetry={reset}
         onGoHome={() => {
           window.location.assign("/");

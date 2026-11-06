@@ -28,6 +28,7 @@ import {
   type TaxReport,
   type DatePeriodPreset,
 } from '@/lib/accounting/financial-reporting';
+import { actionError } from '@/lib/user-facing-error';
 
 async function resolveReportScope() {
   const { requireAdminOrganizationScope, sessionUsesOrganizationScope } =
@@ -99,7 +100,7 @@ export async function getBalanceSheetStatement(input?: {
     return { report };
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to build Balance Sheet',
+      error: actionError(err, 'Failed to build Balance Sheet'),
     };
   }
 }
@@ -127,8 +128,7 @@ export async function getProfitAndLossStatement(input?: {
     return { report };
   } catch (err) {
     return {
-      error:
-        err instanceof Error ? err.message : 'Failed to build Profit & Loss',
+      error: actionError(err, 'Failed to build Profit & Loss'),
     };
   }
 }
@@ -156,8 +156,7 @@ export async function getCashFlowStatement(input?: {
     return { report };
   } catch (err) {
     return {
-      error:
-        err instanceof Error ? err.message : 'Failed to build Cash Flow Statement',
+      error: actionError(err, 'Failed to build Cash Flow Statement'),
     };
   }
 }
@@ -195,7 +194,7 @@ export async function getTrialBalanceReport(input?: {
     return { report };
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to build Trial Balance',
+      error: actionError(err, 'Failed to build Trial Balance'),
     };
   }
 }
@@ -222,7 +221,7 @@ export async function getGeneralLedgerReport(input?: {
     return { report };
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to build General Ledger',
+      error: actionError(err, 'Failed to build General Ledger'),
     };
   }
 }
@@ -251,7 +250,7 @@ export async function getPartnerLedgerReport(input?: {
     return { report };
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to build Partner Ledger',
+      error: actionError(err, 'Failed to build Partner Ledger'),
     };
   }
 }
@@ -275,8 +274,7 @@ export async function getAgedReceivableReport(input?: {
     return { report };
   } catch (err) {
     return {
-      error:
-        err instanceof Error ? err.message : 'Failed to build Aged Receivable',
+      error: actionError(err, 'Failed to build Aged Receivable'),
     };
   }
 }
@@ -300,7 +298,7 @@ export async function getAgedPayableReport(input?: {
     return { report };
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to build Aged Payable',
+      error: actionError(err, 'Failed to build Aged Payable'),
     };
   }
 }
@@ -325,7 +323,7 @@ export async function getTaxReport(input?: {
     return { report };
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to build Tax Report',
+      error: actionError(err, 'Failed to build Tax Report'),
     };
   }
 }

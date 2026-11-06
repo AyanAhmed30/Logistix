@@ -3,6 +3,7 @@
 import { createAdminClient } from '@/utils/supabase/server';
 import { getSession } from '@/lib/auth/session';
 import { revalidatePath } from 'next/cache';
+import { actionError } from '@/lib/user-facing-error';
 
 export type SalesAgent = {
   id: string;
@@ -95,7 +96,7 @@ export async function createSalesAgent(formData: FormData) {
           if (retryError.code === '23505') {
             return { error: 'Username already exists' };
           }
-          return { error: retryError.message };
+          return { error: actionError(retryError) };
         }
         
         return { 
@@ -110,13 +111,13 @@ export async function createSalesAgent(formData: FormData) {
       if (error.code === '23505') {
         return { error: 'Username already exists' };
       }
-      return { error: error.message };
+      return { error: actionError(error) };
     }
 
     revalidatePath('/admin/dashboard');
     return { success: true, salesAgent: data as SalesAgent };
   } catch (err) {
-    return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };
+    return { error: actionError(err, 'An unexpected error occurred') };
   }
 }
 
@@ -147,7 +148,7 @@ export async function getAllSalesAgents() {
           if (retryError.message.includes('does not exist') || retryError.message.includes('relation') || retryError.code === '42P01') {
             return { error: 'Sales agents table does not exist. Please run the SQL migration in Supabase.' };
           }
-          return { error: retryError.message };
+          return { error: actionError(retryError) };
         }
         
         return { 
@@ -170,7 +171,7 @@ export async function getAllSalesAgents() {
       if (error.message.includes('does not exist') || error.message.includes('relation') || error.code === '42P01') {
         return { error: 'Sales agents table does not exist. Please run the SQL migration in Supabase.' };
       }
-      return { error: error.message };
+      return { error: actionError(error) };
     }
 
     // Ensure permissions is always an array or null
@@ -207,7 +208,7 @@ export async function getAllSalesAgents() {
 
     return { salesAgents };
   } catch (err) {
-    return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };
+    return { error: actionError(err, 'An unexpected error occurred') };
   }
 }
 
@@ -236,12 +237,12 @@ export async function getAllCustomersWithAssignments() {
       if (error.message.includes('does not exist') || error.message.includes('relation') || error.code === '42P01') {
         return { error: 'Required tables do not exist. Please run the SQL migrations in Supabase.' };
       }
-      return { error: error.message };
+      return { error: actionError(error) };
     }
 
     return { customers: data || [] };
   } catch (err) {
-    return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };
+    return { error: actionError(err, 'An unexpected error occurred') };
   }
 }
 
@@ -279,7 +280,7 @@ export async function allocateCustomersToSalesAgent(formData: FormData) {
       .in('customer_id', customerIds);
 
     if (checkError) {
-      return { error: checkError.message };
+      return { error: actionError(checkError) };
     }
 
     if (existingAssignments && existingAssignments.length > 0) {
@@ -298,13 +299,13 @@ export async function allocateCustomersToSalesAgent(formData: FormData) {
       .insert(assignments);
 
     if (assignError) {
-      return { error: assignError.message };
+      return { error: actionError(assignError) };
     }
 
     revalidatePath('/admin/dashboard');
     return { success: true, allocated: customerIds.length };
   } catch (err) {
-    return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };
+    return { error: actionError(err, 'An unexpected error occurred') };
   }
 }
 
@@ -389,7 +390,7 @@ export async function updateSalesAgent(formData: FormData) {
           if (retryError.code === '23505') {
             return { error: 'Username already exists' };
           }
-          return { error: retryError.message };
+          return { error: actionError(retryError) };
         }
         
         revalidatePath('/admin/dashboard');
@@ -399,13 +400,13 @@ export async function updateSalesAgent(formData: FormData) {
       if (error.code === '23505') {
         return { error: 'Username already exists' };
       }
-      return { error: error.message };
+      return { error: actionError(error) };
     }
 
     revalidatePath('/admin/dashboard');
     return { success: true };
   } catch (err) {
-    return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };
+    return { error: actionError(err, 'An unexpected error occurred') };
   }
 }
 
@@ -483,7 +484,7 @@ export async function deleteSalesAgent(formData: FormData) {
       reassignedContacts,
     };
   } catch (err) {
-    return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };
+    return { error: actionError(err, 'An unexpected error occurred') };
   }
 }
 
@@ -508,7 +509,7 @@ export async function getSalesAgentByUsername(username: string) {
           .maybeSingle();
 
         if (retryError) {
-          return { error: retryError.message };
+          return { error: actionError(retryError) };
         }
 
         if (!dataWithoutPermissions) {
@@ -522,7 +523,7 @@ export async function getSalesAgentByUsername(username: string) {
           } as { id: string; name: string; username: string | null; permissions: string[] | null } 
         };
       }
-      return { error: error.message };
+      return { error: actionError(error) };
     }
 
     if (!data) {
@@ -550,6 +551,6 @@ export async function getSalesAgentByUsername(username: string) {
       } as { id: string; name: string; username: string | null; permissions: string[] | null } 
     };
   } catch (err) {
-    return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };
+    return { error: actionError(err, 'An unexpected error occurred') };
   }
 }

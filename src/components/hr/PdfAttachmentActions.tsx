@@ -1,7 +1,7 @@
 "use client";
 
 import { Download, Eye } from "lucide-react";
-import { toast } from "sonner";
+import { toast } from "@/lib/app-toast";
 import { Button } from "@/components/ui/button";
 import {
   downloadPdfAttachment,

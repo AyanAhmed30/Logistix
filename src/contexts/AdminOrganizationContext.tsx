@@ -8,7 +8,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { toast } from "sonner";
+import { toast } from "@/lib/app-toast";
 import {
   switchAdminOrganization,
   switchToAdminContext,

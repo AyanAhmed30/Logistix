@@ -7,6 +7,7 @@ import {
   accountingCanManageLockDates,
 } from '@/lib/accounting-roles';
 import type { AutoPostingLine } from '@/lib/accounting-journal-posting';
+import { actionError } from '@/lib/user-facing-error';
 
 export type AccountingLockSettings = {
   organization_id: string;
@@ -346,7 +347,7 @@ export async function getAccountingLockDatesOverview() {
     };
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to load lock dates',
+      error: actionError(err, 'Failed to load lock dates'),
     };
   }
 }
@@ -516,7 +517,7 @@ export async function updateAccountingLockSettings(payload: {
             'Run create_accounting_lock_dates_module.sql (and enhance_accounting_lock_dates_foundation.sql) in Supabase first.',
         };
       }
-      return { error: error.message };
+      return { error: actionError(error) };
     }
 
     await appendLog(supabase, {
@@ -539,7 +540,7 @@ export async function updateAccountingLockSettings(payload: {
     return getAccountingLockDatesOverview();
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to update lock dates',
+      error: actionError(err, 'Failed to update lock dates'),
     };
   }
 }
@@ -572,7 +573,7 @@ export async function upsertAccountingJournalLock(opts: {
       ],
       { onConflict: 'organization_id,journal_id' }
     );
-    if (error) return { error: error.message };
+    if (error) return { error: actionError(error) };
 
     await appendLog(supabase, {
       organizationId: scope.organizationId,
@@ -584,7 +585,7 @@ export async function upsertAccountingJournalLock(opts: {
     return getAccountingLockDatesOverview();
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to set journal lock',
+      error: actionError(err, 'Failed to set journal lock'),
     };
   }
 }
@@ -603,7 +604,7 @@ export async function removeAccountingJournalLock(journalLockId: string) {
       .delete()
       .eq('id', journalLockId)
       .eq('organization_id', scope.organizationId);
-    if (error) return { error: error.message };
+    if (error) return { error: actionError(error) };
 
     await appendLog(supabase, {
       organizationId: scope.organizationId,
@@ -615,7 +616,7 @@ export async function removeAccountingJournalLock(journalLockId: string) {
     return getAccountingLockDatesOverview();
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to remove journal lock',
+      error: actionError(err, 'Failed to remove journal lock'),
     };
   }
 }
@@ -656,7 +657,7 @@ export async function createAccountingFiscalYear(opts: {
       .select('id')
       .single();
 
-    if (error) return { error: error.message };
+    if (error) return { error: actionError(error) };
 
     await appendLog(supabase, {
       organizationId: scope.organizationId,
@@ -671,7 +672,7 @@ export async function createAccountingFiscalYear(opts: {
     return { fiscalYearId: String(data.id), ...overview };
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to create fiscal year',
+      error: actionError(err, 'Failed to create fiscal year'),
     };
   }
 }
@@ -876,7 +877,7 @@ export async function closeAccountingFiscalYear(
           .update({ status: 'open', updated_at: new Date().toISOString() })
           .eq('id', fiscalYearId);
         return {
-          error: err instanceof Error ? err.message : 'Closing journal entry failed',
+          error: actionError(err, 'Closing journal entry failed'),
         };
       }
     }
@@ -958,7 +959,7 @@ export async function closeAccountingFiscalYear(
     return getAccountingLockDatesOverview();
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to close fiscal year',
+      error: actionError(err, 'Failed to close fiscal year'),
     };
   }
 }
@@ -1106,7 +1107,7 @@ export async function reopenAccountingFiscalYear(fiscalYearId: string) {
     return getAccountingLockDatesOverview();
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to re-open fiscal year',
+      error: actionError(err, 'Failed to re-open fiscal year'),
     };
   }
 }
@@ -1314,8 +1315,7 @@ export async function generateOpeningBalances(opts: {
     };
   } catch (err) {
     return {
-      error:
-        err instanceof Error ? err.message : 'Failed to generate opening balances',
+      error: actionError(err, 'Failed to generate opening balances'),
     };
   }
 }

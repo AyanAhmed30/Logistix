@@ -11,7 +11,7 @@ import {
   resumeConsoleLoading,
 } from "@/app/actions/loading-workflow";
 import { LOADING_PHASE_LABELS, type LoadingPhase } from "@/lib/loading-workflow-types";
-import { toast } from "sonner";
+import { toast } from "@/lib/app-toast";
 
 type Order = {
   id: string;

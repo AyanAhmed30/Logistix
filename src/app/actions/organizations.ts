@@ -9,6 +9,7 @@ import {
   resolveInquiryAttachmentContentType,
   uploadToInquiryImagesBucket,
 } from '@/lib/inquiry-storage';
+import { actionError } from '@/lib/user-facing-error';
 
 export type OrganizationBranch = {
   name: string;
@@ -368,13 +369,13 @@ export async function createOrganization(formData: FormData) {
       if (error.code === '23505') {
         return { error: 'Email already exists' };
       }
-      return { error: error.message };
+      return { error: actionError(error) };
     }
 
     revalidatePath('/admin/dashboard');
     return { success: true, organization: normalizeOrganizationRow(data as Record<string, unknown>) };
   } catch (err) {
-    return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };
+    return { error: actionError(err, 'An unexpected error occurred') };
   }
 }
 
@@ -411,12 +412,12 @@ export async function getAllOrganizations() {
       if (isMissingOrganizationsTable(error)) {
         return { organizations: [] };
       }
-      return { error: error.message };
+      return { error: actionError(error) };
     }
 
     return { organizations: (data || []).map((row) => normalizeOrganizationRow(row)) };
   } catch (err) {
-    return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };
+    return { error: actionError(err, 'An unexpected error occurred') };
   }
 }
 
@@ -500,13 +501,13 @@ export async function updateOrganization(formData: FormData) {
       if (isMissingOrganizationsColumn(error)) {
         return { error: organizationSchemaMigrationHint() };
       }
-      return { error: error.message };
+      return { error: actionError(error) };
     }
 
     revalidatePath('/admin/dashboard');
     return { success: true, organization: normalizeOrganizationRow(data as Record<string, unknown>) };
   } catch (err) {
-    return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };
+    return { error: actionError(err, 'An unexpected error occurred') };
   }
 }
 
@@ -524,12 +525,12 @@ export async function deleteOrganization(formData: FormData) {
 
     const supabase = await createAdminClient();
     const { error } = await supabase.from('organizations').delete().eq('id', id);
-    if (error) return { error: error.message };
+    if (error) return { error: actionError(error) };
 
     revalidatePath('/admin/dashboard');
     return { success: true };
   } catch (err) {
-    return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };
+    return { error: actionError(err, 'An unexpected error occurred') };
   }
 }
 
@@ -547,12 +548,12 @@ export async function getOrganizationProfile() {
       .eq('username', session.username)
       .maybeSingle();
 
-    if (error) return { error: error.message };
+    if (error) return { error: actionError(error) };
     if (!data) return { error: 'Organization not found' };
 
     return { organization: normalizeOrganizationRow(data as Record<string, unknown>) };
   } catch (err) {
-    return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };
+    return { error: actionError(err, 'An unexpected error occurred') };
   }
 }
 

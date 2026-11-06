@@ -10,6 +10,7 @@ import { SUPER_ADMIN_USERNAME } from '@/lib/auth/super-admin';
 import type { SessionAppUserRole } from '@/lib/auth/session';
 import { fetchPortalUserOrganizationAssignments } from '@/lib/portal-user-organizations';
 import { migrateLegacyAccountToPortal } from '@/lib/legacy-user-bridge';
+import { actionError } from '@/lib/user-facing-error';
 
 const ADMIN_USERNAME = SUPER_ADMIN_USERNAME;
 const ADMIN_PASSWORD = 'admin123';
@@ -160,7 +161,7 @@ export async function login(formData: FormData) {
           .eq('username', username)
           .eq('password', password)
           .maybeSingle();
-        if (retry.error) return { error: retry.error.message };
+        if (retry.error) return { error: actionError(retry.error) };
         if (retry.data) {
           appUser = {
             id: retry.data.id,
@@ -171,7 +172,7 @@ export async function login(formData: FormData) {
           };
         }
       } else if (appUserResult.error) {
-        return { error: appUserResult.error.message };
+        return { error: actionError(appUserResult.error) };
       } else if (appUserResult.data) {
         const row = appUserResult.data as Record<string, unknown>;
         appUser = {
@@ -251,7 +252,7 @@ export async function login(formData: FormData) {
           !salesAgentResult.error.message.includes('does not exist') &&
           !salesAgentResult.error.message.includes('relation')
         ) {
-          return { error: salesAgentResult.error.message };
+          return { error: actionError(salesAgentResult.error) };
         }
       } else if (salesAgentResult.data) {
         salesRow = salesAgentResult.data as LegacySalesLoginRow;
@@ -299,7 +300,7 @@ export async function login(formData: FormData) {
           !opsUserResult.error.message.includes('does not exist') &&
           !opsUserResult.error.message.includes('relation')
         ) {
-          return { error: opsUserResult.error.message };
+          return { error: actionError(opsUserResult.error) };
         }
       } else if (opsUserResult.data) {
         opsRow = opsUserResult.data as LegacyOpsLoginRow;
@@ -336,7 +337,7 @@ export async function login(formData: FormData) {
         !organizationResult.error.message.includes('does not exist') &&
         !organizationResult.error.message.includes('relation')
       ) {
-        return { error: organizationResult.error.message };
+        return { error: actionError(organizationResult.error) };
       }
       if (organizationResult.data) {
         const org = organizationResult.data;

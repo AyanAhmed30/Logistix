@@ -3,6 +3,7 @@
 import { revalidatePath } from 'next/cache';
 import { getSession } from '@/lib/auth/session';
 import { createAdminClient } from '@/utils/supabase/server';
+import { actionError } from '@/lib/user-facing-error';
 
 // =============================================================
 // Types
@@ -866,7 +867,7 @@ export async function getContactsPage(options: GetContactsPageOptions = {}) {
       createdAtLt,
     };
   } catch (err) {
-    return { error: err instanceof Error ? err.message : 'Failed to load contacts' };
+    return { error: actionError(err, 'Failed to load contacts') };
   }
 }
 
@@ -1091,7 +1092,7 @@ export async function getContacts(searchOrOptions?: string | GetContactsOptions)
       createdAtLt,
     };
   } catch (err) {
-    return { error: err instanceof Error ? err.message : 'Failed to load contacts' };
+    return { error: actionError(err, 'Failed to load contacts') };
   }
 }
 
@@ -1123,7 +1124,7 @@ export async function getContactById(id: string) {
 
     const { data: contact, error } = await detailQuery.maybeSingle();
 
-    if (error || !contact) return { error: error?.message || 'Contact not found.' };
+    if (error || !contact) return { error: actionError(error, 'Contact not found.') };
 
     const [enrichedContact] = await mergeContactLeadIdsFromRpc(supabase, [contact]);
     // Read-only resolve for display. Do not allocate a new Customer ID here —
@@ -1168,7 +1169,7 @@ export async function getContactById(id: string) {
 
     return { contact: enriched };
   } catch (err) {
-    return { error: err instanceof Error ? err.message : 'Failed to load contact' };
+    return { error: actionError(err, 'Failed to load contact') };
   }
 }
 
@@ -1202,10 +1203,10 @@ export async function getContactActivity(contactId: string) {
       .eq('contact_id', id)
       .order('created_at', { ascending: false });
 
-    if (error) return { error: error.message };
+    if (error) return { error: actionError(error) };
     return { activity: (data || []) as ContactActivityLog[] };
   } catch (err) {
-    return { error: err instanceof Error ? err.message : 'Failed to load activity' };
+    return { error: actionError(err, 'Failed to load activity') };
   }
 }
 
@@ -1224,10 +1225,10 @@ export async function getContactTags() {
       .select('*')
       .order('name', { ascending: true });
 
-    if (error) return { error: error.message };
+    if (error) return { error: actionError(error) };
     return { tags: (data || []) as ContactTag[] };
   } catch (err) {
-    return { error: err instanceof Error ? err.message : 'Failed to load tags' };
+    return { error: actionError(err, 'Failed to load tags') };
   }
 }
 
@@ -1255,10 +1256,10 @@ export async function createContactTag(name: string, color?: string) {
       .select('*')
       .single();
 
-    if (error || !data) return { error: error?.message || 'Failed to create tag.' };
+    if (error || !data) return { error: actionError(error, 'Failed to create tag.') };
     return { tag: data as ContactTag };
   } catch (err) {
-    return { error: err instanceof Error ? err.message : 'Failed to create tag' };
+    return { error: actionError(err, 'Failed to create tag') };
   }
 }
 
@@ -1409,7 +1410,7 @@ async function resolveContactParentCompany(
   }
   const { data: parent, error } = await parentQuery.maybeSingle();
 
-  if (error) return { error: error.message };
+  if (error) return { error: actionError(error) };
   if (!parent) return { error: 'Selected company not found in this organization.' };
   if (parent.company_type !== 'company') {
     return { error: 'Company (Employer) must be a Company-type contact.' };
@@ -1469,7 +1470,7 @@ export async function getCompanyContactOptions(options?: {
       };
     }
 
-    if (error) return { error: error.message };
+    if (error) return { error: actionError(error) };
 
     let companies = (data || [])
       .map((row) => ({ id: String(row.id), name: String(row.name || '').trim() }))
@@ -1499,7 +1500,7 @@ export async function getCompanyContactOptions(options?: {
     return { companies };
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to load company contacts',
+      error: actionError(err, 'Failed to load company contacts'),
     };
   }
 }
@@ -1684,14 +1685,12 @@ export async function createContact(input: ContactUpsertInput) {
           duplicate: triggerDup,
         };
       }
-      return { error: error?.message || 'Failed to create contact.' };
+      return { error: actionError(error, 'Failed to create contact.') };
     }
 
     if (!data) {
       return {
-        error:
-          lastError?.message ||
-          'Failed to assign a unique Customer ID. Please try again.',
+        error: actionError(lastError, 'Failed to assign a unique Customer ID. Please try again.'),
       };
     }
 
@@ -1772,7 +1771,7 @@ export async function createContact(input: ContactUpsertInput) {
 
     return { contact: data as Contact };
   } catch (err) {
-    return { error: err instanceof Error ? err.message : 'Failed to create contact' };
+    return { error: actionError(err, 'Failed to create contact') };
   }
 }
 
@@ -1804,7 +1803,7 @@ export async function updateContact(input: ContactUpsertInput) {
     const { data: existing, error: existingErr } = await existingQuery.maybeSingle();
 
     if (existingErr || !existing) {
-      return { error: existingErr?.message || 'Contact not found.' };
+      return { error: actionError(existingErr, 'Contact not found.') };
     }
 
     const organizationId = 'unscoped' in org ? null : org.organizationId;
@@ -1860,9 +1859,7 @@ export async function updateContact(input: ContactUpsertInput) {
       );
       if (transferError) {
         return {
-          error:
-            transferError.message ||
-            'Failed to sync CRM ownership on salesperson change. Apply migration 028.',
+          error: actionError(transferError, 'Failed to sync CRM ownership on salesperson change. Apply migration 028.'),
         };
       }
       // Transfer already set salesperson_id / created_by
@@ -1895,7 +1892,7 @@ export async function updateContact(input: ContactUpsertInput) {
       }
     }
 
-    if (error || !data) return { error: error?.message || 'Failed to update contact.' };
+    if (error || !data) return { error: actionError(error, 'Failed to update contact.') };
 
     if (input.tag_ids !== undefined) {
       await replaceTagLinks(supabase, id, input.tag_ids || []);
@@ -1936,7 +1933,7 @@ export async function updateContact(input: ContactUpsertInput) {
 
     return { contact: data as Contact };
   } catch (err) {
-    return { error: err instanceof Error ? err.message : 'Failed to update contact' };
+    return { error: actionError(err, 'Failed to update contact') };
   }
 }
 
@@ -1962,12 +1959,12 @@ export async function deleteContact(id: string) {
       deleteQuery = deleteQuery.eq('organization_id', org.organizationId);
     }
     const { error } = await deleteQuery;
-    if (error) return { error: error.message };
+    if (error) return { error: actionError(error) };
 
     revalidateContactsPaths();
     return { success: true };
   } catch (err) {
-    return { error: err instanceof Error ? err.message : 'Failed to delete contact' };
+    return { error: actionError(err, 'Failed to delete contact') };
   }
 }
 
@@ -2014,7 +2011,7 @@ export async function createChildContact(input: ChildContactInput) {
     }
     const { data: parent, error: parentErr } = await parentQuery.maybeSingle();
     if (parentErr || !parent) {
-      return { error: parentErr?.message || 'Parent contact not found in this organization.' };
+      return { error: actionError(parentErr, 'Parent contact not found in this organization.') };
     }
 
     const organizationId =
@@ -2042,7 +2039,7 @@ export async function createChildContact(input: ChildContactInput) {
       .select('*')
       .single();
 
-    if (error || !data) return { error: error?.message || 'Failed to create related contact.' };
+    if (error || !data) return { error: actionError(error, 'Failed to create related contact.') };
 
     await supabase.from('contact_activity_logs').insert([
       {
@@ -2056,7 +2053,7 @@ export async function createChildContact(input: ChildContactInput) {
     revalidateContactsPaths();
     return { contact: data as Contact };
   } catch (err) {
-    return { error: err instanceof Error ? err.message : 'Failed to create related contact' };
+    return { error: actionError(err, 'Failed to create related contact') };
   }
 }
 
@@ -2082,12 +2079,12 @@ export async function deleteChildContact(id: string) {
       deleteQuery = deleteQuery.eq('organization_id', org.organizationId);
     }
     const { error } = await deleteQuery;
-    if (error) return { error: error.message };
+    if (error) return { error: actionError(error) };
 
     revalidateContactsPaths();
     return { success: true };
   } catch (err) {
-    return { error: err instanceof Error ? err.message : 'Failed to delete related contact' };
+    return { error: actionError(err, 'Failed to delete related contact') };
   }
 }
 
@@ -2142,11 +2139,11 @@ export async function logContactActivity(
       .select('*')
       .single();
 
-    if (error || !data) return { error: error?.message || 'Failed to record activity.' };
+    if (error || !data) return { error: actionError(error, 'Failed to record activity.') };
 
     return { activity: data as ContactActivityLog };
   } catch (err) {
-    return { error: err instanceof Error ? err.message : 'Failed to record activity' };
+    return { error: actionError(err, 'Failed to record activity') };
   }
 }
 
@@ -2173,12 +2170,12 @@ export async function getSalespersonOptions() {
       ),
     ]);
 
-    if (error) return { error: error.message };
+    if (error) return { error: actionError(error) };
     const salespersons = (data || []) as SalespersonOption[];
     const currentSalespersonId = agent?.id ? String(agent.id) : null;
     return { salespersons, currentSalespersonId };
   } catch (err) {
-    return { error: err instanceof Error ? err.message : 'Failed to load salespersons' };
+    return { error: actionError(err, 'Failed to load salespersons') };
   }
 }
 
@@ -2295,7 +2292,7 @@ export async function searchCustomerContacts(
     }
 
     const { data, error } = await q;
-    if (error) return { error: error.message };
+    if (error) return { error: actionError(error) };
 
     let rows = (data || []) as Array<
       CustomerSearchResult & {
@@ -2434,7 +2431,7 @@ export async function searchCustomerContacts(
       })),
     };
   } catch (err) {
-    return { error: err instanceof Error ? err.message : 'Failed to search contacts' };
+    return { error: actionError(err, 'Failed to search contacts') };
   }
 }
 
@@ -2490,7 +2487,7 @@ export async function getContactAutofillData(
     }
     const { data, error } = await contactQuery.maybeSingle();
 
-    if (error || !data) return { error: error?.message || 'Contact not found' };
+    if (error || !data) return { error: actionError(error, 'Contact not found') };
 
     let salesperson_name: string | null = null;
     if (data.salesperson_id) {
@@ -2545,7 +2542,7 @@ export async function getContactAutofillData(
       },
     };
   } catch (err) {
-    return { error: err instanceof Error ? err.message : 'Failed to load contact' };
+    return { error: actionError(err, 'Failed to load contact') };
   }
 }
 

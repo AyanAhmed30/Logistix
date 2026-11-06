@@ -8,6 +8,7 @@ import {
   mapQuotationUiStatusToDb,
   type SalesQuotationUiStatus,
 } from '@/lib/sales-navigation';
+import { actionError } from '@/lib/user-facing-error';
 
 export type SalesQuotationListItem = {
   id: string;
@@ -227,7 +228,7 @@ export async function getSalesQuotationsList(
       count = second.count;
     }
 
-    if (error) return { error: error.message };
+    if (error) return { error: actionError(error) };
 
     const rows = data || [];
     const salespersonIds = [
@@ -302,7 +303,7 @@ export async function getSalesQuotationsList(
     };
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to load quotations',
+      error: actionError(err, 'Failed to load quotations'),
     };
   }
 }

@@ -17,7 +17,7 @@ import {
 } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
 import { ChevronDown, ChevronRight } from "lucide-react";
-import { toast } from "sonner";
+import { toast } from "@/lib/app-toast";
 
 type Carton = {
   weight: number | null;

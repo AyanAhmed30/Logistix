@@ -6,6 +6,7 @@ import {
   assertHrAccess,
   assertHrChildPermission,
 } from "@/lib/hr-auth";
+import { actionError } from '@/lib/user-facing-error';
 
 export type PayrollRecord = {
   id: string;
@@ -137,7 +138,7 @@ export async function createPayroll(formData: FormData) {
     .maybeSingle();
 
   if (employeeError) {
-    return { error: employeeError.message };
+    return { error: actionError(employeeError) };
   }
 
   if (!employee) {
@@ -171,7 +172,7 @@ export async function createPayroll(formData: FormData) {
           "Payroll table is missing required columns. Please run supabase/HR-migrations/202608030001_enhance_payroll_records.sql in Supabase.",
       };
     }
-    return { error: error.message || "Failed to create payroll record" };
+    return { error: actionError(error, "Failed to create payroll record") };
   }
 
   revalidatePayrollPaths();
@@ -201,7 +202,7 @@ export async function getPayroll(employeeId?: string) {
     ) {
       return { payrollRecords: [] as PayrollRecord[] };
     }
-    return { error: error.message };
+    return { error: actionError(error) };
   }
 
   return { payrollRecords: (data || []) as PayrollRecord[] };
@@ -229,7 +230,7 @@ export async function updatePayroll(formData: FormData) {
     .maybeSingle();
 
   if (existingError) {
-    return { error: existingError.message };
+    return { error: actionError(existingError) };
   }
 
   if (!existing) {
@@ -247,7 +248,7 @@ export async function updatePayroll(formData: FormData) {
     .single();
 
   if (error) {
-    return { error: error.message };
+    return { error: actionError(error) };
   }
 
   revalidatePayrollPaths();
@@ -271,7 +272,7 @@ export async function deletePayroll(formData: FormData) {
     .maybeSingle();
 
   if (existingError) {
-    return { error: existingError.message };
+    return { error: actionError(existingError) };
   }
 
   if (!existing) {
@@ -281,7 +282,7 @@ export async function deletePayroll(formData: FormData) {
   const { error } = await supabase.from("payroll_records").delete().eq("id", id);
 
   if (error) {
-    return { error: error.message };
+    return { error: actionError(error) };
   }
 
   revalidatePayrollPaths();

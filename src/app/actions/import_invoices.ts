@@ -3,6 +3,7 @@
 import { createAdminClient } from '@/utils/supabase/server';
 import { requireChildModule } from '@/lib/auth/require-access';
 import { revalidatePath } from 'next/cache';
+import { actionError } from '@/lib/user-facing-error';
 
 export type ImportInvoiceItem = {
   id: string;
@@ -180,7 +181,7 @@ export async function createImportInvoice(formData: FormData) {
       .single();
 
     if (invoiceError) {
-      return { error: invoiceError.message || 'Failed to create import invoice' };
+      return { error: actionError(invoiceError, 'Failed to create import invoice') };
     }
 
     // Create invoice items
@@ -202,7 +203,7 @@ export async function createImportInvoice(formData: FormData) {
     if (itemsError) {
       // Rollback invoice if items insertion fails
       await supabase.from('import_invoices').delete().eq('id', invoiceData.id);
-      return { error: itemsError.message || 'Failed to create invoice items' };
+      return { error: actionError(itemsError, 'Failed to create invoice items') };
     }
 
     // Fetch complete invoice with items
@@ -216,13 +217,13 @@ export async function createImportInvoice(formData: FormData) {
       .single();
 
     if (fetchError) {
-      return { error: fetchError.message || 'Failed to fetch invoice' };
+      return { error: actionError(fetchError, 'Failed to fetch invoice') };
     }
 
     revalidatePath('/admin/dashboard');
     return { success: true, invoice: completeInvoice as ImportInvoice };
   } catch (err) {
-    return { error: err instanceof Error ? err.message : 'An unexpected error occurred while creating import invoice' };
+    return { error: actionError(err, 'An unexpected error occurred while creating import invoice') };
   }
 }
 
@@ -244,12 +245,12 @@ export async function getAllImportInvoices() {
       .order('created_at', { ascending: false });
 
     if (error) {
-      return { error: error.message || 'Failed to fetch import invoices' };
+      return { error: actionError(error, 'Failed to fetch import invoices') };
     }
 
     return { invoices: (data || []) as ImportInvoice[] };
   } catch (err) {
-    return { error: err instanceof Error ? err.message : 'An unexpected error occurred while fetching import invoices' };
+    return { error: actionError(err, 'An unexpected error occurred while fetching import invoices') };
   }
 }
 
@@ -272,12 +273,12 @@ export async function deleteImportInvoice(id: string) {
       .eq('id', id);
 
     if (error) {
-      return { error: error.message || 'Failed to delete import invoice' };
+      return { error: actionError(error, 'Failed to delete import invoice') };
     }
 
     revalidatePath('/admin/dashboard');
     return { success: true };
   } catch (err) {
-    return { error: err instanceof Error ? err.message : 'An unexpected error occurred while deleting import invoice' };
+    return { error: actionError(err, 'An unexpected error occurred while deleting import invoice') };
   }
 }

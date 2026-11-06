@@ -5,6 +5,7 @@ import { getSession } from '@/lib/auth/session';
 import type { InquiryLog, LeadActivityLog } from '@/app/actions/inquiries';
 import type { Lead, LeadComment } from '@/app/actions/leads';
 import type { SalesAgent } from '@/app/actions/sales_agents';
+import { actionError } from '@/lib/user-facing-error';
 
 export type SalesAgentDirectoryRow = {
   id: string;
@@ -144,15 +145,15 @@ export async function getSalesAgentDirectoryForAdmin() {
           .from('sales_agents')
           .select('id, name, username, email, phone_number, code, created_at, updated_at')
           .order('name', { ascending: true });
-        if (retryErr) return { error: retryErr.message };
+        if (retryErr) return { error: actionError(retryErr) };
         return await mergeAgentStats(supabase, retry as SalesAgent[]);
       }
-      return { error: agentsErr.message };
+      return { error: actionError(agentsErr) };
     }
 
     return await mergeAgentStats(supabase, (agents || []) as SalesAgent[]);
   } catch (err) {
-    return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };
+    return { error: actionError(err, 'An unexpected error occurred') };
   }
 }
 
@@ -160,7 +161,7 @@ async function mergeAgentStats(supabase: Awaited<ReturnType<typeof createAdminCl
   const { data: leadsMin, error: leadsErr } = await supabase
     .from('leads')
     .select('id, sales_agent_id, status');
-  if (leadsErr) return { error: leadsErr.message };
+  if (leadsErr) return { error: actionError(leadsErr) };
 
   const leadIdToAgent = new Map<string, string>();
   const leadCountByAgent = new Map<string, number>();
@@ -180,7 +181,7 @@ async function mergeAgentStats(supabase: Awaited<ReturnType<typeof createAdminCl
   }
 
   const { data: inqRows, error: inqErr } = await supabase.from('lead_inquiries').select('id, lead_id');
-  if (inqErr) return { error: inqErr.message };
+  if (inqErr) return { error: actionError(inqErr) };
 
   const inquiryCountByAgent = new Map<string, number>();
   for (const row of inqRows || []) {
@@ -192,7 +193,7 @@ async function mergeAgentStats(supabase: Awaited<ReturnType<typeof createAdminCl
   const { data: custRows, error: custErr } = await supabase
     .from('customers')
     .select('id, sales_agent_id');
-  if (custErr) return { error: custErr.message };
+  if (custErr) return { error: actionError(custErr) };
 
   const customerCountByAgent = new Map<string, number>();
   for (const row of custRows || []) {
@@ -233,7 +234,7 @@ export async function getSalesAgentOverviewDetailForAdmin(salesAgentId: string) 
       .eq('id', salesAgentId)
       .maybeSingle();
 
-    if (agentErr) return { error: agentErr.message };
+    if (agentErr) return { error: actionError(agentErr) };
     if (!agentRow) return { error: 'Sales agent not found' };
 
     const agent = agentRow as SalesAgent;
@@ -244,7 +245,7 @@ export async function getSalesAgentOverviewDetailForAdmin(salesAgentId: string) 
       .eq('sales_agent_id', salesAgentId)
       .order('created_at', { ascending: false });
 
-    if (leadsErr) return { error: leadsErr.message };
+    if (leadsErr) return { error: actionError(leadsErr) };
     const leadList = (leads || []) as Lead[];
     const leadIds = leadList.map((l) => l.id);
 
@@ -254,7 +255,7 @@ export async function getSalesAgentOverviewDetailForAdmin(salesAgentId: string) 
       .eq('sales_agent_id', salesAgentId)
       .order('converted_at', { ascending: false });
 
-    if (custErr) return { error: custErr.message };
+    if (custErr) return { error: actionError(custErr) };
 
     let inquiries: SalesAgentOverviewInquiry[] = [];
     if (leadIds.length > 0) {
@@ -280,7 +281,7 @@ export async function getSalesAgentOverviewDetailForAdmin(salesAgentId: string) 
         .in('lead_id', leadIds)
         .order('created_at', { ascending: false });
 
-      if (inqErr) return { error: inqErr.message };
+      if (inqErr) return { error: actionError(inqErr) };
       inquiries = (inqData || []) as SalesAgentOverviewInquiry[];
     }
 
@@ -299,7 +300,7 @@ export async function getSalesAgentOverviewDetailForAdmin(salesAgentId: string) 
         .order('performed_at', { ascending: false })
         .limit(4000);
 
-      if (actErr) return { error: actErr.message };
+      if (actErr) return { error: actionError(actErr) };
       activityLogs = (act || []) as LeadActivityLog[];
     }
 
@@ -310,7 +311,7 @@ export async function getSalesAgentOverviewDetailForAdmin(salesAgentId: string) 
         .select('*')
         .in('lead_id', leadIds)
         .order('created_at', { ascending: false });
-      if (cmtErr) return { error: cmtErr.message };
+      if (cmtErr) return { error: actionError(cmtErr) };
       const leadMeta = new Map(leadList.map((l) => [l.id, { name: l.name, fmt: l.lead_id_formatted }]));
       notes = ((cmt || []) as LeadComment[]).map((c) => {
         const meta = leadMeta.get(c.lead_id);
@@ -331,7 +332,7 @@ export async function getSalesAgentOverviewDetailForAdmin(salesAgentId: string) 
         .order('performed_at', { ascending: false })
         .limit(4000);
 
-      if (ilErr) return { error: ilErr.message };
+      if (ilErr) return { error: actionError(ilErr) };
       inquiryLogs = (ilogs || []) as InquiryLog[];
     }
 
@@ -426,6 +427,6 @@ export async function getSalesAgentOverviewDetailForAdmin(salesAgentId: string) 
 
     return { overview };
   } catch (err) {
-    return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };
+    return { error: actionError(err, 'An unexpected error occurred') };
   }
 }

@@ -3,6 +3,7 @@
 import { createAdminClient } from '@/utils/supabase/server';
 import { getSession } from '@/lib/auth/session';
 import { revalidatePath } from 'next/cache';
+import { actionError } from '@/lib/user-facing-error';
 
 export type ApplicationUserListItem = {
   /** CRM contact id when linked; null for legacy mobile accounts without a contact yet. */
@@ -150,7 +151,7 @@ async function loadMobileUsersAndContacts() {
     .limit(2000);
 
   if (usersError) {
-    return { error: usersError.message as string };
+    return { error: actionError(usersError) };
   }
 
   const users = (usersData || []) as MobileUserRow[];
@@ -302,7 +303,7 @@ export async function listApplicationUsers(opts?: {
     return { users };
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to load application users',
+      error: actionError(err, 'Failed to load application users'),
     };
   }
 }
@@ -318,7 +319,7 @@ export async function getApplicationUserAgentCounts() {
       .select('id, name')
       .order('name', { ascending: true });
 
-    if (agentsError) return { error: agentsError.message };
+    if (agentsError) return { error: actionError(agentsError) };
 
     const loaded = await loadMobileUsersAndContacts();
     if ('error' in loaded && loaded.error) return { error: loaded.error };
@@ -348,7 +349,7 @@ export async function getApplicationUserAgentCounts() {
     };
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to load agent counts',
+      error: actionError(err, 'Failed to load agent counts'),
     };
   }
 }
@@ -369,7 +370,7 @@ export async function getApplicationUserDetail(userId: string) {
       .is('deleted_at', null)
       .maybeSingle();
 
-    if (error) return { error: error.message };
+    if (error) return { error: actionError(error) };
     if (!user) return { error: 'Application user not found.' };
 
     const loaded = await loadMobileUsersAndContacts();
@@ -413,7 +414,7 @@ export async function getApplicationUserDetail(userId: string) {
     };
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to load application user',
+      error: actionError(err, 'Failed to load application user'),
     };
   }
 }
@@ -449,7 +450,7 @@ export async function reassignApplicationUserSalesAgent(input: {
       .maybeSingle();
 
     if (userErr || !mobileUser) {
-      return { error: userErr?.message || 'Application user not found.' };
+      return { error: actionError(userErr, 'Application user not found.') };
     }
 
     let contactId = String(input.contactId || '').trim() || null;
@@ -462,7 +463,7 @@ export async function reassignApplicationUserSalesAgent(input: {
         .eq('id', contactId)
         .maybeSingle();
       if (existingErr || !existing) {
-        return { error: existingErr?.message || 'Contact not found.' };
+        return { error: actionError(existingErr, 'Contact not found.') };
       }
       prevAgentId = existing.salesperson_id
         ? String(existing.salesperson_id)
@@ -508,9 +509,7 @@ export async function reassignApplicationUserSalesAgent(input: {
 
         if (createErr || !created) {
           return {
-            error:
-              createErr?.message ||
-              'Unable to create a contact for this mobile user.',
+            error: actionError(createErr, 'Unable to create a contact for this mobile user.'),
           };
         }
         contactId = String(created.id);
@@ -535,7 +534,7 @@ export async function reassignApplicationUserSalesAgent(input: {
         .eq('id', nextAgentId)
         .maybeSingle();
       if (agentErr || !agent) {
-        return { error: agentErr?.message || 'Sales Agent not found.' };
+        return { error: actionError(agentErr, 'Sales Agent not found.') };
       }
 
       const { error: transferError } = await supabase.rpc(
@@ -548,9 +547,7 @@ export async function reassignApplicationUserSalesAgent(input: {
       );
       if (transferError) {
         return {
-          error:
-            transferError.message ||
-            'Failed to transfer contact and CRM ownership. Apply migration 028.',
+          error: actionError(transferError, 'Failed to transfer contact and CRM ownership. Apply migration 028.'),
         };
       }
 
@@ -573,7 +570,7 @@ export async function reassignApplicationUserSalesAgent(input: {
         })
         .eq('id', contactId);
 
-      if (updateErr) return { error: updateErr.message };
+      if (updateErr) return { error: actionError(updateErr) };
 
       await supabase.from('contact_sales_assignments').insert([
         {
@@ -608,8 +605,7 @@ export async function reassignApplicationUserSalesAgent(input: {
     return { success: true as const, contactId };
   } catch (err) {
     return {
-      error:
-        err instanceof Error ? err.message : 'Failed to reassign Sales Agent',
+      error: actionError(err, 'Failed to reassign Sales Agent'),
     };
   }
 }
@@ -637,7 +633,7 @@ export async function deleteApplicationUser(userId: string) {
       .eq('id', id)
       .maybeSingle();
 
-    if (fetchError) return { error: fetchError.message };
+    if (fetchError) return { error: actionError(fetchError) };
     if (!existing) return { error: 'Application user not found.' };
     if (existing.deleted_at) {
       return { error: 'This application user is already deleted.' };
@@ -658,7 +654,7 @@ export async function deleteApplicationUser(userId: string) {
       .eq('id', id)
       .is('deleted_at', null);
 
-    if (updateError) return { error: updateError.message };
+    if (updateError) return { error: actionError(updateError) };
 
     // Invalidate all active sessions / tokens for this user.
     await supabase
@@ -678,8 +674,7 @@ export async function deleteApplicationUser(userId: string) {
     return { success: true as const };
   } catch (err) {
     return {
-      error:
-        err instanceof Error ? err.message : 'Failed to delete application user',
+      error: actionError(err, 'Failed to delete application user'),
     };
   }
 }

@@ -8,6 +8,7 @@ import {
   CRM_CONTACT_TASK_ACTIVITY_TYPES,
   resolveOpportunityIdsForContact,
 } from '@/lib/crm-contact-opportunities';
+import { actionError } from '@/lib/user-facing-error';
 
 export type ContactCrmOpportunitySummary = {
   id: string;
@@ -118,7 +119,7 @@ export async function getContactCrmSummary(contactId: string): Promise<
       if (/does not exist|relation/i.test(oppError.message)) {
         return { summary: emptySummary() };
       }
-      return { error: oppError.message };
+      return { error: actionError(oppError) };
     }
     opportunitiesRaw = oppRows || [];
   }
@@ -308,7 +309,7 @@ export async function getContactDocuments(contactId: string): Promise<
     docQuery = docQuery.eq('organization_id', scope.organizationId);
   }
   const { data: rows, error } = await docQuery;
-  if (error) return { error: error.message };
+  if (error) return { error: actionError(error) };
 
   const documents: ContactDocumentItem[] = (rows || []).map((row) => {
     const metadata = (row.metadata || {}) as Record<string, unknown>;

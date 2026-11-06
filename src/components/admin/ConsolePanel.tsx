@@ -15,7 +15,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { toast } from "sonner";
+import { toast } from "@/lib/app-toast";
 import { ChevronDown, ChevronRight, Plus, Truck } from "lucide-react";
 
 type Carton = {

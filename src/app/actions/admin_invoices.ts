@@ -3,6 +3,7 @@
 import { createAdminClient } from '@/utils/supabase/server';
 import { getSession } from '@/lib/auth/session';
 import { revalidatePath } from 'next/cache';
+import { actionError } from '@/lib/user-facing-error';
 
 export type AdminInvoice = {
   id: string;
@@ -103,7 +104,7 @@ export async function createAdminInvoice(formData: FormData) {
       .single();
 
     if (error || !data) {
-      return { error: error?.message || 'Failed to create invoice' };
+      return { error: actionError(error, 'Failed to create invoice') };
     }
 
     revalidatePath('/admin/dashboard');
@@ -126,7 +127,7 @@ export async function getAllAdminInvoices() {
       .order('created_at', { ascending: false });
 
     if (error) {
-      return { error: error.message };
+      return { error: actionError(error) };
     }
 
     return { invoices: (data || []) as AdminInvoice[] };
@@ -149,7 +150,7 @@ export async function deleteAdminInvoice(id: string) {
     const { error } = await supabase.from('admin_invoices').delete().eq('id', id);
 
     if (error) {
-      return { error: error.message };
+      return { error: actionError(error) };
     }
 
     revalidatePath('/admin/dashboard');
@@ -208,7 +209,7 @@ export async function updateAdminInvoice(formData: FormData) {
       .single();
 
     if (error || !data) {
-      return { error: error?.message || 'Failed to update invoice' };
+      return { error: actionError(error, 'Failed to update invoice') };
     }
 
     revalidatePath('/admin/dashboard');

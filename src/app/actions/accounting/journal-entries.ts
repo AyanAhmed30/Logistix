@@ -17,6 +17,7 @@ import {
   buildVendorRefundLines,
   type AutoPostingLine,
 } from '@/lib/accounting-journal-posting';
+import { actionError } from '@/lib/user-facing-error';
 
 export type AccountingJournalEntryStatus = 'draft' | 'posted' | 'cancelled';
 
@@ -351,14 +352,14 @@ export async function getAccountingJournals() {
           .select('id, name, code, type')
           .eq('is_active', true)
           .order('code', { ascending: true });
-        if (legacy.error) return { error: legacy.error.message };
+        if (legacy.error) return { error: actionError(legacy.error) };
         return { journals: legacy.data || [] };
       }
-      return { error: error.message };
+      return { error: actionError(error) };
     }
     return { journals: data || [] };
   } catch (err) {
-    return { error: err instanceof Error ? err.message : 'Failed to load journals' };
+    return { error: actionError(err, 'Failed to load journals') };
   }
 }
 
@@ -422,14 +423,14 @@ export async function getAccountingChartAccounts(
           legacy = legacy.or(`code.ilike.%${needle}%,name.ilike.%${needle}%`);
         }
         const legacyRes = await legacy;
-        if (legacyRes.error) return { error: legacyRes.error.message };
+        if (legacyRes.error) return { error: actionError(legacyRes.error) };
         return { accounts: legacyRes.data || [] };
       }
-      return { error: error.message };
+      return { error: actionError(error) };
     }
     return { accounts: data || [] };
   } catch (err) {
-    return { error: err instanceof Error ? err.message : 'Failed to load accounts' };
+    return { error: actionError(err, 'Failed to load accounts') };
   }
 }
 
@@ -496,7 +497,7 @@ export async function getAccountingJournalEntries(filters?: {
     }
 
     const { data, error, count } = await q;
-    if (error) return { error: error.message };
+    if (error) return { error: actionError(error) };
 
     const rows = data || [];
     const journalIds = [...new Set(rows.map((r) => String(r.journal_id)))];
@@ -543,7 +544,7 @@ export async function getAccountingJournalEntries(filters?: {
     return { entries, total: count || 0, page, pageSize };
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to load journal entries',
+      error: actionError(err, 'Failed to load journal entries'),
     };
   }
 }
@@ -558,7 +559,7 @@ export async function getAccountingJournalEntryDetail(id: string) {
       .select('*')
       .eq('id', id)
       .maybeSingle();
-    if (error || !row) return { error: error?.message || 'Journal entry not found' };
+    if (error || !row) return { error: actionError(error, 'Journal entry not found') };
 
     if (
       scope.organizationId &&
@@ -571,7 +572,7 @@ export async function getAccountingJournalEntryDetail(id: string) {
     return { entry: await mapDetail(supabase, row as Record<string, unknown>) };
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to load journal entry',
+      error: actionError(err, 'Failed to load journal entry'),
     };
   }
 }
@@ -587,7 +588,7 @@ export async function getAccountingJournalEntryLogs(journalEntryId: string) {
       .eq('journal_entry_id', journalEntryId)
       .order('created_at', { ascending: false })
       .limit(100);
-    if (error) return { error: error.message };
+    if (error) return { error: actionError(error) };
     const logs: AccountingJournalEntryLog[] = (data || []).map((l) => ({
       id: String(l.id),
       action: String(l.action),
@@ -599,7 +600,7 @@ export async function getAccountingJournalEntryLogs(journalEntryId: string) {
     }));
     return { logs };
   } catch (err) {
-    return { error: err instanceof Error ? err.message : 'Failed to load activity' };
+    return { error: actionError(err, 'Failed to load activity') };
   }
 }
 
@@ -670,7 +671,7 @@ export async function createManualAccountingJournalEntry(input?: {
       .select('*')
       .single();
 
-    if (error || !row) return { error: error?.message || 'Failed to create entry' };
+    if (error || !row) return { error: actionError(error, 'Failed to create entry') };
 
     await logEntry(supabase, {
       journalEntryId: String(row.id),
@@ -684,7 +685,7 @@ export async function createManualAccountingJournalEntry(input?: {
     return { entry: await mapDetail(supabase, row as Record<string, unknown>) };
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to create journal entry',
+      error: actionError(err, 'Failed to create journal entry'),
     };
   }
 }
@@ -711,7 +712,7 @@ export async function updateAccountingJournalEntry(
       .eq('id', id)
       .maybeSingle();
     if (loadError || !existing) {
-      return { error: loadError?.message || 'Journal entry not found' };
+      return { error: actionError(loadError, 'Journal entry not found') };
     }
     if (String(existing.status) !== 'draft') {
       return { error: 'Only draft journal entries can be edited' };
@@ -787,7 +788,7 @@ export async function updateAccountingJournalEntry(
       .select('*')
       .single();
 
-    if (error || !row) return { error: error?.message || 'Failed to update entry' };
+    if (error || !row) return { error: actionError(error, 'Failed to update entry') };
 
     await logEntry(supabase, {
       journalEntryId: id,
@@ -801,7 +802,7 @@ export async function updateAccountingJournalEntry(
     return { entry: await mapDetail(supabase, row as Record<string, unknown>) };
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to update journal entry',
+      error: actionError(err, 'Failed to update journal entry'),
     };
   }
 }
@@ -851,7 +852,7 @@ export async function postAccountingJournalEntry(id: string) {
       .eq('id', id)
       .select('*')
       .single();
-    if (error || !row) return { error: error?.message || 'Failed to post entry' };
+    if (error || !row) return { error: actionError(error, 'Failed to post entry') };
 
     await logEntry(supabase, {
       journalEntryId: id,
@@ -865,7 +866,7 @@ export async function postAccountingJournalEntry(id: string) {
     return { entry: await mapDetail(supabase, row as Record<string, unknown>) };
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to post journal entry',
+      error: actionError(err, 'Failed to post journal entry'),
     };
   }
 }
@@ -918,7 +919,7 @@ export async function cancelAccountingJournalEntry(id: string) {
       .eq('id', id)
       .select('*')
       .single();
-    if (error || !row) return { error: error?.message || 'Failed to cancel' };
+    if (error || !row) return { error: actionError(error, 'Failed to cancel') };
 
     await logEntry(supabase, {
       journalEntryId: id,
@@ -932,7 +933,7 @@ export async function cancelAccountingJournalEntry(id: string) {
     return { entry: await mapDetail(supabase, row as Record<string, unknown>) };
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to cancel journal entry',
+      error: actionError(err, 'Failed to cancel journal entry'),
     };
   }
 }
@@ -986,7 +987,7 @@ export async function resetAccountingJournalEntryToDraft(id: string) {
       .eq('id', id)
       .select('*')
       .single();
-    if (error || !row) return { error: error?.message || 'Failed to reset' };
+    if (error || !row) return { error: actionError(error, 'Failed to reset') };
 
     await logEntry(supabase, {
       journalEntryId: id,
@@ -1000,7 +1001,7 @@ export async function resetAccountingJournalEntryToDraft(id: string) {
     return { entry: await mapDetail(supabase, row as Record<string, unknown>) };
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to reset journal entry',
+      error: actionError(err, 'Failed to reset journal entry'),
     };
   }
 }
@@ -1033,7 +1034,7 @@ export async function duplicateAccountingJournalEntry(id: string) {
     });
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to duplicate journal entry',
+      error: actionError(err, 'Failed to duplicate journal entry'),
     };
   }
 }
@@ -1160,7 +1161,7 @@ export async function createAndPostAutomaticJournalEntry(args: {
           'Vendor refund journal entries are not enabled yet. Run supabase/migrations/fix_accounting_vendor_refund_journal_entries.sql in the SQL editor, then post the refund again.',
       };
     }
-    return { error: error?.message || 'Failed to create automatic journal entry' };
+    return { error: actionError(error, 'Failed to create automatic journal entry') };
   }
 
   const lineRows = validated.lines!.map((l, idx) => {
@@ -1210,7 +1211,7 @@ export async function createAndPostAutomaticJournalEntry(args: {
   }
   if (lineErr) {
     await supabase.from('accounting_journal_entries').delete().eq('id', row.id);
-    return { error: lineErr.message };
+    return { error: actionError(lineErr) };
   }
 
   const postedAt = new Date().toISOString();
@@ -1227,7 +1228,7 @@ export async function createAndPostAutomaticJournalEntry(args: {
   if (postErr) {
     await supabase.from('accounting_journal_entry_lines').delete().eq('journal_entry_id', row.id);
     await supabase.from('accounting_journal_entries').delete().eq('id', row.id);
-    return { error: postErr.message };
+    return { error: actionError(postErr) };
   }
 
   await logEntry(supabase, {
@@ -1263,7 +1264,7 @@ export async function postJournalEntryForCustomerInvoice(invoiceId: string) {
       .select('*')
       .eq('id', invoiceId)
       .maybeSingle();
-    if (error || !inv) return { error: error?.message || 'Invoice not found' };
+    if (error || !inv) return { error: actionError(error, 'Invoice not found') };
     if (String(inv.status) !== 'posted' && String(inv.status) !== 'paid') {
       return { error: 'Invoice must be posted before creating a journal entry' };
     }
@@ -1327,8 +1328,7 @@ export async function postJournalEntryForCustomerInvoice(invoiceId: string) {
     return res;
   } catch (err) {
     return {
-      error:
-        err instanceof Error ? err.message : 'Failed to create invoice journal entry',
+      error: actionError(err, 'Failed to create invoice journal entry'),
     };
   }
 }
@@ -1341,7 +1341,7 @@ export async function postJournalEntryForCustomerPayment(paymentId: string) {
       .select('*')
       .eq('id', paymentId)
       .maybeSingle();
-    if (error || !pay) return { error: error?.message || 'Payment not found' };
+    if (error || !pay) return { error: actionError(error, 'Payment not found') };
     if (pay.journal_entry_id) {
       return { journalEntryId: String(pay.journal_entry_id), alreadyExists: true as const };
     }
@@ -1390,8 +1390,7 @@ export async function postJournalEntryForCustomerPayment(paymentId: string) {
     return res;
   } catch (err) {
     return {
-      error:
-        err instanceof Error ? err.message : 'Failed to create payment journal entry',
+      error: actionError(err, 'Failed to create payment journal entry'),
     };
   }
 }
@@ -1410,7 +1409,7 @@ export async function postJournalEntryForBankPaymentSettlement(opts: {
       .select('*')
       .eq('id', opts.paymentId)
       .maybeSingle();
-    if (error || !pay) return { error: error?.message || 'Payment not found' };
+    if (error || !pay) return { error: actionError(error, 'Payment not found') };
 
     const journalKind =
       String(pay.journal) === 'cash' || String(pay.payment_method) === 'cash'
@@ -1452,10 +1451,7 @@ export async function postJournalEntryForBankPaymentSettlement(opts: {
     });
   } catch (err) {
     return {
-      error:
-        err instanceof Error
-          ? err.message
-          : 'Failed to create bank settlement journal entry',
+      error: actionError(err, 'Failed to create bank settlement journal entry'),
     };
   }
 }
@@ -1468,7 +1464,7 @@ export async function postJournalEntryForVendorPayment(paymentId: string) {
       .select('*')
       .eq('id', paymentId)
       .maybeSingle();
-    if (error || !pay) return { error: error?.message || 'Payment not found' };
+    if (error || !pay) return { error: actionError(error, 'Payment not found') };
     if ((pay as { journal_entry_id?: string | null }).journal_entry_id) {
       return {
         journalEntryId: String(
@@ -1522,10 +1518,7 @@ export async function postJournalEntryForVendorPayment(paymentId: string) {
     return res;
   } catch (err) {
     return {
-      error:
-        err instanceof Error
-          ? err.message
-          : 'Failed to create vendor payment journal entry',
+      error: actionError(err, 'Failed to create vendor payment journal entry'),
     };
   }
 }
@@ -1541,7 +1534,7 @@ export async function postJournalEntryForCreditNote(
       .select('*')
       .eq('id', creditNoteId)
       .maybeSingle();
-    if (error || !cn) return { error: error?.message || 'Credit note not found' };
+    if (error || !cn) return { error: actionError(error, 'Credit note not found') };
     if (String(cn.status) !== 'posted') {
       return { error: 'Credit note must be posted before creating a journal entry' };
     }
@@ -1604,10 +1597,7 @@ export async function postJournalEntryForCreditNote(
     return res;
   } catch (err) {
     return {
-      error:
-        err instanceof Error
-          ? err.message
-          : 'Failed to create credit note journal entry',
+      error: actionError(err, 'Failed to create credit note journal entry'),
     };
   }
 }
@@ -1620,7 +1610,7 @@ export async function postJournalEntryForVendorBill(billId: string) {
       .select('*')
       .eq('id', billId)
       .maybeSingle();
-    if (error || !bill) return { error: error?.message || 'Vendor bill not found' };
+    if (error || !bill) return { error: actionError(error, 'Vendor bill not found') };
     if (String(bill.status) !== 'posted' && String(bill.status) !== 'paid') {
       return { error: 'Bill must be posted before creating a journal entry' };
     }
@@ -1665,7 +1655,7 @@ export async function postJournalEntryForVendorBill(billId: string) {
     return res;
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to create bill journal entry',
+      error: actionError(err, 'Failed to create bill journal entry'),
     };
   }
 }
@@ -1678,7 +1668,7 @@ export async function postJournalEntryForVendorRefund(refundId: string) {
       .select('*')
       .eq('id', refundId)
       .maybeSingle();
-    if (error || !row) return { error: error?.message || 'Vendor refund not found' };
+    if (error || !row) return { error: actionError(error, 'Vendor refund not found') };
     if (String(row.status) !== 'posted') {
       return { error: 'Vendor refund must be posted before creating a journal entry' };
     }
@@ -1744,10 +1734,7 @@ export async function postJournalEntryForVendorRefund(refundId: string) {
     return res;
   } catch (err) {
     return {
-      error:
-        err instanceof Error
-          ? err.message
-          : 'Failed to create vendor refund journal entry',
+      error: actionError(err, 'Failed to create vendor refund journal entry'),
     };
   }
 }

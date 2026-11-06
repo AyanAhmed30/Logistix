@@ -12,6 +12,7 @@ import {
   mapQuotationDbStatusToUi,
   type SalesQuotationUiStatus,
 } from '@/lib/sales-navigation';
+import { actionError } from '@/lib/user-facing-error';
 
 export type SalesQuotationLineInput = {
   id?: string | null;
@@ -553,7 +554,7 @@ export async function getSalesQuotationPrefillFromOpportunity(opportunityId: str
       .eq('id', opportunityId)
       .maybeSingle();
 
-    if (error || !data) return { error: error?.message || 'Opportunity not found' };
+    if (error || !data) return { error: actionError(error, 'Opportunity not found') };
 
     let customer_name = '';
     if (data.contact_id) {
@@ -581,7 +582,7 @@ export async function getSalesQuotationPrefillFromOpportunity(opportunityId: str
     };
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to load opportunity',
+      error: actionError(err, 'Failed to load opportunity'),
     };
   }
 }
@@ -654,7 +655,7 @@ async function fetchInquiryQuotationPrefill(
       .eq('id', inquiryId)
       .maybeSingle();
 
-    if (error || !data) return { error: error?.message || 'Inquiry not found' };
+    if (error || !data) return { error: actionError(error, 'Inquiry not found') };
 
     const {
       resolveInquiryWorkflowStatus,
@@ -839,7 +840,7 @@ async function fetchInquiryQuotationPrefill(
     };
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to load inquiry',
+      error: actionError(err, 'Failed to load inquiry'),
     };
   }
 }
@@ -873,7 +874,7 @@ export async function getSalesQuotationPrefillFromInquiry(inquiryId: string): Pr
     return loaded;
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to load inquiry',
+      error: actionError(err, 'Failed to load inquiry'),
     };
   }
 }
@@ -885,7 +886,7 @@ export async function getSalesQuotationDetail(id: string) {
 
     const supabase = await createAdminClient();
     const { data, error } = await supabase.from('quotations').select('*').eq('id', id).maybeSingle();
-    if (error || !data) return { error: error?.message || 'Quotation not found' };
+    if (error || !data) return { error: actionError(error, 'Quotation not found') };
 
     if (
       scope.organizationId &&
@@ -932,7 +933,7 @@ export async function getSalesQuotationDetail(id: string) {
     };
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to load quotation',
+      error: actionError(err, 'Failed to load quotation'),
     };
   }
 }
@@ -976,14 +977,14 @@ export async function getSalesQuotationDetailForWorkflow(id: string) {
 
     const supabase = await createAdminClient();
     const { data, error } = await supabase.from('quotations').select('*').eq('id', id).maybeSingle();
-    if (error || !data) return { error: error?.message || 'Quotation not found' };
+    if (error || !data) return { error: actionError(error, 'Quotation not found') };
 
     return {
       quotation: await hydrateSalesQuotationDetail(supabase, data as Record<string, unknown>),
     };
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to load quotation',
+      error: actionError(err, 'Failed to load quotation'),
     };
   }
 }
@@ -1051,7 +1052,7 @@ export async function createSalesQuotation(payload: SalesQuotationFormPayload) {
       error = retry.error;
     }
 
-    if (error || !data) return { error: error?.message || 'Failed to create quotation' };
+    if (error || !data) return { error: actionError(error, 'Failed to create quotation') };
 
     try {
       await replaceLines(supabase, data.id, payload.lines);
@@ -1080,7 +1081,7 @@ export async function createSalesQuotation(payload: SalesQuotationFormPayload) {
     return { quotation: mapRowToDetail(data as Record<string, unknown>, lines) };
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to create quotation',
+      error: actionError(err, 'Failed to create quotation'),
     };
   }
 }
@@ -1103,7 +1104,7 @@ export async function updateSalesQuotation(
       .eq('id', id)
       .maybeSingle();
 
-    if (loadError || !existing) return { error: loadError?.message || 'Quotation not found' };
+    if (loadError || !existing) return { error: actionError(loadError, 'Quotation not found') };
 
     const denied = await assertSalesRecordAccess(scope.session!, existing as Record<string, unknown>);
     if (denied) return { error: denied };
@@ -1149,7 +1150,7 @@ export async function updateSalesQuotation(
       .select('*')
       .single();
 
-    if (error || !data) return { error: error?.message || 'Failed to update quotation' };
+    if (error || !data) return { error: actionError(error, 'Failed to update quotation') };
 
     try {
       await replaceLines(supabase, id, payload.lines);
@@ -1178,7 +1179,7 @@ export async function updateSalesQuotation(
     return { quotation: mapRowToDetail(data as Record<string, unknown>, lines) };
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to update quotation',
+      error: actionError(err, 'Failed to update quotation'),
     };
   }
 }
@@ -1215,7 +1216,7 @@ async function transitionSalesQuotationStatus(
       .eq('id', id)
       .maybeSingle();
 
-    if (loadError || !existing) return { error: loadError?.message || 'Quotation not found' };
+    if (loadError || !existing) return { error: actionError(loadError, 'Quotation not found') };
 
     const denied = await assertSalesRecordAccess(
       scope.session!,
@@ -1282,7 +1283,7 @@ async function transitionSalesQuotationStatus(
       .select('*')
       .single();
 
-    if (error || !data) return { error: error?.message || 'Failed to update status' };
+    if (error || !data) return { error: actionError(error, 'Failed to update status') };
 
     await logAction(
       supabase,
@@ -1297,7 +1298,7 @@ async function transitionSalesQuotationStatus(
     return { quotation: mapRowToDetail(data as Record<string, unknown>, lines) };
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to update status',
+      error: actionError(err, 'Failed to update status'),
     };
   }
 }
@@ -1314,7 +1315,7 @@ export async function lockSalesQuotation(id: string, locked: boolean) {
       .eq('id', id)
       .maybeSingle();
 
-    if (loadError || !existing) return { error: loadError?.message || 'Quotation not found' };
+    if (loadError || !existing) return { error: actionError(loadError, 'Quotation not found') };
     if (String(existing.status) === 'cancelled') {
       return { error: 'Cancelled quotations cannot be locked' };
     }
@@ -1330,7 +1331,7 @@ export async function lockSalesQuotation(id: string, locked: boolean) {
       .select('*')
       .single();
 
-    if (error || !data) return { error: error?.message || 'Failed to update lock' };
+    if (error || !data) return { error: actionError(error, 'Failed to update lock') };
 
     await logAction(
       supabase,
@@ -1345,7 +1346,7 @@ export async function lockSalesQuotation(id: string, locked: boolean) {
     return { quotation: mapRowToDetail(data as Record<string, unknown>, lines) };
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to update lock',
+      error: actionError(err, 'Failed to update lock'),
     };
   }
 }
@@ -1408,7 +1409,7 @@ export async function duplicateSalesQuotation(id: string) {
     return result;
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to duplicate quotation',
+      error: actionError(err, 'Failed to duplicate quotation'),
     };
   }
 }
@@ -1429,7 +1430,7 @@ export async function getSalesQuotationVersions(quotationId: string) {
       if (/relation|does not exist|column/i.test(error.message)) {
         return { versions: [] as SalesQuotationVersion[] };
       }
-      return { error: error.message };
+      return { error: actionError(error) };
     }
 
     return {
@@ -1444,7 +1445,7 @@ export async function getSalesQuotationVersions(quotationId: string) {
     };
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to load versions',
+      error: actionError(err, 'Failed to load versions'),
     };
   }
 }
@@ -1462,7 +1463,7 @@ export async function getSalesQuotationActivity(quotationId: string) {
       .order('performed_at', { ascending: false })
       .limit(50);
 
-    if (error) return { error: error.message };
+    if (error) return { error: actionError(error) };
 
     return {
       logs: (data || []).map((l) => ({
@@ -1477,7 +1478,7 @@ export async function getSalesQuotationActivity(quotationId: string) {
     };
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to load activity',
+      error: actionError(err, 'Failed to load activity'),
     };
   }
 }
@@ -1499,7 +1500,7 @@ export async function logSalesQuotationPreview(id: string, kind: 'email' | 'pdf'
     return { success: true };
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to log preview',
+      error: actionError(err, 'Failed to log preview'),
     };
   }
 }
@@ -1536,7 +1537,7 @@ async function appendQuotationLog(
     .select('*')
     .single();
 
-  if (error || !data) return { error: error?.message || 'Failed to save log' };
+  if (error || !data) return { error: actionError(error, 'Failed to save log') };
 
   return {
     log: {
@@ -1601,7 +1602,7 @@ export async function setSalesOrderDeliveryStatus(
       .eq('id', id)
       .maybeSingle();
 
-    if (loadError || !existing) return { error: loadError?.message || 'Order not found' };
+    if (loadError || !existing) return { error: actionError(loadError, 'Order not found') };
     if (String(existing.status) !== 'sales_order') {
       return { error: 'Delivery status applies only to confirmed sales orders' };
     }
@@ -1623,7 +1624,7 @@ export async function setSalesOrderDeliveryStatus(
             'Run sales_orders_delivery_status.sql migration to enable delivery status.',
         };
       }
-      return { error: error?.message || 'Failed to update delivery status' };
+      return { error: actionError(error, 'Failed to update delivery status') };
     }
 
     await logAction(
@@ -1640,7 +1641,7 @@ export async function setSalesOrderDeliveryStatus(
     return { quotation: mapRowToDetail(data as Record<string, unknown>, lines) };
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to update delivery status',
+      error: actionError(err, 'Failed to update delivery status'),
     };
   }
 }
@@ -1773,7 +1774,7 @@ export async function ensureQuotationForApprovedInquiry(
         .limit(1)
         .maybeSingle();
       if (existing?.id) return { quotationId: String(existing.id) };
-      return { error: error?.message || 'Failed to create quotation' };
+      return { error: actionError(error, 'Failed to create quotation') };
     }
 
     try {
@@ -1791,7 +1792,7 @@ export async function ensureQuotationForApprovedInquiry(
     return { quotationId: String(data.id) };
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to create quotation from inquiry',
+      error: actionError(err, 'Failed to create quotation from inquiry'),
     };
   }
 }

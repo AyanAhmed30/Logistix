@@ -3,6 +3,7 @@
 import { createAdminClient } from '@/utils/supabase/server';
 import { getSession } from '@/lib/auth/session';
 import { sessionHasSalesAccess } from '@/lib/auth/require-access';
+import { actionError } from '@/lib/user-facing-error';
 
 export type SalesOrderInvoiceStatus = 'no' | 'to_invoice' | 'invoiced';
 
@@ -209,7 +210,7 @@ export async function getSalesOrdersToInvoice(filters: {
           'Run sales_to_invoice_phase.sql migration to enable Orders to Invoice.',
       };
     }
-    if (error) return { error: error.message };
+    if (error) return { error: actionError(error) };
 
     const rows = data || [];
     const ids = rows.map((r) => String(r.id));
@@ -281,7 +282,7 @@ export async function getSalesOrdersToInvoice(filters: {
     };
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to load orders to invoice',
+      error: actionError(err, 'Failed to load orders to invoice'),
     };
   }
 }
@@ -344,7 +345,7 @@ export async function getSalesOrdersToUpsell(filters: {
           'Run sales_to_invoice_phase.sql migration to enable Orders to Upsell.',
       };
     }
-    if (error) return { error: error.message };
+    if (error) return { error: actionError(error) };
 
     const rows = data || [];
     const salespersonIds = [
@@ -385,7 +386,7 @@ export async function getSalesOrdersToUpsell(filters: {
     return { orders, total: count ?? orders.length, page, pageSize };
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to load orders to upsell',
+      error: actionError(err, 'Failed to load orders to upsell'),
     };
   }
 }
@@ -411,7 +412,7 @@ export async function createSalesInvoiceFromOrder(quotationId: string) {
       .maybeSingle();
 
     if (loadError || !order) {
-      return { error: loadError?.message || 'Sales order not found' };
+      return { error: actionError(loadError, 'Sales order not found') };
     }
 
     if (
@@ -524,7 +525,7 @@ export async function createSalesInvoiceFromOrder(quotationId: string) {
             'Run sales_to_invoice_phase.sql migration to enable Sales invoices.',
         };
       }
-      return { error: invError?.message || 'Failed to create invoice' };
+      return { error: actionError(invError, 'Failed to create invoice') };
     }
 
     if (lineRows.length) {
@@ -560,7 +561,7 @@ export async function createSalesInvoiceFromOrder(quotationId: string) {
     return { invoiceId: String(invoice.id), alreadyExists: false as const };
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to create sales invoice',
+      error: actionError(err, 'Failed to create sales invoice'),
     };
   }
 }
@@ -577,7 +578,7 @@ export async function getSalesInvoiceDetail(invoiceId: string) {
       .eq('id', invoiceId)
       .maybeSingle();
 
-    if (error || !inv) return { error: error?.message || 'Invoice not found' };
+    if (error || !inv) return { error: actionError(error, 'Invoice not found') };
 
     if (
       scope.organizationId &&
@@ -675,7 +676,7 @@ export async function getSalesInvoiceDetail(invoiceId: string) {
     return { invoice: detail };
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to load invoice',
+      error: actionError(err, 'Failed to load invoice'),
     };
   }
 }
@@ -695,7 +696,7 @@ export async function getSalesInvoiceIdForOrder(quotationId: string) {
     return { invoiceId: data?.id ? String(data.id) : null };
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to resolve invoice',
+      error: actionError(err, 'Failed to resolve invoice'),
     };
   }
 }

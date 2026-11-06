@@ -10,6 +10,7 @@ import {
   type LoanInterestMethod,
 } from '@/lib/accounting-loans';
 import type { AutoPostingLine } from '@/lib/accounting-journal-posting';
+import { actionError } from '@/lib/user-facing-error';
 
 export type AccountingLoanStatus =
   | 'draft'
@@ -473,7 +474,7 @@ export async function getAccountingLoans(opts?: {
           migrationRequired: true as const,
         };
       }
-      return { error: error.message };
+      return { error: actionError(error) };
     }
 
     const rows = data || [];
@@ -490,7 +491,7 @@ export async function getAccountingLoans(opts?: {
     return { loans, total: count || 0, page, pageSize };
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to load loans',
+      error: actionError(err, 'Failed to load loans'),
     };
   }
 }
@@ -506,7 +507,7 @@ export async function getAccountingLoanDetail(loanId: string) {
       .select('*')
       .eq('id', loanId)
       .maybeSingle();
-    if (error || !row) return { error: error?.message || 'Loan not found' };
+    if (error || !row) return { error: actionError(error, 'Loan not found') };
 
     if (
       scope.organizationId &&
@@ -589,7 +590,7 @@ export async function getAccountingLoanDetail(loanId: string) {
     return { loan: asset };
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to load loan',
+      error: actionError(err, 'Failed to load loan'),
     };
   }
 }
@@ -606,7 +607,7 @@ export async function getAccountingLoanIdByInstallment(installmentId: string) {
       .eq('id', installmentId)
       .maybeSingle();
     if (error || !inst?.loan_id) {
-      return { error: error?.message || 'Installment not found' };
+      return { error: actionError(error, 'Installment not found') };
     }
 
     const { data: loan } = await supabase
@@ -627,7 +628,7 @@ export async function getAccountingLoanIdByInstallment(installmentId: string) {
     return { loanId: String(loan.id) };
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to resolve installment',
+      error: actionError(err, 'Failed to resolve installment'),
     };
   }
 }
@@ -689,7 +690,7 @@ export async function createAccountingLoan() {
     return { loanId: String(data.id) };
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to create loan',
+      error: actionError(err, 'Failed to create loan'),
     };
   }
 }
@@ -807,7 +808,7 @@ export async function updateAccountingLoan(
       .from('accounting_loans')
       .update(patch)
       .eq('id', loanId);
-    if (error) return { error: error.message };
+    if (error) return { error: actionError(error) };
 
     const shouldRebuild =
       isDraft &&
@@ -865,7 +866,7 @@ export async function updateAccountingLoan(
     return getAccountingLoanDetail(loanId);
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to update loan',
+      error: actionError(err, 'Failed to update loan'),
     };
   }
 }
@@ -1038,7 +1039,7 @@ export async function confirmAccountingLoan(loanId: string) {
     return getAccountingLoanDetail(loanId);
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to confirm loan',
+      error: actionError(err, 'Failed to confirm loan'),
     };
   }
 }
@@ -1308,7 +1309,7 @@ export async function payAccountingLoanInstallment(
     return getAccountingLoanDetail(String(loan.id));
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to pay installment',
+      error: actionError(err, 'Failed to pay installment'),
     };
   }
 }
@@ -1365,7 +1366,7 @@ export async function closeAccountingLoan(loanId: string) {
     return getAccountingLoanDetail(loanId);
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to close loan',
+      error: actionError(err, 'Failed to close loan'),
     };
   }
 }
@@ -1408,7 +1409,7 @@ export async function cancelAccountingLoan(loanId: string) {
     return getAccountingLoanDetail(loanId);
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to cancel loan',
+      error: actionError(err, 'Failed to cancel loan'),
     };
   }
 }
@@ -1430,7 +1431,7 @@ export async function getAccountingLoanActivity(loanId: string) {
       if (/accounting_loan_logs|relation/i.test(error.message)) {
         return { logs: [] as AccountingLoanLog[] };
       }
-      return { error: error.message };
+      return { error: actionError(error) };
     }
 
     const logs: AccountingLoanLog[] = (data || []).map((r) => ({
@@ -1447,7 +1448,7 @@ export async function getAccountingLoanActivity(loanId: string) {
     return { logs };
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to load activity',
+      error: actionError(err, 'Failed to load activity'),
     };
   }
 }

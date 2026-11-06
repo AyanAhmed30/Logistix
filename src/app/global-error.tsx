@@ -2,6 +2,7 @@
 
 import { useEffect } from "react";
 import { ErrorFallback } from "@/components/error/ErrorFallback";
+import { reloadIfStaleClient } from "@/lib/client-recovery";
 
 export default function GlobalError({
   error,
@@ -12,6 +13,7 @@ export default function GlobalError({
 }) {
   useEffect(() => {
     console.error("[global-error]", error);
+    reloadIfStaleClient(error);
   }, [error]);
 
   return (
@@ -21,7 +23,6 @@ export default function GlobalError({
           <ErrorFallback
             title="Application error"
             description="Logistix Express encountered an unexpected problem. Your session is still active — try reloading this page."
-            errorMessage={error.message}
             onRetry={reset}
             onGoHome={() => {
               window.location.assign("/");

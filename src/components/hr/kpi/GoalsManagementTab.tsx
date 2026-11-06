@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Edit, PlusCircle, Target, Trash2 } from "lucide-react";
-import { toast } from "sonner";
+import { toast } from "@/lib/app-toast";
 import type { Employee } from "@/app/actions/employees";
 import {
   createGoal,

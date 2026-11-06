@@ -15,6 +15,7 @@ import {
   type ShipmentInfoStatus,
 } from '@/lib/sales-orders-info';
 import { revalidatePath } from 'next/cache';
+import { actionError } from '@/lib/user-facing-error';
 
 async function resolveSalesOrgScope() {
   const { requireAdminOrganizationScope, sessionUsesOrganizationScope } = await import(
@@ -167,7 +168,7 @@ export async function getSalesOrdersInfo(input: {
     const to = from + pageSize - 1;
 
     const { data, error, count } = await query.range(from, to);
-    if (error) return { error: error.message };
+    if (error) return { error: actionError(error) };
 
     const agentIds = [
       ...new Set(
@@ -348,7 +349,7 @@ export async function getSalesOrdersInfo(input: {
     };
   } catch (error) {
     return {
-      error: error instanceof Error ? error.message : 'Unable to load Orders Info.',
+      error: actionError(error, 'Unable to load Orders Info.'),
     };
   }
 }
@@ -378,7 +379,7 @@ export async function updateSalesOrderShipmentInfo(input: {
     }
 
     const { data: existing, error: fetchError } = await fetchQuery.maybeSingle();
-    if (fetchError) return { error: fetchError.message };
+    if (fetchError) return { error: actionError(fetchError) };
     if (!existing) return { error: 'Quotation not found.' };
 
     if (ownershipOr) {
@@ -427,7 +428,7 @@ export async function updateSalesOrderShipmentInfo(input: {
       .update(patch)
       .eq('id', input.quotationId);
 
-    if (updateError) return { error: updateError.message };
+    if (updateError) return { error: actionError(updateError) };
 
     await supabase.from('quotation_logs').insert({
       quotation_id: input.quotationId,
@@ -478,8 +479,7 @@ export async function updateSalesOrderShipmentInfo(input: {
     return { ok: true };
   } catch (error) {
     return {
-      error:
-        error instanceof Error ? error.message : 'Unable to update shipment information.',
+      error: actionError(error, 'Unable to update shipment information.'),
     };
   }
 }
@@ -507,7 +507,7 @@ export async function uploadSalesParcelPhoto(formData: FormData): Promise<
     return { ok: true, url: uploaded.url, path: `${INQUIRY_IMAGES_BUCKET}/${path}` };
   } catch (error) {
     return {
-      error: error instanceof Error ? error.message : 'Photo upload failed.',
+      error: actionError(error, 'Photo upload failed.'),
     };
   }
 }

@@ -15,6 +15,7 @@ import {
   parseJournalCsv,
   type AccountingJournalType,
 } from '@/lib/accounting-journals';
+import { actionError } from '@/lib/user-facing-error';
 
 export type AccountingJournalListItem = {
   id: string;
@@ -303,7 +304,7 @@ export async function ensureDefaultAccountingJournals() {
     return { created };
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to ensure default journals',
+      error: actionError(err, 'Failed to ensure default journals'),
     };
   }
 }
@@ -363,7 +364,7 @@ export async function getAccountingConfigJournals(opts?: {
           migrationRequired: true as const,
         };
       }
-      return { error: error.message };
+      return { error: actionError(error) };
     }
 
     const journals = await enrichJournals(
@@ -373,7 +374,7 @@ export async function getAccountingConfigJournals(opts?: {
     return { journals, total: count || 0, page, pageSize };
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to load journals',
+      error: actionError(err, 'Failed to load journals'),
     };
   }
 }
@@ -389,7 +390,7 @@ export async function getAccountingConfigJournalDetail(journalId: string) {
       .select('*')
       .eq('id', journalId)
       .maybeSingle();
-    if (error || !row) return { error: error?.message || 'Journal not found' };
+    if (error || !row) return { error: actionError(error, 'Journal not found') };
 
     if (
       scope.organizationId &&
@@ -412,7 +413,7 @@ export async function getAccountingConfigJournalDetail(journalId: string) {
     return { journal: detail };
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to load journal',
+      error: actionError(err, 'Failed to load journal'),
     };
   }
 }
@@ -580,13 +581,13 @@ export async function createAccountingConfigJournal(payload: {
       if (/unique|duplicate/i.test(error.message)) {
         return { error: 'Journal code must be unique within the organization' };
       }
-      return { error: error.message };
+      return { error: actionError(error) };
     }
 
     return { journalId: String(data!.id) };
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to create journal',
+      error: actionError(err, 'Failed to create journal'),
     };
   }
 }
@@ -723,13 +724,13 @@ export async function updateAccountingConfigJournal(
       if (/unique|duplicate/i.test(error.message)) {
         return { error: 'Journal code must be unique within the organization' };
       }
-      return { error: error.message };
+      return { error: actionError(error) };
     }
 
     return getAccountingConfigJournalDetail(journalId);
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to update journal',
+      error: actionError(err, 'Failed to update journal'),
     };
   }
 }
@@ -799,7 +800,7 @@ export async function allocateAccountingJournalSequence(args: {
           const p = String(j?.sequence_prefix || j?.code || prefix).toUpperCase();
           return { number: `${p}${String(n).padStart(5, '0')}` };
         }
-        return { error: error.message };
+        return { error: actionError(error) };
       }
       return {
         number: `${String(created.prefix || prefix).toUpperCase()}${String(1).padStart(5, '0')}`,
@@ -811,14 +812,14 @@ export async function allocateAccountingJournalSequence(args: {
       .from('accounting_journal_sequences')
       .update({ next_number: n + 1, updated_at: new Date().toISOString() })
       .eq('id', existing.id);
-    if (updErr) return { error: updErr.message };
+    if (updErr) return { error: actionError(updErr) };
 
     return {
       number: `${String(existing.prefix || prefix).toUpperCase()}${String(n).padStart(5, '0')}`,
     };
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to allocate sequence',
+      error: actionError(err, 'Failed to allocate sequence'),
     };
   }
 }
@@ -847,7 +848,7 @@ export async function exportAccountingConfigJournalsCsv() {
     return { csv };
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to export journals',
+      error: actionError(err, 'Failed to export journals'),
     };
   }
 }
@@ -957,7 +958,7 @@ export async function importAccountingConfigJournalsCsv(csvText: string) {
     return { created, updated, errors };
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to import journals',
+      error: actionError(err, 'Failed to import journals'),
     };
   }
 }

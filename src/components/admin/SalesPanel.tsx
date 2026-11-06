@@ -17,7 +17,7 @@ import { getAllLeadsForAdmin, type LeadWithSalesAgent } from "@/app/actions/lead
 import { getAllConvertedCustomersForAdmin, type ConvertedCustomerWithDetails } from "@/app/actions/customer_conversion";
 import { getSalesAgentDirectoryForAdmin, type SalesAgentDirectoryRow } from "@/app/actions/admin_sales_agent_overview";
 import { SalesAgentOverviewDrawer, type DateRangeKey } from "@/components/admin/SalesAgentOverviewDrawer";
-import { toast } from "sonner";
+import { toast } from "@/lib/app-toast";
 
 type SalesSubTab = "leads" | "customer-list" | "sales-agent-overview";
 

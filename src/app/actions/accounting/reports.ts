@@ -16,6 +16,7 @@ import {
 import { documentPaymentSnapshot } from '@/lib/accounting-payments';
 import { daysOverdueFromDueDate } from '@/lib/accounting-payment-terms';
 import { accountingCanAccessReports } from '@/lib/accounting-roles';
+import { actionError } from '@/lib/user-facing-error';
 
 export type ReportFilters = {
   dateFrom?: string;
@@ -132,7 +133,7 @@ async function loadInvoices(filters: ReportFilters = {}) {
   }
 
   const { data, error } = await q.limit(5000);
-  if (error) return { error: error.message };
+  if (error) return { error: actionError(error) };
 
   let invoices = (data || []).map((r) => ({
     id: String(r.id),
@@ -460,7 +461,7 @@ export async function getAccountingReportBundle(filters: ReportFilters = {}) {
     };
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to load reports',
+      error: actionError(err, 'Failed to load reports'),
     };
   }
 }

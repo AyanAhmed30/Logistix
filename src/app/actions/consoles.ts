@@ -7,6 +7,7 @@ import {
 } from "@/lib/auth/require-access";
 import { ensureConsoleOrderLoadingRows, logConsoleLoadingEvent } from "@/lib/loading-workflow-server";
 import { getSession } from "@/lib/auth/session";
+import { actionError } from '@/lib/user-facing-error';
 type ConsoleInput = {
   console_number: string;
   container_number: string;
@@ -91,12 +92,12 @@ export async function createConsole(console: ConsoleInput) {
       if (error.code === "23505") {
         return { error: "Console number already exists" };
       }
-      return { error: error.message || "Failed to create console" };
+      return { error: actionError(error, "Failed to create console") };
     }
 
     return { console: data };
   } catch (err) {
-    return { error: err instanceof Error ? err.message : "An unexpected error occurred while creating console" };
+    return { error: actionError(err, "An unexpected error occurred while creating console") };
   }
 }
 
@@ -166,7 +167,7 @@ export async function getAllConsoles() {
     }
 
     if (error) {
-      return { error: error.message || "Failed to fetch consoles" };
+      return { error: actionError(error, "Failed to fetch consoles") };
     }
 
     // Keep active + ready_for_loading visible in Console tab (reusable console workflow).
@@ -180,7 +181,7 @@ export async function getAllConsoles() {
 
     return { consoles: filtered };
   } catch (err) {
-    return { error: err instanceof Error ? err.message : "An unexpected error occurred while fetching consoles" };
+    return { error: actionError(err, "An unexpected error occurred while fetching consoles") };
   }
 }
 
@@ -200,7 +201,7 @@ export async function getReadyForLoadingConsoles() {
       .order("created_at", { ascending: false });
 
     if (error) {
-      return { error: error.message || "Failed to fetch consoles" };
+      return { error: actionError(error, "Failed to fetch consoles") };
     }
 
     // Filter by status in JavaScript (handles case where status column doesn't exist)
@@ -211,7 +212,7 @@ export async function getReadyForLoadingConsoles() {
 
     return { consoles: filtered };
   } catch (err) {
-    return { error: err instanceof Error ? err.message : "An unexpected error occurred while fetching ready for loading consoles" };
+    return { error: actionError(err, "An unexpected error occurred while fetching ready for loading consoles") };
   }
 }
 
@@ -241,7 +242,7 @@ export async function markConsoleReadyForLoading(consoleId: string) {
       .single();
 
     if (error) {
-      return { error: error.message || "Failed to mark console as ready for loading" };
+      return { error: actionError(error, "Failed to mark console as ready for loading") };
     }
 
     // Record only newly sent orders for Loading Instruction, so old orders are not re-sent.
@@ -274,7 +275,7 @@ export async function markConsoleReadyForLoading(consoleId: string) {
 
     return { console: data };
   } catch (err) {
-    return { error: err instanceof Error ? err.message : "An unexpected error occurred while marking console as ready for loading" };
+    return { error: actionError(err, "An unexpected error occurred while marking console as ready for loading") };
   }
 }
 
@@ -298,7 +299,7 @@ export async function getConsoleWithOrders(
       .single();
 
     if (consoleError || !console) {
-      return { error: consoleError?.message || "Console not found" };
+      return { error: actionError(consoleError, "Console not found") };
     }
 
     // Get orders for this console
@@ -308,7 +309,7 @@ export async function getConsoleWithOrders(
       .eq("console_id", consoleId);
 
     if (ordersError) {
-      return { error: ordersError.message || "Failed to fetch console orders" };
+      return { error: actionError(ordersError, "Failed to fetch console orders") };
     }
 
     const orderIds = consoleOrders?.map((co) => co.order_id) || [];
@@ -347,12 +348,12 @@ export async function getConsoleWithOrders(
       .in("id", filteredOrderIds);
 
     if (fullOrdersError) {
-      return { error: fullOrdersError.message || "Failed to fetch orders" };
+      return { error: actionError(fullOrdersError, "Failed to fetch orders") };
     }
 
     return { console, orders: orders || [] };
   } catch (err) {
-    return { error: err instanceof Error ? err.message : "An unexpected error occurred while fetching console with orders" };
+    return { error: actionError(err, "An unexpected error occurred while fetching console with orders") };
   }
 }
 
@@ -401,7 +402,7 @@ export async function assignOrdersToConsole(consoleId: string, orderIds: string[
     .in("id", orderIds);
 
   if (ordersError) {
-    return { error: ordersError.message || "Failed to fetch orders" };
+    return { error: actionError(ordersError, "Failed to fetch orders") };
   }
 
   // Calculate CBM and cartons of orders to add
@@ -470,13 +471,13 @@ export async function assignOrdersToConsole(consoleId: string, orderIds: string[
     if (insertError.code === "23505") {
       return { error: "One or more orders are already assigned to this console" };
     }
-    return { error: insertError.message || "Failed to assign orders" };
+    return { error: actionError(insertError, "Failed to assign orders") };
   }
 
   try {
     await ensureConsoleOrderLoadingRows(supabase, consoleId, orderIds);
   } catch (e) {
-    return { error: e instanceof Error ? e.message : "Failed to sync loading assignments" };
+    return { error: actionError(e, "Failed to sync loading assignments") };
   }
 
   if (console.loading_phase === "space_available" || console.status === "ready_for_loading") {
@@ -505,11 +506,11 @@ export async function assignOrdersToConsole(consoleId: string, orderIds: string[
     .eq("id", consoleId);
 
   if (updateError) {
-    return { error: updateError.message || "Failed to update console totals" };
+    return { error: actionError(updateError, "Failed to update console totals") };
   }
 
   return { success: true };
   } catch (err) {
-    return { error: err instanceof Error ? err.message : "An unexpected error occurred while assigning orders to console" };
+    return { error: actionError(err, "An unexpected error occurred while assigning orders to console") };
   }
 }

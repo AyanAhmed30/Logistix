@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { toast } from "sonner";
+import { toast } from "@/lib/app-toast";
 import { useDebouncedValue } from "@/hooks/useDebouncedValue";
 import { useCrmShell } from "@/components/crm/CrmShell";
 import {

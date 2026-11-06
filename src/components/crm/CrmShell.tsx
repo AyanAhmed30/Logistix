@@ -22,7 +22,7 @@ import { invalidateContactsClientCache } from "@/lib/contacts-client-cache";
 import { invalidateContactPickerCache } from "@/lib/contact-picker-cache";
 import { getCrmPageMeta } from "@/lib/crm-navigation";
 import type { DashboardAccessState } from "@/lib/dashboard-access";
-import { toast } from "sonner";
+import { toast } from "@/lib/app-toast";
 import { AppNotificationBell } from "@/components/notifications/AppNotificationBell";
 
 type CrmShellContextValue = {

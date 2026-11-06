@@ -14,6 +14,7 @@ import {
 } from '@/lib/inquiry-storage';
 import { renderSalesQuotationPdfBufferFromPayload } from '@/lib/sales-quotation-pdf-server';
 import { getSalesQuotationPdfPayload } from '@/app/actions/sales/quotation-pdf';
+import { actionError } from '@/lib/user-facing-error';
 
 export type NegotiationEvent = {
   id: string;
@@ -250,7 +251,7 @@ export async function getQuotationNegotiationState(quotationId: string) {
       .maybeSingle();
 
     if (error || !row) {
-      return { error: error?.message || 'Quotation not found' };
+      return { error: actionError(error, 'Quotation not found') };
     }
 
     const { data: eventRows } = await supabase
@@ -279,7 +280,7 @@ export async function getQuotationNegotiationState(quotationId: string) {
     return { negotiation: mapNegotiationState(row as Record<string, unknown>, events) };
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to load negotiation',
+      error: actionError(err, 'Failed to load negotiation'),
     };
   }
 }
@@ -434,7 +435,7 @@ export async function saveNegotiationCounterDraft(
       .eq('id', quotationId)
       .maybeSingle();
 
-    if (error || !row) return { error: error?.message || 'Quotation not found' };
+    if (error || !row) return { error: actionError(error, 'Quotation not found') };
     if (!row.sent_to_customer_at) {
       return { error: 'Send the quotation to the customer before negotiating.' };
     }
@@ -466,7 +467,7 @@ export async function saveNegotiationCounterDraft(
             'Run supabase/migrations/020_quotation_negotiation.sql in Supabase before using negotiation.',
         };
       }
-      return { error: updateError.message };
+      return { error: actionError(updateError) };
     }
 
     await supabase.from('quotation_negotiation_events').insert([
@@ -503,7 +504,7 @@ export async function saveNegotiationCounterDraft(
     return getQuotationNegotiationState(quotationId);
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to save counter draft',
+      error: actionError(err, 'Failed to save counter draft'),
     };
   }
 }
@@ -524,7 +525,7 @@ export async function rejectCustomerNegotiationRequest(
       .eq('id', quotationId)
       .maybeSingle();
 
-    if (error || !row) return { error: error?.message || 'Quotation not found' };
+    if (error || !row) return { error: actionError(error, 'Quotation not found') };
     const blocked = negotiationBlocked(row as Record<string, unknown>);
     if (blocked) return { error: blocked };
     if (!row.pending_customer_request_amount) {
@@ -562,7 +563,7 @@ export async function rejectCustomerNegotiationRequest(
       })
       .eq('id', quotationId);
 
-    if (updateError) return { error: updateError.message };
+    if (updateError) return { error: actionError(updateError) };
 
     await supabase.from('quotation_logs').insert([
       {
@@ -582,7 +583,7 @@ export async function rejectCustomerNegotiationRequest(
     return getQuotationNegotiationState(quotationId);
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to reject negotiation',
+      error: actionError(err, 'Failed to reject negotiation'),
     };
   }
 }
@@ -621,7 +622,7 @@ export async function applyNegotiationTotals(
       .eq('id', quotationId)
       .maybeSingle();
 
-    if (error || !row) return { error: error?.message || 'Quotation not found' };
+    if (error || !row) return { error: actionError(error, 'Quotation not found') };
     if (!row.sent_to_customer_at || !row.linked_inquiry_id) {
       return { error: 'Quotation must already be linked and sent to a customer inquiry.' };
     }
@@ -690,7 +691,7 @@ export async function applyNegotiationTotals(
           revision: (Number(row.revision) || 1) + 1,
         })
         .eq('id', quotationId);
-      if (retryError) return { error: retryError.message };
+      if (retryError) return { error: actionError(retryError) };
     }
 
     return {
@@ -705,7 +706,7 @@ export async function applyNegotiationTotals(
     };
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to apply negotiation totals',
+      error: actionError(err, 'Failed to apply negotiation totals'),
     };
   }
 }
@@ -732,7 +733,7 @@ export async function attachNegotiationCustomerPdf(
       .eq('id', quotationId)
       .maybeSingle();
 
-    if (error || !row) return { error: error?.message || 'Quotation not found' };
+    if (error || !row) return { error: actionError(error, 'Quotation not found') };
     if (!row.linked_inquiry_id) {
       return { error: 'Quotation is not linked to a customer inquiry.' };
     }
@@ -762,10 +763,7 @@ export async function attachNegotiationCustomerPdf(
       uploaded = await uploadCustomerPdf(supabase, quotationId, rendered.buffer);
     } catch (err) {
       return {
-        error:
-          err instanceof Error
-            ? err.message
-            : 'Failed to store PDF. Totals may already be updated — use Send Quotation to Customer.',
+        error: actionError(err, 'Failed to store PDF. Totals may already be updated — use Send Quotation to Customer.'),
       };
     }
 
@@ -813,9 +811,7 @@ export async function attachNegotiationCustomerPdf(
 
     if (updateError || !updated) {
       return {
-        error:
-          updateError?.message ||
-          'PDF stored but finalize failed. Use Send Quotation to Customer if needed.',
+        error: actionError(updateError, 'PDF stored but finalize failed. Use Send Quotation to Customer if needed.'),
       };
     }
 
@@ -874,8 +870,7 @@ export async function attachNegotiationCustomerPdf(
     };
   } catch (err) {
     return {
-      error:
-        err instanceof Error ? err.message : 'Failed to attach negotiation PDF',
+      error: actionError(err, 'Failed to attach negotiation PDF'),
     };
   }
 }

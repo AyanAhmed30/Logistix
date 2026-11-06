@@ -1,3 +1,5 @@
+import { toUserMessage } from "@/lib/user-facing-error";
+
 export type SafeResult<T> =
   | { ok: true; value: T }
   | { ok: false; error: string };
@@ -26,9 +28,7 @@ export function getErrorMessage(error: unknown, fallback = "Something went wrong
     return fallback;
   }
   if (error instanceof ActionTimeoutError) return error.message;
-  if (error instanceof Error && error.message.trim()) return error.message;
-  if (typeof error === "string" && error.trim()) return error;
-  return fallback;
+  return toUserMessage(error, fallback);
 }
 
 export function withTimeout<T>(

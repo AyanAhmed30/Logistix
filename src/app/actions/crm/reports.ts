@@ -4,6 +4,7 @@ import { createAdminClient } from '@/utils/supabase/server';
 import { requireAnyChildModule, isAccessDenied } from '@/lib/auth/require-access';
 import { resolveCrmOrganizationScope } from '@/app/actions/crm/shared';
 import { ensureDefaultCrmStages } from '@/app/actions/crm/stages';
+import { actionError } from '@/lib/user-facing-error';
 
 export type CrmReportFilters = {
   salespersonId?: string | null;
@@ -116,7 +117,7 @@ export async function getCrmReportsDashboard(
     if (/does not exist|relation/i.test(oppError.message)) {
       return { dashboard: emptyDashboard() };
     }
-    return { error: oppError.message };
+    return { error: actionError(oppError) };
   }
 
   let opportunities = oppRows || [];

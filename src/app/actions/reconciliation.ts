@@ -7,6 +7,7 @@ import {
   calculate_exchange_difference,
   post_exchange_gain_loss,
 } from '@/lib/accounting/multiCurrency';
+import { actionError } from '@/lib/user-facing-error';
 
 type AllocationTarget = { invoice_id?: string; vendor_bill_id?: string };
 type LineMatchInput = {
@@ -69,9 +70,9 @@ export async function getReconciliationData(partnerId?: string) {
 
     const [{ data: payments, error: pErr }, { data: invoices, error: iErr }, { data: bills, error: bErr }] =
       await Promise.all([paymentsQuery, invoicesQuery, billsQuery]);
-    if (pErr) return { error: pErr.message };
-    if (iErr) return { error: iErr.message };
-    if (bErr) return { error: bErr.message };
+    if (pErr) return { error: actionError(pErr) };
+    if (iErr) return { error: actionError(iErr) };
+    if (bErr) return { error: actionError(bErr) };
 
     return {
       payments: payments || [],
@@ -79,7 +80,7 @@ export async function getReconciliationData(partnerId?: string) {
       vendorBills: bills || [],
     };
   } catch (err) {
-    return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };
+    return { error: actionError(err, 'An unexpected error occurred') };
   }
 }
 
@@ -102,7 +103,7 @@ export async function reconcilePayment(
       .select('*')
       .eq('id', paymentId)
       .single();
-    if (paymentError || !payment) return { error: paymentError?.message || 'Payment not found.' };
+    if (paymentError || !payment) return { error: actionError(paymentError, 'Payment not found.') };
     if (payment.status !== 'posted' && payment.status !== 'reconciled') {
       return { error: 'Only posted/reconciled payments can be reconciled.' };
     }
@@ -126,12 +127,12 @@ export async function reconcilePayment(
       p_allocations: normalizedAllocations,
       p_actor: session.username,
     });
-    if (rpcError) return { error: rpcError.message };
+    if (rpcError) return { error: actionError(rpcError) };
 
     revalidatePath('/admin/dashboard');
     return { success: true };
   } catch (err) {
-    return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };
+    return { error: actionError(err, 'An unexpected error occurred') };
   }
 }
 
@@ -154,7 +155,7 @@ export async function reconcile_invoice_payment(input: LineMatchInput) {
       p_amount: amount,
       p_actor: session.username,
     });
-    if (error) return { error: error.message };
+    if (error) return { error: actionError(error) };
 
     // Optional realized FX recognition at settlement time.
     // If both lines carry foreign amounts, compare implied base from open unit rates.
@@ -207,7 +208,7 @@ export async function reconcile_invoice_payment(input: LineMatchInput) {
     revalidatePath('/admin/dashboard');
     return { success: true, reconciliation_id: data as string };
   } catch (err) {
-    return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };
+    return { error: actionError(err, 'An unexpected error occurred') };
   }
 }
 
@@ -232,12 +233,12 @@ export async function reconcile_payment_bank(input: BankMatchInput) {
       p_actor: session.username,
       p_tolerance: tolerance,
     });
-    if (error) return { error: error.message };
+    if (error) return { error: actionError(error) };
 
     revalidatePath('/admin/dashboard');
     return { success: true, reconciliation_id: data as string };
   } catch (err) {
-    return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };
+    return { error: actionError(err, 'An unexpected error occurred') };
   }
 }
 
@@ -266,12 +267,12 @@ export async function reconcile_cod_settlement(input: CodMatchInput) {
       p_actor: session.username,
       p_finalize: Boolean(input.finalize),
     });
-    if (error) return { error: error.message };
+    if (error) return { error: actionError(error) };
 
     revalidatePath('/admin/dashboard');
     return { success: true, reconciliation_id: data as string };
   } catch (err) {
-    return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };
+    return { error: actionError(err, 'An unexpected error occurred') };
   }
 }
 
@@ -287,11 +288,11 @@ export async function unreconcile(reconciliationId: string) {
       p_reconciliation_id: reconciliationId,
       p_actor: session.username,
     });
-    if (error) return { error: error.message };
+    if (error) return { error: actionError(error) };
 
     revalidatePath('/admin/dashboard');
     return { success: true };
   } catch (err) {
-    return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };
+    return { error: actionError(err, 'An unexpected error occurred') };
   }
 }

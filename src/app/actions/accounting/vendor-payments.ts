@@ -11,6 +11,7 @@ import {
 } from '@/lib/accounting-payments';
 import { billOpenAmount } from '@/lib/accounting-document-outstanding';
 import { resolveVendorAccountingScope } from '@/lib/accounting-vendor-scope';
+import { actionError } from '@/lib/user-facing-error';
 
 function round2(n: number) {
   return Math.round(n * 100) / 100;
@@ -116,7 +117,7 @@ export async function registerVendorBillPayment(
       .eq('id', billId)
       .maybeSingle();
 
-    if (loadError || !bill) return { error: loadError?.message || 'Bill not found' };
+    if (loadError || !bill) return { error: actionError(loadError, 'Bill not found') };
     if (
       scope.organizationId &&
       !scope.isGlobalAdminView &&
@@ -183,7 +184,7 @@ export async function registerVendorBillPayment(
           error: 'Run create_accounting_vendors_module.sql migration.',
         };
       }
-      return { error: payError?.message || 'Failed to register payment' };
+      return { error: actionError(payError, 'Failed to register payment') };
     }
 
     const refreshed = await refreshBillPaymentState(
@@ -250,7 +251,7 @@ export async function registerVendorBillPayment(
     return getAccountingBillDetail(billId);
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to register payment',
+      error: actionError(err, 'Failed to register payment'),
     };
   }
 }
@@ -348,7 +349,7 @@ export async function getAccountingVendorPayments(filters: {
           pageSize,
         };
       }
-      return { error: error.message };
+      return { error: actionError(error) };
     }
 
     const rows = data || [];
@@ -431,7 +432,7 @@ export async function getAccountingVendorPayments(filters: {
     return { payments, total: count ?? payments.length, page, pageSize };
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to load payments',
+      error: actionError(err, 'Failed to load payments'),
     };
   }
 }
@@ -448,7 +449,7 @@ export async function getAccountingVendorPaymentDetail(paymentId: string) {
       .eq('id', paymentId)
       .maybeSingle();
 
-    if (error || !row) return { error: error?.message || 'Payment not found' };
+    if (error || !row) return { error: actionError(error, 'Payment not found') };
     if (
       scope.organizationId &&
       !scope.isGlobalAdminView &&
@@ -511,7 +512,7 @@ export async function getAccountingVendorPaymentDetail(paymentId: string) {
     };
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to load payment',
+      error: actionError(err, 'Failed to load payment'),
     };
   }
 }
@@ -532,7 +533,7 @@ export async function getAccountingBillPayments(billId: string) {
       if (/accounting_vendor_payments|relation/i.test(error.message)) {
         return { payments: [] };
       }
-      return { error: error.message };
+      return { error: actionError(error) };
     }
 
     return {
@@ -549,7 +550,7 @@ export async function getAccountingBillPayments(billId: string) {
     };
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to load payments',
+      error: actionError(err, 'Failed to load payments'),
     };
   }
 }

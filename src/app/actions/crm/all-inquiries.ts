@@ -24,6 +24,7 @@ import {
   type InquiryWorkflowStatus,
 } from '@/lib/inquiry-workflow';
 import { normalizeInquiryFlags, type InquiryFlag } from '@/lib/inquiry-flags';
+import { actionError } from '@/lib/user-facing-error';
 
 const LIST_SELECT = `
   id,
@@ -595,10 +596,10 @@ export async function getSalesAllInquiries(): Promise<
         fallback = fallback.eq('leads.sales_agent_id', visibility.salesAgentId);
       }
       const retry = await fallback;
-      if (retry.error) return { error: retry.error.message };
+      if (retry.error) return { error: actionError(retry.error) };
       rows = retry.data || [];
     } else if (error) {
-      return { error: error.message };
+      return { error: actionError(error) };
     }
 
     const mappedBase = mapListRows(rows, visibility, auth.session.username);
@@ -626,7 +627,7 @@ export async function getSalesAllInquiries(): Promise<
       }),
     };
   } catch (err) {
-    return { error: err instanceof Error ? err.message : 'Failed to load inquiries' };
+    return { error: actionError(err, 'Failed to load inquiries') };
   }
 }
 
@@ -678,7 +679,7 @@ export async function getSalesInquiryDetail(
       .eq('id', inquiryId.trim())
       .maybeSingle();
 
-    if (error) return { error: error.message };
+    if (error) return { error: actionError(error) };
     if (!data) return { error: 'Inquiry not found' };
 
     const row = data as Record<string, unknown>;
@@ -851,7 +852,7 @@ export async function getSalesInquiryDetail(
       },
     };
   } catch (err) {
-    return { error: err instanceof Error ? err.message : 'Failed to load inquiry' };
+    return { error: actionError(err, 'Failed to load inquiry') };
   }
 }
 

@@ -13,6 +13,7 @@ import {
   resolveLoadingConsoleForOrder,
 } from "@/lib/loading-workflow-server";
 import { lookupCartonByScanIdentifier } from "@/lib/lookup-carton-by-scan-identifier";
+import { actionError } from '@/lib/user-facing-error';
 
 export { lookupCartonByScanIdentifier };
 
@@ -38,13 +39,13 @@ export async function getNextCartonSerial() {
     const supabase = await createAdminClient();
     const { data, error } = await supabase.rpc("next_carton_serial");
     if (error || data === null || data === undefined) {
-      return { error: error?.message || "Unable to generate serial number" };
+      return { error: actionError(error, "Unable to generate serial number") };
     }
 
     const serial = String(data).padStart(7, "0");
     return { serial };
   } catch (err) {
-    return { error: err instanceof Error ? err.message : "An unexpected error occurred while generating serial number" };
+    return { error: actionError(err, "An unexpected error occurred while generating serial number") };
   }
 }
 
@@ -86,7 +87,7 @@ export async function createOrderWithCartons(order: OrderInput, cartons: CartonI
       .single();
 
     if (orderError || !orderData?.id) {
-      return { error: orderError?.message || "Unable to create order" };
+      return { error: actionError(orderError, "Unable to create order") };
     }
 
     const cartonsPayload = cartons.map((carton) => ({
@@ -121,7 +122,7 @@ export async function createOrderWithCartons(order: OrderInput, cartons: CartonI
 
     if (cartonError) {
       await supabase.from("orders").delete().eq("id", orderData.id);
-      return { error: cartonError.message };
+      return { error: actionError(cartonError) };
     }
 
     return {
@@ -129,7 +130,7 @@ export async function createOrderWithCartons(order: OrderInput, cartons: CartonI
       cartons: cartonData ?? [],
     };
   } catch (err) {
-    return { error: err instanceof Error ? err.message : "An unexpected error occurred while creating order" };
+    return { error: actionError(err, "An unexpected error occurred while creating order") };
   }
 }
 
@@ -152,7 +153,7 @@ export async function getOrderHistory() {
       .order("carton_index", { ascending: true, referencedTable: "cartons" });
 
     if (error) {
-      return { error: error.message };
+      return { error: actionError(error) };
     }
 
     return { orders: data ?? [] };
@@ -192,7 +193,7 @@ export async function getAllOrdersForAdmin() {
       .select("order_id");
 
     if (assignedError) {
-      return { error: assignedError.message };
+      return { error: actionError(assignedError) };
     }
 
     const assignedOrderIds = new Set(assignedOrders?.map((co) => co.order_id) || []);
@@ -221,7 +222,7 @@ export async function getAllOrdersForAdmin() {
     }
 
     if (error) {
-      return { error: error.message };
+      return { error: actionError(error) };
     }
 
     // Filter out orders that are already assigned to consoles
@@ -251,7 +252,7 @@ export async function getAdminNotifications() {
       .limit(20);
 
     if (error) {
-      return { error: error.message };
+      return { error: actionError(error) };
     }
 
     return { notifications: data ?? [] };
@@ -276,7 +277,7 @@ export async function getCartonBySerial(serial: string) {
       .single();
 
     if (error) {
-      return { error: error.message || "Carton not found" };
+      return { error: actionError(error, "Carton not found") };
     }
 
     if (!data) {
@@ -285,7 +286,7 @@ export async function getCartonBySerial(serial: string) {
 
     return { carton: data };
   } catch (err) {
-    return { error: err instanceof Error ? err.message : "Unable to load carton details" };
+    return { error: actionError(err, "Unable to load carton details") };
   }
 }
 
@@ -357,7 +358,7 @@ export async function getCartonScanPreview(scanIdentifier: string) {
     }
 
     if (lookupError || !carton) {
-      return { error: lookupError?.message || "Carton not found" };
+      return { error: actionError(lookupError, "Carton not found") };
     }
 
     const ordersValue = carton.orders;
@@ -492,7 +493,7 @@ export async function getCartonScanPreview(scanIdentifier: string) {
       },
     };
   } catch (err) {
-    return { error: err instanceof Error ? err.message : "Unable to load scan preview" };
+    return { error: actionError(err, "Unable to load scan preview") };
   }
 }
 
@@ -523,7 +524,7 @@ export async function recordCartonScan(scanIdentifier: string) {
     const cartonError = recordLookup.error;
 
     if (cartonError || !carton) {
-      return { error: cartonError?.message || "Carton not found" };
+      return { error: actionError(cartonError, "Carton not found") };
     }
 
     type CartonWithOrder = {
@@ -595,7 +596,7 @@ export async function recordCartonScan(scanIdentifier: string) {
             carton: buildCartonPayload(),
           };
         }
-        return { error: ins.error.message };
+        return { error: actionError(ins.error) };
       }
 
       const statusUpdate = await supabase
@@ -607,7 +608,7 @@ export async function recordCartonScan(scanIdentifier: string) {
         })
         .eq("id", carton.id);
       if (statusUpdate.error && !/(scan_status|scanned_at|scanned_by)/i.test(statusUpdate.error.message || "")) {
-        return { error: statusUpdate.error.message };
+        return { error: actionError(statusUpdate.error) };
       }
 
       return {
@@ -737,7 +738,7 @@ export async function recordCartonScan(scanIdentifier: string) {
           carton: buildCartonPayload(),
         };
       }
-      return { error: insertRes.error.message };
+      return { error: actionError(insertRes.error) };
     }
 
     return {
@@ -748,7 +749,7 @@ export async function recordCartonScan(scanIdentifier: string) {
       carton: buildCartonPayload(),
     };
   } catch (err) {
-    return { error: err instanceof Error ? err.message : "Unable to record carton scan" };
+    return { error: actionError(err, "Unable to record carton scan") };
   }
 }
 
@@ -805,7 +806,7 @@ export async function getLoadingInstructionsForUser() {
       .order("created_at", { ascending: false });
 
     if (cErr) {
-      return { error: cErr.message };
+      return { error: actionError(cErr) };
     }
 
     type InstructionOrder = {
@@ -880,7 +881,7 @@ export async function getLoadingInstructionsForUser() {
 
     return { instructions };
   } catch (err) {
-    return { error: err instanceof Error ? err.message : "Unable to load loading instructions" };
+    return { error: actionError(err, "Unable to load loading instructions") };
   }
 }
 
@@ -928,7 +929,7 @@ export async function getReInwardProgressForUser() {
       .neq("loading_phase", "closed");
 
     if (cErr) {
-      return { error: cErr.message };
+      return { error: actionError(cErr) };
     }
 
     const rows: ReInwardProgressRow[] = [];
@@ -1032,7 +1033,7 @@ export async function getReInwardProgressForUser() {
 
     return { rows };
   } catch (err) {
-    return { error: err instanceof Error ? err.message : "Unable to load re-inward progress" };
+    return { error: actionError(err, "Unable to load re-inward progress") };
   }
 }
 
@@ -1058,7 +1059,7 @@ export async function getOrderScanProgressForUser() {
       .limit(orderLimit);
 
     if (ordersError) {
-      return { error: ordersError.message };
+      return { error: actionError(ordersError) };
     }
 
     if (!orders || orders.length === 0) {
@@ -1082,7 +1083,7 @@ export async function getOrderScanProgressForUser() {
         .eq("username", session.username)
         .in("order_id", orderIds);
       if (legacy.error) {
-        return { error: legacy.error.message };
+        return { error: actionError(legacy.error) };
       }
       scanRows = (legacy.data || []).map((r) => ({
         carton_id: r.carton_id as string,
@@ -1092,7 +1093,7 @@ export async function getOrderScanProgressForUser() {
         order_id: r.order_id as string,
       }));
     } else if (scanSelect.error) {
-      return { error: scanSelect.error.message };
+      return { error: actionError(scanSelect.error) };
     } else {
       scanRows = (scanSelect.data || []) as typeof scanRows;
     }
@@ -1116,7 +1117,7 @@ export async function getOrderScanProgressForUser() {
       .in("order_id", orderIds);
 
     if (coErr) {
-      return { error: coErr.message };
+      return { error: actionError(coErr) };
     }
 
     type ConsoleMeta = {
@@ -1299,7 +1300,7 @@ export async function getOrderScanProgressForUser() {
 
     return { orders: rows };
   } catch (err) {
-    return { error: err instanceof Error ? err.message : "Unable to load scan progress" };
+    return { error: actionError(err, "Unable to load scan progress") };
   }
 }
 
@@ -1342,7 +1343,7 @@ export async function getScannedCartonsForUser() {
         .order("scanned_at", { ascending: false })
         .limit(200);
       if (legacy.error) {
-        return { error: legacy.error.message };
+        return { error: actionError(legacy.error) };
       }
       normalizedScanRows = (legacy.data || []).map((r) => ({
         ...(r as NormalizedUserScan),
@@ -1350,7 +1351,7 @@ export async function getScannedCartonsForUser() {
         console_id: null,
       }));
     } else if (error) {
-      return { error: error.message };
+      return { error: actionError(error) };
     }
 
     const rows = normalizedScanRows;
@@ -1415,7 +1416,7 @@ export async function getScannedCartonsForUser() {
 
     return { scans };
   } catch (err) {
-    return { error: err instanceof Error ? err.message : "Unable to load scanned cartons" };
+    return { error: actionError(err, "Unable to load scanned cartons") };
   }
 }
 
@@ -1435,11 +1436,11 @@ export async function deleteCartonScan(scanId: string) {
       .eq("username", session.username);
 
     if (error) {
-      return { error: error.message };
+      return { error: actionError(error) };
     }
 
     return { success: true };
   } catch (err) {
-    return { error: err instanceof Error ? err.message : "Unable to delete scanned sticker" };
+    return { error: actionError(err, "Unable to delete scanned sticker") };
   }
 }

@@ -2,7 +2,7 @@
 /* eslint-disable @next/next/no-img-element */
 
 import { useEffect, useState, useTransition, useCallback, useRef, useMemo } from "react";
-import { toast } from "sonner";
+import { toast } from "@/lib/app-toast";
 import {
   Plus,
   X,

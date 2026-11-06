@@ -5,7 +5,7 @@ import { createUser } from '@/app/actions/user';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { toast } from 'sonner';
+import { toast } from '@/lib/app-toast';
 
 export function CreateUserForm() {
     const [isLoading, setIsLoading] = useState(false);

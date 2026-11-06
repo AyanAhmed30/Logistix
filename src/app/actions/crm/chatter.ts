@@ -9,6 +9,7 @@ import {
 } from '@/app/actions/crm/shared';
 import { uploadToInquiryImagesBucket } from '@/lib/inquiry-storage';
 import type { CrmChatterEntry, CrmChatterEntryType } from '@/app/actions/crm/types';
+import { actionError } from '@/lib/user-facing-error';
 
 const PAGE_SIZE = 40;
 
@@ -49,7 +50,7 @@ async function assertOpportunityAccess(opportunityId: string) {
   }
 
   const { data, error } = await query.maybeSingle();
-  if (error) return { error: error.message };
+  if (error) return { error: actionError(error) };
   if (!data) return { error: 'Opportunity not found.' };
 
   return {
@@ -88,7 +89,7 @@ export async function getOpportunityChatter(
   }
 
   const { data, error } = await query;
-  if (error) return { error: error.message };
+  if (error) return { error: actionError(error) };
 
   const entries = (data || []).map((row) => mapEntry(row as Record<string, unknown>));
   return { entries, hasMore: entries.length >= limit };
@@ -108,7 +109,7 @@ export async function getOpportunityFollowers(opportunityId: string) {
     .eq('opportunity_id', opportunityId)
     .order('created_at', { ascending: true });
 
-  if (error) return { error: error.message };
+  if (error) return { error: actionError(error) };
   return {
     followers: (data || []).map((r) => ({
       username: String(r.username),
@@ -149,7 +150,7 @@ export async function toggleOpportunityFollower(opportunityId: string) {
       .delete()
       .eq('opportunity_id', opportunityId)
       .eq('username', username);
-    if (error) return { error: error.message };
+    if (error) return { error: actionError(error) };
     return { following: false as const };
   }
 
@@ -157,7 +158,7 @@ export async function toggleOpportunityFollower(opportunityId: string) {
     opportunity_id: opportunityId,
     username,
   });
-  if (error) return { error: error.message };
+  if (error) return { error: actionError(error) };
   return { following: true as const };
 }
 
@@ -191,7 +192,7 @@ async function insertChatterEntry(input: {
     .select('*')
     .single();
 
-  if (error || !data) return { error: error?.message || 'Failed to save entry.' };
+  if (error || !data) return { error: actionError(error, 'Failed to save entry.') };
   return { entry: mapEntry(data as Record<string, unknown>) };
 }
 
@@ -332,7 +333,7 @@ export async function logOpportunityChatterAudit(input: {
     .select('*')
     .single();
 
-  if (error || !data) return { error: error?.message || 'Failed to log audit.' };
+  if (error || !data) return { error: actionError(error, 'Failed to log audit.') };
   return { entry: mapEntry(data as Record<string, unknown>) };
 }
 

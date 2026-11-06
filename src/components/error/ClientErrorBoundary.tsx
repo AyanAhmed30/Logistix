@@ -2,6 +2,7 @@
 
 import React from "react";
 import { ErrorFallback } from "@/components/error/ErrorFallback";
+import { reloadIfStaleClient } from "@/lib/client-recovery";
 
 type ClientErrorBoundaryProps = {
   children: React.ReactNode;
@@ -10,7 +11,6 @@ type ClientErrorBoundaryProps = {
   resetKey?: string | number | null;
   onReset?: () => void;
   compact?: boolean;
-  showErrorMessage?: boolean;
 };
 
 type ClientErrorBoundaryState = {
@@ -35,6 +35,7 @@ export class ClientErrorBoundary extends React.Component<
 
   componentDidCatch(error: Error, errorInfo: React.ErrorInfo) {
     console.error("[ClientErrorBoundary]", error, errorInfo);
+    reloadIfStaleClient(error);
   }
 
   private handleRetry = () => {
@@ -54,9 +55,6 @@ export class ClientErrorBoundary extends React.Component<
         <ErrorFallback
           title={this.props.title}
           description={this.props.description}
-          errorMessage={
-            this.props.showErrorMessage ? this.state.error.message : null
-          }
           onRetry={this.handleRetry}
           onGoHome={this.handleGoHome}
           compact={this.props.compact}

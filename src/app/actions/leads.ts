@@ -15,6 +15,7 @@ import { LEAD_SOURCE_VALUES, isValidLeadSource } from '@/lib/lead-source';
 import { listInquiriesForLead, type LeadInquiry } from '@/app/actions/inquiries';
 import { resolveSalesAgentForSession } from '@/lib/legacy-user-bridge';
 import type { SessionPayload } from '@/lib/auth/session';
+import { actionError } from '@/lib/user-facing-error';
 
 async function fetchSalesAgentBySession(
   supabase: Awaited<ReturnType<typeof createAdminClient>>,
@@ -381,7 +382,7 @@ async function finishCreateLead(input: {
         if (retryError.message.includes('does not exist') || retryError.message.includes('relation') || retryError.code === '42P01') {
           return { error: 'Leads table does not exist. Please run the SQL migration in Supabase.' };
         }
-        return { error: retryError.message };
+        return { error: actionError(retryError) };
       }
     }
 
@@ -389,7 +390,7 @@ async function finishCreateLead(input: {
       return { error: 'Leads table does not exist. Please run the SQL migration in Supabase.' };
     }
 
-    return { error: error?.message || 'Failed to create lead' };
+    return { error: actionError(error, 'Failed to create lead') };
   }
 
   if (!data) {
@@ -510,7 +511,7 @@ export async function createLead(formData: FormData) {
       preferredLeadIdFormatted,
     });
   } catch (err) {
-    return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };
+    return { error: actionError(err, 'An unexpected error occurred') };
   }
 }
 
@@ -582,7 +583,7 @@ export async function getAllLeadsForSalesAgent() {
         if (error.message.includes('does not exist') || error.message.includes('relation') || error.code === '42P01') {
           return { error: 'Leads table does not exist. Please run the SQL migration in Supabase.' };
         }
-        return { error: error.message };
+        return { error: actionError(error) };
       }
 
       const batch = (data || []) as Lead[];
@@ -607,7 +608,7 @@ export async function getAllLeadsForSalesAgent() {
       totalCount: leadsWithStatus.length,
     };
   } catch (err) {
-    return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };
+    return { error: actionError(err, 'An unexpected error occurred') };
   }
 }
 
@@ -617,7 +618,7 @@ export async function getLeadForSalesAgentById(leadId: string) {
     if ('error' in result) return result;
     return { lead: result.lead };
   } catch (err) {
-    return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };
+    return { error: actionError(err, 'An unexpected error occurred') };
   }
 }
 
@@ -661,7 +662,7 @@ export async function getSalesAgentLeadDetailBootstrap(
         }
 
         if (leadResult.error) {
-          return { error: leadResult.error.message };
+          return { error: actionError(leadResult.error) };
         }
         if (!leadResult.data || leadResult.data.sales_agent_id !== fallbackAgent.id) {
           return { error: 'Lead not found' };
@@ -675,7 +676,7 @@ export async function getSalesAgentLeadDetailBootstrap(
           approvedInquiryId: inquiryResult.approvedInquiryId,
         };
       }
-      return { error: agentResult.error.message };
+      return { error: actionError(agentResult.error) };
     }
 
     const salesAgent = agentResult.data;
@@ -689,7 +690,7 @@ export async function getSalesAgentLeadDetailBootstrap(
     }
 
     if (leadResult.error) {
-      return { error: leadResult.error.message };
+      return { error: actionError(leadResult.error) };
     }
     if (!leadResult.data || leadResult.data.sales_agent_id !== salesAgent.id) {
       return { error: 'Lead not found' };
@@ -703,7 +704,7 @@ export async function getSalesAgentLeadDetailBootstrap(
       approvedInquiryId: inquiryResult.approvedInquiryId,
     };
   } catch (err) {
-    return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };
+    return { error: actionError(err, 'An unexpected error occurred') };
   }
 }
 
@@ -764,7 +765,7 @@ export async function getAllLeadsForAdmin() {
       if (error.message.includes('does not exist') || error.message.includes('relation') || error.code === '42P01') {
         return { error: 'Leads table does not exist. Please run the SQL migration in Supabase.' };
       }
-      return { error: error.message };
+      return { error: actionError(error) };
     }
 
     // Transform the data to match LeadWithSalesAgent type
@@ -791,7 +792,7 @@ export async function getAllLeadsForAdmin() {
 
     return { leads: leadsWithAgent };
   } catch (err) {
-    return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };
+    return { error: actionError(err, 'An unexpected error occurred') };
   }
 }
 
@@ -875,7 +876,7 @@ export async function updateLeadStatus(leadId: string, status: LeadStatus) {
       if (error.message.includes('check constraint') || error.message.includes('leads_status_check')) {
         return { error: `Invalid status value. Status must be one of: Leads, Inquiry Received, Quotation Sent, Negotiation, Win` };
       }
-      return { error: error.message };
+      return { error: actionError(error) };
     }
 
     await addLeadLifecycleLog(supabase, {
@@ -891,7 +892,7 @@ export async function updateLeadStatus(leadId: string, status: LeadStatus) {
     revalidatePath('/sales-agent/dashboard');
     return { success: true, lead: data as Lead };
   } catch (err) {
-    return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };
+    return { error: actionError(err, 'An unexpected error occurred') };
   }
 }
 
@@ -934,12 +935,12 @@ export async function getLeadComments(leadId: string) {
       .order('created_at', { ascending: false });
 
     if (error) {
-      return { error: error.message };
+      return { error: actionError(error) };
     }
 
     return { comments: (data || []) as LeadComment[] };
   } catch (err) {
-    return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };
+    return { error: actionError(err, 'An unexpected error occurred') };
   }
 }
 
@@ -1003,13 +1004,13 @@ export async function createLeadComment(leadId: string, comment: string) {
       .single();
 
     if (error) {
-      return { error: error.message };
+      return { error: actionError(error) };
     }
 
     revalidatePath('/sales-agent/dashboard');
     return { success: true, comment: data as LeadComment };
   } catch (err) {
-    return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };
+    return { error: actionError(err, 'An unexpected error occurred') };
   }
 }
 
@@ -1085,13 +1086,13 @@ export async function updateLeadComment(commentId: string, comment: string) {
       .single();
 
     if (error) {
-      return { error: error.message };
+      return { error: actionError(error) };
     }
 
     revalidatePath('/sales-agent/dashboard');
     return { success: true, comment: data as LeadComment };
   } catch (err) {
-    return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };
+    return { error: actionError(err, 'An unexpected error occurred') };
   }
 }
 
@@ -1158,13 +1159,13 @@ export async function deleteLeadComment(commentId: string) {
       .eq('id', commentId);
 
     if (error) {
-      return { error: error.message };
+      return { error: actionError(error) };
     }
 
     revalidatePath('/sales-agent/dashboard');
     return { success: true };
   } catch (err) {
-    return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };
+    return { error: actionError(err, 'An unexpected error occurred') };
   }
 }
 
@@ -1307,7 +1308,7 @@ export async function updateLead(formData: FormData) {
       if (error.message.includes('does not exist') || error.message.includes('relation') || error.code === '42P01') {
         return { error: 'Leads table does not exist. Please run the SQL migration in Supabase.' };
       }
-      return { error: error.message };
+      return { error: actionError(error) };
     }
 
     await addLeadLifecycleLog(supabase, {
@@ -1332,7 +1333,7 @@ export async function updateLead(formData: FormData) {
     revalidatePath('/admin/dashboard');
     return { success: true, lead: data as Lead };
   } catch (err) {
-    return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };
+    return { error: actionError(err, 'An unexpected error occurred') };
   }
 }
 
@@ -1390,14 +1391,14 @@ export async function deleteLead(leadId: string) {
       if (error.message.includes('does not exist') || error.message.includes('relation') || error.code === '42P01') {
         return { error: 'Leads table does not exist. Please run the SQL migration in Supabase.' };
       }
-      return { error: error.message };
+      return { error: actionError(error) };
     }
 
     revalidatePath('/sales-agent/dashboard');
     revalidatePath('/admin/dashboard');
     return { success: true };
   } catch (err) {
-    return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };
+    return { error: actionError(err, 'An unexpected error occurred') };
   }
 }
 
@@ -1432,14 +1433,14 @@ export async function getTransferableSalesAgents() {
       .order('name', { ascending: true });
 
     if (error) {
-      return { error: error.message };
+      return { error: actionError(error) };
     }
 
     return {
       salesAgents: (data || []) as TransferableSalesAgent[],
     };
   } catch (err) {
-    return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };
+    return { error: actionError(err, 'An unexpected error occurred') };
   }
 }
 
@@ -1515,7 +1516,7 @@ export async function transferLeadToSalesAgent(leadId: string, targetSalesAgentI
       .single();
 
     if (updateError) {
-      return { error: updateError.message };
+      return { error: actionError(updateError) };
     }
 
     const { error: transferInsertError } = await supabase
@@ -1532,7 +1533,7 @@ export async function transferLeadToSalesAgent(leadId: string, targetSalesAgentI
       }]);
 
     if (transferInsertError) {
-      return { error: transferInsertError.message };
+      return { error: actionError(transferInsertError) };
     }
 
     if (recipientAgent.username) {
@@ -1552,7 +1553,7 @@ export async function transferLeadToSalesAgent(leadId: string, targetSalesAgentI
         }]);
 
       if (notificationError) {
-        return { error: notificationError.message };
+        return { error: actionError(notificationError) };
       }
     }
 
@@ -1560,7 +1561,7 @@ export async function transferLeadToSalesAgent(leadId: string, targetSalesAgentI
     revalidatePath('/admin/dashboard');
     return { success: true, lead: updatedLead as Lead };
   } catch (err) {
-    return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };
+    return { error: actionError(err, 'An unexpected error occurred') };
   }
 }
 
@@ -1606,7 +1607,7 @@ export async function getLeadTransferHistoryForCurrentSalesAgent() {
       .order('transferred_at', { ascending: false });
 
     if (transferError) {
-      return { error: transferError.message };
+      return { error: actionError(transferError) };
     }
 
     const transfers = transferRows || [];
@@ -1629,7 +1630,7 @@ export async function getLeadTransferHistoryForCurrentSalesAgent() {
       .in('id', salesAgentIds);
 
     if (salesAgentsError) {
-      return { error: salesAgentsError.message };
+      return { error: actionError(salesAgentsError) };
     }
 
     const byId = new Map(
@@ -1661,6 +1662,6 @@ export async function getLeadTransferHistoryForCurrentSalesAgent() {
       receivedTransfers: records.filter((record) => record.to_sales_agent_id === currentAgent.id),
     };
   } catch (err) {
-    return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };
+    return { error: actionError(err, 'An unexpected error occurred') };
   }
 }

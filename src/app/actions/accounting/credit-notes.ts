@@ -2,6 +2,7 @@
 
 import { createAdminClient } from '@/utils/supabase/server';
 import { getAccountingInvoiceDetail } from '@/app/actions/accounting/invoices';
+import { actionError } from '@/lib/user-facing-error';
 
 export type CreditNoteStatus = 'draft' | 'posted' | 'cancelled';
 
@@ -402,7 +403,7 @@ export async function createManualAccountingCreditNote() {
             'Run create_accounting_credit_notes_phase6_7.sql migration to enable credit notes.',
         };
       }
-      return { error: error?.message || 'Failed to create credit note' };
+      return { error: actionError(error, 'Failed to create credit note') };
     }
 
     await supabase.from('accounting_credit_note_lines').insert([
@@ -440,7 +441,7 @@ export async function createManualAccountingCreditNote() {
     return { creditNoteId: String(cn.id) };
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to create credit note',
+      error: actionError(err, 'Failed to create credit note'),
     };
   }
 }
@@ -494,7 +495,7 @@ export async function updateAccountingCreditNote(
       .maybeSingle();
 
     if (loadError || !row) {
-      return { error: loadError?.message || 'Credit note not found' };
+      return { error: actionError(loadError, 'Credit note not found') };
     }
     if (String(row.status) !== 'draft') {
       return { error: 'Only draft credit notes can be edited' };
@@ -603,7 +604,7 @@ export async function updateAccountingCreditNote(
       })
       .eq('id', creditNoteId);
 
-    if (updError) return { error: updError.message };
+    if (updError) return { error: actionError(updError) };
 
     if (payload.lines) {
       await supabase
@@ -642,7 +643,7 @@ export async function updateAccountingCreditNote(
     return getAccountingCreditNoteDetail(creditNoteId);
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to update credit note',
+      error: actionError(err, 'Failed to update credit note'),
     };
   }
 }
@@ -741,7 +742,7 @@ export async function resetAccountingCreditNoteToDraft(creditNoteId: string) {
     return getAccountingCreditNoteDetail(creditNoteId);
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to reset credit note',
+      error: actionError(err, 'Failed to reset credit note'),
     };
   }
 }
@@ -891,7 +892,7 @@ export async function createCreditNoteFromInvoice(
             'Run create_accounting_credit_notes_phase6_7.sql migration to enable credit notes.',
         };
       }
-      return { error: error?.message || 'Failed to create credit note' };
+      return { error: actionError(error, 'Failed to create credit note') };
     }
 
     const { error: cnLineErr } = await supabase
@@ -1023,7 +1024,7 @@ export async function createCreditNoteFromInvoice(
     return { creditNoteId, replacementInvoiceId };
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to create credit note',
+      error: actionError(err, 'Failed to create credit note'),
     };
   }
 }
@@ -1039,7 +1040,7 @@ export async function getAccountingCreditNoteDetail(creditNoteId: string) {
       .select('*')
       .eq('id', creditNoteId)
       .maybeSingle();
-    if (error || !cn) return { error: error?.message || 'Credit note not found' };
+    if (error || !cn) return { error: actionError(error, 'Credit note not found') };
 
     if (
       scope.organizationId &&
@@ -1066,7 +1067,7 @@ export async function getAccountingCreditNoteDetail(creditNoteId: string) {
     };
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to load credit note',
+      error: actionError(err, 'Failed to load credit note'),
     };
   }
 }
@@ -1242,7 +1243,7 @@ export async function postAccountingCreditNote(
     return getAccountingCreditNoteDetail(creditNoteId);
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to post credit note',
+      error: actionError(err, 'Failed to post credit note'),
     };
   }
 }
@@ -1315,7 +1316,7 @@ export async function cancelAccountingCreditNote(creditNoteId: string) {
     return getAccountingCreditNoteDetail(creditNoteId);
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to cancel credit note',
+      error: actionError(err, 'Failed to cancel credit note'),
     };
   }
 }
@@ -1410,7 +1411,7 @@ export async function issueAccountingRefund(opts: {
             'Run create_accounting_credit_notes_phase6_7.sql migration to enable refunds.',
         };
       }
-      return { error: error?.message || 'Failed to create payment' };
+      return { error: actionError(error, 'Failed to create payment') };
     }
 
     const nextRefundsSum = round2(refundsSum + amount);
@@ -1447,7 +1448,7 @@ export async function issueAccountingRefund(opts: {
         .eq('id', opts.creditNoteId);
       updError = retry.error;
     }
-    if (updError) return { error: updError.message };
+    if (updError) return { error: actionError(updError) };
 
     if (cn.invoice_id) {
       await supabase.from('accounting_invoice_logs').insert([
@@ -1476,7 +1477,7 @@ export async function issueAccountingRefund(opts: {
     };
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to create payment',
+      error: actionError(err, 'Failed to create payment'),
     };
   }
 }
@@ -1520,7 +1521,7 @@ export async function getAccountingCreditNotes(filters: {
       if (/accounting_credit_notes|relation/i.test(error.message)) {
         return { creditNotes: [], total: 0, page, pageSize };
       }
-      return { error: error.message };
+      return { error: actionError(error) };
     }
 
     const rows = data || [];
@@ -1569,7 +1570,7 @@ export async function getAccountingCreditNotes(filters: {
     };
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to load credit notes',
+      error: actionError(err, 'Failed to load credit notes'),
     };
   }
 }
@@ -1611,7 +1612,7 @@ export async function getAccountingRefundHistory(filters: {
       if (/accounting_refunds|relation/i.test(error.message)) {
         return { refunds: [] as AccountingRefundListItem[], total: 0, page, pageSize };
       }
-      return { error: error.message };
+      return { error: actionError(error) };
     }
 
     const rows = data || [];
@@ -1673,7 +1674,7 @@ export async function getAccountingRefundHistory(filters: {
     return { refunds, total: count ?? refunds.length, page, pageSize };
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to load refunds',
+      error: actionError(err, 'Failed to load refunds'),
     };
   }
 }

@@ -4,6 +4,7 @@ import { getSession } from '@/lib/auth/session';
 import { createAdminClient } from '@/utils/supabase/server';
 import { sessionHasSalesAccess } from '@/lib/auth/require-access';
 import type { ContactWithRelations, ContactTag } from '@/app/actions/contacts';
+import { actionError } from '@/lib/user-facing-error';
 
 /**
  * Sales Customers — Contacts with customer_rank > 0 (same Contacts table).
@@ -59,7 +60,7 @@ export async function getSalesCustomers(search?: string) {
       };
     }
 
-    if (error) return { error: error.message };
+    if (error) return { error: actionError(error) };
 
     let filtered = rows || [];
 
@@ -139,7 +140,7 @@ export async function getSalesCustomers(search?: string) {
     return { customers };
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to load customers',
+      error: actionError(err, 'Failed to load customers'),
     };
   }
 }

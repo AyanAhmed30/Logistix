@@ -13,6 +13,7 @@ import {
   generateOrganizationRfqNumber,
   reserveUniqueOrganizationRfqNumber,
 } from '@/lib/organization-rfq-number';
+import { actionError } from '@/lib/user-facing-error';
 
 export type OrganizationQuotation = {
   id: string;
@@ -167,14 +168,14 @@ export async function getOrganizationQuotations() {
       if (error.message.includes('does not exist') || error.code === '42P01') {
         return { quotations: [] };
       }
-      return { error: error.message };
+      return { error: actionError(error) };
     }
 
     return {
       quotations: (data || []).map((row) => normalizeQuotation(row as Record<string, unknown>)),
     };
   } catch (err) {
-    return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };
+    return { error: actionError(err, 'An unexpected error occurred') };
   }
 }
 
@@ -190,7 +191,7 @@ export async function getNextOrganizationQuotationNumber() {
     const rfq_number = await generateOrganizationRfqNumber(ctx.supabase, ctx.organization.id);
     return { quotation_number, rfq_number };
   } catch (err) {
-    return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };
+    return { error: actionError(err, 'An unexpected error occurred') };
   }
 }
 
@@ -218,7 +219,7 @@ export async function createOrganizationQuotation(formData: FormData) {
       .eq('status', 'active')
       .maybeSingle();
 
-    if (customerError) return { error: customerError.message };
+    if (customerError) return { error: actionError(customerError) };
     if (!customer) return { error: 'Selected customer was not found' };
 
     const lineItemsResult = parseLineItemsFromForm(formData);
@@ -265,14 +266,14 @@ export async function createOrganizationQuotation(formData: FormData) {
       if (error.message.includes('does not exist') || error.code === '42P01') {
         return { error: 'Organization quotations table does not exist. Please run the SQL migration in Supabase.' };
       }
-      return { error: error.message };
+      return { error: actionError(error) };
     }
 
     revalidatePath('/organization/dashboard');
     revalidatePath('/user/dashboard');
     return { success: true, quotation: normalizeQuotation(data as Record<string, unknown>) };
   } catch (err) {
-    return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };
+    return { error: actionError(err, 'An unexpected error occurred') };
   }
 }
 
@@ -302,7 +303,7 @@ export async function updateOrganizationQuotation(formData: FormData) {
       .eq('status', 'active')
       .maybeSingle();
 
-    if (customerError) return { error: customerError.message };
+    if (customerError) return { error: actionError(customerError) };
     if (!customer) return { error: 'Selected customer was not found' };
 
     const lineItemsResult = parseLineItemsFromForm(formData);
@@ -335,14 +336,14 @@ export async function updateOrganizationQuotation(formData: FormData) {
       .select(QUOTATION_SELECT)
       .single();
 
-    if (error) return { error: error.message };
+    if (error) return { error: actionError(error) };
     if (!data) return { error: 'Quotation not found' };
 
     revalidatePath('/organization/dashboard');
     revalidatePath('/user/dashboard');
     return { success: true, quotation: normalizeQuotation(data as Record<string, unknown>) };
   } catch (err) {
-    return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };
+    return { error: actionError(err, 'An unexpected error occurred') };
   }
 }
 
@@ -363,12 +364,12 @@ export async function archiveOrganizationQuotation(formData: FormData) {
       .eq('id', id)
       .eq('organization_id', ctx.organization.id);
 
-    if (error) return { error: error.message };
+    if (error) return { error: actionError(error) };
 
     revalidatePath('/organization/dashboard');
     revalidatePath('/user/dashboard');
     return { success: true };
   } catch (err) {
-    return { error: err instanceof Error ? err.message : 'An unexpected error occurred' };
+    return { error: actionError(err, 'An unexpected error occurred') };
   }
 }

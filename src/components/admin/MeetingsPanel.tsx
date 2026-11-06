@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
-import { toast } from "sonner";
+import { toast } from "@/lib/app-toast";
 import SummaryCard from "./SummaryCard";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";

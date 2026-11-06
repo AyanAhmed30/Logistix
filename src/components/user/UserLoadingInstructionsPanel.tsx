@@ -18,7 +18,7 @@ import type {
 } from "@/lib/loading-instruction-progress";
 import { LoadingInstructionFilters } from "@/components/loading-instructions/LoadingInstructionFilters";
 import { LoadingInstructionOrdersTable } from "@/components/loading-instructions/LoadingInstructionOrdersTable";
-import { toast } from "sonner";
+import { toast } from "@/lib/app-toast";
 
 type InstructionBundle = {
   console: {

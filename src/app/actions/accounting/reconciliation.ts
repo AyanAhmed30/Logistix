@@ -5,6 +5,7 @@ import { getSession } from '@/lib/auth/session';
 import { sessionHasAccountingAccess } from '@/lib/accounting-page-access';
 import { computePaymentState, outstandingFromComponents, invoicePaidDeltaFromReconcileCredits } from '@/lib/accounting-payments';
 import { sumPostedCreditNotesForInvoice } from '@/lib/accounting-document-outstanding';
+import { actionError } from '@/lib/user-facing-error';
 
 export type ReconciliationDocumentType =
   | 'customer_invoice'
@@ -77,7 +78,7 @@ export async function getAccountingJournalItemsToReconcile(filters?: {
     }
 
     const { data: entries, error: entryErr } = await entryQ;
-    if (entryErr) return { error: entryErr.message };
+    if (entryErr) return { error: actionError(entryErr) };
     if (!entries?.length) {
       return { items: [] as JournalItemToReconcile[], total: 0, page, pageSize };
     }
@@ -103,7 +104,7 @@ export async function getAccountingJournalItemsToReconcile(filters?: {
           )
           .in('journal_entry_id', entryIds)
           .order('sequence', { ascending: true });
-        if (basicErr) return { error: basicErr.message };
+        if (basicErr) return { error: actionError(basicErr) };
         return buildJournalItemsFromLines(
           supabase,
           basicLines || [],
@@ -111,7 +112,7 @@ export async function getAccountingJournalItemsToReconcile(filters?: {
           { search, withResidualOnly, page, pageSize, legacy: true }
         );
       }
-      return { error: lineErr.message };
+      return { error: actionError(lineErr) };
     }
 
     return buildJournalItemsFromLines(supabase, lines || [], entryMap, {
@@ -123,10 +124,7 @@ export async function getAccountingJournalItemsToReconcile(filters?: {
     });
   } catch (err) {
     return {
-      error:
-        err instanceof Error
-          ? err.message
-          : 'Failed to load journal items to reconcile',
+      error: actionError(err, 'Failed to load journal items to reconcile'),
     };
   }
 }
@@ -808,8 +806,7 @@ export async function getAccountingOutstandingEntries(filters?: {
     return { entries: pageRows, total, page, pageSize };
   } catch (err) {
     return {
-      error:
-        err instanceof Error ? err.message : 'Failed to load outstanding entries',
+      error: actionError(err, 'Failed to load outstanding entries'),
     };
   }
 }
@@ -835,7 +832,7 @@ export async function getAccountingReconciliationSuggestions() {
       invQ = invQ.eq('organization_id', scope.organizationId);
     }
     const { data: invoices, error: invErr } = await invQ;
-    if (invErr) return { error: invErr.message };
+    if (invErr) return { error: actionError(invErr) };
 
     let payQ = supabase
       .from('accounting_invoice_payments')
@@ -846,7 +843,7 @@ export async function getAccountingReconciliationSuggestions() {
       payQ = payQ.eq('organization_id', scope.organizationId);
     }
     const { data: payRows, error: payErr } = await payQ;
-    if (payErr) return { error: payErr.message };
+    if (payErr) return { error: actionError(payErr) };
 
     const invById = new Map((invoices || []).map((i) => [String(i.id), i]));
     const payments: OutstandingEntry[] = [];
@@ -1049,8 +1046,7 @@ export async function getAccountingReconciliationSuggestions() {
     return { suggestions: suggestions.slice(0, 40) };
   } catch (err) {
     return {
-      error:
-        err instanceof Error ? err.message : 'Failed to load suggestions',
+      error: actionError(err, 'Failed to load suggestions'),
     };
   }
 }
@@ -1343,7 +1339,7 @@ export async function reconcileAccountingEntries(input: {
           appliedWithoutRecord: true as const,
         };
       }
-      return { error: reconErr?.message || 'Failed to create reconciliation' };
+      return { error: actionError(reconErr, 'Failed to create reconciliation') };
     }
 
     const lineRows = [];
@@ -1499,7 +1495,7 @@ export async function reconcileAccountingEntries(input: {
     };
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to reconcile',
+      error: actionError(err, 'Failed to reconcile'),
     };
   }
 }
@@ -1775,7 +1771,7 @@ export async function unreconcileAccountingReconciliation(reconciliationId: stri
     return { ok: true as const };
   } catch (err) {
     return {
-      error: err instanceof Error ? err.message : 'Failed to unreconcile',
+      error: actionError(err, 'Failed to unreconcile'),
     };
   }
 }
@@ -1817,7 +1813,7 @@ export async function getAccountingReconciliations(filters?: {
       if (/accounting_reconciliations|relation/i.test(error.message)) {
         return { reconciliations: [], total: 0, page, pageSize };
       }
-      return { error: error.message };
+      return { error: actionError(error) };
     }
 
     return {
@@ -1838,8 +1834,7 @@ export async function getAccountingReconciliations(filters?: {
     };
   } catch (err) {
     return {
-      error:
-        err instanceof Error ? err.message : 'Failed to load reconciliations',
+      error: actionError(err, 'Failed to load reconciliations'),
     };
   }
 }
@@ -1884,10 +1879,7 @@ export async function getAccountingBankReconciliationBootstrap() {
     };
   } catch (err) {
     return {
-      error:
-        err instanceof Error
-          ? err.message
-          : 'Failed to load bank reconciliation data',
+      error: actionError(err, 'Failed to load bank reconciliation data'),
     };
   }
 }

@@ -192,7 +192,7 @@ export function AccountingTaxFormView({ taxId }: Props) {
         return;
       }
       toast.success("Tax saved");
-      if (res.tax) setTax(res.tax);
+      if ("tax" in res && res.tax) setTax(res.tax);
     });
   }
 

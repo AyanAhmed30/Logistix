@@ -12,6 +12,7 @@ import {
   type ProductTaxLike,
 } from '@/lib/product-accounting';
 import { actionError } from '@/lib/user-facing-error';
+import { viewOnlyError } from '@/lib/auth/view-only';
 
 export type SalesProductTaxRef = ProductTaxLike & {
   id: string;
@@ -509,6 +510,8 @@ export async function getSalesProductById(id: string) {
 }
 
 export async function createSalesProduct(input: SalesProductUpsertInput) {
+  const viewOnly = await viewOnlyError();
+  if (viewOnly) return { error: viewOnly };
   try {
     const scope = await resolveSalesOrgScope();
     if ('error' in scope && scope.error) return { error: scope.error };
@@ -575,6 +578,8 @@ export async function createSalesProduct(input: SalesProductUpsertInput) {
 }
 
 export async function updateSalesProduct(id: string, input: SalesProductUpsertInput) {
+  const viewOnly = await viewOnlyError();
+  if (viewOnly) return { error: viewOnly };
   try {
     const scope = await resolveSalesOrgScope();
     if ('error' in scope && scope.error) return { error: scope.error };
@@ -643,6 +648,8 @@ export async function updateSalesProduct(id: string, input: SalesProductUpsertIn
 }
 
 export async function setSalesProductActive(id: string, active: boolean) {
+  const viewOnly = await viewOnlyError();
+  if (viewOnly) return { error: viewOnly };
   try {
     const scope = await resolveSalesOrgScope();
     if ('error' in scope && scope.error) return { error: scope.error };
@@ -664,6 +671,8 @@ export async function setSalesProductActive(id: string, active: boolean) {
 }
 
 export async function uploadSalesProductImage(productId: string, formData: FormData) {
+  const viewOnly = await viewOnlyError();
+  if (viewOnly) return { error: viewOnly };
   try {
     const scope = await resolveSalesOrgScope();
     if ('error' in scope && scope.error) return { error: scope.error };
@@ -737,6 +746,8 @@ export async function upsertSalesProductCategory(input: {
   name: string;
   parent_id?: string | null;
 }) {
+  const viewOnly = await viewOnlyError();
+  if (viewOnly) return { error: viewOnly };
   try {
     const scope = await resolveSalesOrgScope();
     if ('error' in scope && scope.error) return { error: scope.error };
@@ -800,6 +811,8 @@ export async function upsertSalesProductCategory(input: {
 }
 
 export async function deleteSalesProductCategory(id: string) {
+  const viewOnly = await viewOnlyError();
+  if (viewOnly) return { error: viewOnly };
   try {
     const scope = await resolveSalesOrgScope();
     if ('error' in scope && scope.error) return { error: scope.error };

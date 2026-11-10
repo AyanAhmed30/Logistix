@@ -12,6 +12,7 @@ import {
 } from '@/lib/accounting-vendor-scope';
 import { computeBillLineTotal } from '@/lib/accounting-bill-math';
 import { actionError } from '@/lib/user-facing-error';
+import { viewOnlyError } from '@/lib/auth/view-only';
 
 export type AccountingBillLog = {
   id: string;
@@ -84,6 +85,8 @@ export async function updateAccountingBill(
   billId: string,
   payload: UpdateAccountingBillInput
 ) {
+  const viewOnly = await viewOnlyError();
+  if (viewOnly) return { error: viewOnly };
   try {
     const scope = await resolveVendorAccountingScope();
     if ('error' in scope && scope.error) return { error: scope.error };
@@ -333,6 +336,8 @@ async function transitionStatus(
 }
 
 export async function postAccountingBill(billId: string) {
+  const viewOnly = await viewOnlyError();
+  if (viewOnly) return { error: viewOnly };
   try {
     const scope = await resolveVendorAccountingScope();
     if ('error' in scope && scope.error) return { error: scope.error };
@@ -500,6 +505,8 @@ export async function cancelAccountingBill(billId: string) {
 }
 
 export async function resetAccountingBillToDraft(billId: string) {
+  const viewOnly = await viewOnlyError();
+  if (viewOnly) return { error: viewOnly };
   try {
     const scope = await resolveVendorAccountingScope();
     if ('error' in scope && scope.error) return { error: scope.error };
@@ -561,6 +568,8 @@ export async function resetAccountingBillToDraft(billId: string) {
 }
 
 export async function duplicateAccountingBill(billId: string) {
+  const viewOnly = await viewOnlyError();
+  if (viewOnly) return { error: viewOnly };
   try {
     const scope = await resolveVendorAccountingScope();
     if ('error' in scope && scope.error) return { error: scope.error };
@@ -698,6 +707,8 @@ export async function getAccountingBillActivity(billId: string) {
 }
 
 export async function postAccountingBillNote(billId: string, note: string) {
+  const viewOnly = await viewOnlyError();
+  if (viewOnly) return { error: viewOnly };
   try {
     const scope = await resolveVendorAccountingScope();
     if ('error' in scope && scope.error) return { error: scope.error };

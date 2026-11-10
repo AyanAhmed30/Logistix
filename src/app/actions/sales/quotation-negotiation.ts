@@ -15,6 +15,7 @@ import {
 import { renderSalesQuotationPdfBufferFromPayload } from '@/lib/sales-quotation-pdf-server';
 import { getSalesQuotationPdfPayload } from '@/app/actions/sales/quotation-pdf';
 import { actionError } from '@/lib/user-facing-error';
+import { viewOnlyError } from '@/lib/auth/view-only';
 
 export type NegotiationEvent = {
   id: string;
@@ -421,6 +422,8 @@ export async function saveNegotiationCounterDraft(
   offeredAmount: number,
   message: string
 ) {
+  const viewOnly = await viewOnlyError();
+  if (viewOnly) return { error: viewOnly };
   try {
     const scope = await resolveSalesScope();
     if ('error' in scope) return { error: scope.error };
@@ -514,6 +517,8 @@ export async function rejectCustomerNegotiationRequest(
   quotationId: string,
   message: string
 ) {
+  const viewOnly = await viewOnlyError();
+  if (viewOnly) return { error: viewOnly };
   try {
     const scope = await resolveSalesScope();
     if ('error' in scope) return { error: scope.error };
@@ -607,6 +612,8 @@ export async function applyNegotiationTotals(
     }
   | { error: string }
 > {
+  const viewOnly = await viewOnlyError();
+  if (viewOnly) return { error: viewOnly };
   try {
     const scope = await resolveSalesScope();
     if ('error' in scope) return { error: scope.error };
@@ -722,6 +729,8 @@ export async function attachNegotiationCustomerPdf(
   | { quotation: SalesQuotationDetail; negotiation: QuotationNegotiationState; pdfUrl: string }
   | { error: string }
 > {
+  const viewOnly = await viewOnlyError();
+  if (viewOnly) return { error: viewOnly };
   try {
     const scope = await resolveSalesScope();
     if ('error' in scope) return { error: scope.error };
@@ -880,6 +889,8 @@ export async function applyNegotiationOfferAndSendToCustomer(
   quotationId: string,
   mode: ApplyAndSendMode
 ) {
+  const viewOnly = await viewOnlyError();
+  if (viewOnly) return { error: viewOnly };
   const applied = await applyNegotiationTotals(quotationId, mode);
   if ('error' in applied) return applied;
   return attachNegotiationCustomerPdf(quotationId, mode);

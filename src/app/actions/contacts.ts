@@ -4,6 +4,7 @@ import { revalidatePath } from 'next/cache';
 import { getSession } from '@/lib/auth/session';
 import { createAdminClient } from '@/utils/supabase/server';
 import { actionError } from '@/lib/user-facing-error';
+import { viewOnlyError } from '@/lib/auth/view-only';
 
 // =============================================================
 // Types
@@ -1233,6 +1234,8 @@ export async function getContactTags() {
 }
 
 export async function createContactTag(name: string, color?: string) {
+  const viewOnly = await viewOnlyError();
+  if (viewOnly) return { error: viewOnly };
   try {
     const session = await getSession();
     ensureAuth(session);
@@ -1557,6 +1560,8 @@ function buildDiffLines(
 }
 
 export async function createContact(input: ContactUpsertInput) {
+  const viewOnly = await viewOnlyError();
+  if (viewOnly) return { error: viewOnly };
   try {
     const {
       allocateContactLeadIdFormatted,
@@ -1776,6 +1781,8 @@ export async function createContact(input: ContactUpsertInput) {
 }
 
 export async function updateContact(input: ContactUpsertInput) {
+  const viewOnly = await viewOnlyError();
+  if (viewOnly) return { error: viewOnly };
   try {
     const session = await getSession();
     const s = ensureAuth(session);
@@ -1938,6 +1945,8 @@ export async function updateContact(input: ContactUpsertInput) {
 }
 
 export async function deleteContact(id: string) {
+  const viewOnly = await viewOnlyError();
+  if (viewOnly) return { error: viewOnly };
   try {
     const session = await getSession();
     ensureAuth(session);
@@ -1983,6 +1992,8 @@ export type ChildContactInput = {
 };
 
 export async function createChildContact(input: ChildContactInput) {
+  const viewOnly = await viewOnlyError();
+  if (viewOnly) return { error: viewOnly };
   try {
     const session = await getSession();
     const s = ensureAuth(session);
@@ -2058,6 +2069,8 @@ export async function createChildContact(input: ChildContactInput) {
 }
 
 export async function deleteChildContact(id: string) {
+  const viewOnly = await viewOnlyError();
+  if (viewOnly) return { error: viewOnly };
   try {
     const session = await getSession();
     ensureAuth(session);
@@ -2097,6 +2110,8 @@ export async function logContactActivity(
   action_type: ActivityActionType,
   body: string
 ) {
+  const viewOnly = await viewOnlyError();
+  if (viewOnly) return { error: viewOnly };
   try {
     const session = await getSession();
     const s = ensureAuth(session);
@@ -2557,6 +2572,8 @@ export async function createQuickContact(input: {
   phone?: string | null;
   company_name?: string | null;
 }) {
+  const viewOnly = await viewOnlyError();
+  if (viewOnly) return { error: viewOnly };
   return createContact({
     name: input.name,
     email: input.email ?? null,

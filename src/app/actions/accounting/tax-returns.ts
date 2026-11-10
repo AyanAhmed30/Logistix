@@ -13,6 +13,7 @@ import {
 } from '@/lib/accounting-tax-returns';
 import type { AutoPostingLine } from '@/lib/accounting-journal-posting';
 import { actionError } from '@/lib/user-facing-error';
+import { viewOnlyError } from '@/lib/auth/view-only';
 
 export type AccountingTaxReturnListItem = {
   id: string;
@@ -868,6 +869,8 @@ export async function createAccountingTaxReturn(opts?: {
   dateTo?: string;
   name?: string;
 }) {
+  const viewOnly = await viewOnlyError();
+  if (viewOnly) return { error: viewOnly };
   try {
     const scope = await resolveScope();
     if ('error' in scope && scope.error) return { error: scope.error };
@@ -1045,6 +1048,8 @@ export async function generateAccountingTaxReturn(returnId: string) {
 }
 
 export async function confirmAccountingTaxReturn(returnId: string) {
+  const viewOnly = await viewOnlyError();
+  if (viewOnly) return { error: viewOnly };
   try {
     const scope = await resolveScope();
     if ('error' in scope && scope.error) return { error: scope.error };
@@ -1091,6 +1096,8 @@ export async function confirmAccountingTaxReturn(returnId: string) {
 
 /** File return → settlement JE + status filed. */
 export async function fileAccountingTaxReturn(returnId: string) {
+  const viewOnly = await viewOnlyError();
+  if (viewOnly) return { error: viewOnly };
   try {
     const scope = await resolveScope();
     if ('error' in scope && scope.error) return { error: scope.error };
@@ -1289,6 +1296,8 @@ export async function updateAccountingTaxReturn(
     tax_authority_account_id?: string | null;
   }
 ) {
+  const viewOnly = await viewOnlyError();
+  if (viewOnly) return { error: viewOnly };
   try {
     const scope = await resolveScope();
     if ('error' in scope && scope.error) return { error: scope.error };
@@ -1353,6 +1362,8 @@ export async function lockAccountingTaxPeriod(opts: {
   name?: string;
   returnId?: string;
 }) {
+  const viewOnly = await viewOnlyError();
+  if (viewOnly) return { error: viewOnly };
   try {
     const scope = await resolveScope();
     if ('error' in scope && scope.error) return { error: scope.error };
@@ -1402,6 +1413,8 @@ export async function lockAccountingTaxPeriod(opts: {
 }
 
 export async function unlockAccountingTaxPeriod(periodId: string, returnId?: string) {
+  const viewOnly = await viewOnlyError();
+  if (viewOnly) return { error: viewOnly };
   try {
     const scope = await resolveScope();
     if ('error' in scope && scope.error) return { error: scope.error };

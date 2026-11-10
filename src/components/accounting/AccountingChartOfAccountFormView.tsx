@@ -227,7 +227,7 @@ export function AccountingChartOfAccountFormView({ accountId }: Props) {
         return;
       }
       toast.success("Account saved");
-      if (res.account) {
+      if ("account" in res && res.account) {
         setAccount(res.account);
       }
     });

@@ -13,6 +13,7 @@ import {
   type SalesQuotationUiStatus,
 } from '@/lib/sales-navigation';
 import { actionError } from '@/lib/user-facing-error';
+import { viewOnlyError } from '@/lib/auth/view-only';
 
 export type SalesQuotationLineInput = {
   id?: string | null;
@@ -990,6 +991,8 @@ export async function getSalesQuotationDetailForWorkflow(id: string) {
 }
 
 export async function createSalesQuotation(payload: SalesQuotationFormPayload) {
+  const viewOnly = await viewOnlyError();
+  if (viewOnly) return { error: viewOnly };
   try {
     const scope = await resolveSalesOrgScope();
     if ('error' in scope && scope.error) return { error: scope.error };
@@ -1090,6 +1093,8 @@ export async function updateSalesQuotation(
   id: string,
   payload: SalesQuotationFormPayload
 ) {
+  const viewOnly = await viewOnlyError();
+  if (viewOnly) return { error: viewOnly };
   try {
     const scope = await resolveSalesOrgScope();
     if ('error' in scope && scope.error) return { error: scope.error };
@@ -1185,14 +1190,20 @@ export async function updateSalesQuotation(
 }
 
 export async function markSalesQuotationSent(id: string) {
+  const viewOnly = await viewOnlyError();
+  if (viewOnly) return { error: viewOnly };
   return transitionSalesQuotationStatus(id, 'quotation_sent', 'emailed');
 }
 
 export async function markSalesQuotationCustomerReview(id: string) {
+  const viewOnly = await viewOnlyError();
+  if (viewOnly) return { error: viewOnly };
   return transitionSalesQuotationStatus(id, 'customer_review');
 }
 
 export async function confirmSalesQuotation(id: string) {
+  const viewOnly = await viewOnlyError();
+  if (viewOnly) return { error: viewOnly };
   return transitionSalesQuotationStatus(id, 'sales_order');
 }
 
@@ -1304,6 +1315,8 @@ async function transitionSalesQuotationStatus(
 }
 
 export async function lockSalesQuotation(id: string, locked: boolean) {
+  const viewOnly = await viewOnlyError();
+  if (viewOnly) return { error: viewOnly };
   try {
     const scope = await resolveSalesOrgScope();
     if ('error' in scope && scope.error) return { error: scope.error };
@@ -1352,6 +1365,8 @@ export async function lockSalesQuotation(id: string, locked: boolean) {
 }
 
 export async function duplicateSalesQuotation(id: string) {
+  const viewOnly = await viewOnlyError();
+  if (viewOnly) return { error: viewOnly };
   try {
     const scope = await resolveSalesOrgScope();
     if ('error' in scope && scope.error) return { error: scope.error };
@@ -1554,6 +1569,8 @@ async function appendQuotationLog(
 
 /** Chatter: customer-facing style message (stored on quotation_logs). */
 export async function postSalesQuotationMessage(quotationId: string, message: string) {
+  const viewOnly = await viewOnlyError();
+  if (viewOnly) return { error: viewOnly };
   const text = String(message || '').trim();
   if (!quotationId || !text) return { error: 'Message is required' };
   return appendQuotationLog(quotationId, 'log_note', {
@@ -1564,6 +1581,8 @@ export async function postSalesQuotationMessage(quotationId: string, message: st
 
 /** Chatter: internal log note. */
 export async function postSalesQuotationNote(quotationId: string, note: string) {
+  const viewOnly = await viewOnlyError();
+  if (viewOnly) return { error: viewOnly };
   const text = String(note || '').trim();
   if (!quotationId || !text) return { error: 'Note is required' };
   return appendQuotationLog(quotationId, 'log_note', {
@@ -1578,6 +1597,8 @@ export async function postSalesQuotationActivity(
   summary: string,
   dueDate: string | null
 ) {
+  const viewOnly = await viewOnlyError();
+  if (viewOnly) return { error: viewOnly };
   const text = String(summary || '').trim();
   if (!quotationId || !text) return { error: 'Activity summary is required' };
   return appendQuotationLog(quotationId, 'activity', {
@@ -1591,6 +1612,8 @@ export async function setSalesOrderDeliveryStatus(
   id: string,
   deliveryStatus: 'waiting' | 'ready' | 'delivered'
 ) {
+  const viewOnly = await viewOnlyError();
+  if (viewOnly) return { error: viewOnly };
   try {
     const scope = await resolveSalesOrgScope();
     if ('error' in scope && scope.error) return { error: scope.error };

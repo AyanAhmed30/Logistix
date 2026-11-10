@@ -6,6 +6,7 @@ import { requireCrmOrganizationScope, revalidateCrmPipelinePaths } from '@/app/a
 import { DEFAULT_CRM_PIPELINE_STAGES } from '@/lib/crm-pipeline-utils';
 import type { CrmPipelineStage } from '@/app/actions/crm/types';
 import { actionError } from '@/lib/user-facing-error';
+import { viewOnlyError } from '@/lib/auth/view-only';
 
 function mapStage(row: Record<string, unknown>): CrmPipelineStage {
   return {
@@ -262,6 +263,8 @@ export async function createCrmPipelineStage(input: {
   is_won?: boolean;
   is_lost?: boolean;
 }) {
+  const viewOnly = await viewOnlyError();
+  if (viewOnly) return { error: viewOnly };
   const auth = await requireAnyChildModule(['crm-pipeline']);
   if (isAccessDenied(auth)) return { error: auth.error };
 
@@ -314,6 +317,8 @@ export async function updateCrmPipelineStage(
     is_folded?: boolean;
   }
 ) {
+  const viewOnly = await viewOnlyError();
+  if (viewOnly) return { error: viewOnly };
   const auth = await requireAnyChildModule(['crm-pipeline']);
   if (isAccessDenied(auth)) return { error: auth.error };
 
@@ -342,6 +347,8 @@ export async function updateCrmPipelineStage(
 }
 
 export async function deleteCrmPipelineStage(stageId: string) {
+  const viewOnly = await viewOnlyError();
+  if (viewOnly) return { error: viewOnly };
   const auth = await requireAnyChildModule(['crm-pipeline']);
   if (isAccessDenied(auth)) return { error: auth.error };
 
@@ -372,6 +379,8 @@ export async function deleteCrmPipelineStage(stageId: string) {
 }
 
 export async function reorderCrmPipelineStages(orderedStageIds: string[]) {
+  const viewOnly = await viewOnlyError();
+  if (viewOnly) return { error: viewOnly };
   const auth = await requireAnyChildModule(['crm-pipeline']);
   if (isAccessDenied(auth)) return { error: auth.error };
 
@@ -396,5 +405,7 @@ export async function reorderCrmPipelineStages(orderedStageIds: string[]) {
 }
 
 export async function toggleCrmPipelineStageFold(stageId: string, folded: boolean) {
+  const viewOnly = await viewOnlyError();
+  if (viewOnly) return { error: viewOnly };
   return updateCrmPipelineStage(stageId, { is_folded: folded });
 }

@@ -6,6 +6,7 @@ import { sessionHasAccountingAccess } from '@/lib/accounting-page-access';
 import { computePaymentState, outstandingFromComponents, invoicePaidDeltaFromReconcileCredits } from '@/lib/accounting-payments';
 import { sumPostedCreditNotesForInvoice } from '@/lib/accounting-document-outstanding';
 import { actionError } from '@/lib/user-facing-error';
+import { viewOnlyError } from '@/lib/auth/view-only';
 
 export type ReconciliationDocumentType =
   | 'customer_invoice'
@@ -1061,6 +1062,8 @@ export async function reconcileAccountingEntries(input: {
   notes?: string;
   reconciliationDate?: string;
 }) {
+  const viewOnly = await viewOnlyError();
+  if (viewOnly) return { error: viewOnly };
   try {
     const scope = await resolveScope();
     if ('error' in scope && scope.error) return { error: scope.error };
@@ -1506,6 +1509,8 @@ export async function acceptAccountingReconciliationSuggestion(suggestion: {
   credits: { document_type: ReconciliationDocumentType; document_id: string; residual: number }[];
   amount: number;
 }) {
+  const viewOnly = await viewOnlyError();
+  if (viewOnly) return { error: viewOnly };
   const items: ReconciliationMatchItem[] = [
     {
       document_type: suggestion.debit.document_type,
@@ -1537,6 +1542,8 @@ export async function acceptAccountingReconciliationSuggestion(suggestion: {
 
 /** Reverse a reconciliation and restore outstanding. */
 export async function unreconcileAccountingReconciliation(reconciliationId: string) {
+  const viewOnly = await viewOnlyError();
+  if (viewOnly) return { error: viewOnly };
   try {
     const scope = await resolveScope();
     if ('error' in scope && scope.error) return { error: scope.error };

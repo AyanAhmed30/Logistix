@@ -16,6 +16,7 @@ import {
   type PaymentTermValueType,
 } from '@/lib/accounting-payment-terms';
 import { actionError } from '@/lib/user-facing-error';
+import { viewOnlyError } from '@/lib/auth/view-only';
 
 export type AccountingPaymentTermLine = {
   id: string;
@@ -483,6 +484,8 @@ export async function createAccountingConfigPaymentTerm(payload: {
     delay_type: PaymentTermDelayType;
   }>;
 }) {
+  const viewOnly = await viewOnlyError();
+  if (viewOnly) return { error: viewOnly };
   try {
     const scope = await resolvePaymentTermScope({ config: true });
     if ('error' in scope && scope.error) return { error: scope.error };
@@ -585,6 +588,8 @@ export async function updateAccountingConfigPaymentTerm(
     }>;
   }
 ) {
+  const viewOnly = await viewOnlyError();
+  if (viewOnly) return { error: viewOnly };
   try {
     const scope = await resolvePaymentTermScope({ config: true });
     if ('error' in scope && scope.error) return { error: scope.error };
@@ -675,10 +680,14 @@ export async function updateAccountingConfigPaymentTerm(
 }
 
 export async function archiveAccountingConfigPaymentTerm(termId: string) {
+  const viewOnly = await viewOnlyError();
+  if (viewOnly) return { error: viewOnly };
   return updateAccountingConfigPaymentTerm(termId, { is_active: false });
 }
 
 export async function restoreAccountingConfigPaymentTerm(termId: string) {
+  const viewOnly = await viewOnlyError();
+  if (viewOnly) return { error: viewOnly };
   return updateAccountingConfigPaymentTerm(termId, { is_active: true });
 }
 

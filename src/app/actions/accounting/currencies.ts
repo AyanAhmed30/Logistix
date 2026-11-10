@@ -20,6 +20,7 @@ import {
   FALLBACK_BASE_CURRENCY,
 } from '@/lib/accounting-currencies';
 import { actionError } from '@/lib/user-facing-error';
+import { viewOnlyError } from '@/lib/auth/view-only';
 
 export type AccountingCurrencyListItem = {
   id: string;
@@ -381,6 +382,8 @@ export async function createAccountingConfigCurrency(payload: {
   initial_rate?: number | null;
   initial_rate_date?: string | null;
 }) {
+  const viewOnly = await viewOnlyError();
+  if (viewOnly) return { error: viewOnly };
   try {
     const scope = await resolveCurrencyScope({ config: true });
     if ('error' in scope && scope.error) return { error: scope.error };
@@ -475,6 +478,8 @@ export async function updateAccountingConfigCurrency(
     is_base?: boolean;
   }
 ) {
+  const viewOnly = await viewOnlyError();
+  if (viewOnly) return { error: viewOnly };
   try {
     const scope = await resolveCurrencyScope({ config: true });
     if ('error' in scope && scope.error) return { error: scope.error };
@@ -548,6 +553,8 @@ export async function updateAccountingConfigCurrency(
 }
 
 export async function archiveAccountingConfigCurrency(currencyId: string) {
+  const viewOnly = await viewOnlyError();
+  if (viewOnly) return { error: viewOnly };
   try {
     const scope = await resolveCurrencyScope({ config: true });
     if ('error' in scope && scope.error) return { error: scope.error };
@@ -582,6 +589,8 @@ export async function archiveAccountingConfigCurrency(currencyId: string) {
 }
 
 export async function restoreAccountingConfigCurrency(currencyId: string) {
+  const viewOnly = await viewOnlyError();
+  if (viewOnly) return { error: viewOnly };
   try {
     const scope = await resolveCurrencyScope({ config: true });
     if ('error' in scope && scope.error) return { error: scope.error };
@@ -612,6 +621,8 @@ export async function upsertAccountingExchangeRate(payload: {
   source?: string | null;
   rate_type?: ExchangeRateType;
 }) {
+  const viewOnly = await viewOnlyError();
+  if (viewOnly) return { error: viewOnly };
   try {
     const scope = await resolveCurrencyScope({ config: true });
     if ('error' in scope && scope.error) return { error: scope.error };
@@ -672,6 +683,8 @@ export async function upsertAccountingExchangeRate(payload: {
 }
 
 export async function deleteAccountingExchangeRate(rateId: string) {
+  const viewOnly = await viewOnlyError();
+  if (viewOnly) return { error: viewOnly };
   try {
     const scope = await resolveCurrencyScope({ config: true });
     if ('error' in scope && scope.error) return { error: scope.error };
@@ -823,6 +836,8 @@ export async function setOrganizationCurrency(
   organizationId: string,
   currencyId: string
 ) {
+  const viewOnly = await viewOnlyError();
+  if (viewOnly) return { error: viewOnly };
   try {
     const scope = await resolveCurrencyScope({ config: true });
     if ('error' in scope && scope.error) return { error: scope.error };

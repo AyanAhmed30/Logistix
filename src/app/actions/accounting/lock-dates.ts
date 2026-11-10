@@ -8,6 +8,7 @@ import {
 } from '@/lib/accounting-roles';
 import type { AutoPostingLine } from '@/lib/accounting-journal-posting';
 import { actionError } from '@/lib/user-facing-error';
+import { viewOnlyError } from '@/lib/auth/view-only';
 
 export type AccountingLockSettings = {
   organization_id: string;
@@ -360,6 +361,8 @@ export async function updateAccountingLockSettings(payload: {
   purchase_lock_date?: string | null;
   tax_lock_date?: string | null;
 }) {
+  const viewOnly = await viewOnlyError();
+  if (viewOnly) return { error: viewOnly };
   try {
     const scope = await resolveOrgScope();
     if ('error' in scope) return { error: scope.error };
@@ -549,6 +552,8 @@ export async function upsertAccountingJournalLock(opts: {
   journalId: string;
   lockDate: string;
 }) {
+  const viewOnly = await viewOnlyError();
+  if (viewOnly) return { error: viewOnly };
   try {
     const scope = await resolveOrgScope();
     if ('error' in scope) return { error: scope.error };
@@ -591,6 +596,8 @@ export async function upsertAccountingJournalLock(opts: {
 }
 
 export async function removeAccountingJournalLock(journalLockId: string) {
+  const viewOnly = await viewOnlyError();
+  if (viewOnly) return { error: viewOnly };
   try {
     const scope = await resolveOrgScope();
     if ('error' in scope) return { error: scope.error };
@@ -627,6 +634,8 @@ export async function createAccountingFiscalYear(opts: {
   dateTo: string;
   retainedEarningsAccountId?: string | null;
 }) {
+  const viewOnly = await viewOnlyError();
+  if (viewOnly) return { error: viewOnly };
   try {
     const scope = await resolveOrgScope();
     if ('error' in scope) return { error: scope.error };
@@ -682,6 +691,8 @@ export async function closeAccountingFiscalYear(
   fiscalYearId: string,
   opts?: { retainedEarningsAccountId?: string | null }
 ) {
+  const viewOnly = await viewOnlyError();
+  if (viewOnly) return { error: viewOnly };
   try {
     const scope = await resolveOrgScope();
     if ('error' in scope) return { error: scope.error };
@@ -965,6 +976,8 @@ export async function closeAccountingFiscalYear(
 }
 
 export async function reopenAccountingFiscalYear(fiscalYearId: string) {
+  const viewOnly = await viewOnlyError();
+  if (viewOnly) return { error: viewOnly };
   try {
     const scope = await resolveOrgScope();
     if ('error' in scope) return { error: scope.error };

@@ -11,6 +11,7 @@ import type { SessionAppUserRole } from '@/lib/auth/session';
 import { fetchPortalUserOrganizationAssignments } from '@/lib/portal-user-organizations';
 import { migrateLegacyAccountToPortal } from '@/lib/legacy-user-bridge';
 import { actionError } from '@/lib/user-facing-error';
+import { loadAdminDefaultOrganization } from '@/lib/admin-default-organization';
 
 const ADMIN_USERNAME = SUPER_ADMIN_USERNAME;
 const ADMIN_PASSWORD = 'admin123';
@@ -110,6 +111,7 @@ export async function login(formData: FormData) {
     // otherwise an empty .env.local blocks all admin sign-in.
     if (username === ADMIN_USERNAME && password === ADMIN_PASSWORD) {
       let organizationIds: string[] = [];
+      let defaultOrganization: { id: string; name: string } | null = null;
       try {
         const supabase = await createAdminClient();
         const { data: orgs } = await supabase
@@ -118,14 +120,18 @@ export async function login(formData: FormData) {
           .eq('status', 'active')
           .order('organization_name', { ascending: true });
         organizationIds = (orgs || []).map((o) => String(o.id));
+        defaultOrganization = await loadAdminDefaultOrganization(supabase, username, orgs || []);
       } catch (error) {
         console.warn('[login] Super Admin org load skipped:', loginFailureMessage(error));
       }
 
+      // Start in the saved default company; without one, start in Admin.
       return await establishSession({
         username,
         role: 'admin',
         organizationIds,
+        organizationId: defaultOrganization?.id,
+        organizationName: defaultOrganization?.name,
       });
     }
 

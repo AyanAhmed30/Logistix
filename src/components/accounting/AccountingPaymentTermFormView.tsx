@@ -200,7 +200,7 @@ export function AccountingPaymentTermFormView({ termId }: Props) {
         return;
       }
       toast.success("Payment term saved");
-      if (res.term) setTerm(res.term);
+      if ("term" in res && res.term) setTerm(res.term);
     });
   }
 

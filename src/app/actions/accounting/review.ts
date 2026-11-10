@@ -23,6 +23,7 @@ import {
 import type { AnnualReportFiscalYear } from '@/lib/accounting/financial-reporting/annual-report';
 import { resolveDatePeriod } from '@/lib/accounting/financial-reporting/periods';
 import { actionError } from '@/lib/user-facing-error';
+import { viewOnlyError } from '@/lib/auth/view-only';
 
 function round2(n: number) {
   return Math.round((Number(n) || 0) * 100) / 100;
@@ -2307,6 +2308,8 @@ export async function createAccountingWorkingFile(opts: {
   dateTo: string;
   cycles: string[];
 }) {
+  const viewOnly = await viewOnlyError();
+  if (viewOnly) return { error: viewOnly };
   try {
     const scope = await resolveReviewScope(false);
     if ('error' in scope && scope.error) return { error: scope.error };
@@ -2592,6 +2595,8 @@ export async function createAccountingAnnualReportWorkingFile(opts: {
   dateTo: string;
   name?: string;
 }) {
+  const viewOnly = await viewOnlyError();
+  if (viewOnly) return { error: viewOnly };
   try {
     const scope = await resolveReviewScope(true);
     if ('error' in scope && scope.error) return { error: scope.error };

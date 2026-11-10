@@ -23,6 +23,7 @@ import {
   resolveOpportunityIdsForContact,
 } from '@/lib/crm-contact-opportunities';
 import { actionError } from '@/lib/user-facing-error';
+import { viewOnlyError } from '@/lib/auth/view-only';
 
 const ACTIVITY_TYPES: CrmActivityType[] = ['call', 'meeting', 'email', 'follow-up', 'todo'];
 
@@ -259,6 +260,8 @@ export async function getCrmActivitiesForOpportunity(opportunityId: string) {
 }
 
 export async function createCrmActivity(input: CrmActivityUpsertInput) {
+  const viewOnly = await viewOnlyError();
+  if (viewOnly) return { error: viewOnly };
   const auth = await requireAnyChildModule(['crm-pipeline', 'crm-activities']);
   if (isAccessDenied(auth)) return { error: auth.error };
 
@@ -316,6 +319,8 @@ export async function createCrmActivity(input: CrmActivityUpsertInput) {
 }
 
 export async function updateCrmActivity(input: CrmActivityUpsertInput) {
+  const viewOnly = await viewOnlyError();
+  if (viewOnly) return { error: viewOnly };
   const auth = await requireAnyChildModule(['crm-pipeline', 'crm-activities']);
   if (isAccessDenied(auth)) return { error: auth.error };
 
@@ -353,6 +358,8 @@ export async function updateCrmActivity(input: CrmActivityUpsertInput) {
 }
 
 export async function deleteCrmActivity(activityId: string) {
+  const viewOnly = await viewOnlyError();
+  if (viewOnly) return { error: viewOnly };
   const auth = await requireAnyChildModule(['crm-pipeline', 'crm-activities']);
   if (isAccessDenied(auth)) return { error: auth.error };
 
@@ -373,6 +380,8 @@ export async function deleteCrmActivity(activityId: string) {
 }
 
 export async function markCrmActivityDone(activityId: string) {
+  const viewOnly = await viewOnlyError();
+  if (viewOnly) return { error: viewOnly };
   const auth = await requireAnyChildModule(['crm-pipeline', 'crm-activities']);
   if (isAccessDenied(auth)) return { error: auth.error };
 
@@ -406,6 +415,8 @@ export async function markCrmActivityDone(activityId: string) {
 }
 
 export async function rescheduleCrmActivity(activityId: string, dueDate: string) {
+  const viewOnly = await viewOnlyError();
+  if (viewOnly) return { error: viewOnly };
   const auth = await requireAnyChildModule(['crm-pipeline', 'crm-activities']);
   if (isAccessDenied(auth)) return { error: auth.error };
 

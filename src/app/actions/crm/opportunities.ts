@@ -24,11 +24,14 @@ import {
   buildAutoOpportunityName,
 } from '@/lib/crm-pipeline-utils';
 import type {
+  CrmBoardInquiry,
   CrmOpportunityCard,
   CrmOpportunityUpsertInput,
   CrmPipelineBoardFilters,
 } from '@/app/actions/crm/types';
 import { actionError } from '@/lib/user-facing-error';
+import { viewOnlyError } from '@/lib/auth/view-only';
+import { isSuperAdminSession } from '@/lib/auth/super-admin';
 
 function parseTags(raw: unknown): string[] {
   if (!Array.isArray(raw)) return [];
@@ -746,6 +749,10 @@ export async function getCrmPipelineBoard(filters: CrmPipelineBoardFilters = {})
       );
     }
 
+    if (isSuperAdminSession(scope.session)) {
+      opportunities = await attachBoardInquiries(supabase, opportunities);
+    }
+
     return { stages, opportunities, isGlobalAdminView: true as const };
   }
 
@@ -823,11 +830,66 @@ export async function getCrmPipelineBoard(filters: CrmPipelineBoardFilters = {})
     );
   }
 
+  if (isSuperAdminSession(scope.session)) {
+    opportunities = await attachBoardInquiries(supabase, opportunities);
+  }
+
   return {
     stages: mappedStages,
     opportunities,
     isGlobalAdminView: false as const,
   };
+}
+
+/**
+ * Adds each opportunity's inquiries (linked by crm_opportunity_id, or by the
+ * older lead_inquiry_id on the opportunity). Used by Super Admin's pipeline
+ * summary and search; on any failure the board loads without them.
+ */
+async function attachBoardInquiries(
+  supabase: Awaited<ReturnType<typeof createAdminClient>>,
+  opportunities: CrmOpportunityCard[]
+): Promise<CrmOpportunityCard[]> {
+  if (opportunities.length === 0) return opportunities;
+  try {
+    const columns = 'id, approval_status, sent_at, crm_opportunity_id';
+    const legacyOwner = new Map(
+      opportunities
+        .filter((opp) => opp.lead_inquiry_id)
+        .map((opp) => [String(opp.lead_inquiry_id), opp.id])
+    );
+    const [linked, legacy] = await Promise.all([
+      supabase.from('lead_inquiries').select(columns).in('crm_opportunity_id', opportunities.map((opp) => opp.id)),
+      legacyOwner.size
+        ? supabase.from('lead_inquiries').select(columns).in('id', [...legacyOwner.keys()])
+        : Promise.resolve({ data: [], error: null }),
+    ]);
+    if (linked.error || legacy.error) {
+      console.error('[attachBoardInquiries]', (linked.error ?? legacy.error)?.message);
+      return opportunities;
+    }
+
+    const byOpportunity = new Map<string, Map<string, CrmBoardInquiry>>();
+    for (const row of [...(linked.data ?? []), ...(legacy.data ?? [])]) {
+      const id = String(row.id);
+      const owner = row.crm_opportunity_id ? String(row.crm_opportunity_id) : legacyOwner.get(id);
+      if (!owner) continue;
+      const list = byOpportunity.get(owner) ?? new Map<string, CrmBoardInquiry>();
+      list.set(id, {
+        id,
+        status: String(row.approval_status || 'draft'),
+        sent_at: row.sent_at ? String(row.sent_at) : null,
+      });
+      byOpportunity.set(owner, list);
+    }
+    return opportunities.map((opp) => ({
+      ...opp,
+      inquiries: [...(byOpportunity.get(opp.id)?.values() ?? [])],
+    }));
+  } catch (error) {
+    console.error('[attachBoardInquiries]', error);
+    return opportunities;
+  }
 }
 
 export async function getCrmOpportunityById(opportunityId: string) {
@@ -917,6 +979,8 @@ export async function getCrmOpportunityById(opportunityId: string) {
 }
 
 export async function createCrmOpportunity(input: CrmOpportunityUpsertInput) {
+  const viewOnly = await viewOnlyError();
+  if (viewOnly) return { error: viewOnly };
   const auth = await requireAnyChildModule(['crm-pipeline']);
   if (isAccessDenied(auth)) return { error: auth.error };
 
@@ -1077,6 +1141,8 @@ export async function createCrmOpportunity(input: CrmOpportunityUpsertInput) {
 }
 
 export async function updateCrmOpportunity(input: CrmOpportunityUpsertInput) {
+  const viewOnly = await viewOnlyError();
+  if (viewOnly) return { error: viewOnly };
   const auth = await requireAnyChildModule(['crm-pipeline']);
   if (isAccessDenied(auth)) return { error: auth.error };
 
@@ -1188,6 +1254,8 @@ export async function moveCrmOpportunityStage(
     stageName?: string | null;
   }
 ) {
+  const viewOnly = await viewOnlyError();
+  if (viewOnly) return { error: viewOnly };
   const auth = await requireAnyChildModule(['crm-pipeline']);
   if (isAccessDenied(auth)) return { error: auth.error };
 

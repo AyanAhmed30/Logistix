@@ -4,6 +4,7 @@ import { createAdminClient } from '@/utils/supabase/server';
 import { getSession } from '@/lib/auth/session';
 import { sessionHasSalesAccess } from '@/lib/auth/require-access';
 import { actionError } from '@/lib/user-facing-error';
+import { viewOnlyError } from '@/lib/auth/view-only';
 
 export type SalesOrderInvoiceStatus = 'no' | 'to_invoice' | 'invoiced';
 
@@ -396,6 +397,8 @@ export async function getSalesOrdersToUpsell(filters: {
  * Reuses order lines — does not duplicate product master data.
  */
 export async function createSalesInvoiceFromOrder(quotationId: string) {
+  const viewOnly = await viewOnlyError();
+  if (viewOnly) return { error: viewOnly };
   try {
     const scope = await resolveSalesOrgScope();
     if ('error' in scope && scope.error) return { error: scope.error };

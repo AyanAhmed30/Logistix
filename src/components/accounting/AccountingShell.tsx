@@ -19,6 +19,7 @@ import { useAdminOrganization } from "@/contexts/AdminOrganizationContext";
 import { getAccountingPageMeta } from "@/lib/accounting-navigation";
 import { useAccountingShortcuts } from "@/hooks/useAccountingShortcuts";
 import type { DashboardAccessState } from "@/lib/dashboard-access";
+import { ViewOnlyGuard } from "@/components/shared/ViewOnlyGuard";
 
 type AccountingShellContextValue = {
   searchQuery: string;
@@ -304,6 +305,7 @@ export function AccountingShell({ access, children }: Props) {
               isFormLike || isReviewOdooView ? "p-0 sm:p-2 md:p-3" : "p-3 sm:p-4 md:p-5"
             }`}
           >
+            <ViewOnlyGuard />
             {children}
           </main>
         </div>

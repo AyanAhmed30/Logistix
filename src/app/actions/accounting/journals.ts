@@ -16,6 +16,7 @@ import {
   type AccountingJournalType,
 } from '@/lib/accounting-journals';
 import { actionError } from '@/lib/user-facing-error';
+import { viewOnlyError } from '@/lib/auth/view-only';
 
 export type AccountingJournalListItem = {
   id: string;
@@ -482,6 +483,8 @@ export async function createAccountingConfigJournal(payload: {
   notes?: string | null;
   orgSpecific?: boolean;
 }) {
+  const viewOnly = await viewOnlyError();
+  if (viewOnly) return { error: viewOnly };
   try {
     const scope = await resolveJournalScope({ config: true });
     if ('error' in scope && scope.error) return { error: scope.error };
@@ -606,6 +609,8 @@ export async function updateAccountingConfigJournal(
     is_active?: boolean;
   }
 ) {
+  const viewOnly = await viewOnlyError();
+  if (viewOnly) return { error: viewOnly };
   try {
     const scope = await resolveJournalScope({ config: true });
     if ('error' in scope && scope.error) return { error: scope.error };
@@ -736,10 +741,14 @@ export async function updateAccountingConfigJournal(
 }
 
 export async function archiveAccountingConfigJournal(journalId: string) {
+  const viewOnly = await viewOnlyError();
+  if (viewOnly) return { error: viewOnly };
   return updateAccountingConfigJournal(journalId, { is_active: false });
 }
 
 export async function restoreAccountingConfigJournal(journalId: string) {
+  const viewOnly = await viewOnlyError();
+  if (viewOnly) return { error: viewOnly };
   return updateAccountingConfigJournal(journalId, { is_active: true });
 }
 
@@ -751,6 +760,8 @@ export async function allocateAccountingJournalSequence(args: {
   journalId: string;
   organizationId: string;
 }) {
+  const viewOnly = await viewOnlyError();
+  if (viewOnly) return { error: viewOnly };
   try {
     const supabase = await createAdminClient();
     const { data: journal } = await supabase
@@ -854,6 +865,8 @@ export async function exportAccountingConfigJournalsCsv() {
 }
 
 export async function importAccountingConfigJournalsCsv(csvText: string) {
+  const viewOnly = await viewOnlyError();
+  if (viewOnly) return { error: viewOnly };
   try {
     const scope = await resolveJournalScope({ config: true });
     if ('error' in scope && scope.error) return { error: scope.error };

@@ -919,7 +919,7 @@ export function SalesQuotationFormView({
         toast.error(sent.error);
         return;
       }
-      if (sent.quotation) {
+      if ("quotation" in sent && sent.quotation) {
         hydrateFromDetail(sent.quotation);
         setChatterKey((k) => k + 1);
       }

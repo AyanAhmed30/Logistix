@@ -42,6 +42,15 @@ import {
 import { type SalespersonOption } from "@/app/actions/contacts";
 import { CrmKanbanSkeleton, CrmEmptyState } from "@/components/crm/CrmSkeleton";
 import { useAdminOrganization } from "@/contexts/AdminOrganizationContext";
+import { CrmPipelineOverview } from "@/components/crm/CrmPipelineOverview";
+import { CrmPipelineFilterBar } from "@/components/crm/CrmPipelineFilterBar";
+import {
+  EMPTY_PIPELINE_FILTERS,
+  applyPipelineFilters,
+  countActiveFilters,
+  summarizePipeline,
+  type PipelineFilterState,
+} from "@/lib/crm-pipeline-filter";
 import { Button } from "@/components/ui/button";
 import {
   Select,
@@ -63,6 +72,7 @@ import { CrmStageManagerDialog } from "@/components/crm/CrmStageManagerDialog";
 import { CrmPipelineQuickCreate } from "@/components/crm/CrmPipelineQuickCreate";
 import { CrmLostReasonDialog } from "@/components/crm/CrmLostReasonDialog";
 import { ModuleLoadingOverlay } from "@/components/ui/ModuleLoadingOverlay";
+import { useSuperAdminViewOnly } from "@/contexts/AdminOrganizationContext";
 
 function formatRevenue(value: number) {
   return new Intl.NumberFormat(undefined, {
@@ -100,8 +110,10 @@ function OpportunityCard({
   ) => void;
   sendingInquiry?: boolean;
 }) {
+  const viewOnly = useSuperAdminViewOnly();
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: opportunity.id,
+    disabled: viewOnly,
   });
 
   const style = {
@@ -345,8 +357,8 @@ export function CrmPipelineView() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const contactIdFilter = searchParams.get("contactId");
-  const { switchVersion, organizationId } = useAdminOrganization();
-  const { setSearchBusy } = useCrmShell();
+  const { switchVersion, organizationId, isSuperAdmin } = useAdminOrganization();
+  const { setSearchBusy, setSearchQuery } = useCrmShell();
   const [stages, setStages] = useState<CrmPipelineStage[]>([]);
   const [opportunities, setOpportunities] = useState<CrmOpportunityCard[]>([]);
   const [salespersons, setSalespersons] = useState<SalespersonOption[]>([]);
@@ -389,16 +401,22 @@ export function CrmPipelineView() {
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } })
   );
 
+  // Super Admin loads the whole board once and filters it in the browser (see
+  // applyPipelineFilters); everyone else filters on the server as before.
+  const [pipelineFilters, setPipelineFilters] = useState<PipelineFilterState>(EMPTY_PIPELINE_FILTERS);
   const filters: CrmPipelineBoardFilters = useMemo(
-    () => ({
-      search: debouncedSearch.trim() || undefined,
-      stageId: stageFilter !== "all" ? stageFilter : undefined,
-      salespersonId: salespersonFilter !== "all" ? salespersonFilter : undefined,
-      contactId: contactIdFilter || undefined,
-      sortBy,
-      sortDir,
-    }),
-    [debouncedSearch, stageFilter, salespersonFilter, contactIdFilter, sortBy, sortDir]
+    () =>
+      isSuperAdmin
+        ? { contactId: contactIdFilter || undefined, sortBy, sortDir }
+        : {
+            search: debouncedSearch.trim() || undefined,
+            stageId: stageFilter !== "all" ? stageFilter : undefined,
+            salespersonId: salespersonFilter !== "all" ? salespersonFilter : undefined,
+            contactId: contactIdFilter || undefined,
+            sortBy,
+            sortDir,
+          },
+    [isSuperAdmin, debouncedSearch, stageFilter, salespersonFilter, contactIdFilter, sortBy, sortDir]
   );
 
   const boardCacheKey = `${organizationId ?? "admin"}:${JSON.stringify(filters)}`;
@@ -680,9 +698,50 @@ export function CrmPipelineView() {
     );
   }
 
+  // Super Admin: one filter state feeds the board, the summary and the charts.
+  // Everyone else keeps the server-side stage and salesperson filters.
+  const adminFilterState = { ...pipelineFilters, search: debouncedSearch };
+  const boardOpportunities = isSuperAdmin
+    ? applyPipelineFilters(opportunities, stages, adminFilterState, { isGlobalAdminView })
+    : opportunities;
+
+  // A selected stage shows only its own column; an unknown one (e.g. after switching company) shows all.
+  const selectedStageId = isSuperAdmin ? pipelineFilters.stage : stageFilter;
+  const selectedStages = selectedStageId === "all" ? [] : stages.filter((stage) => stage.id === selectedStageId);
+  const visibleStages = selectedStages.length > 0 ? selectedStages : stages;
+
+  const tagOptions = isSuperAdmin
+    ? [...new Set(opportunities.flatMap((o) => o.tags ?? []).map((t) => t.trim()).filter(Boolean))].sort((a, b) =>
+        a.localeCompare(b)
+      )
+    : [];
+
   return (
     <div className="space-y-3">
       {sendingInquiryId ? <ModuleLoadingOverlay label="Inquiry" /> : null}
+      {isSuperAdmin ? (
+        <>
+          <CrmPipelineFilterBar
+            value={adminFilterState}
+            onChange={(next) => setPipelineFilters((prev) => ({ ...prev, ...next }))}
+            onReset={() => {
+              setPipelineFilters(EMPTY_PIPELINE_FILTERS);
+              setSearchQuery("");
+            }}
+            activeCount={countActiveFilters(adminFilterState)}
+            stages={stages}
+            assignees={salespersons}
+            tags={tagOptions}
+            resultCount={boardOpportunities.length}
+          />
+          <CrmPipelineOverview
+            summary={summarizePipeline(boardOpportunities, stages, isGlobalAdminView)}
+            opportunities={boardOpportunities}
+            stages={stages}
+            isGlobalAdminView={isGlobalAdminView}
+          />
+        </>
+      ) : null}
       {isGlobalAdminView ? (
         <div className="rounded-sm border border-[#017e84]/20 bg-[#017e84]/5 px-4 py-2.5 text-sm text-[#017e84]">
           <strong>Admin view</strong> — showing opportunities from all organizations. Select a
@@ -704,35 +763,40 @@ export function CrmPipelineView() {
         </div>
       ) : null}
 
-      {/* Secondary filters — search lives in the Odoo-style control panel */}
+      {/* Secondary filters — search lives in the Odoo-style control panel.
+          Super Admin's stage and salesperson filters are in the filter bar above. */}
       <div className="flex flex-wrap items-center gap-2">
-        <Select value={stageFilter} onValueChange={setStageFilter}>
-          <SelectTrigger className="w-full sm:w-[150px] h-8 rounded-sm text-sm">
-            <SelectValue placeholder="Stage" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">All stages</SelectItem>
-            {stages.map((stage) => (
-              <SelectItem key={stage.id} value={stage.id}>
-                {stage.name}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+        {!isSuperAdmin ? (
+          <>
+            <Select value={stageFilter} onValueChange={setStageFilter}>
+              <SelectTrigger className="w-full sm:w-[150px] h-8 rounded-sm text-sm">
+                <SelectValue placeholder="Stage" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All stages</SelectItem>
+                {stages.map((stage) => (
+                  <SelectItem key={stage.id} value={stage.id}>
+                    {stage.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
 
-        <Select value={salespersonFilter} onValueChange={setSalespersonFilter}>
-          <SelectTrigger className="w-full sm:w-[150px] h-8 rounded-sm text-sm">
-            <SelectValue placeholder="Salesperson" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">All salespeople</SelectItem>
-            {salespersons.map((sp) => (
-              <SelectItem key={sp.id} value={sp.id}>
-                {sp.name}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+            <Select value={salespersonFilter} onValueChange={setSalespersonFilter}>
+              <SelectTrigger className="w-full sm:w-[150px] h-8 rounded-sm text-sm">
+                <SelectValue placeholder="Salesperson" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All salespeople</SelectItem>
+                {salespersons.map((sp) => (
+                  <SelectItem key={sp.id} value={sp.id}>
+                    {sp.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </>
+        ) : null}
 
         <Select
           value={`${sortBy}:${sortDir}`}
@@ -805,11 +869,11 @@ export function CrmPipelineView() {
                 searchPending || (loading && hasLoadedOnce) ? "opacity-50" : ""
               }`}
             >
-              {stages.map((stage) => (
+              {visibleStages.map((stage) => (
                 <StageColumn
                   key={stage.id}
                   stage={stage}
-                  opportunities={opportunities}
+                  opportunities={boardOpportunities}
                   onOpenOpportunity={(id) => router.push(`/crm/opportunities/${id}`)}
                   onSendInquiry={(id, tab, inquiryId) => {
                     if (sendingInquiryId) return;

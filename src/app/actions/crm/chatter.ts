@@ -10,6 +10,7 @@ import {
 import { uploadToInquiryImagesBucket } from '@/lib/inquiry-storage';
 import type { CrmChatterEntry, CrmChatterEntryType } from '@/app/actions/crm/types';
 import { actionError } from '@/lib/user-facing-error';
+import { viewOnlyError } from '@/lib/auth/view-only';
 
 const PAGE_SIZE = 40;
 
@@ -120,6 +121,8 @@ export async function getOpportunityFollowers(opportunityId: string) {
 }
 
 export async function toggleOpportunityFollower(opportunityId: string) {
+  const viewOnly = await viewOnlyError();
+  if (viewOnly) return { error: viewOnly };
   const auth = await requireAnyChildModule(['crm-pipeline']);
   if (isAccessDenied(auth)) return { error: auth.error };
 
@@ -201,6 +204,8 @@ export async function postOpportunityMessage(
   body: string,
   parentId?: string | null
 ) {
+  const viewOnly = await viewOnlyError();
+  if (viewOnly) return { error: viewOnly };
   const auth = await requireAnyChildModule(['crm-pipeline']);
   if (isAccessDenied(auth)) return { error: auth.error };
 
@@ -234,6 +239,8 @@ export async function postOpportunityMessage(
 }
 
 export async function postOpportunityNote(opportunityId: string, body: string) {
+  const viewOnly = await viewOnlyError();
+  if (viewOnly) return { error: viewOnly };
   const auth = await requireAnyChildModule(['crm-pipeline']);
   if (isAccessDenied(auth)) return { error: auth.error };
 
@@ -266,6 +273,8 @@ export async function postOpportunityNote(opportunityId: string, body: string) {
 }
 
 export async function uploadOpportunityAttachment(opportunityId: string, formData: FormData) {
+  const viewOnly = await viewOnlyError();
+  if (viewOnly) return { error: viewOnly };
   const auth = await requireAnyChildModule(['crm-pipeline']);
   if (isAccessDenied(auth)) return { error: auth.error };
 

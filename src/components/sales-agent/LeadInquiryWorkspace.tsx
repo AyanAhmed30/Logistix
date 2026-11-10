@@ -78,6 +78,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { useSuperAdminViewOnly } from "@/contexts/AdminOrganizationContext";
 
 export type LeadInquiryWorkspaceTab = "create" | "view" | "customer" | "status";
 type MainTab = LeadInquiryWorkspaceTab;
@@ -424,6 +425,8 @@ export function LeadInquiryWorkspace({
   /** CRM opportunity context — enables Odoo-style inquiry chrome + linking. */
   crmContext?: CrmInquiryContext;
 }) {
+  // Super Admin viewing an organization can read inquiries in CRM but not change them.
+  const viewOnly = useSuperAdminViewOnly();
   const router = useRouter();
   const inquiryImageInputId = "sales-inquiry-image-input";
   const bootstrapAppliedRef = useRef(false);
@@ -1378,7 +1381,8 @@ export function LeadInquiryWorkspace({
   }
 
   const canEditForm =
-    mode === "create" || isViewEditing || ((layout === "page" || layout === "crm") && mainTab === "create");
+    !viewOnly &&
+    (mode === "create" || isViewEditing || ((layout === "page" || layout === "crm") && mainTab === "create"));
   const liveUnsavedEntries = useMemo(() => {
     if (!canEditForm) return [] as Array<{ key: string; label: string; oldValue: string; newValue: string }>;
     const pairs = [

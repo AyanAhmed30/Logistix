@@ -16,6 +16,7 @@ import {
 } from '@/lib/sales-orders-info';
 import { revalidatePath } from 'next/cache';
 import { actionError } from '@/lib/user-facing-error';
+import { viewOnlyError } from '@/lib/auth/view-only';
 
 async function resolveSalesOrgScope() {
   const { requireAdminOrganizationScope, sessionUsesOrganizationScope } = await import(
@@ -360,6 +361,8 @@ export async function updateSalesOrderShipmentInfo(input: {
   parcelPhotoUrl?: string | null;
   parcelPhotoPath?: string | null;
 }): Promise<{ ok: true } | { error: string }> {
+  const viewOnly = await viewOnlyError();
+  if (viewOnly) return { error: viewOnly };
   try {
     const scope = await resolveSalesOrgScope();
     if ('error' in scope && scope.error) return { error: scope.error };
@@ -487,6 +490,8 @@ export async function updateSalesOrderShipmentInfo(input: {
 export async function uploadSalesParcelPhoto(formData: FormData): Promise<
   { ok: true; url: string; path: string } | { error: string }
 > {
+  const viewOnly = await viewOnlyError();
+  if (viewOnly) return { error: viewOnly };
   try {
     const scope = await resolveSalesOrgScope();
     if ('error' in scope && scope.error) return { error: scope.error };

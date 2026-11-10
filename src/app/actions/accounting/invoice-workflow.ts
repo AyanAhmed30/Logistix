@@ -8,6 +8,7 @@ import {
   type AccountingInvoiceStatus,
 } from '@/app/actions/accounting/invoices';
 import { actionError } from '@/lib/user-facing-error';
+import { viewOnlyError } from '@/lib/auth/view-only';
 
 export type AccountingInvoiceLog = {
   id: string;
@@ -195,6 +196,8 @@ export async function updateAccountingInvoice(
   invoiceId: string,
   payload: AccountingInvoiceUpdatePayload
 ) {
+  const viewOnly = await viewOnlyError();
+  if (viewOnly) return { error: viewOnly };
   try {
     const scope = await resolveScope();
     if ('error' in scope && scope.error) return { error: scope.error };
@@ -510,6 +513,8 @@ async function transitionStatus(
 }
 
 export async function postAccountingInvoice(invoiceId: string) {
+  const viewOnly = await viewOnlyError();
+  if (viewOnly) return { error: viewOnly };
   try {
     const scope = await resolveScope();
     if ('error' in scope && scope.error) return { error: scope.error };
@@ -691,6 +696,8 @@ export async function cancelAccountingInvoice(invoiceId: string) {
 }
 
 export async function resetAccountingInvoiceToDraft(invoiceId: string) {
+  const viewOnly = await viewOnlyError();
+  if (viewOnly) return { error: viewOnly };
   try {
     const scope = await resolveScope();
     if ('error' in scope && scope.error) return { error: scope.error };
@@ -869,6 +876,8 @@ export async function registerAccountingPaymentPlaceholder(
   invoiceId: string,
   opts?: { amount?: number; simulatePaid?: boolean }
 ) {
+  const viewOnly = await viewOnlyError();
+  if (viewOnly) return { error: viewOnly };
   const { registerAccountingPayment } = await import(
     '@/app/actions/accounting/payments'
   );
@@ -888,6 +897,8 @@ export async function getAccountingInvoicePdfPayload(invoiceId: string) {
 }
 
 export async function duplicateAccountingInvoice(invoiceId: string) {
+  const viewOnly = await viewOnlyError();
+  if (viewOnly) return { error: viewOnly };
   try {
     const scope = await resolveScope();
     if ('error' in scope && scope.error) return { error: scope.error };
@@ -1084,6 +1095,8 @@ export async function postAccountingInvoiceNote(
   note: string,
   kind: 'note' | 'message' = 'note'
 ) {
+  const viewOnly = await viewOnlyError();
+  if (viewOnly) return { error: viewOnly };
   try {
     const scope = await resolveScope();
     if ('error' in scope && scope.error) return { error: scope.error };
@@ -1141,6 +1154,8 @@ export async function logAccountingInvoicePreview(
 }
 
 export async function prepareAccountingInvoiceEmail(invoiceId: string) {
+  const viewOnly = await viewOnlyError();
+  if (viewOnly) return { error: viewOnly };
   try {
     const detailRes = await getAccountingInvoiceDetail(invoiceId);
     if ('error' in detailRes && detailRes.error) return { error: detailRes.error };

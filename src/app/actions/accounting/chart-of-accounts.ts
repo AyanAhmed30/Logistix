@@ -16,6 +16,7 @@ import {
   type CoaClassification,
 } from '@/lib/accounting-chart-of-accounts';
 import { actionError } from '@/lib/user-facing-error';
+import { viewOnlyError } from '@/lib/auth/view-only';
 
 export type AccountingCoaListItem = {
   id: string;
@@ -467,6 +468,8 @@ export async function createAccountingCoaAccount(payload: {
   /** When true, create as org-specific; default shared template if no org */
   orgSpecific?: boolean;
 }) {
+  const viewOnly = await viewOnlyError();
+  if (viewOnly) return { error: viewOnly };
   try {
     const scope = await resolveCoaScope({ config: true });
     if ('error' in scope && scope.error) return { error: scope.error };
@@ -605,6 +608,8 @@ export async function updateAccountingCoaAccount(
     is_active?: boolean;
   }
 ) {
+  const viewOnly = await viewOnlyError();
+  if (viewOnly) return { error: viewOnly };
   try {
     const scope = await resolveCoaScope({ config: true });
     if ('error' in scope && scope.error) return { error: scope.error };
@@ -743,10 +748,14 @@ export async function updateAccountingCoaAccount(
 }
 
 export async function archiveAccountingCoaAccount(accountId: string) {
+  const viewOnly = await viewOnlyError();
+  if (viewOnly) return { error: viewOnly };
   return updateAccountingCoaAccount(accountId, { is_active: false });
 }
 
 export async function restoreAccountingCoaAccount(accountId: string) {
+  const viewOnly = await viewOnlyError();
+  if (viewOnly) return { error: viewOnly };
   return updateAccountingCoaAccount(accountId, { is_active: true });
 }
 
@@ -779,6 +788,8 @@ export async function exportAccountingCoaAccountsCsv() {
 }
 
 export async function importAccountingCoaAccountsCsv(csvText: string) {
+  const viewOnly = await viewOnlyError();
+  if (viewOnly) return { error: viewOnly };
   try {
     const scope = await resolveCoaScope({ config: true });
     if ('error' in scope && scope.error) return { error: scope.error };

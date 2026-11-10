@@ -68,6 +68,15 @@ export type CrmOpportunityCard = CrmOpportunity & {
   next_activity_due_date?: string | null;
   next_activity_assigned_name?: string | null;
   next_activity_status?: CrmActivityStatus | null;
+  /** Inquiries raised from this opportunity, for pipeline search and summary counts. */
+  inquiries?: CrmBoardInquiry[];
+};
+
+export type CrmBoardInquiry = {
+  id: string;
+  /** lead_inquiries.approval_status: draft, sent, sent_to_admin, calculated_by_admin, approved, rejected. */
+  status: string;
+  sent_at: string | null;
 };
 
 export type CrmActivityType = 'call' | 'meeting' | 'email' | 'follow-up' | 'todo';

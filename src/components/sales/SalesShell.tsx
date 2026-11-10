@@ -21,6 +21,7 @@ import type { DashboardAccessState } from "@/lib/dashboard-access";
 import { toast } from "@/lib/app-toast";
 import { useSalesKeyboardShortcuts } from "@/hooks/useSalesKeyboardShortcuts";
 import { AppNotificationBell } from "@/components/notifications/AppNotificationBell";
+import { ViewOnlyGuard } from "@/components/shared/ViewOnlyGuard";
 
 type SalesShellContextValue = {
   searchQuery: string;
@@ -236,6 +237,7 @@ export function SalesShell({ access, children }: Props) {
               isFormLike ? "p-0 sm:p-2 md:p-3" : "p-3 sm:p-4 md:p-5"
             }`}
           >
+            <ViewOnlyGuard />
             {children}
           </main>
         </div>

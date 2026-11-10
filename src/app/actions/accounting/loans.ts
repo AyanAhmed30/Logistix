@@ -11,6 +11,7 @@ import {
 } from '@/lib/accounting-loans';
 import type { AutoPostingLine } from '@/lib/accounting-journal-posting';
 import { actionError } from '@/lib/user-facing-error';
+import { viewOnlyError } from '@/lib/auth/view-only';
 
 export type AccountingLoanStatus =
   | 'draft'
@@ -634,6 +635,8 @@ export async function getAccountingLoanIdByInstallment(installmentId: string) {
 }
 
 export async function createAccountingLoan() {
+  const viewOnly = await viewOnlyError();
+  if (viewOnly) return { error: viewOnly };
   try {
     const scope = await resolveScope();
     if ('error' in scope && scope.error) return { error: scope.error };
@@ -721,6 +724,8 @@ export async function updateAccountingLoan(
     rebuild_schedule?: boolean;
   }
 ) {
+  const viewOnly = await viewOnlyError();
+  if (viewOnly) return { error: viewOnly };
   try {
     const scope = await resolveScope();
     if ('error' in scope && scope.error) return { error: scope.error };
@@ -873,6 +878,8 @@ export async function updateAccountingLoan(
 
 /** Confirm draft → Active + disbursement JE + schedule. */
 export async function confirmAccountingLoan(loanId: string) {
+  const viewOnly = await viewOnlyError();
+  if (viewOnly) return { error: viewOnly };
   try {
     const scope = await resolveScope();
     if ('error' in scope && scope.error) return { error: scope.error };
@@ -1049,6 +1056,8 @@ export async function payAccountingLoanInstallment(
   installmentId: string,
   opts?: { paymentDate?: string }
 ) {
+  const viewOnly = await viewOnlyError();
+  if (viewOnly) return { error: viewOnly };
   try {
     const scope = await resolveScope();
     if ('error' in scope && scope.error) return { error: scope.error };
@@ -1315,6 +1324,8 @@ export async function payAccountingLoanInstallment(
 }
 
 export async function closeAccountingLoan(loanId: string) {
+  const viewOnly = await viewOnlyError();
+  if (viewOnly) return { error: viewOnly };
   try {
     const scope = await resolveScope();
     if ('error' in scope && scope.error) return { error: scope.error };

@@ -17,6 +17,7 @@ import {
   sumPostedCreditNotesForInvoice,
 } from '@/lib/accounting-document-outstanding';
 import { actionError } from '@/lib/user-facing-error';
+import { viewOnlyError } from '@/lib/auth/view-only';
 
 export type AccountingInvoicePayment = {
   id: string;
@@ -171,6 +172,8 @@ export async function registerAccountingPayment(
   invoiceId: string,
   input: RegisterAccountingPaymentInput
 ) {
+  const viewOnly = await viewOnlyError();
+  if (viewOnly) return { error: viewOnly };
   try {
     const scope = await resolveScope();
     if ('error' in scope && scope.error) return { error: scope.error };

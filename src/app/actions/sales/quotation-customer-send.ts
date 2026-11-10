@@ -26,6 +26,7 @@ import {
   resolveLeadSalesAgentRecipient,
 } from '@/lib/notify-lifecycle';
 import { actionError } from '@/lib/user-facing-error';
+import { viewOnlyError } from '@/lib/auth/view-only';
 
 export type SendQuotationToCustomerResult =
   | {
@@ -464,6 +465,8 @@ async function deliverQuotationPdfToCustomer(input: {
 export async function sendSalesQuotationToCustomer(
   quotationId: string
 ): Promise<SendQuotationToCustomerResult> {
+  const viewOnly = await viewOnlyError();
+  if (viewOnly) return { error: viewOnly };
   try {
     const session = await getSession();
     if (!session || !sessionHasSalesAccess(session)) {

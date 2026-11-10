@@ -3,6 +3,7 @@
 import { createAdminClient } from '@/utils/supabase/server';
 import { getAccountingInvoiceDetail } from '@/app/actions/accounting/invoices';
 import { actionError } from '@/lib/user-facing-error';
+import { viewOnlyError } from '@/lib/auth/view-only';
 
 export type CreditNoteStatus = 'draft' | 'posted' | 'cancelled';
 
@@ -349,6 +350,8 @@ async function loadOrgBrand(
  * Odoo-style New Credit Note: create an empty Draft, then open the form.
  */
 export async function createManualAccountingCreditNote() {
+  const viewOnly = await viewOnlyError();
+  if (viewOnly) return { error: viewOnly };
   try {
     const scope = await resolveScope({ creditNotes: true });
     if ('error' in scope && scope.error) return { error: scope.error };
@@ -483,6 +486,8 @@ export async function updateAccountingCreditNote(
   creditNoteId: string,
   payload: UpdateAccountingCreditNoteInput
 ) {
+  const viewOnly = await viewOnlyError();
+  if (viewOnly) return { error: viewOnly };
   try {
     const scope = await resolveScope({ creditNotes: true });
     if ('error' in scope && scope.error) return { error: scope.error };
@@ -649,6 +654,8 @@ export async function updateAccountingCreditNote(
 }
 
 export async function resetAccountingCreditNoteToDraft(creditNoteId: string) {
+  const viewOnly = await viewOnlyError();
+  if (viewOnly) return { error: viewOnly };
   try {
     const scope = await resolveScope({ creditNotes: true });
     if ('error' in scope && scope.error) return { error: scope.error };
@@ -768,6 +775,8 @@ export async function createCreditNoteFromInvoice(
     createReplacementInvoice?: boolean;
   }
 ) {
+  const viewOnly = await viewOnlyError();
+  if (viewOnly) return { error: viewOnly };
   try {
     const scope = await resolveScope({ creditNotes: true });
     if ('error' in scope && scope.error) return { error: scope.error };
@@ -1076,6 +1085,8 @@ export async function postAccountingCreditNote(
   creditNoteId: string,
   opts?: { journalId?: string | null }
 ) {
+  const viewOnly = await viewOnlyError();
+  if (viewOnly) return { error: viewOnly };
   try {
     const scope = await resolveScope({ creditNotes: true });
     if ('error' in scope && scope.error) return { error: scope.error };

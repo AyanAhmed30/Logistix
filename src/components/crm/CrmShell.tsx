@@ -24,6 +24,7 @@ import { getCrmPageMeta } from "@/lib/crm-navigation";
 import type { DashboardAccessState } from "@/lib/dashboard-access";
 import { toast } from "@/lib/app-toast";
 import { AppNotificationBell } from "@/components/notifications/AppNotificationBell";
+import { ViewOnlyGuard } from "@/components/shared/ViewOnlyGuard";
 
 type CrmShellContextValue = {
   searchQuery: string;
@@ -196,6 +197,7 @@ export function CrmShell({ access, children }: Props) {
               isOpportunityForm ? "p-0 sm:p-2 md:p-3" : "p-3 sm:p-4 md:p-5"
             }`}
           >
+            <ViewOnlyGuard />
             {children}
           </main>
         </div>

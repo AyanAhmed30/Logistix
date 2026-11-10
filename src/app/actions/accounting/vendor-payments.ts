@@ -12,6 +12,7 @@ import {
 import { billOpenAmount } from '@/lib/accounting-document-outstanding';
 import { resolveVendorAccountingScope } from '@/lib/accounting-vendor-scope';
 import { actionError } from '@/lib/user-facing-error';
+import { viewOnlyError } from '@/lib/auth/view-only';
 
 function round2(n: number) {
   return Math.round(n * 100) / 100;
@@ -95,6 +96,8 @@ export async function registerVendorBillPayment(
   billId: string,
   input: RegisterVendorPaymentInput
 ) {
+  const viewOnly = await viewOnlyError();
+  if (viewOnly) return { error: viewOnly };
   try {
     const scope = await resolveVendorAccountingScope();
     if ('error' in scope && scope.error) return { error: scope.error };

@@ -6,6 +6,7 @@ import { getAccountingInvoiceDetail } from '@/app/actions/accounting/invoices';
 import { formatMoney } from '@/lib/sales-quotation-form';
 import { renderAccountingEmailTemplate } from '@/lib/accounting-email-templates';
 import { actionError } from '@/lib/user-facing-error';
+import { viewOnlyError } from '@/lib/auth/view-only';
 
 export type AccountingEmailTemplateKey =
   | 'invoice_sent'
@@ -209,6 +210,8 @@ export async function prepareAccountingTemplateEmail(opts: {
   invoiceId?: string;
   extraVars?: Record<string, string>;
 }) {
+  const viewOnly = await viewOnlyError();
+  if (viewOnly) return { error: viewOnly };
   try {
     const scope = await resolveScope();
     if ('error' in scope && scope.error) return { error: scope.error };
@@ -274,6 +277,8 @@ export async function scheduleAccountingReminder(opts: {
   dueAt?: string;
   sendNow?: boolean;
 }) {
+  const viewOnly = await viewOnlyError();
+  if (viewOnly) return { error: viewOnly };
   try {
     const scope = await resolveScope();
     if ('error' in scope && scope.error) return { error: scope.error };
@@ -431,6 +436,8 @@ export async function createAccountingActivity(opts: {
   dueAt: string;
   assignedTo?: string;
 }) {
+  const viewOnly = await viewOnlyError();
+  if (viewOnly) return { error: viewOnly };
   try {
     const scope = await resolveScope();
     if ('error' in scope && scope.error) return { error: scope.error };
@@ -557,6 +564,8 @@ export async function getAccountingActivities(opts: {
 }
 
 export async function markAccountingActivityDone(activityId: string) {
+  const viewOnly = await viewOnlyError();
+  if (viewOnly) return { error: viewOnly };
   try {
     const scope = await resolveScope();
     if ('error' in scope && scope.error) return { error: scope.error };

@@ -5,6 +5,7 @@ import { getSession } from '@/lib/auth/session';
 import { sessionHasSalesAccess } from '@/lib/auth/require-access';
 import { sessionHasAccountingAccess } from '@/lib/accounting-page-access';
 import { actionError } from '@/lib/user-facing-error';
+import { viewOnlyError } from '@/lib/auth/view-only';
 
 export type AccountingInvoiceStatus = 'draft' | 'posted' | 'cancelled' | 'paid';
 
@@ -198,6 +199,8 @@ async function allocateAccountingInvoiceNumber(
  * Reuses Contact Customer ID — never generates a new one.
  */
 export async function createAccountingInvoiceFromOrder(quotationId: string) {
+  const viewOnly = await viewOnlyError();
+  if (viewOnly) return { error: viewOnly };
   try {
     const scope = await resolveAccountingOrgScope({ allowSalesCreate: true });
     if ('error' in scope && scope.error) return { error: scope.error };
@@ -554,6 +557,8 @@ export async function createAccountingInvoiceFromOrder(quotationId: string) {
  * Odoo-style "New" — opens the same invoice form for manual entry.
  */
 export async function createManualAccountingInvoice() {
+  const viewOnly = await viewOnlyError();
+  if (viewOnly) return { error: viewOnly };
   try {
     const scope = await resolveAccountingOrgScope();
     if ('error' in scope && scope.error) return { error: scope.error };

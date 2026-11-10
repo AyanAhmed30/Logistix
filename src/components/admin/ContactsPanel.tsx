@@ -5,6 +5,7 @@ import { ContactsListView } from "@/components/admin/contacts/ContactsListView";
 import { ContactFormView } from "@/components/admin/contacts/ContactFormView";
 import { useAdminOrganization } from "@/contexts/AdminOrganizationContext";
 import { invalidateContactsClientCache } from "@/lib/contacts-client-cache";
+import { ViewOnlyGuard } from "@/components/shared/ViewOnlyGuard";
 
 type View = { mode: "list" } | { mode: "form"; contactId: string | null };
 
@@ -58,6 +59,7 @@ export function ContactsPanel({
 
   return (
     <>
+      <ViewOnlyGuard />
       {/* Keep list mounted (hidden on form) so saves refresh data without a full panel reload. */}
       <div className={view.mode === "list" ? "" : "hidden"} aria-hidden={view.mode !== "list"}>
         <ContactsListView

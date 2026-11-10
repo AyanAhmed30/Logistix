@@ -52,6 +52,7 @@ import { ContactSmartButtons } from "@/components/admin/contacts/ContactSmartBut
 import { CompanyEmployerPicker } from "@/components/admin/contacts/CompanyEmployerPicker";
 import type { ContactSmartButtonCounts } from "@/lib/contacts-integration";
 import { getContactCrmSummary, getContactDocuments, type ContactDocumentItem } from "@/app/actions/crm/contact-summary";
+import { useSuperAdminViewOnly } from "@/contexts/AdminOrganizationContext";
 
 type Props = {
   contactId: string | null;
@@ -270,13 +271,16 @@ export function ContactFormView({
   contactId,
   onBack,
   onSaved,
-  readOnly = false,
+  readOnly: readOnlyProp = false,
   backLabel = "Contacts",
   initialRelatedPanel = null,
   documentsBasePath,
   defaultCustomer = false,
   defaultVendor = false,
 }: Props) {
+  // Super Admin viewing an organization sees contacts read-only on every screen that reuses this form.
+  const viewOnly = useSuperAdminViewOnly();
+  const readOnly = readOnlyProp || viewOnly;
   const [form, setForm] = useState<FormState>(() => ({
     ...EMPTY_FORM,
     customer_rank: defaultCustomer ? 1 : 0,

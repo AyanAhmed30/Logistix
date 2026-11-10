@@ -9,6 +9,7 @@ import {
 } from '@/lib/sales-roles';
 import { renderSalesEmailTemplate } from '@/lib/sales-email-templates';
 import { actionError } from '@/lib/user-facing-error';
+import { viewOnlyError } from '@/lib/auth/view-only';
 
 export type SalesEmailTemplate = {
   id: string;
@@ -199,6 +200,8 @@ export async function prepareSalesQuotationEmail(
   quotationId: string,
   templateKey: string = 'send_quotation'
 ) {
+  const viewOnly = await viewOnlyError();
+  if (viewOnly) return { error: viewOnly };
   try {
     const scope = await resolveSalesOrgScope();
     if ('error' in scope && scope.error) return { error: scope.error };
@@ -430,6 +433,8 @@ export async function scheduleSalesQuotationFollowUp(input: {
   summary: string;
   channel?: 'in_app' | 'email' | 'both';
 }) {
+  const viewOnly = await viewOnlyError();
+  if (viewOnly) return { error: viewOnly };
   try {
     const scope = await resolveSalesOrgScope();
     if ('error' in scope && scope.error) return { error: scope.error };

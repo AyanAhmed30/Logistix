@@ -7,6 +7,7 @@ import {
   resolveVendorAccountingScope,
 } from '@/lib/accounting-vendor-scope';
 import { actionError } from '@/lib/user-facing-error';
+import { viewOnlyError } from '@/lib/auth/view-only';
 
 export type AccountingBillStatus = 'draft' | 'posted' | 'cancelled' | 'paid';
 
@@ -161,6 +162,8 @@ function mapBill(row: Record<string, unknown>, lines: AccountingBillLine[], org?
 }
 
 export async function createManualAccountingBill() {
+  const viewOnly = await viewOnlyError();
+  if (viewOnly) return { error: viewOnly };
   try {
     const scope = await resolveVendorAccountingScope();
     if ('error' in scope && scope.error) return { error: scope.error };

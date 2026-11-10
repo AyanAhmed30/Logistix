@@ -18,6 +18,7 @@ import {
   type AutoPostingLine,
 } from '@/lib/accounting-journal-posting';
 import { actionError } from '@/lib/user-facing-error';
+import { viewOnlyError } from '@/lib/auth/view-only';
 
 export type AccountingJournalEntryStatus = 'draft' | 'posted' | 'cancelled';
 
@@ -609,6 +610,8 @@ export async function createManualAccountingJournalEntry(input?: {
   entry_date?: string;
   reference?: string;
 }) {
+  const viewOnly = await viewOnlyError();
+  if (viewOnly) return { error: viewOnly };
   try {
     const scope = await resolveScope();
     if ('error' in scope && scope.error) return { error: scope.error };
@@ -702,6 +705,8 @@ export async function updateAccountingJournalEntry(
     lines?: JournalEntryLineInput[];
   }
 ) {
+  const viewOnly = await viewOnlyError();
+  if (viewOnly) return { error: viewOnly };
   try {
     const scope = await resolveScope();
     if ('error' in scope && scope.error) return { error: scope.error };
@@ -808,6 +813,8 @@ export async function updateAccountingJournalEntry(
 }
 
 export async function postAccountingJournalEntry(id: string) {
+  const viewOnly = await viewOnlyError();
+  if (viewOnly) return { error: viewOnly };
   try {
     const scope = await resolveScope();
     if ('error' in scope && scope.error) return { error: scope.error };
@@ -939,6 +946,8 @@ export async function cancelAccountingJournalEntry(id: string) {
 }
 
 export async function resetAccountingJournalEntryToDraft(id: string) {
+  const viewOnly = await viewOnlyError();
+  if (viewOnly) return { error: viewOnly };
   try {
     const scope = await resolveScope();
     if ('error' in scope && scope.error) return { error: scope.error };
@@ -1007,6 +1016,8 @@ export async function resetAccountingJournalEntryToDraft(id: string) {
 }
 
 export async function duplicateAccountingJournalEntry(id: string) {
+  const viewOnly = await viewOnlyError();
+  if (viewOnly) return { error: viewOnly };
   try {
     const detailRes = await getAccountingJournalEntryDetail(id);
     if ('error' in detailRes && detailRes.error) return { error: detailRes.error };
@@ -1074,6 +1085,8 @@ export async function createAndPostAutomaticJournalEntry(args: {
   /** When omitted, derived from sourceType so sale locks do not block purchase JEs. */
   lockDomain?: import('@/lib/accounting-lock-dates').AccountingLockDomain;
 }) {
+  const viewOnly = await viewOnlyError();
+  if (viewOnly) return { error: viewOnly };
   const supabase = await createAdminClient();
 
   const { data: existing } = await supabase
@@ -1257,6 +1270,8 @@ export async function createAndPostAutomaticJournalEntry(args: {
 }
 
 export async function postJournalEntryForCustomerInvoice(invoiceId: string) {
+  const viewOnly = await viewOnlyError();
+  if (viewOnly) return { error: viewOnly };
   try {
     const supabase = await createAdminClient();
     const { data: inv, error } = await supabase
@@ -1334,6 +1349,8 @@ export async function postJournalEntryForCustomerInvoice(invoiceId: string) {
 }
 
 export async function postJournalEntryForCustomerPayment(paymentId: string) {
+  const viewOnly = await viewOnlyError();
+  if (viewOnly) return { error: viewOnly };
   try {
     const supabase = await createAdminClient();
     const { data: pay, error } = await supabase
@@ -1402,6 +1419,8 @@ export async function postJournalEntryForBankPaymentSettlement(opts: {
   amount: number;
   performedBy: string;
 }) {
+  const viewOnly = await viewOnlyError();
+  if (viewOnly) return { error: viewOnly };
   try {
     const supabase = await createAdminClient();
     const { data: pay, error } = await supabase
@@ -1457,6 +1476,8 @@ export async function postJournalEntryForBankPaymentSettlement(opts: {
 }
 
 export async function postJournalEntryForVendorPayment(paymentId: string) {
+  const viewOnly = await viewOnlyError();
+  if (viewOnly) return { error: viewOnly };
   try {
     const supabase = await createAdminClient();
     const { data: pay, error } = await supabase
@@ -1527,6 +1548,8 @@ export async function postJournalEntryForCreditNote(
   creditNoteId: string,
   opts?: { journalId?: string | null }
 ) {
+  const viewOnly = await viewOnlyError();
+  if (viewOnly) return { error: viewOnly };
   try {
     const supabase = await createAdminClient();
     const { data: cn, error } = await supabase
@@ -1603,6 +1626,8 @@ export async function postJournalEntryForCreditNote(
 }
 
 export async function postJournalEntryForVendorBill(billId: string) {
+  const viewOnly = await viewOnlyError();
+  if (viewOnly) return { error: viewOnly };
   try {
     const supabase = await createAdminClient();
     const { data: bill, error } = await supabase
@@ -1661,6 +1686,8 @@ export async function postJournalEntryForVendorBill(billId: string) {
 }
 
 export async function postJournalEntryForVendorRefund(refundId: string) {
+  const viewOnly = await viewOnlyError();
+  if (viewOnly) return { error: viewOnly };
   try {
     const supabase = await createAdminClient();
     const { data: row, error } = await supabase

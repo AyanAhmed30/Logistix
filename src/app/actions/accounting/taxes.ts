@@ -14,6 +14,7 @@ import {
   type TaxScope,
 } from '@/lib/accounting-tax-engine';
 import { actionError } from '@/lib/user-facing-error';
+import { viewOnlyError } from '@/lib/auth/view-only';
 
 export type AccountingTaxListItem = {
   id: string;
@@ -440,6 +441,8 @@ export async function createAccountingConfigTax(payload: {
   sequence?: number;
   orgSpecific?: boolean;
 }) {
+  const viewOnly = await viewOnlyError();
+  if (viewOnly) return { error: viewOnly };
   try {
     const scope = await resolveTaxScope({ config: true });
     if ('error' in scope && scope.error) return { error: scope.error };
@@ -546,6 +549,8 @@ export async function updateAccountingConfigTax(
     is_active?: boolean;
   }
 ) {
+  const viewOnly = await viewOnlyError();
+  if (viewOnly) return { error: viewOnly };
   try {
     const scope = await resolveTaxScope({ config: true });
     if ('error' in scope && scope.error) return { error: scope.error };
@@ -662,14 +667,20 @@ export async function updateAccountingConfigTax(
 }
 
 export async function archiveAccountingConfigTax(taxId: string) {
+  const viewOnly = await viewOnlyError();
+  if (viewOnly) return { error: viewOnly };
   return updateAccountingConfigTax(taxId, { is_active: false });
 }
 
 export async function restoreAccountingConfigTax(taxId: string) {
+  const viewOnly = await viewOnlyError();
+  if (viewOnly) return { error: viewOnly };
   return updateAccountingConfigTax(taxId, { is_active: true });
 }
 
 export async function createAccountingTaxGroup(name: string) {
+  const viewOnly = await viewOnlyError();
+  if (viewOnly) return { error: viewOnly };
   try {
     const scope = await resolveTaxScope({ config: true });
     if ('error' in scope && scope.error) return { error: scope.error };

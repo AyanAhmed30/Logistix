@@ -11,6 +11,7 @@ import {
 } from '@/lib/accounting-assets';
 import type { AutoPostingLine } from '@/lib/accounting-journal-posting';
 import { actionError } from '@/lib/user-facing-error';
+import { viewOnlyError } from '@/lib/auth/view-only';
 
 export type AccountingAssetStatus =
   | 'draft'
@@ -384,6 +385,8 @@ export async function saveAccountingAssetCategory(input: {
   depreciation_account_id?: string | null;
   expense_account_id?: string | null;
 }) {
+  const viewOnly = await viewOnlyError();
+  if (viewOnly) return { error: viewOnly };
   try {
     const scope = await resolveScope();
     if ('error' in scope && scope.error) return { error: scope.error };
@@ -649,6 +652,8 @@ export async function createAccountingAsset(input?: {
   name?: string;
   category_id?: string | null;
 }) {
+  const viewOnly = await viewOnlyError();
+  if (viewOnly) return { error: viewOnly };
   try {
     const scope = await resolveScope();
     if ('error' in scope && scope.error) return { error: scope.error };
@@ -783,6 +788,8 @@ export async function updateAccountingAsset(
     notes?: string | null;
   }
 ) {
+  const viewOnly = await viewOnlyError();
+  if (viewOnly) return { error: viewOnly };
   try {
     const scope = await resolveScope();
     if ('error' in scope && scope.error) return { error: scope.error };
@@ -921,6 +928,8 @@ export async function updateAccountingAsset(
 
 /** Confirm asset → Running + purchase JE + build schedule. */
 export async function confirmAccountingAsset(assetId: string) {
+  const viewOnly = await viewOnlyError();
+  if (viewOnly) return { error: viewOnly };
   try {
     const scope = await resolveScope();
     if ('error' in scope && scope.error) return { error: scope.error };
@@ -1071,6 +1080,8 @@ export async function confirmAccountingAsset(assetId: string) {
 }
 
 export async function postAccountingAssetDepreciation(depreciationId: string) {
+  const viewOnly = await viewOnlyError();
+  if (viewOnly) return { error: viewOnly };
   try {
     const scope = await resolveScope();
     if ('error' in scope && scope.error) return { error: scope.error };
@@ -1231,6 +1242,8 @@ export async function postAccountingAssetDepreciation(depreciationId: string) {
 
 /** Post all due draft depreciation lines (date <= today). */
 export async function postDueAccountingAssetDepreciations(assetId?: string) {
+  const viewOnly = await viewOnlyError();
+  if (viewOnly) return { error: viewOnly };
   try {
     const scope = await resolveScope();
     if ('error' in scope && scope.error) return { error: scope.error };
@@ -1268,6 +1281,8 @@ export async function disposeAccountingAsset(
   assetId: string,
   opts?: { disposalDate?: string; disposalValue?: number }
 ) {
+  const viewOnly = await viewOnlyError();
+  if (viewOnly) return { error: viewOnly };
   try {
     const scope = await resolveScope();
     if ('error' in scope && scope.error) return { error: scope.error };

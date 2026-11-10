@@ -17,6 +17,7 @@ import {
 import { fetchPortalUserOrganizationAssignments } from '@/lib/portal-user-organizations';
 import { isPortalAccountSession } from '@/lib/auth/portal-access';
 import { actionError } from '@/lib/user-facing-error';
+import { loadAdminDefaultOrganization } from '@/lib/admin-default-organization';
 
 export type OrganizationSwitcherItem = {
   id: string;
@@ -31,6 +32,8 @@ export type AdminOrganizationState = {
   isSuperAdmin: boolean;
   /** True when super admin is in global Admin context (no org selected). */
   isAdminContext: boolean;
+  /** Super admin's saved login company; null means Admin. Separate from the active company. */
+  defaultOrganizationId: string | null;
 };
 
 function isTransientSupabaseError(message: string, code?: string | null) {
@@ -151,6 +154,7 @@ function buildAdminOrganizationState(
   overrides?: {
     organizationId?: string | null;
     organizationName?: string | null;
+    defaultOrganizationId?: string | null;
   }
 ): AdminOrganizationState {
   const isSuperAdmin = isSuperAdminSession(session);
@@ -164,6 +168,7 @@ function buildAdminOrganizationState(
     organizations,
     isSuperAdmin,
     isAdminContext,
+    defaultOrganizationId: overrides?.defaultOrganizationId ?? null,
   };
 }
 
@@ -177,16 +182,21 @@ export async function getAdminOrganizationState(): Promise<AdminOrganizationStat
       organizations: [],
       isSuperAdmin: false,
       isAdminContext: false,
+      defaultOrganizationId: null,
     };
   }
 
   let organizations: OrganizationSwitcherItem[] = [];
   let activeOrganizationId: string | null = session.organizationId ?? null;
   let activeOrganizationName: string | null = session.organizationName ?? null;
+  let defaultOrganizationId: string | null = null;
 
   try {
     if (isSuperAdminSession(session)) {
       organizations = await loadAllActiveOrganizations();
+      const supabase = await createAdminClient();
+      defaultOrganizationId =
+        (await loadAdminDefaultOrganization(supabase, session.username, organizations))?.id ?? null;
       // Soft fallback: keep current org visible in switcher if DB is unreachable
       if (
         organizations.length === 0 &&
@@ -262,7 +272,49 @@ export async function getAdminOrganizationState(): Promise<AdminOrganizationStat
   return buildAdminOrganizationState(session, organizations, {
     organizationId: activeOrganizationId,
     organizationName: activeOrganizationName,
+    defaultOrganizationId,
   });
+}
+
+/**
+ * Save super admin's login company (null = Admin). Only changes the default;
+ * the company being viewed right now stays as it is.
+ */
+export async function setAdminDefaultOrganization(organizationId: string | null) {
+  try {
+    const session = await getSession();
+    if (!session || !isSuperAdminSession(session)) {
+      return { error: 'Access Denied' as const };
+    }
+
+    const id = organizationId ? String(organizationId).trim() : null;
+    const supabase = await createAdminClient();
+
+    if (id) {
+      const { data, error } = await supabase
+        .from('organizations')
+        .select('id')
+        .eq('id', id)
+        .eq('status', 'active')
+        .maybeSingle();
+      if (error) return { error: actionError(error, 'Unable to save the default company') };
+      if (!data) return { error: 'That company is no longer available.' };
+    }
+
+    const { error } = await supabase.from('admin_preferences').upsert(
+      {
+        username: session.username,
+        default_organization_id: id,
+        updated_at: new Date().toISOString(),
+      },
+      { onConflict: 'username' }
+    );
+    if (error) return { error: actionError(error, 'Unable to save the default company') };
+
+    return { success: true as const, defaultOrganizationId: id };
+  } catch (err) {
+    return { error: actionError(err, 'Unable to save the default company') };
+  }
 }
 
 /** Switch active organization without re-login. */

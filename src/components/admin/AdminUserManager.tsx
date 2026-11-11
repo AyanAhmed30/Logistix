@@ -48,10 +48,13 @@ import { OrganizationPanel } from "@/components/admin/OrganizationPanel";
 import { UsersManagementPanel } from "@/components/admin/UsersManagementPanel";
 import { ApplicationUsersPanel } from "@/components/admin/ApplicationUsersPanel";
 import { useDashboardAccess } from "@/contexts/DashboardAccessContext";
+import { useAdminOrganization } from "@/contexts/AdminOrganizationContext";
+import { prefetchContactsFirstPage } from "@/components/admin/contacts/ContactsListView";
 import {
   canAccessAdminTab,
   defaultSalesRouteForAccess,
   isPortalDashboardAccess,
+  visibleModulesForAccess,
 } from "@/lib/dashboard-access";
 import {
   PortalContactsModuleContent,
@@ -128,6 +131,16 @@ export function AdminUserManager({
 }: Props) {
   const access = useDashboardAccess();
   const isPortal = isPortalDashboardAccess(access);
+  const { organizationId, switchVersion, isAdminContext } = useAdminOrganization();
+
+  // Contacts opens instantly: its first page loads in the background while the
+  // user is on the dashboard. Super Admin's list depends on the agent picker.
+  const canOpenContacts = !access.isSuperAdmin && !isAdminContext && visibleModulesForAccess(access).includes("contacts");
+  useEffect(() => {
+    if (!canOpenContacts) return;
+    const timer = window.setTimeout(() => prefetchContactsFirstPage(organizationId, switchVersion), 400);
+    return () => window.clearTimeout(timer);
+  }, [canOpenContacts, organizationId, switchVersion]);
   const router = useRouter();
   const [operationsSubTab, setOperationsSubTab] = useState<"operations" | "leads-inquiry" | null>(
     activeTab === "operations" ? "operations" : null

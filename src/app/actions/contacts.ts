@@ -5,6 +5,7 @@ import { getSession } from '@/lib/auth/session';
 import { createAdminClient } from '@/utils/supabase/server';
 import { actionError } from '@/lib/user-facing-error';
 import { viewOnlyError } from '@/lib/auth/view-only';
+import { CONTACTS_LIST_OR_FILTER } from '@/lib/contacts-list-filter';
 
 // =============================================================
 // Types
@@ -193,7 +194,6 @@ function normalizeCompanyType(value: CompanyType | undefined): CompanyType {
 }
 
 /** Odoo list: top-level companies + all individuals (including employer-linked). */
-const CONTACTS_LIST_OR_FILTER = 'parent_id.is.null,company_type.eq.person';
 
 /** Page size for chunked contact fetches (avoids oversized single responses). */
 const CONTACTS_FETCH_PAGE_SIZE = 1000;
@@ -641,6 +641,25 @@ async function attachContactTags(
   };
 }
 
+/** Tags embedded in the page query, saving the two follow-up lookups. */
+const CONTACT_TAGS_EMBED = 'contact_tag_links(tag_id, contact_tags(*))';
+
+function isTagEmbedError(error: { message?: string; code?: string }): boolean {
+  const message = String(error.message || '');
+  return error.code === 'PGRST200' || message.includes('contact_tag_links') || message.includes('contact_tags');
+}
+
+/** Turns the embedded tag links into the `tags` list the screens expect. */
+function withEmbeddedTags(contact: Contact): ContactWithRelations {
+  const { contact_tag_links: links, ...rest } = contact as Contact & {
+    contact_tag_links?: Array<{ contact_tags: ContactTag | ContactTag[] | null }> | null;
+  };
+  const tags = (links || [])
+    .flatMap((link) => (Array.isArray(link.contact_tags) ? link.contact_tags : [link.contact_tags]))
+    .filter((tag): tag is ContactTag => Boolean(tag));
+  return { ...(rest as Contact), tags, children: [] };
+}
+
 export type ContactsTypeFilter = 'all' | 'person' | 'company';
 export type ContactsSourceFilter = 'all' | 'mobile_app' | 'manual';
 
@@ -652,6 +671,8 @@ export type GetContactsPageOptions = GetContactsOptions & {
   source?: ContactsSourceFilter;
   /** Skip the two source-count queries when the caller already has them. */
   includeSourceCounts?: boolean;
+  /** Only contacts of this salesperson (sales_agents.id), or 'unassigned'. */
+  salespersonId?: string;
 };
 
 export type ContactsSourceCounts = { all: number; mobile: number; manual: number };
@@ -730,11 +751,21 @@ export async function getContactsPage(options: GetContactsPageOptions = {}) {
       return withMobileColumn ? manual.is('mobile_registered_at', null) : manual;
     }
 
+    // Super Admin's sales agent picker on the Contacts page, and the pipeline summary.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    function salespersonFilter(q: any) {
+      const id = options.salespersonId;
+      if (!id) return q;
+      return id === 'unassigned' ? q.is('salesperson_id', null) : q.eq('salesperson_id', id);
+    }
+
+    let embedTags = true;
     async function runPage(selectCols: string, withMobileColumn: boolean) {
+      const cols = embedTags ? `${selectCols}, ${CONTACT_TAGS_EMBED}` : selectCols;
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       let q: any = applyContactsListFilters(
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        supabase.from('contacts').select(selectCols, { count: 'exact' }) as any,
+        supabase.from('contacts').select(cols, { count: 'exact' }) as any,
         scope as ContactsListScope,
         searchOrFilter,
         dates,
@@ -742,6 +773,7 @@ export async function getContactsPage(options: GetContactsPageOptions = {}) {
       );
       if (companyType !== 'all') q = q.eq('company_type', companyType);
       if (source !== 'all') q = sourceFilter(q, source, withMobileColumn);
+      q = salespersonFilter(q);
       const from = (page - 1) * pageSize;
       q = q
         .order('created_at', { ascending: false })
@@ -766,6 +798,7 @@ export async function getContactsPage(options: GetContactsPageOptions = {}) {
         applyOrganizationFilter
       );
       if (which === 'mobile_app') q = sourceFilter(q, 'mobile_app', withMobileColumn);
+      q = salespersonFilter(q);
       const res = await q;
       return {
         count: typeof res.count === 'number' ? res.count : 0,
@@ -795,6 +828,15 @@ export async function getContactsPage(options: GetContactsPageOptions = {}) {
       `${CONTACTS_LIST_SELECT}, lead_id_formatted`,
       withMobileColumn
     );
+
+    // Tag tables or their relationship missing: retry without the embed.
+    if (pageRes.error && isTagEmbedError(pageRes.error)) {
+      embedTags = false;
+      [pageRes, allCount, mobileCount] = await runAll(
+        `${CONTACTS_LIST_SELECT}, lead_id_formatted`,
+        withMobileColumn
+      );
+    }
 
     if (pageRes.error && isMissingLeadIdColumnError(pageRes.error)) {
       [pageRes, allCount, mobileCount] = await runAll(CONTACTS_LIST_SELECT, withMobileColumn);
@@ -845,7 +887,9 @@ export async function getContactsPage(options: GetContactsPageOptions = {}) {
       contacts = (await assignMissingContactLeadIds(supabase, contacts)) as Contact[];
     }
 
-    const withTags = await attachContactTags(supabase, contacts);
+    const withTags = embedTags
+      ? { contacts: contacts.map(withEmbeddedTags) }
+      : await attachContactTags(supabase, contacts);
     if ('error' in withTags) return { error: withTags.error };
 
     const sourceCounts: ContactsSourceCounts | null =

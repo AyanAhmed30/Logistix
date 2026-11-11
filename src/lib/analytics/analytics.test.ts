@@ -9,6 +9,7 @@ import {
   type DailyReportSettings,
 } from './daily-report-status';
 import { formatDuration } from './format-duration';
+import { bucketForDays, groupSeries, trimLeadingEmpty } from './series-buckets';
 
 // Wednesday 2026-11-04 12:00 in Karachi
 const NOW = new Date('2026-11-04T07:00:00.000Z');
@@ -146,4 +147,35 @@ test('anything that cannot be scoped is denied', () => {
   assert.deepEqual(resolveAnalyticsAccess(session({ role: 'sales_agent' })), { kind: 'denied' });
   assert.equal(canViewEmployee({ kind: 'denied' }, 'sales', 'x'), false);
   assert.deepEqual(resolveAnalyticsAccess(session({ username: 'notadmin', role: 'admin' })), { kind: 'denied' });
+});
+
+test('this year and all time cover every record up to today', () => {
+  const year = range('this_year', undefined, NOW);
+  assert.equal(year.startYmd, '2026-01-01');
+  assert.equal(year.endYmd, '2026-11-04');
+  const all = range('all_time', undefined, NOW);
+  assert.equal(all.startYmd, '2024-01-01');
+  assert.equal(all.to, '2026-11-04T19:00:00.000Z');
+});
+
+test('long series group into Monday weeks and months, summing every count', () => {
+  assert.equal(bucketForDays(30), 'day');
+  assert.equal(bucketForDays(90), 'week');
+  assert.equal(bucketForDays(700), 'month');
+  const days = [
+    { day: '2026-11-01', sent: 1, approved: 0 }, // Sunday: week of 26 Oct
+    { day: '2026-11-02', sent: 2, approved: 1 }, // Monday
+    { day: '2026-11-04', sent: 3, approved: 2 },
+  ];
+  assert.deepEqual(groupSeries(days, 'week'), [
+    { day: '2026-10-26', sent: 1, approved: 0 },
+    { day: '2026-11-02', sent: 5, approved: 3 },
+  ]);
+  assert.deepEqual(groupSeries(days, 'month'), [
+    { day: '2026-11-01', sent: 6, approved: 3 },
+  ]);
+  assert.deepEqual(
+    trimLeadingEmpty([{ day: 'a', n: 0 }, { day: 'b', n: 2 }, { day: 'c', n: 0 }]),
+    [{ day: 'b', n: 2 }, { day: 'c', n: 0 }]
+  );
 });

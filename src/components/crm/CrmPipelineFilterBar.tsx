@@ -158,26 +158,6 @@ export function CrmPipelineFilterBar({
           </SelectContent>
         </Select>
 
-        <div className="flex items-center gap-1.5">
-          <Input
-            inputMode="decimal"
-            aria-label="Minimum value"
-            placeholder="Min value"
-            className={`${fieldClass} w-[100px]`}
-            value={value.minValue}
-            onChange={(e) => onChange({ minValue: e.target.value })}
-          />
-          <span className="text-sm text-slate-500">–</span>
-          <Input
-            inputMode="decimal"
-            aria-label="Maximum value"
-            placeholder="Max value"
-            className={`${fieldClass} w-[100px]`}
-            value={value.maxValue}
-            onChange={(e) => onChange({ maxValue: e.target.value })}
-          />
-        </div>
-
         <Select value={value.tag} onValueChange={(tag) => onChange({ tag })} disabled={tags.length === 0}>
           <SelectTrigger className={`${fieldClass} w-[130px]`} aria-label="Tag">
             <SelectValue placeholder="Tag" />

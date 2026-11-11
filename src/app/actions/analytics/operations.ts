@@ -374,6 +374,53 @@ export type OperationsAdminInquiryRow = {
 };
 
 /** Summary cards for the whole team. Admin calculation stays separate from approval. */
+/** Hours an inquiry may wait at Operations before it counts as waiting too long. */
+async function pendingAlertHours(
+  supabase: Awaited<ReturnType<typeof createAdminClient>>,
+  organizationId: string | null
+): Promise<number> {
+  const { data } = await supabase
+    .from('daily_report_settings')
+    .select('organization_id, inquiry_pending_alert_hours');
+  const settings =
+    (data || []).find((r) => organizationId && r.organization_id === organizationId) ||
+    (data || []).find((r) => r.organization_id === null);
+  return Number(settings?.inquiry_pending_alert_hours ?? 24);
+}
+
+export type OperationsTeamRow = { id: string; name: string; metrics: OperationsEmployeeMetrics };
+
+/** Every Operations person in scope with their work in the period. Admin views only. */
+export async function getOperationsTeamPerformance(period: AnalyticsPeriod) {
+  const access = resolveAnalyticsAccess(await getSession());
+  if (access.kind !== 'admin' || !validPeriod(period)) return DENIED;
+
+  const supabase = await createAdminClient();
+  const [people, metrics] = await Promise.all([
+    getOperationsEmployees(),
+    supabase.rpc('analytics_operations_employee_metrics', {
+      p_organization_id: access.organizationId,
+      p_from: period.from,
+      p_to: period.to,
+    }),
+  ]);
+  if ('error' in people) return { error: String(people.error || 'Unable to load the Operations team') };
+  if (metrics.error) return { error: actionError(metrics.error) };
+
+  const byActor = new Map(
+    ((metrics.data || []) as Array<Record<string, unknown>>).map((row) => {
+      const normalized = normalizeEmployee(row);
+      return [normalized.actor.toLowerCase(), normalized];
+    })
+  );
+  const rows: OperationsTeamRow[] = people.employees.map((person) => ({
+    id: person.id,
+    name: person.name,
+    metrics: byActor.get(person.id.toLowerCase()) ?? normalizeEmployee({ actor: person.id }),
+  }));
+  return { rows };
+}
+
 export async function getOperationsAdminSummary(period: AnalyticsPeriod) {
   const access = resolveAnalyticsAccess(await getSession());
   if (access.kind !== 'admin' || !validPeriod(period)) return DENIED;
@@ -387,13 +434,23 @@ export async function getOperationsAdminSummary(period: AnalyticsPeriod) {
     .lt('last_calculation_at', period.to);
   if (access.organizationId) calculated = calculated.eq('organization_id', access.organizationId);
 
-  const [overview, calculatedCount] = await Promise.all([
+  const alertHours = await pendingAlertHours(supabase, access.organizationId);
+  const overdueBefore = new Date(Date.now() - alertHours * 3_600_000).toISOString();
+  let overdue = supabase
+    .from('analytics_inquiry_timings')
+    .select('inquiry_id', { count: 'exact', head: true })
+    .eq('approval_status', 'sent')
+    .lt('first_submitted_at', overdueBefore);
+  if (access.organizationId) overdue = overdue.eq('organization_id', access.organizationId);
+
+  const [overview, calculatedCount, overdueCount] = await Promise.all([
     supabase.rpc('analytics_operations_overview', {
       p_organization_id: access.organizationId,
       p_from: period.from,
       p_to: period.to,
     }),
     calculated,
+    overdue,
   ]);
   if (overview.error) return { error: actionError(overview.error) };
 
@@ -404,6 +461,15 @@ export async function getOperationsAdminSummary(period: AnalyticsPeriod) {
     approved: row.approved,
     rejected: row.rejected,
     calculated: calculatedCount.count ?? 0,
+    flagged: row.flagged,
+    /** Current queues; the period does not filter these. */
+    atOperations: row.at_operations,
+    withAdmin: row.with_admin + row.admin_calculating,
+    waitingTooLong: overdueCount.count ?? 0,
+    alertHours,
+    avgOperationsSeconds: row.avg_operations_seconds,
+    avgAdminDecisionSeconds: row.avg_admin_decision_seconds,
+    avgTurnaroundSeconds: row.avg_turnaround_seconds,
   };
 }
 

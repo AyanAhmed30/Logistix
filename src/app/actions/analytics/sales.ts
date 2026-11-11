@@ -5,6 +5,7 @@ import { getSession } from '@/lib/auth/session';
 import { canViewEmployee, resolveAnalyticsAccess } from '@/lib/analytics/access';
 import type { SessionPayload } from '@/lib/auth/session';
 import { applyCrmVisibilityFilter } from '@/lib/crm-visibility';
+import { isLostStage, isWonStage } from '@/lib/crm-pipeline-filter';
 import { actionError } from '@/lib/user-facing-error';
 
 export type AnalyticsPeriod = { from: string; to: string };
@@ -180,6 +181,107 @@ export async function getSalesEmployees() {
     .filter((a) => !visible || visible.has(a.id))
     .map(({ id, name }) => ({ id, name }));
   return { employees };
+}
+
+export type SalesTeamAgentRow = {
+  id: string;
+  name: string;
+  metrics: SalesAgentMetrics;
+  /** When this agent last sent an inquiry, any time (not limited to the period). */
+  lastInquiryAt: string | null;
+};
+
+export type SalesTeamOverview = {
+  agents: SalesTeamAgentRow[];
+  /** Contacts with no sales agent, so agent totals add up to the Contacts page. */
+  unassigned: { total: number; added: number };
+  series: AnalyticsSeriesPoint[];
+};
+
+/**
+ * The whole sales team for one period: one row per agent (the same metrics as
+ * each agent's own dashboard), unassigned contacts, and the team's daily trend.
+ * Admin views only. With agentId, the trend is limited to that agent.
+ */
+export async function getSalesTeamOverview(period: AnalyticsPeriod, agentId: string | null = null) {
+  const access = resolveAnalyticsAccess(await getSession());
+  if (access.kind !== 'admin' || !validPeriod(period)) return DENIED;
+
+  try {
+    const supabase = await createAdminClient();
+    const organizationId = access.organizationId;
+
+    const unassignedCount = (inPeriod: boolean) => {
+      let query = supabase
+        .from('contacts')
+        .select('id', { count: 'exact', head: true })
+        .is('salesperson_id', null)
+        .or('parent_id.is.null,company_type.eq.person');
+      if (organizationId) query = query.eq('organization_id', organizationId);
+      if (inPeriod) query = query.gte('created_at', period.from).lt('created_at', period.to);
+      return query;
+    };
+
+    let latest = supabase
+      .from('lead_inquiries')
+      .select('sent_at, leads!inner(sales_agent_id)')
+      .not('sent_at', 'is', null)
+      .not('leads.sales_agent_id', 'is', null)
+      .order('sent_at', { ascending: false })
+      .limit(5000);
+    if (organizationId) latest = latest.eq('organization_id', organizationId);
+
+    const [metrics, agentsResult, series, unassignedTotal, unassignedAdded, latestInquiries] = await Promise.all([
+      fetchMetrics(supabase, organizationId, period, null),
+      supabase.from('sales_agents').select('id, name, username, app_user_id').order('name'),
+      fetchSeries(supabase, organizationId, period, agentId),
+      unassignedCount(false),
+      unassignedCount(true),
+      latest,
+    ]);
+    if ('error' in metrics) return { error: metrics.error };
+    if (agentsResult.error) return { error: actionError(agentsResult.error) };
+    if (unassignedTotal.error) return { error: actionError(unassignedTotal.error) };
+
+    const agents = (agentsResult.data || []).map((a) => ({
+      id: String(a.id),
+      name: String(a.name || a.username || 'Unnamed'),
+      app_user_id: a.app_user_id ? String(a.app_user_id) : null,
+    }));
+    // Same rule as the agent list: linked to the organization, or with work in it.
+    // Uses all-time metrics so an agent with no activity this period still shows.
+    let visible: Set<string> | null = null;
+    if (organizationId) {
+      const allTime = await fetchMetrics(supabase, organizationId, null, null);
+      if ('error' in allTime) return { error: allTime.error };
+      visible = await organizationAgentIds(supabase, organizationId, agents, allTime.rows);
+    }
+
+    const byId = new Map(metrics.rows.map((row) => [row.sales_agent_id, row]));
+    // Rows arrive newest first, so the first per agent is the latest.
+    const lastSent = new Map<string, string>();
+    for (const row of latestInquiries.data || []) {
+      const lead = row.leads as { sales_agent_id?: string | null } | Array<{ sales_agent_id?: string | null }> | null;
+      const owner = Array.isArray(lead) ? lead[0]?.sales_agent_id : lead?.sales_agent_id;
+      if (owner && row.sent_at && !lastSent.has(String(owner))) lastSent.set(String(owner), String(row.sent_at));
+    }
+    const rows: SalesTeamAgentRow[] = agents
+      .filter((a) => !visible || visible.has(a.id))
+      .map((a) => ({
+        id: a.id,
+        name: a.name,
+        metrics: byId.get(a.id) ?? emptyMetrics(a.id),
+        lastInquiryAt: lastSent.get(a.id) ?? null,
+      }));
+
+    return {
+      agents: rows,
+      unassigned: { total: unassignedTotal.count ?? 0, added: unassignedAdded.count ?? 0 },
+      series,
+    } satisfies SalesTeamOverview;
+  } catch (err) {
+    return { error: actionError(err, 'Unable to load sales analytics') };
+  }
 }
 
 type AgentContext = {
@@ -690,4 +792,364 @@ export async function getAgentTimeline(agentId: string, period: AnalyticsPeriod)
 
   items.sort((a, b) => (a.at < b.at ? 1 : -1));
   return { items: items.slice(0, LIMIT), truncated: items.length > LIMIT };
+}
+
+// ---------------------------------------------------------------------------
+// Sales funnel for one agent: everything the agent dashboard shows above the
+// record tables, for the period and the period just before it.
+// ---------------------------------------------------------------------------
+
+export type FunnelWindow = {
+  contactsAdded: number;
+  inquiriesReceived: number;
+  receivedFromMobile: number;
+  /** Received in the period and still a draft, not sent to Operations. */
+  receivedStillDraft: number;
+  inquiriesSent: number;
+  approved: number;
+  rejected: number;
+  quotationsSent: number;
+  quotedValue: number;
+  salesOrders: number;
+  salesOrderValue: number;
+  activitiesLogged: number;
+  activitiesDone: number;
+  avgApprovalSeconds: number | null;
+};
+
+export type FunnelSeriesPoint = {
+  day: string;
+  contacts_added: number;
+  quoted_value: number;
+  sales_order_value: number;
+};
+
+export type FunnelStage = {
+  name: string;
+  isWon: boolean;
+  isLost: boolean;
+  count: number;
+  addedInPeriod: number;
+  expectedRevenue: number;
+  avgAgeSeconds: number | null;
+};
+
+export type SalesAgentFunnel = {
+  agent: { id: string; name: string };
+  sources: string[];
+  hasUnsourced: boolean;
+  current: FunnelWindow;
+  /** The same length of time just before the period; null for "All time". */
+  previous: FunnelWindow | null;
+  totalContacts: number;
+  inProgress: number;
+  series: FunnelSeriesPoint[];
+  pipeline: FunnelStage[];
+  activityTypes: Array<{ type: string; logged: number; done: number }>;
+  rejectionReasons: Array<{ at: string; reason: string }>;
+};
+
+const DAY_MS = 86_400_000;
+const KARACHI_MS = 5 * 3_600_000;
+const karachiDay = (iso: string) => new Date(Date.parse(iso) + KARACHI_MS).toISOString().slice(0, 10);
+
+type FunnelRange = { from: string; to: string };
+const within = (iso: unknown, w: FunnelRange) =>
+  typeof iso === 'string' && iso !== '' && iso >= w.from && iso < w.to;
+
+/**
+ * source: a contact source, '__none__' for contacts without one, or null for all.
+ * Every record follows the source of its contact.
+ */
+export async function getSalesAgentFunnel(
+  agentId: string,
+  period: AnalyticsPeriod,
+  options: FunnelOptions = {}
+): Promise<SalesAgentFunnel | { error: string }> {
+  if (!validPeriod(period)) return DENIED;
+  const ctx = await requireAgent(agentId);
+  if ('error' in ctx) return ctx;
+  return buildSalesFunnel(ctx.supabase, ctx.organizationId, ctx.agent, period, options);
+}
+
+/**
+ * The same funnel for the whole sales team in the active company. Admin views
+ * only. Contacts include those without a sales agent, so the total matches the
+ * Contacts page, and inquiries match the All Inquiries page.
+ */
+export async function getSalesTeamFunnel(
+  period: AnalyticsPeriod,
+  options: FunnelOptions = {}
+): Promise<SalesAgentFunnel | { error: string }> {
+  const access = resolveAnalyticsAccess(await getSession());
+  if (access.kind !== 'admin' || !validPeriod(period)) return DENIED;
+  const supabase = await createAdminClient();
+  return buildSalesFunnel(supabase, access.organizationId, null, period, options);
+}
+
+type FunnelOptions = { source?: string | null; allTime?: boolean };
+
+/** agent null = every agent (and unassigned contacts) in the organization scope. */
+async function buildSalesFunnel(
+  supabase: AgentContext['supabase'],
+  organizationId: string | null,
+  agent: AgentContext['agent'] | null,
+  period: AnalyticsPeriod,
+  options: FunnelOptions
+): Promise<SalesAgentFunnel | { error: string }> {
+  try {
+    const LIMIT = 5000;
+
+    let stagesQuery = supabase.from('crm_pipeline_stages').select('id, name, sequence, is_won, is_lost').order('sequence');
+    if (organizationId) stagesQuery = stagesQuery.eq('organization_id', organizationId);
+
+    let opportunitiesQuery = supabase
+      .from('crm_opportunities')
+      .select('id, stage_id, expected_revenue, created_at, contact_id')
+      .limit(LIMIT);
+    if (organizationId) opportunitiesQuery = opportunitiesQuery.eq('organization_id', organizationId);
+
+    let contactsQuery = supabase
+      .from('contacts')
+      .select('id, source, created_at')
+      .or('parent_id.is.null,company_type.eq.person')
+      .limit(LIMIT);
+    if (organizationId) contactsQuery = contactsQuery.eq('organization_id', organizationId);
+    if (agent) contactsQuery = contactsQuery.eq('salesperson_id', agent.id);
+
+    let inquiriesQuery = supabase
+      .from('lead_inquiries')
+      .select('id, created_at, sent_at, approval_status, customer_submitted, leads!inner(sales_agent_id, contact_id)')
+      .or('is_current_version.is.null,is_current_version.eq.true')
+      .limit(LIMIT);
+    if (organizationId) inquiriesQuery = inquiriesQuery.eq('organization_id', organizationId);
+    if (agent) inquiriesQuery = inquiriesQuery.eq('leads.sales_agent_id', agent.id);
+
+    let eventsQuery = supabase
+      .from('inquiry_workflow_events')
+      .select('inquiry_id, event_type, occurred_at')
+      .in('event_type', ['approved', 'rejected'])
+      .limit(LIMIT);
+    if (organizationId) eventsQuery = eventsQuery.eq('organization_id', organizationId);
+    if (agent) eventsQuery = eventsQuery.eq('sales_agent_id', agent.id);
+
+    let quotationsQuery = supabase
+      .from('quotations')
+      .select('total_amount, status, created_at, sent_to_customer_at, contact_id')
+      .limit(LIMIT);
+    if (organizationId) quotationsQuery = quotationsQuery.eq('organization_id', organizationId);
+    if (agent) quotationsQuery = quotationsQuery.eq('salesperson_id', agent.id);
+
+    let activitiesQuery = supabase
+      .from('crm_activities')
+      .select('activity_type, status, created_at, completed_at, opportunity_id')
+      .limit(LIMIT);
+    if (organizationId) activitiesQuery = activitiesQuery.eq('organization_id', organizationId);
+    if (agent) activitiesQuery = activitiesQuery.eq('assigned_to', agent.id);
+
+    let timingsQuery = supabase
+      .from('analytics_inquiry_timings')
+      .select('inquiry_id, decided_at, turnaround_seconds')
+      .not('decided_at', 'is', null)
+      .limit(LIMIT);
+    if (organizationId) timingsQuery = timingsQuery.eq('organization_id', organizationId);
+    if (agent) timingsQuery = timingsQuery.eq('sales_agent_id', agent.id);
+
+    const [contacts, inquiries, events, quotations, opportunities, stages, activities, timings] = await Promise.all([
+      contactsQuery,
+      inquiriesQuery,
+      eventsQuery,
+      quotationsQuery,
+      // Ownership uses the Kanban's own Own Documents rule, as fetchCrmPipeline does.
+      agent
+        ? applyCrmVisibilityFilter(opportunitiesQuery, {
+            mode: 'assigned',
+            session: { username: agent.username ?? '' } as SessionPayload,
+            salesAgentId: agent.id,
+          })
+        : opportunitiesQuery,
+      stagesQuery,
+      activitiesQuery,
+      timingsQuery,
+    ]);
+    for (const result of [contacts, inquiries, quotations, opportunities, stages]) {
+      if (result.error) return { error: actionError(result.error, 'Unable to load sales analytics') };
+    }
+
+    // --- Source filter
+    const sourceOf = new Map<string, string | null>();
+    for (const c of contacts.data || []) sourceOf.set(String(c.id), c.source ? String(c.source) : null);
+    const sources = [...new Set([...sourceOf.values()].filter((v): v is string => Boolean(v)))].sort();
+    const hasUnsourced = [...sourceOf.values()].some((v) => !v);
+    const source = options.source || null;
+    const keep = (contactId: unknown) => {
+      if (!source) return true;
+      const value = contactId ? sourceOf.get(String(contactId)) : undefined;
+      if (value === undefined) return false; // not one of this agent's contacts
+      return source === '__none__' ? value === null : value === source;
+    };
+
+    const contactRows = (contacts.data || []).filter((c) => keep(c.id));
+    const inquiryRows = (inquiries.data || [])
+      .map((row) => {
+        const lead = row.leads as { contact_id?: string | null } | Array<{ contact_id?: string | null }> | null;
+        const contactId = Array.isArray(lead) ? lead[0]?.contact_id : lead?.contact_id;
+        return { ...row, contactId: contactId ?? null };
+      })
+      .filter((row) => keep(row.contactId));
+    const inquiryIds = new Set(inquiryRows.map((row) => String(row.id)));
+    const eventRows = (events.data || []).filter((e) => !source || inquiryIds.has(String(e.inquiry_id)));
+    const quotationRows = (quotations.data || []).filter((q) => keep(q.contact_id));
+    const opportunityRows = (opportunities.data || []).filter((o) => keep(o.contact_id));
+    const opportunityIds = new Set(opportunityRows.map((o) => String(o.id)));
+    const activityRows = (activities.data || []).filter(
+      (a) => !source || (a.opportunity_id && opportunityIds.has(String(a.opportunity_id)))
+    );
+    const timingRows = (timings.data || []).filter((t) => !source || inquiryIds.has(String(t.inquiry_id)));
+
+    // --- Windows
+    const current: FunnelRange = { from: period.from, to: period.to };
+    const length = Date.parse(period.to) - Date.parse(period.from);
+    const previous: FunnelRange | null = options.allTime
+      ? null
+      : { from: new Date(Date.parse(period.from) - length).toISOString(), to: period.from };
+
+    const summarize = (w: FunnelRange): FunnelWindow => {
+      const decisions = (type: string) =>
+        new Set(eventRows.filter((e) => e.event_type === type && within(e.occurred_at, w)).map((e) => String(e.inquiry_id)))
+          .size;
+      const sent = quotationRows.filter((q) => within(q.sent_to_customer_at, w));
+      const orders = quotationRows.filter((q) => q.status === 'sales_order' && within(q.created_at, w));
+      const turnarounds = timingRows
+        .filter((t) => within(t.decided_at, w) && t.turnaround_seconds !== null)
+        .map((t) => Number(t.turnaround_seconds));
+      const received = inquiryRows.filter((i) => within(i.created_at, w));
+      return {
+        contactsAdded: contactRows.filter((c) => within(c.created_at, w)).length,
+        inquiriesReceived: received.length,
+        receivedFromMobile: received.filter((i) => i.customer_submitted).length,
+        receivedStillDraft: received.filter((i) => String(i.approval_status) === 'draft').length,
+        inquiriesSent: inquiryRows.filter((i) => within(i.sent_at, w)).length,
+        approved: decisions('approved'),
+        rejected: decisions('rejected'),
+        quotationsSent: sent.length,
+        quotedValue: sent.reduce((sum, q) => sum + Number(q.total_amount || 0), 0),
+        salesOrders: orders.length,
+        salesOrderValue: orders.reduce((sum, q) => sum + Number(q.total_amount || 0), 0),
+        activitiesLogged: activityRows.filter((a) => within(a.created_at, w)).length,
+        activitiesDone: activityRows.filter((a) => a.status === 'done' && within(a.completed_at, w)).length,
+        avgApprovalSeconds: turnarounds.length
+          ? Math.round(turnarounds.reduce((a, b) => a + b, 0) / turnarounds.length)
+          : null,
+      };
+    };
+
+    // --- Daily series for the period (Karachi days)
+    const firstDay = karachiDay(period.from);
+    const lastDay = karachiDay(new Date(Date.parse(period.to) - 1).toISOString());
+    const points = new Map<string, FunnelSeriesPoint>();
+    for (let t = Date.parse(`${firstDay}T00:00:00Z`); ; t += DAY_MS) {
+      const day = new Date(t).toISOString().slice(0, 10);
+      points.set(day, { day, contacts_added: 0, quoted_value: 0, sales_order_value: 0 });
+      if (day >= lastDay) break;
+    }
+    for (const c of contactRows) {
+      if (!within(c.created_at, current)) continue;
+      const point = points.get(karachiDay(String(c.created_at)));
+      if (point) point.contacts_added += 1;
+    }
+    for (const q of quotationRows) {
+      if (!within(q.sent_to_customer_at, current)) continue;
+      const point = points.get(karachiDay(String(q.sent_to_customer_at)));
+      if (!point) continue;
+      point.quoted_value += Number(q.total_amount || 0);
+      if (q.status === 'sales_order') point.sales_order_value += Number(q.total_amount || 0);
+    }
+
+    // --- Pipeline: same-named stages merge, as on the Kanban's Admin view.
+    const now = Date.now();
+    type StageGroup = FunnelStage & { ids: Set<string>; ageTotal: number };
+    const groups = new Map<string, StageGroup>();
+    const stageGroup = new Map<string, StageGroup>();
+    for (const stage of stages.data || []) {
+      const key = String(stage.name || '').trim().toLowerCase();
+      let group = groups.get(key);
+      if (!group) {
+        const shape = { name: String(stage.name || ''), is_won: Boolean(stage.is_won), is_lost: Boolean(stage.is_lost) };
+        group = {
+          name: shape.name,
+          isWon: isWonStage(shape),
+          isLost: isLostStage(shape),
+          count: 0,
+          addedInPeriod: 0,
+          expectedRevenue: 0,
+          avgAgeSeconds: null,
+          ids: new Set(),
+          ageTotal: 0,
+        };
+        groups.set(key, group);
+      }
+      group.ids.add(String(stage.id));
+      stageGroup.set(String(stage.id), group);
+    }
+    for (const o of opportunityRows) {
+      const group = stageGroup.get(String(o.stage_id));
+      if (!group) continue; // the stage was deleted
+      group.count += 1;
+      group.expectedRevenue += Number(o.expected_revenue || 0);
+      if (within(o.created_at, current)) group.addedInPeriod += 1;
+      group.ageTotal += Math.max(0, (now - Date.parse(String(o.created_at))) / 1000);
+    }
+    const pipeline: FunnelStage[] = [...groups.values()].map((group) => ({
+      name: group.name,
+      isWon: group.isWon,
+      isLost: group.isLost,
+      count: group.count,
+      addedInPeriod: group.addedInPeriod,
+      expectedRevenue: group.expectedRevenue,
+      avgAgeSeconds: group.count ? Math.round(group.ageTotal / group.count) : null,
+    }));
+
+    // --- Activities by type in the period
+    const types = new Map<string, { type: string; logged: number; done: number }>();
+    for (const a of activityRows) {
+      const type = String(a.activity_type || 'other');
+      const entry = types.get(type) ?? { type, logged: 0, done: 0 };
+      if (within(a.created_at, current)) entry.logged += 1;
+      if (a.status === 'done' && within(a.completed_at, current)) entry.done += 1;
+      types.set(type, entry);
+    }
+
+    // --- Written rejection reasons in the period, newest first
+    let rejectionReasons: Array<{ at: string; reason: string }> = [];
+    const ids = [...inquiryIds].slice(0, 1000);
+    if (ids.length) {
+      const { data } = await supabase
+        .from('inquiry_confirmations')
+        .select('rejection_reason, reviewed_at, updated_at')
+        .in('inquiry_id', ids)
+        .not('rejection_reason', 'is', null);
+      rejectionReasons = (data || [])
+        .map((r) => ({ at: String(r.reviewed_at || r.updated_at), reason: String(r.rejection_reason || '').trim() }))
+        .filter((r) => r.reason && within(r.at, current))
+        .sort((a, b) => (a.at < b.at ? 1 : -1))
+        .slice(0, 5);
+    }
+
+    return {
+      agent: agent ? { id: agent.id, name: agent.name } : { id: 'team', name: 'Sales team' },
+      sources,
+      hasUnsourced,
+      current: summarize(current),
+      previous: previous ? summarize(previous) : null,
+      totalContacts: contactRows.length,
+      inProgress: inquiryRows.filter((i) => PENDING_STATUSES.has(String(i.approval_status))).length,
+      series: [...points.values()],
+      pipeline,
+      activityTypes: [...types.values()].sort((a, b) => b.logged - a.logged || a.type.localeCompare(b.type)),
+      rejectionReasons,
+    };
+  } catch (err) {
+    return { error: actionError(err, 'Unable to load sales analytics') };
+  }
 }

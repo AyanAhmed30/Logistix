@@ -2,6 +2,9 @@
 
 import { useRef, useState } from "react";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
+import { ArrowLeft } from "lucide-react";
+import { Input } from "@/components/ui/input";
 import { TableCell, TableRow } from "@/components/ui/table";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import {
@@ -10,10 +13,11 @@ import {
   getAgentTimeline,
   getContactInquiryHistory,
   getSalesAgentDetail,
+  getSalesAgentFunnel,
   type AgentContactRow,
   type AgentInquiryRow,
   type AnalyticsPeriod,
-  type CrmPipelineStageCount,
+  type SalesAgentFunnel,
   type TimelineItem,
 } from "@/app/actions/analytics/sales";
 import { useAdminOrganization } from "@/contexts/AdminOrganizationContext";
@@ -22,26 +26,29 @@ import { formatDuration } from "@/lib/analytics/format-duration";
 import { useAnalyticsRange } from "@/components/analytics/AnalyticsDateFilter";
 import {
   ActivityRail,
-  DashboardHeader,
   PagedTable,
-  Panel,
-  PipelineRow,
   SectionTabs,
   useLoad,
   usePaged,
-  type PipelineStage,
 } from "@/components/analytics/AnalyticsDashboardKit";
 import {
   AnalyticsEmpty,
   AnalyticsError,
   AnalyticsLoading,
-  KpiCards,
   StatusBadge,
   formatDate,
   formatDateTime,
 } from "@/components/analytics/AnalyticsParts";
 import { AnalyticsInquiryDetail } from "@/components/analytics/AnalyticsInquiryDetail";
 import { AnalyticsTrendChart } from "@/components/analytics/AnalyticsTrendChart";
+import {
+  FunnelBoard,
+  FunnelFilters,
+  FunnelHeader,
+  NO_SOURCE,
+  funnelPeriodLabel,
+  sourceLabel,
+} from "@/components/analytics/SalesAgentFunnel";
 
 type Detail = Exclude<Awaited<ReturnType<typeof getSalesAgentDetail>>, { error: string }>;
 type Section = "contacts" | "inquiries";
@@ -59,24 +66,6 @@ const INQUIRY_STATUSES: Record<string, string> = {
   approved: "Approved",
   rejected: "Rejected",
 };
-
-// Teal deepens through open stages; won and lost use their semantic colours.
-const STAGE_RAMP = [
-  { fill: "bg-[#cfe9eb]", text: "text-[#073D51]" },
-  { fill: "bg-[#a6d8dc]", text: "text-[#073D51]" },
-  { fill: "bg-[#7cc4c9]", text: "text-[#073D51]" },
-  { fill: "bg-[#017e84]", text: "text-white" },
-  { fill: "bg-[#016970]", text: "text-white" },
-];
-
-function toPipelineStage(stage: CrmPipelineStageCount, index: number): PipelineStage {
-  const colours = stage.isWon
-    ? { fill: "bg-emerald-700", text: "text-white" }
-    : stage.isLost
-      ? { fill: "bg-red-700", text: "text-white" }
-      : STAGE_RAMP[Math.min(index, STAGE_RAMP.length - 1)];
-  return { id: stage.name, label: stage.name, count: stage.count, ...colours };
-}
 
 const linkClass = "font-medium text-[#017e84] hover:underline";
 const selectClass = "h-8 rounded-md border border-slate-200 bg-white px-2 text-sm text-primary-dark";
@@ -296,7 +285,9 @@ export function SalesAgentAnalytics({
   selfView?: boolean;
 }) {
   const { switchVersion } = useAdminOrganization();
-  const { range, rangeError, query } = useAnalyticsRange();
+  const params = useSearchParams();
+  const { range, rangeError, query, update } = useAnalyticsRange();
+  const source = params.get("source") ?? "";
   const [search, setSearch] = useState("");
   const needle = useDebouncedValue(search, 280);
   const [section, setSection] = useState<Section>("contacts");
@@ -309,26 +300,27 @@ export function SalesAgentAnalytics({
   const to = range?.to ?? "";
   const period = { from, to };
   const periodKey = `${agentId}|${from}|${to}|${switchVersion}`;
+  const noPeriod = () => Promise.resolve({ error: rangeError ?? "Choose a period." });
+  const allTime = range?.preset === "all_time";
 
-  const { data, error, loading, onRetry } = useLoad<Detail>(
-    () => (from ? getSalesAgentDetail(agentId, period) : Promise.resolve({ error: rangeError ?? "Choose a period." })),
-    periodKey
+  const funnel = useLoad<SalesAgentFunnel>(
+    () => (from ? getSalesAgentFunnel(agentId, period, { source: source || null, allTime }) : noPeriod()),
+    `${periodKey}|${source}`
   );
+  const detail = useLoad<Detail>(() => (from ? getSalesAgentDetail(agentId, period) : noPeriod()), periodKey);
   const timeline = useLoad<{ items: TimelineItem[]; truncated: boolean }>(
-    () => (from ? getAgentTimeline(agentId, period) : Promise.resolve({ error: rangeError ?? "Choose a period." })),
+    () => (from ? getAgentTimeline(agentId, period) : noPeriod()),
     periodKey
   );
 
-  const selectStage = (id: string | null) => {
-    setStage(id);
-    if (id) {
+  const openRecords = (target: "contacts" | "inquiries" | "approved" | "rejected") => {
+    if (target === "contacts") setSection("contacts");
+    else {
+      setStage(target === "inquiries" ? null : target);
       setSection("inquiries");
-      tablesRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
     }
+    tablesRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
   };
-
-  const m = data?.metrics;
-  const stages = (data?.pipeline ?? []).map(toPipelineStage);
 
   if (openInquiry) {
     return (
@@ -343,73 +335,73 @@ export function SalesAgentAnalytics({
     );
   }
 
+  const data = funnel.data;
+  const name = selfView ? "My performance" : data?.agent.name ?? detail.data?.agent.name ?? "Sales agent";
+
   return (
     <div className="space-y-4">
-      <DashboardHeader
-        backHref={selfView ? undefined : `/analytics/sales${query ? `?${query}` : ""}`}
-        backLabel="Sales"
-        name={selfView ? "My performance" : data?.agent.name ?? "Sales agent"}
-        title="Sales analytics"
-        search={search}
-        onSearch={setSearch}
-        searchPlaceholder="Search contact or inquiry"
+      <FunnelHeader
+        name={name}
+        periodLabel={range ? funnelPeriodLabel(range.preset, range.from, range.to) : rangeError ?? ""}
+        back={
+          selfView ? undefined : (
+            <Link
+              href={`/analytics/sales${query ? `?${query}` : ""}`}
+              className="inline-flex items-center gap-1 text-sm text-slate-600 hover:text-[#017e84]"
+            >
+              <ArrowLeft className="h-4 w-4" aria-hidden />
+              Sales team
+            </Link>
+          )
+        }
       />
 
-      {error ? (
-        <AnalyticsError message={error} onRetry={onRetry} />
-      ) : !data || !m ? (
+      <FunnelFilters
+        sources={data?.sources ?? []}
+        hasUnsourced={data?.hasUnsourced ?? false}
+        source={source}
+        onSource={(value) => update({ source: value })}
+      />
+      {source ? (
+        <p className="text-xs text-slate-600" role="status">
+          Charts and totals show only contacts from{" "}
+          <span className="font-semibold text-primary-dark">{source === NO_SOURCE ? "no recorded source" : sourceLabel(source)}</span>{" "}
+          and their inquiries, quotations and deals. The record tables below are not filtered by source.
+        </p>
+      ) : null}
+
+      {funnel.error ? (
+        <AnalyticsError message={funnel.error} onRetry={funnel.onRetry} />
+      ) : !data ? (
         <AnalyticsLoading />
       ) : (
-        <div className={`space-y-4 transition-opacity ${loading ? "opacity-60" : ""}`} aria-busy={loading}>
-          <KpiCards
-            label="Performance overview"
-            items={[
-              {
-                label: "Total contacts",
-                value: m.total_contacts,
-                note: `${m.new_contacts.toLocaleString()} added in period`,
-                onClick: () => setSection("contacts"),
-              },
-              {
-                label: "Inquiries sent",
-                value: m.inquiries_submitted,
-                tone: "brand",
-                onClick: () => {
-                  setStage(null);
-                  setSection("inquiries");
-                },
-              },
-              { label: "Approved", value: m.inquiries_approved, tone: "success", onClick: () => selectStage("approved") },
-              { label: "Under processing", value: m.inquiries_pending, tone: "warning", note: "Right now", onClick: () => setSection("inquiries") },
-              { label: "Rejected", value: m.inquiries_rejected, tone: "danger", onClick: () => selectStage("rejected") },
-            ]}
-          />
-
-          <div className="grid grid-cols-1 gap-4 xl:grid-cols-12">
-            <div className="min-w-0 space-y-4 xl:col-span-8">
-              <Panel title="Inquiry pipeline" description="Opportunities in each CRM stage right now">
-                {stages.length ? (
-                  <PipelineRow stages={stages} />
-                ) : (
-                  <AnalyticsEmpty title="No CRM pipeline stages found" />
-                )}
-              </Panel>
-              <div ref={tablesRef} className="scroll-mt-16 rounded-lg border border-slate-200 bg-white">
-                <SectionTabs tabs={SECTIONS} active={section} onChange={setSection} label="Records" />
-                {section === "contacts" ? (
-                  <ContactsSection agentId={agentId} period={period} search={needle} onOpen={setOpenContact} />
-                ) : (
-                  <InquiriesSection agentId={agentId} period={period} search={needle} status={stage} onStatus={setStage} onOpen={setOpenInquiry} />
-                )}
-              </div>
-            </div>
-            <div className="min-w-0 space-y-4 xl:col-span-4">
-              <AnalyticsTrendChart data={data.series} title="Daily activity" />
-              <ActivityRail title="Activity history" state={timeline} emptyTitle="No recorded activity in this period" />
-            </div>
-          </div>
-        </div>
+        <FunnelBoard data={data} allTime={allTime} loading={funnel.loading} onRecords={openRecords} />
       )}
+
+      <div className="grid grid-cols-1 gap-4 xl:grid-cols-12">
+        <div ref={tablesRef} className="min-w-0 scroll-mt-16 rounded-lg border border-slate-200 bg-white xl:col-span-8">
+          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 pr-3">
+            <SectionTabs tabs={SECTIONS} active={section} onChange={setSection} label="Records" />
+            <Input
+              type="search"
+              aria-label="Search contact or inquiry"
+              placeholder="Search contact or inquiry"
+              className="my-2 ml-3 h-9 w-full bg-white sm:ml-0 sm:w-64"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+            />
+          </div>
+          {section === "contacts" ? (
+            <ContactsSection agentId={agentId} period={period} search={needle} onOpen={setOpenContact} />
+          ) : (
+            <InquiriesSection agentId={agentId} period={period} search={needle} status={stage} onStatus={setStage} onOpen={setOpenInquiry} />
+          )}
+        </div>
+        <div className="min-w-0 space-y-4 xl:col-span-4">
+          {detail.data ? <AnalyticsTrendChart data={detail.data.series} title="Daily activity" /> : null}
+          <ActivityRail title="Activity history" state={timeline} emptyTitle="No recorded activity in this period" />
+        </div>
+      </div>
 
       {openContact ? (
         <ContactHistorySheet

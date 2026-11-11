@@ -1,6 +1,7 @@
 import type { SessionAppUserRole, SessionRole } from '@/lib/auth/session';
 import type { AdminModule } from '@/lib/admin-navigation';
 import {
+  getSalesAccessLevel,
   hasDepartmentAccess,
   hasModulePermission,
 } from '@/lib/module-permissions';
@@ -18,6 +19,18 @@ export type DashboardAccessState = {
   fullName: string | null;
   permissions: string[];
 };
+
+/**
+ * A sales agent: a legacy sales agent login, or a portal user with Sales access
+ * "Own documents only" or "All documents". Sales administrators, organization
+ * administrators and Super Admin are never sales agents.
+ */
+export function isSalesAgentAccess(access: DashboardAccessState | null | undefined): boolean {
+  if (!access || access.isSuperAdmin || access.isOrganizationAdmin) return false;
+  if (access.sessionRole === 'sales_agent') return true;
+  const level = getSalesAccessLevel(access.permissions);
+  return level === 'own' || level === 'all';
+}
 
 export function isPortalDashboardAccess(access: DashboardAccessState): boolean {
   return access.isPortalAccount && !access.isSuperAdmin;

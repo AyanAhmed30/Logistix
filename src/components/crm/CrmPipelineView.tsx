@@ -48,9 +48,13 @@ import {
   EMPTY_PIPELINE_FILTERS,
   applyPipelineFilters,
   countActiveFilters,
+  resolveDateRange,
   summarizePipeline,
   type PipelineFilterState,
 } from "@/lib/crm-pipeline-filter";
+import { getCrmPipelineTotals, type CrmPipelineTotals } from "@/app/actions/crm/overview";
+import { getSalesEmployees } from "@/app/actions/analytics/sales";
+import { isSalesAgentAccess } from "@/lib/dashboard-access";
 import { Button } from "@/components/ui/button";
 import {
   Select,
@@ -100,9 +104,12 @@ function OpportunityCard({
   onOpen,
   onSendInquiry,
   sendingInquiry,
+  staticCard = false,
 }: {
   opportunity: CrmOpportunityCard;
   onOpen: (id: string) => void;
+  /** Display only: the card neither opens nor drags (Super Admin's board). */
+  staticCard?: boolean;
   onSendInquiry: (
     id: string,
     tab?: "create" | "view",
@@ -113,7 +120,7 @@ function OpportunityCard({
   const viewOnly = useSuperAdminViewOnly();
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: opportunity.id,
-    disabled: viewOnly,
+    disabled: viewOnly || staticCard,
   });
 
   const style = {
@@ -129,15 +136,23 @@ function OpportunityCard({
     <div
       ref={setNodeRef}
       style={style}
-      className="touch-none"
-      {...attributes}
-      {...listeners}
+      className={staticCard ? undefined : "touch-none"}
+      {...(staticCard ? {} : attributes)}
+      {...(staticCard ? {} : listeners)}
     >
       <div
-        className="rounded-lg border border-slate-200 bg-white shadow-sm hover:shadow-md transition-shadow cursor-grab active:cursor-grabbing"
-        onClick={() => {
-          if (!isDragging) onOpen(opportunity.id);
-        }}
+        className={
+          staticCard
+            ? "rounded-lg border border-slate-200 bg-white shadow-sm"
+            : "rounded-lg border border-slate-200 bg-white shadow-sm hover:shadow-md transition-shadow cursor-grab active:cursor-grabbing"
+        }
+        onClick={
+          staticCard
+            ? undefined
+            : () => {
+                if (!isDragging) onOpen(opportunity.id);
+              }
+        }
       >
         <div className="p-3 space-y-1">
           <h3 className="font-semibold text-sm text-primary-dark truncate">
@@ -240,7 +255,9 @@ function StageColumn({
   onQuickCreateSuccess,
   salespersons,
   defaultSalespersonId,
+  staticCards = false,
 }: {
+  staticCards?: boolean;
   stage: CrmPipelineStage;
   opportunities: CrmOpportunityCard[];
   onOpenOpportunity: (id: string) => void;
@@ -337,6 +354,7 @@ function StageColumn({
                 onOpen={onOpenOpportunity}
                 onSendInquiry={onSendInquiry}
                 sendingInquiry={sendingInquiryId === opp.id}
+                staticCard={staticCards}
               />
             ))}
           </SortableContext>
@@ -358,7 +376,8 @@ export function CrmPipelineView() {
   const searchParams = useSearchParams();
   const contactIdFilter = searchParams.get("contactId");
   const { switchVersion, organizationId, isSuperAdmin } = useAdminOrganization();
-  const { setSearchBusy, setSearchQuery } = useCrmShell();
+  const { setSearchBusy, setSearchQuery, access } = useCrmShell();
+  const salesAgentView = isSalesAgentAccess(access);
   const [stages, setStages] = useState<CrmPipelineStage[]>([]);
   const [opportunities, setOpportunities] = useState<CrmOpportunityCard[]>([]);
   const [salespersons, setSalespersons] = useState<SalespersonOption[]>([]);
@@ -404,6 +423,64 @@ export function CrmPipelineView() {
   // Super Admin loads the whole board once and filters it in the browser (see
   // applyPipelineFilters); everyone else filters on the server as before.
   const [pipelineFilters, setPipelineFilters] = useState<PipelineFilterState>(EMPTY_PIPELINE_FILTERS);
+
+  // The assignee list is the company's sales agents (the same list as Analytics);
+  // the board opens on the first of them rather than on "All assignees".
+  const [assigneeOptions, setAssigneeOptions] = useState<SalespersonOption[] | null>(null);
+  useEffect(() => {
+    if (!isSuperAdmin) return;
+    let cancelled = false;
+    setAssigneeOptions(null);
+    getSalesEmployees()
+      .then((res) => {
+        if (cancelled) return;
+        const list: SalespersonOption[] =
+          "employees" in res ? (res.employees ?? []).map((e) => ({ id: e.id, name: e.name, email: null })) : [];
+        setAssigneeOptions(list);
+        setPipelineFilters((prev) => ({ ...prev, assignee: list[0]?.id ?? "all" }));
+      })
+      .catch(() => {
+        if (!cancelled) setAssigneeOptions([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [isSuperAdmin, switchVersion]);
+  const defaultAssignee = assigneeOptions?.[0]?.id ?? "all";
+  const assigneeReady = !isSuperAdmin || assigneeOptions !== null;
+
+  // Contact and inquiry totals come from the server, counted like the Contacts
+  // and All Inquiries pages; they follow the date and assignee filters only.
+  const [totals, setTotals] = useState<CrmPipelineTotals | null>(null);
+  const totalsKey = useMemo(() => {
+    if (!isSuperAdmin || !assigneeReady) return null;
+    const range = resolveDateRange(pipelineFilters);
+    const iso = (ms: number | undefined) => (ms !== undefined && Number.isFinite(ms) ? new Date(ms).toISOString() : null);
+    return JSON.stringify({
+      from: iso(range?.start),
+      to: iso(range?.end),
+      assignee: pipelineFilters.assignee,
+      version: switchVersion,
+    });
+  }, [isSuperAdmin, assigneeReady, pipelineFilters, switchVersion]);
+
+  useEffect(() => {
+    if (!totalsKey) return;
+    let cancelled = false;
+    setTotals(null);
+    const { from, to, assignee } = JSON.parse(totalsKey) as { from: string | null; to: string | null; assignee: string };
+    getCrmPipelineTotals({ from, to, assignee })
+      .then((result) => {
+        if (cancelled) return;
+        if ("totals" in result) setTotals(result.totals);
+        else console.error("[pipeline-totals]", result.error);
+      })
+      .catch((error) => console.error("[pipeline-totals]", error));
+    return () => {
+      cancelled = true;
+    };
+  }, [totalsKey]);
+
   const filters: CrmPipelineBoardFilters = useMemo(
     () =>
       isSuperAdmin
@@ -725,20 +802,32 @@ export function CrmPipelineView() {
             value={adminFilterState}
             onChange={(next) => setPipelineFilters((prev) => ({ ...prev, ...next }))}
             onReset={() => {
-              setPipelineFilters(EMPTY_PIPELINE_FILTERS);
+              setPipelineFilters({ ...EMPTY_PIPELINE_FILTERS, assignee: defaultAssignee });
               setSearchQuery("");
             }}
-            activeCount={countActiveFilters(adminFilterState)}
+            activeCount={countActiveFilters({
+              ...adminFilterState,
+              // The default agent is not a filter the user set; "All assignees" is.
+              assignee:
+                adminFilterState.assignee === defaultAssignee
+                  ? "all"
+                  : adminFilterState.assignee === "all"
+                    ? "everyone"
+                    : adminFilterState.assignee,
+            })}
             stages={stages}
-            assignees={salespersons}
+            assignees={assigneeOptions ?? salespersons}
             tags={tagOptions}
             resultCount={boardOpportunities.length}
           />
           <CrmPipelineOverview
-            summary={summarizePipeline(boardOpportunities, stages, isGlobalAdminView)}
-            opportunities={boardOpportunities}
-            stages={stages}
-            isGlobalAdminView={isGlobalAdminView}
+            summary={{
+              ...summarizePipeline(boardOpportunities, stages, isGlobalAdminView),
+              contacts: totals?.contacts ?? null,
+              inquiriesSent: totals?.inquiriesSent ?? null,
+              approved: totals?.approved ?? null,
+              rejected: totals?.rejected ?? null,
+            }}
           />
         </>
       ) : null}
@@ -782,19 +871,21 @@ export function CrmPipelineView() {
               </SelectContent>
             </Select>
 
-            <Select value={salespersonFilter} onValueChange={setSalespersonFilter}>
-              <SelectTrigger className="w-full sm:w-[150px] h-8 rounded-sm text-sm">
-                <SelectValue placeholder="Salesperson" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All salespeople</SelectItem>
-                {salespersons.map((sp) => (
-                  <SelectItem key={sp.id} value={sp.id}>
-                    {sp.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            {salesAgentView ? null : (
+              <Select value={salespersonFilter} onValueChange={setSalespersonFilter}>
+                <SelectTrigger className="w-full sm:w-[150px] h-8 rounded-sm text-sm">
+                  <SelectValue placeholder="Salesperson" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All salespeople</SelectItem>
+                  {salespersons.map((sp) => (
+                    <SelectItem key={sp.id} value={sp.id}>
+                      {sp.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            )}
           </>
         ) : null}
 
@@ -850,7 +941,7 @@ export function CrmPipelineView() {
           </div>
         ) : null}
 
-        {loading && !hasLoadedOnce ? (
+        {(loading && !hasLoadedOnce) || !assigneeReady ? (
           <CrmKanbanSkeleton />
         ) : stages.length === 0 ? (
           <CrmEmptyState
@@ -889,6 +980,7 @@ export function CrmPipelineView() {
                   onQuickCreateSuccess={handleQuickCreateSuccess}
                   salespersons={salespersons}
                   defaultSalespersonId={currentSalespersonId}
+                  staticCards={isSuperAdmin}
                 />
               ))}
             </div>

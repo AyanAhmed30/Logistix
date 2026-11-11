@@ -1,5 +1,5 @@
-import { AnalyticsEmployeeList } from '@/components/analytics/AnalyticsEmployeeList';
+import { SalesTeamOverview } from '@/components/analytics/SalesTeamOverview';
 
 export default function SalesAnalyticsPage() {
-  return <AnalyticsEmployeeList department="sales" />;
+  return <SalesTeamOverview />;
 }

@@ -40,6 +40,7 @@ import {
   rememberContactsSourceCounts,
 } from "@/lib/contacts-client-cache";
 import { useAdminOrganization } from "@/contexts/AdminOrganizationContext";
+import { getSalesEmployees, type AnalyticsEmployee } from "@/app/actions/analytics/sales";
 import { useDebouncedValue } from "@/hooks/useDebouncedValue";
 import { ContactDateRangeFilter } from "@/components/admin/contacts/ContactDateRangeFilter";
 import {
@@ -59,6 +60,52 @@ const PAGE_SIZE = 40;
 
 type TypeFilter = "all" | "person" | "company";
 type SourceFilter = "all" | "mobile_app" | "manual";
+
+/** Cache keys for one list view; shared with the background warm-up below. */
+function contactsListKeys(p: {
+  organizationId: string | null;
+  switchVersion: number;
+  refreshToken: number;
+  needle: string;
+  createdAtGte: string | null;
+  createdAtLt: string | null;
+  agent: string;
+  typeFilter: TypeFilter;
+  sourceFilter: SourceFilter;
+  page: number;
+}) {
+  // Source counts depend on access + search + date + agent only (not type / source / page).
+  const countsKey = `${p.organizationId ?? "none"}:${p.switchVersion}:${p.refreshToken}:${p.needle}:${p.createdAtGte ?? ""}:${p.createdAtLt ?? ""}:${p.agent || "any"}`;
+  return { countsKey, pageKey: `${countsKey}:${p.typeFilter}:${p.sourceFilter}:${p.page}` };
+}
+
+/**
+ * Loads the first page of Contacts into the client cache in the background, so
+ * the Contacts tab opens instantly. Only for users without the Super Admin
+ * sales agent picker, whose first page is the same for every visit.
+ */
+export function prefetchContactsFirstPage(organizationId: string | null, switchVersion: number) {
+  const { countsKey, pageKey } = contactsListKeys({
+    organizationId,
+    switchVersion,
+    refreshToken: 0,
+    needle: "",
+    createdAtGte: null,
+    createdAtLt: null,
+    agent: "",
+    typeFilter: "all",
+    sourceFilter: "all",
+    page: 1,
+  });
+  if (peekContactsClientCache(pageKey)) return;
+  void getCachedContactsList(pageKey, () =>
+    getContactsPage({ page: 1, pageSize: PAGE_SIZE, companyType: "all", source: "all", includeSourceCounts: true })
+  )
+    .then((res) => {
+      if ("sourceCounts" in res && res.sourceCounts) rememberContactsSourceCounts(countsKey, res.sourceCounts);
+    })
+    .catch(() => undefined);
+}
 
 function isMobileAppContact(c: ContactWithRelations): boolean {
   return Boolean(c.mobile_registered_at) || c.source === "mobile_app";
@@ -86,7 +133,36 @@ export function ContactsListView({
   refreshToken,
   onListLoaded,
 }: Props) {
-  const { switchVersion, organizationId } = useAdminOrganization();
+  const { switchVersion, organizationId, isSuperAdmin } = useAdminOrganization();
+
+  // Super Admin inside a company picks one sales agent; the list opens on the
+  // first agent of that company (the same list as Analytics).
+  const needsAgent = isSuperAdmin && Boolean(organizationId);
+  const [agentOptions, setAgentOptions] = useState<AnalyticsEmployee[] | null>(null);
+  const [agent, setAgent] = useState("");
+  useEffect(() => {
+    if (!needsAgent) return;
+    let cancelled = false;
+    setAgentOptions(null);
+    getSalesEmployees()
+      .then((res) => {
+        if (cancelled) return;
+        const list = "employees" in res ? res.employees ?? [] : [];
+        setAgentOptions(list);
+        setAgent(list[0]?.id ?? "all");
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setAgentOptions([]);
+          setAgent("all");
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [needsAgent, switchVersion]);
+  const agentReady = !needsAgent || agentOptions !== null;
+  const agentFilter = needsAgent && agent !== "all" ? agent : "";
   const [search, setSearch] = useState("");
   const debouncedSearch = useDebouncedValue(search, 250);
   const [dateRange, setDateRange] = useState<ContactDateRangeValue | null>(null);
@@ -102,9 +178,18 @@ export function ContactsListView({
   const needle = debouncedSearch.trim();
   const createdAtGte = dateQuery?.createdAtGte ?? null;
   const createdAtLt = dateQuery?.createdAtLt ?? null;
-  // Source counts depend on access + search + date only (not type / source / page).
-  const countsKey = `${organizationId ?? "none"}:${switchVersion}:${refreshToken}:${needle}:${createdAtGte ?? ""}:${createdAtLt ?? ""}`;
-  const pageKey = `${countsKey}:${typeFilter}:${sourceFilter}:${page}`;
+  const { countsKey, pageKey } = contactsListKeys({
+    organizationId,
+    switchVersion,
+    refreshToken,
+    needle,
+    createdAtGte,
+    createdAtLt,
+    agent: agentFilter,
+    typeFilter,
+    sourceFilter,
+    page,
+  });
 
   const cached = peekContactsClientCache(pageKey);
   const cachedPage = cached && "contacts" in cached ? cached : null;
@@ -121,6 +206,11 @@ export function ContactsListView({
   const [retryToken, setRetryToken] = useState(0);
 
   useEffect(() => {
+    // Wait for the default sales agent so the full list never flashes first.
+    if (!agentReady) {
+      setLoading(true);
+      return;
+    }
     let cancelled = false;
 
     const knownCounts = peekContactsSourceCounts(countsKey);
@@ -149,6 +239,7 @@ export function ContactsListView({
           companyType: typeFilter,
           source: sourceFilter,
           includeSourceCounts: !knownCounts,
+          salespersonId: agentFilter || undefined,
         }),
       { force: retryToken > 0 && !existing }
     ).then((res) => {
@@ -187,6 +278,8 @@ export function ContactsListView({
     sourceFilter,
     retryToken,
     onListLoaded,
+    agentReady,
+    agentFilter,
   ]);
 
   const totalPages = Math.max(1, Math.ceil(totalCount / PAGE_SIZE));
@@ -241,6 +334,35 @@ export function ContactsListView({
             setPage(1);
           }}
         />
+
+        {needsAgent ? (
+          <div className="flex items-center gap-2">
+            <label htmlFor="contacts-sales-agent" className="text-sm font-medium text-primary-dark whitespace-nowrap">
+              Sales agent
+            </label>
+            <Select
+              value={agent}
+              onValueChange={(value) => {
+                setAgent(value);
+                setPage(1);
+              }}
+              disabled={agentOptions === null}
+            >
+              <SelectTrigger id="contacts-sales-agent" className="h-9 w-[190px] bg-slate-50 border-slate-200">
+                <SelectValue placeholder={agentOptions === null ? "Loading…" : "Sales agent"} />
+              </SelectTrigger>
+              <SelectContent>
+                {(agentOptions ?? []).map((option) => (
+                  <SelectItem key={option.id} value={option.id}>
+                    {option.name}
+                  </SelectItem>
+                ))}
+                <SelectItem value="unassigned">No sales agent</SelectItem>
+                <SelectItem value="all">All sales agents</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+        ) : null}
 
         <div className="flex items-center gap-2">
           <Filter className="h-4 w-4 text-secondary-muted shrink-0" aria-hidden />

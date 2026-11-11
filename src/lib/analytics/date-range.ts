@@ -24,6 +24,8 @@ export type AnalyticsDatePreset =
   | 'last_week'
   | 'this_month'
   | 'last_month'
+  | 'this_year'
+  | 'all_time'
   | 'custom';
 
 export const ANALYTICS_DATE_PRESETS: Array<{ id: AnalyticsDatePreset; label: string }> = [
@@ -35,6 +37,8 @@ export const ANALYTICS_DATE_PRESETS: Array<{ id: AnalyticsDatePreset; label: str
   { id: 'last_week', label: 'Last week' },
   { id: 'this_month', label: 'This month' },
   { id: 'last_month', label: 'Last month' },
+  { id: 'this_year', label: 'This year' },
+  { id: 'all_time', label: 'All time' },
   { id: 'custom', label: 'Custom range' },
 ];
 
@@ -56,6 +60,12 @@ export type AnalyticsDateRange = {
   /** ISO UTC, exclusive. */
   to: string;
 };
+
+/**
+ * "All time" starts here. Analytics records begin in 2026, so this bound includes
+ * every record while keeping the daily series a finite length.
+ */
+export const ANALYTICS_ALL_TIME_START_YMD = '2024-01-01';
 
 const TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
 
@@ -105,6 +115,10 @@ export function resolveAnalyticsDateRange(
       const lastDay = addDaysYmd(startOfMonthYmd(today), -1);
       return daysRange(preset, startOfMonthYmd(lastDay), endOfMonthYmd(lastDay));
     }
+    case 'this_year':
+      return daysRange(preset, `${today.slice(0, 4)}-01-01`, today);
+    case 'all_time':
+      return daysRange(preset, ANALYTICS_ALL_TIME_START_YMD, today);
     case 'custom':
       return resolveCustomRange(custom);
   }

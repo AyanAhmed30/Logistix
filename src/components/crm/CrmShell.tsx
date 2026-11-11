@@ -25,8 +25,10 @@ import type { DashboardAccessState } from "@/lib/dashboard-access";
 import { toast } from "@/lib/app-toast";
 import { AppNotificationBell } from "@/components/notifications/AppNotificationBell";
 import { ViewOnlyGuard } from "@/components/shared/ViewOnlyGuard";
+import { prefetchAllInquiries } from "@/lib/crm-inquiries-cache";
 
 type CrmShellContextValue = {
+  access: DashboardAccessState;
   searchQuery: string;
   setSearchQuery: (value: string) => void;
   activeFilterId: string;
@@ -78,6 +80,11 @@ export function CrmShell({ access, children }: Props) {
     setMobileNavOpen(false);
   }, [pathname]);
 
+  useEffect(() => {
+    const timer = window.setTimeout(() => prefetchAllInquiries(String(switchVersion)), 300);
+    return () => window.clearTimeout(timer);
+  }, [switchVersion]);
+
   // Push control-panel search into pipeline (single Odoo-style search bar)
   useEffect(() => {
     if (pageMeta.searchMode !== "pipeline") return;
@@ -96,6 +103,7 @@ export function CrmShell({ access, children }: Props) {
 
   const shellContext = useMemo(
     () => ({
+      access,
       searchQuery,
       setSearchQuery,
       activeFilterId,
@@ -103,7 +111,7 @@ export function CrmShell({ access, children }: Props) {
       searchBusy,
       setSearchBusy,
     }),
-    [searchQuery, activeFilterId, searchBusy]
+    [access, searchQuery, activeFilterId, searchBusy]
   );
 
   const handleSearchSubmit = useCallback(() => {

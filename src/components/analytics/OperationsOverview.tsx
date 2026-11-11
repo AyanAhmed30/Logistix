@@ -6,7 +6,9 @@ import {
   getOperationsAdminInquiries,
   getOperationsAdminSummary,
   getOperationsEmployees,
+  getOperationsTeamPerformance,
   type OperationsAdminInquiryRow,
+  type OperationsTeamRow,
 } from "@/app/actions/analytics/operations";
 import { getSalesEmployees, type AnalyticsEmployee } from "@/app/actions/analytics/sales";
 import { useAdminOrganization } from "@/contexts/AdminOrganizationContext";
@@ -19,7 +21,8 @@ import {
   useLoad,
   usePaged,
 } from "@/components/analytics/AnalyticsDashboardKit";
-import { AnalyticsEmployeeList } from "@/components/analytics/AnalyticsEmployeeList";
+import { OperationsTeamTable } from "@/components/analytics/OperationsTeamTable";
+import { formatDuration } from "@/lib/analytics/format-duration";
 import { AnalyticsInquiryDetail } from "@/components/analytics/AnalyticsInquiryDetail";
 import {
   AnalyticsError,
@@ -69,7 +72,7 @@ function FilterSelect({
 
 export function OperationsOverview() {
   const { switchVersion } = useAdminOrganization();
-  const { range, rangeError } = useAnalyticsRange();
+  const { range, rangeError, query } = useAnalyticsRange();
   const [search, setSearch] = useState("");
   const needle = useDebouncedValue(search, 280);
   const [status, setStatus] = useState("");
@@ -86,6 +89,10 @@ export function OperationsOverview() {
   const summary = useLoad<Summary>(
     () => (from ? getOperationsAdminSummary(period) : noPeriod()),
     `${from}|${to}|${switchVersion}`
+  );
+  const team = useLoad<{ rows: OperationsTeamRow[] }>(
+    () => (from ? getOperationsTeamPerformance(period) : noPeriod()),
+    `team|${from}|${to}|${switchVersion}`
   );
   const sales = useLoad<People>(() => getSalesEmployees(), `sales|${switchVersion}`);
   const operations = useLoad<People>(() => getOperationsEmployees(), `ops|${switchVersion}`);
@@ -144,6 +151,37 @@ export function OperationsOverview() {
               { label: "Rejected by Admin", value: s.rejected, tone: "danger", onClick: () => setStatus("rejected") },
               { label: "Calculated by Admin", value: s.calculated, tone: "warning", onClick: () => setStatus("calculated_by_admin") },
             ]}
+          />
+
+          <KpiCards
+            label="Queues and response times"
+            items={[
+              {
+                label: "Waiting at Operations",
+                value: s.atOperations,
+                tone: "warning",
+                note: "Right now",
+              },
+              {
+                label: "Waiting too long",
+                value: s.waitingTooLong,
+                tone: s.waitingTooLong > 0 ? "danger" : "neutral",
+                note: `At Operations over ${s.alertHours} hours`,
+              },
+              {
+                label: "Waiting for Admin",
+                value: s.withAdmin,
+                note: "Right now",
+              },
+              { label: "Avg Operations time", value: formatDuration(s.avgOperationsSeconds), note: "Received to sent to Admin" },
+              { label: "Avg Admin decision", value: formatDuration(s.avgAdminDecisionSeconds), note: "Sent to Admin to decision" },
+              { label: "Avg total time", value: formatDuration(s.avgTurnaroundSeconds), note: "Received to decision" },
+            ]}
+          />
+
+          <OperationsTeamTable
+            state={team}
+            personHref={(id) => `/analytics/operations/${encodeURIComponent(id)}${query ? `?${query}` : ""}`}
           />
 
           <Panel
@@ -227,7 +265,6 @@ export function OperationsOverview() {
             />
           </Panel>
 
-          <AnalyticsEmployeeList department="operations" embedded />
         </div>
       )}
     </div>

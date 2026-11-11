@@ -15,6 +15,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { CRM_TOP_MENUS, type CrmMenuLink } from "@/lib/crm-navigation";
 import {
+  isSalesAgentAccess,
   visibleCrmModuleTabs,
   type DashboardAccessState,
 } from "@/lib/dashboard-access";
@@ -58,6 +59,9 @@ function isItemActive(
   return path === basePath || path.startsWith(`${basePath}/`);
 }
 
+/** Sales agents get All Inquiries as its own tab, next to Reporting. */
+const ALL_INQUIRIES_ID = "all-inquiries";
+
 function menuHasActive(
   pathname: string,
   items: CrmMenuLink[],
@@ -78,6 +82,17 @@ export function CrmTopNav({ access, mobileOpen, onMobileOpenChange }: Props) {
         : visibleCrmModuleTabs(access.permissions),
     [access.isSuperAdmin, access.permissions]
   );
+
+  const salesAgent = isSalesAgentAccess(access);
+  const allInquiriesLink = CRM_TOP_MENUS.flatMap((menu) => menu.items).find((item) => item.id === ALL_INQUIRIES_ID);
+  const separateInquiriesTab = salesAgent && Boolean(allInquiriesLink);
+  const menuItems = (menu: (typeof CRM_TOP_MENUS)[number]) =>
+    menu.items.filter(
+      (item) =>
+        linkAllowed(item, [...visibleTabs], access.isSuperAdmin) &&
+        !(separateInquiriesTab && item.id === ALL_INQUIRIES_ID)
+    );
+  const inquiriesActive = Boolean(allInquiriesLink) && isItemActive(pathname, allInquiriesLink!.href, reportView);
 
   function handleNavigate(item: CrmMenuLink) {
     onMobileOpenChange(false);
@@ -125,9 +140,7 @@ export function CrmTopNav({ access, mobileOpen, onMobileOpenChange }: Props) {
           aria-label="CRM menus"
         >
           {CRM_TOP_MENUS.map((menu) => {
-            const items = menu.items.filter((item) =>
-              linkAllowed(item, [...visibleTabs], access.isSuperAdmin)
-            );
+            const items = menuItems(menu);
             if (items.length === 0) return null;
             const active = menuHasActive(pathname, items, reportView);
             return (
@@ -184,15 +197,27 @@ export function CrmTopNav({ access, mobileOpen, onMobileOpenChange }: Props) {
               </DropdownMenu>
             );
           })}
+          {separateInquiriesTab ? (
+            <button
+              type="button"
+              aria-current={inquiriesActive ? "page" : undefined}
+              onClick={() => handleNavigate(allInquiriesLink!)}
+              className={`h-full px-3 inline-flex items-center text-sm font-medium transition-colors outline-none focus-visible:bg-white/15 ${
+                inquiriesActive
+                  ? "bg-white/15 text-white"
+                  : "text-white/85 hover:bg-white/10 hover:text-white"
+              }`}
+            >
+              {allInquiriesLink!.label}
+            </button>
+          ) : null}
         </nav>
       </div>
 
       {mobileOpen ? (
         <div className="lg:hidden absolute top-full inset-x-0 z-50 bg-[#016970] border-t border-white/10 shadow-xl max-h-[70vh] overflow-y-auto">
           {CRM_TOP_MENUS.map((menu) => {
-            const items = menu.items.filter((item) =>
-              linkAllowed(item, [...visibleTabs], access.isSuperAdmin)
-            );
+            const items = menuItems(menu);
             if (items.length === 0) return null;
             return (
               <div key={menu.id} className="px-3 py-3 border-b border-white/10">
@@ -231,6 +256,20 @@ export function CrmTopNav({ access, mobileOpen, onMobileOpenChange }: Props) {
               </div>
             );
           })}
+          {separateInquiriesTab ? (
+            <div className="px-3 py-3 border-b border-white/10">
+              <button
+                type="button"
+                aria-current={inquiriesActive ? "page" : undefined}
+                onClick={() => handleNavigate(allInquiriesLink!)}
+                className={`w-full text-left rounded-md px-3 py-2.5 text-sm ${
+                  inquiriesActive ? "bg-white/15 text-white font-medium" : "text-white/90 hover:bg-white/10"
+                }`}
+              >
+                {allInquiriesLink!.label}
+              </button>
+            </div>
+          ) : null}
           <div className="px-3 py-3">
             <Link
               href="/admin/dashboard"

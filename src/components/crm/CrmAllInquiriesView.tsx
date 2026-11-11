@@ -11,11 +11,9 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { ClipboardList } from "lucide-react";
-import {
-  getSalesAllInquiries,
-  type SalesAllInquiryListItem,
-} from "@/app/actions/crm/all-inquiries";
+import { ClipboardList, FileText } from "lucide-react";
+import { type SalesAllInquiryListItem } from "@/app/actions/crm/all-inquiries";
+import { loadAllInquiries, peekAllInquiries } from "@/lib/crm-inquiries-cache";
 import { useAdminOrganization } from "@/contexts/AdminOrganizationContext";
 import { useCrmShell } from "@/components/crm/CrmShell";
 import { CrmEmptyState, CrmPageSkeleton } from "@/components/crm/CrmSkeleton";
@@ -88,17 +86,25 @@ export function CrmAllInquiriesView() {
   const router = useRouter();
   const { switchVersion } = useAdminOrganization();
   const { searchQuery } = useCrmShell();
-  const [rows, setRows] = useState<SalesAllInquiryListItem[]>([]);
-  const [loading, setLoading] = useState(true);
+  const cacheKey = String(switchVersion);
+  // Paint the cached list at once (the CRM shell warms it), then refresh it.
+  const [rows, setRows] = useState<SalesAllInquiryListItem[]>(() => peekAllInquiries(cacheKey) ?? []);
+  const [loading, setLoading] = useState(() => peekAllInquiries(cacheKey) === null);
 
   useEffect(() => {
     let cancelled = false;
-    setLoading(true);
-    void getSalesAllInquiries().then((res) => {
+    const cached = peekAllInquiries(cacheKey);
+    if (cached) {
+      setRows(cached);
+      setLoading(false);
+    } else {
+      setLoading(true);
+    }
+    void loadAllInquiries(cacheKey).then((res) => {
       if (cancelled) return;
       if ("error" in res && res.error) {
         toast.error(res.error);
-        setRows([]);
+        if (!cached) setRows([]);
       } else if ("inquiries" in res) {
         setRows(res.inquiries ?? []);
       }
@@ -107,7 +113,7 @@ export function CrmAllInquiriesView() {
     return () => {
       cancelled = true;
     };
-  }, [switchVersion]);
+  }, [cacheKey]);
 
   useEffect(() => {
     router.prefetch("/sales/quotations/new");
@@ -159,6 +165,7 @@ export function CrmAllInquiriesView() {
                   <TableHead>Lead Number</TableHead>
                   <TableHead className="hidden sm:table-cell">Sent</TableHead>
                   <TableHead>Status</TableHead>
+                  <TableHead className="whitespace-nowrap">Ready for Quote</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -250,6 +257,29 @@ export function CrmAllInquiriesView() {
                           </p>
                         )}
                       </div>
+                    </TableCell>
+                    <TableCell className="whitespace-nowrap align-top">
+                      {row.workflow.isReadyForQuotation ? (
+                        <button
+                          type="button"
+                          className="mt-1 inline-flex items-center gap-1.5 rounded-sm bg-[#017e84] px-2.5 py-1.5 text-xs font-medium text-white hover:bg-[#016970] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#017e84]"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            router.push(inquiryQuotationHref(row.id));
+                          }}
+                          onMouseEnter={() => router.prefetch(inquiryQuotationHref(row.id))}
+                        >
+                          <FileText className="h-3.5 w-3.5 stroke-white" aria-hidden />
+                          Ready for Quote
+                        </button>
+                      ) : (
+                        <span
+                          className="mt-1 inline-flex items-center rounded-sm border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-xs text-slate-500"
+                          title="Available once Admin approves the inquiry"
+                        >
+                          Not approved yet
+                        </span>
+                      )}
                     </TableCell>
                   </TableRow>
                 ))}

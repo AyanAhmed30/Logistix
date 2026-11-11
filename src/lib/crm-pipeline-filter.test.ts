@@ -95,8 +95,6 @@ test('filters combine: date, stage, assignee, value, tag', () => {
   assert.deepEqual(ids({ stage: 's-won' }), ['b']);
   assert.deepEqual(ids({ assignee: 'sp1' }), ['a']);
   assert.deepEqual(ids({ assignee: 'unassigned' }), ['b', 'c']);
-  assert.deepEqual(ids({ minValue: '500' }), ['b']);
-  assert.deepEqual(ids({ maxValue: '1,000', minValue: '50' }), ['a', 'b']);
   assert.deepEqual(ids({ tag: 'vip' }), ['a']);
   assert.deepEqual(ids({ stage: 's-won' }, true), ['b'], 'Admin view matches stages by name');
 });
@@ -125,5 +123,5 @@ test('summary counts the six numbers from the filtered list', () => {
 
 test('active filter count drives the Reset button', () => {
   assert.equal(countActiveFilters(EMPTY_PIPELINE_FILTERS), 0);
-  assert.equal(countActiveFilters(filters({ search: 'x', tag: 'VIP', minValue: '5' })), 3);
+  assert.equal(countActiveFilters(filters({ search: 'x', tag: 'VIP' })), 2);
 });

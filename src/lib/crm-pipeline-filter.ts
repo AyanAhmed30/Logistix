@@ -28,8 +28,6 @@ export type PipelineFilterState = {
   search: string;
   stage: string;
   assignee: string;
-  minValue: string;
-  maxValue: string;
   tag: string;
 };
 
@@ -41,8 +39,6 @@ export const EMPTY_PIPELINE_FILTERS: PipelineFilterState = {
   search: '',
   stage: 'all',
   assignee: 'all',
-  minValue: '',
-  maxValue: '',
   tag: 'all',
 };
 
@@ -195,11 +191,6 @@ export function matchesSearch(opp: CrmOpportunityCard, search: string) {
   return terms.every((term) => text.includes(term));
 }
 
-const toNumber = (value: string) => {
-  const n = Number(value.replace(/,/g, '').trim());
-  return value.trim() !== '' && Number.isFinite(n) ? n : null;
-};
-
 export function applyPipelineFilters(
   opportunities: CrmOpportunityCard[],
   stages: CrmPipelineStage[],
@@ -208,8 +199,6 @@ export function applyPipelineFilters(
 ): CrmOpportunityCard[] {
   const range = resolveDateRange(state, options.now);
   const stage = state.stage === 'all' ? undefined : stages.find((s) => s.id === state.stage);
-  const min = toNumber(state.minValue);
-  const max = toNumber(state.maxValue);
   const tag = state.tag === 'all' ? null : state.tag.toLowerCase();
 
   // Only deals that sit in one of the board's stages, so counts match the columns.
@@ -230,9 +219,6 @@ export function applyPipelineFilters(
     if (state.assignee !== 'all') {
       if (state.assignee === 'unassigned' ? opp.salesperson_id : opp.salesperson_id !== state.assignee) return false;
     }
-    const value = Number(opp.expected_revenue || 0);
-    if (min !== null && value < min) return false;
-    if (max !== null && value > max) return false;
     if (tag && !(opp.tags ?? []).some((t) => t.toLowerCase() === tag)) return false;
     return matchesSearch(opp, state.search);
   });
@@ -278,7 +264,6 @@ export function countActiveFilters(state: PipelineFilterState) {
     Number(state.search.trim() !== '') +
     Number(state.stage !== 'all') +
     Number(state.assignee !== 'all') +
-    Number(state.minValue.trim() !== '' || state.maxValue.trim() !== '') +
     Number(state.tag !== 'all')
   );
 }

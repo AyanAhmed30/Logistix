@@ -63,8 +63,30 @@ const LIST_SELECT = `
     submitted_by_role,
     reviewed_by,
     reviewed_at
+  ),
+  inquiry_logs (
+    action,
+    performed_by,
+    performed_at
   )
 `;
+
+/** Log actions that feed the list's activity timeline. */
+const LIST_LOG_ACTIONS = new Set([
+  'inquiry_sent',
+  'inquiry_resent',
+  'send_for_confirmation',
+  'admin_approved',
+  'admin_rejected',
+]);
+
+/** The embedded log rows for one list row, oldest first, as the timeline expects. */
+function listLogsFromRow(row: Record<string, unknown>): InquiryLogRow[] {
+  const logs = Array.isArray(row.inquiry_logs) ? (row.inquiry_logs as InquiryLogRow[]) : [];
+  return logs
+    .filter((log) => LIST_LOG_ACTIONS.has(String(log.action || '')))
+    .sort((a, b) => String(a.performed_at || '').localeCompare(String(b.performed_at || '')));
+}
 
 const DETAIL_SELECT = `
   id,
@@ -521,41 +543,6 @@ function rowMatchesAssignedVisibility(
   return false;
 }
 
-async function fetchInquiryLogsByInquiryIds(
-  supabase: Awaited<ReturnType<typeof createAdminClient>>,
-  inquiryIds: string[]
-): Promise<Map<string, InquiryLogRow[]>> {
-  const map = new Map<string, InquiryLogRow[]>();
-  if (!inquiryIds.length) return map;
-
-  const CHUNK = 100;
-  for (let i = 0; i < inquiryIds.length; i += CHUNK) {
-    const chunk = inquiryIds.slice(i, i + CHUNK);
-    const { data, error } = await supabase
-      .from('inquiry_logs')
-      .select('inquiry_id, action, performed_by, performed_at')
-      .in('inquiry_id', chunk)
-      .in('action', [
-        'inquiry_sent',
-        'inquiry_resent',
-        'send_for_confirmation',
-        'admin_approved',
-        'admin_rejected',
-      ])
-      .order('performed_at', { ascending: true });
-
-    if (error || !data?.length) continue;
-    for (const row of data as InquiryLogRow[]) {
-      const id = String(row.inquiry_id || '');
-      if (!id) continue;
-      const list = map.get(id) || [];
-      list.push(row);
-      map.set(id, list);
-    }
-  }
-  return map;
-}
-
 export async function getSalesAllInquiries(): Promise<
   { inquiries: SalesAllInquiryListItem[] } | { error: string }
 > {
@@ -563,11 +550,12 @@ export async function getSalesAllInquiries(): Promise<
     const auth = await requireSalesInquiryAccess();
     if ('error' in auth) return { error: auth.error };
 
-    const scope = await resolveCrmOrganizationScope();
+    const [scope, visibility, supabase] = await Promise.all([
+      resolveCrmOrganizationScope(),
+      resolveCrmVisibilityScope(auth.session),
+      createAdminClient(),
+    ]);
     if ('error' in scope) return { error: scope.error };
-
-    const visibility = await resolveCrmVisibilityScope(auth.session);
-    const supabase = await createAdminClient();
 
     let query = supabase
       .from('lead_inquiries')
@@ -603,10 +591,6 @@ export async function getSalesAllInquiries(): Promise<
     }
 
     const mappedBase = mapListRows(rows, visibility, auth.session.username);
-    const logsByInquiry = await fetchInquiryLogsByInquiryIds(
-      supabase,
-      mappedBase.map((r) => r.id)
-    );
 
     const rowById = new Map(
       (rows as Record<string, unknown>[]).map((r) => [String(r.id), r])
@@ -621,7 +605,7 @@ export async function getSalesAllInquiries(): Promise<
           activity: buildInquiryActivityTimeline(
             sourceRow,
             leadFromRow(sourceRow),
-            logsByInquiry.get(item.id) || []
+            listLogsFromRow(sourceRow)
           ),
         };
       }),

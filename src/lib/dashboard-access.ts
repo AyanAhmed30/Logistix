@@ -41,6 +41,7 @@ export function visibleModulesForAccess(access: DashboardAccessState): AdminModu
     return [
       'contacts',
       'crm',
+      'lead-distribution',
       'sales',
       'accounting',
       'operations',
@@ -109,6 +110,9 @@ export function canAccessAdminTab(
   module: AdminModule | null
 ): boolean {
   if (access.isSuperAdmin) return true;
+
+  // Lead Distribution is Super Admin only.
+  if (module === 'lead-distribution' || tab === 'lead-distribution' || tab === 'lead-distribution-tracking') return false;
 
   if (module === 'analytics') return true;
   if (module === 'settings') return true;

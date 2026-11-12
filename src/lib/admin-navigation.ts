@@ -20,6 +20,8 @@ import {
   Target,
   Users,
   Smartphone,
+  Share2,
+  ListChecks,
 } from "lucide-react";
 
 export type AdminTab =
@@ -39,12 +41,15 @@ export type AdminTab =
   | "inquiry-confirmation"
   | "calculator-config"
   | "contacts"
+  | "lead-distribution"
+  | "lead-distribution-tracking"
   | "organization"
   | "application-users";
 
 export type AdminModule =
   | "contacts"
   | "crm"
+  | "lead-distribution"
   | "sales"
   | "accounting"
   | "operations"
@@ -89,6 +94,15 @@ export const ADMIN_MODULES: AdminModuleDefinition[] = [
     accentClass: "text-[#017e84]",
     borderClass: "border-[#017e84]/20 hover:border-[#017e84]/40",
     iconBgClass: "bg-[#017e84]/10 text-[#017e84]",
+  },
+  {
+    id: "lead-distribution",
+    label: "Lead Distribution",
+    description: "Upload leads from Excel and assign them to sales agents",
+    icon: Share2,
+    accentClass: "text-[#b4530a]",
+    borderClass: "border-[#b4530a]/20 hover:border-[#b4530a]/40",
+    iconBgClass: "bg-[#b4530a]/10 text-[#b4530a]",
   },
   {
     id: "sales",
@@ -159,6 +173,20 @@ export const ADMIN_MODULES: AdminModuleDefinition[] = [
 export const ADMIN_SIDEBAR_ITEMS: AdminSidebarItem[] = [
   { tab: "dashboard", label: "Dashboard", title: "Dashboard", icon: TrendingUp, module: null },
   { tab: "contacts", label: "Contacts", title: "Contacts", icon: BookUser, module: "contacts" },
+  {
+    tab: "lead-distribution",
+    label: "Lead Upload & Assignment",
+    title: "Lead Upload & Assignment",
+    icon: Share2,
+    module: "lead-distribution",
+  },
+  {
+    tab: "lead-distribution-tracking",
+    label: "Distribution Tracking",
+    title: "Distribution Tracking",
+    icon: ListChecks,
+    module: "lead-distribution",
+  },
   { tab: "sales", label: "Sales", title: "Sales", icon: ShoppingCart, module: "sales" },
   {
     tab: "management",

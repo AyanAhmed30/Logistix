@@ -3,6 +3,7 @@ export const SALES_NOTIFICATION_EVENTS = [
   'inquiry_received',
   'approved',
   'lead_transferred',
+  'leads_assigned',
   'quotation_sent_to_customer',
   'quotation_counter_offer',
   'quotation_negotiation_request',
@@ -27,6 +28,7 @@ export const ADMIN_NOTIFICATION_EVENTS = [
 ] as const;
 
 export const LIFECYCLE_EVENT_TYPES = [
+  'leads_assigned',
   'inquiry_received',
   'inquiry_sent',
   'sent_for_admin_approval',
@@ -126,6 +128,10 @@ export const NOTIFICATION_EVENT_CATALOG: Record<string, EventCatalogEntry> = {
   lead_transferred: {
     title: 'Lead Transferred to You',
     fallbackMessage: 'A lead was transferred to you.',
+  },
+  leads_assigned: {
+    title: 'New Leads Assigned',
+    fallbackMessage: 'Admin assigned new leads to you. They are in the New column of your pipeline.',
   },
   quotation_sent_to_customer: {
     title: 'Quotation Sent to Customer',
@@ -368,6 +374,9 @@ export function resolveNotificationHref(input: {
   if (source === 'chat' && leadId) {
     return `/sales-agent/leads/${leadId}?tab=chat`;
   }
+
+  // Lead Distribution: the leads are in the New column of the agent's pipeline.
+  if (eventType === 'leads_assigned') return '/crm/pipeline';
 
   if (eventType === 'inquiry_flag_raised' && inquiryId) {
     if (canOpenCrmPipeline && opportunityId) {

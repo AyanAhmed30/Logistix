@@ -44,6 +44,8 @@ import { InquiryConfirmationPanel } from "@/components/admin/InquiryConfirmation
 import { prefetchInquiryConfirmationsList } from "@/lib/admin-inquiry-confirmations-cache";
 import { AdminCalculatorPanel } from "@/components/admin/AdminCalculatorPanel";
 import { ContactsPanel } from "@/components/admin/ContactsPanel";
+import { LeadDistributionPanel } from "@/components/admin/lead-distribution/LeadDistributionPanel";
+import { DistributionTrackingPanel } from "@/components/admin/lead-distribution/DistributionTrackingPanel";
 import { OrganizationPanel } from "@/components/admin/OrganizationPanel";
 import { UsersManagementPanel } from "@/components/admin/UsersManagementPanel";
 import { ApplicationUsersPanel } from "@/components/admin/ApplicationUsersPanel";
@@ -311,7 +313,12 @@ export function AdminUserManager({
                     <Button
                       key={item.tab}
                       variant={activeTab === item.tab ? "default" : "outline"}
-                      className="justify-start gap-2"
+                      className={`justify-start gap-2${
+                        activeModule === "lead-distribution" && activeTab === item.tab
+                          ? " bg-[#017e84] text-white hover:bg-[#016970] [&_span]:text-white [&_svg]:stroke-white"
+                          : ""
+                      }`}
+                      aria-current={activeTab === item.tab ? "page" : undefined}
                       title={item.title}
                       onClick={() => {
                         if (item.tab === "inquiry-confirmation") {
@@ -392,6 +399,10 @@ export function AdminUserManager({
           <LoadingInstructionPanel />
         ) : activeTab === "sales" ? (
           <LegacySalesRedirect href={defaultSalesRouteForAccess(access)} />
+        ) : activeTab === "lead-distribution" && access.isSuperAdmin ? (
+          <LeadDistributionPanel />
+        ) : activeTab === "lead-distribution-tracking" && access.isSuperAdmin ? (
+          <DistributionTrackingPanel />
         ) : activeTab === "contacts" || activeModule === "contacts" ? (
           <ContactsPanel initialPayload={contactPayload ?? undefined} />
         ) : activeTab === "operations" ? (

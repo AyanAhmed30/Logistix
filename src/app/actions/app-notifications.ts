@@ -29,7 +29,8 @@ import { actionError } from '@/lib/user-facing-error';
 
 type LifecycleRow = {
   id: string;
-  lead_id: string;
+  /** Null for notifications not tied to one lead (e.g. leads_assigned). */
+  lead_id: string | null;
   inquiry_id: string | null;
   confirmation_id: string | null;
   sender_role: string;
@@ -235,7 +236,7 @@ function mapLifecycleRow(row: LifecycleRow, ctx: NotificationViewerContext): App
     }),
     isRead: Boolean(row.is_read),
     createdAt: row.created_at,
-    leadId: row.lead_id,
+    leadId: row.lead_id ?? '',
     inquiryId,
     confirmationId,
     senderRole: row.sender_role,

@@ -750,6 +750,8 @@ export type TrackedInquiry = {
 
 export type TrackedLead = {
   id: string;
+  /** Contact created or reused for this lead at assignment. */
+  contactId: string | null;
   name: string;
   phone: string | null;
   agentId: string;
@@ -800,6 +802,11 @@ export type TrackingFilters = {
    */
   dateFrom?: string | null;
   dateTo?: string | null;
+  /**
+   * With a date window: list only leads assigned in it and keep all of their
+   * inquiries (used by the Activity Logs day view). Off by default.
+   */
+  assignedOnly?: boolean;
   /** Lead name, phone or inquiry number. */
   search?: string;
 };
@@ -973,7 +980,8 @@ export async function getDistributionTracking(
     const status = filters.status ?? 'all';
     const from = filters.dateFrom || null;
     const to = filters.dateTo || null;
-    const dateOn = Boolean(from || to);
+    const assignedOnly = Boolean(filters.assignedOnly);
+    const dateOn = Boolean(from || to) && !assignedOnly;
     const inWindow = (iso: string | null | undefined) =>
       Boolean(iso) && (!from || (iso as string) >= from) && (!to || (iso as string) < to);
     const inquiryMatches = (q: TrackedInquiry) => {
@@ -990,6 +998,7 @@ export async function getDistributionTracking(
         (b.sentToOperationsAt ?? b.createdAt).localeCompare(a.sentToOperationsAt ?? a.createdAt)
       );
       if (status === 'none' && all.length) continue;
+      if (assignedOnly && (from || to) && !inWindow(row.assigned_at)) continue;
       let inquiries = all.filter(inquiryMatches);
       if (inquiryFilterOn && inquiries.length === 0) continue;
       // With a date, a lead shows when it was assigned then or has inquiry activity then.
@@ -1006,6 +1015,7 @@ export async function getDistributionTracking(
       const agentId = String(row.assigned_sales_agent_id || '');
       leads.push({
         id: row.id,
+        contactId: row.contact_id,
         name: String(row.name || ''),
         phone: row.phone,
         agentId,

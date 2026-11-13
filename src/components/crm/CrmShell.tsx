@@ -21,7 +21,8 @@ import { invalidateCrmClientCache } from "@/lib/crm-client-cache";
 import { invalidateContactsClientCache } from "@/lib/contacts-client-cache";
 import { invalidateContactPickerCache } from "@/lib/contact-picker-cache";
 import { getCrmPageMeta } from "@/lib/crm-navigation";
-import type { DashboardAccessState } from "@/lib/dashboard-access";
+import { isSalesAgentAccess, type DashboardAccessState } from "@/lib/dashboard-access";
+import { WorkDayControls } from "@/components/sales-activity/WorkDayControls";
 import { toast } from "@/lib/app-toast";
 import { AppNotificationBell } from "@/components/notifications/AppNotificationBell";
 import { ViewOnlyGuard } from "@/components/shared/ViewOnlyGuard";
@@ -182,6 +183,7 @@ export function CrmShell({ access, children }: Props) {
               <div className="crm-org-switcher [&_button]:h-8 [&_button]:border-white/25 [&_button]:bg-white/10 [&_button]:text-white [&_button]:hover:bg-white/20 [&_button]:max-w-[120px] sm:[&_button]:max-w-[200px] [&_svg]:text-white">
                 <OrganizationSwitcher />
               </div>
+              {isSalesAgentAccess(access) ? <WorkDayControls tone="brand" /> : null}
               <AppNotificationBell tone="brand" />
               <CrmUserMenu access={access} />
             </div>

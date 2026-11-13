@@ -63,7 +63,7 @@ const dateTime = new Intl.DateTimeFormat("en-GB", {
 /** Real timestamp in Pakistan time, or N/A when the step never happened. */
 const when = (iso: string | null) => (iso ? dateTime.format(new Date(iso)) : "N/A");
 
-function StatusBadge({ status }: { status: TrackedInquiryStatus }) {
+export function StatusBadge({ status }: { status: TrackedInquiryStatus }) {
   return (
     <span className={`inline-flex whitespace-nowrap rounded-sm border px-1.5 py-0.5 text-xs font-medium ${STATUS_STYLE[status]}`}>
       {statusLabel(status)}
@@ -72,7 +72,7 @@ function StatusBadge({ status }: { status: TrackedInquiryStatus }) {
 }
 
 /** Latest inquiry's status, with when it was sent to Operations and when Admin decided. */
-function LatestInquiryStatus({ inquiry }: { inquiry: TrackedInquiry }) {
+export function LatestInquiryStatus({ inquiry }: { inquiry: TrackedInquiry }) {
   const decision =
     inquiry.status === "approved"
       ? { label: "Approved by Admin", at: inquiry.approvedAt }
@@ -98,7 +98,7 @@ function LatestInquiryStatus({ inquiry }: { inquiry: TrackedInquiry }) {
   );
 }
 
-function TimeCell({ iso }: { iso: string | null }) {
+export function TimeCell({ iso }: { iso: string | null }) {
   return <span className={`whitespace-nowrap tabular-nums ${iso ? "" : "text-slate-500"}`}>{when(iso)}</span>;
 }
 

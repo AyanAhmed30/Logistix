@@ -4,6 +4,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { refreshSession } from "@/app/actions/session";
 import { SessionExpiredModal } from "@/components/auth/SessionExpiredModal";
 import {
+  ACTIVITY_HEARTBEAT_MS,
+  ACTIVITY_INTERACTION_WINDOW_MS,
   CLIENT_INACTIVITY_TIMEOUT_MS,
   SESSION_EXPIRED_STORAGE_KEY,
   SESSION_HEALTH_CHECK_MS,
@@ -30,6 +32,9 @@ export function SessionManager() {
   const lastActivityRef = useRef(0);
   const lastRefreshRef = useRef(0);
   const expiredShownRef = useRef(false);
+  // Sales agent sessions (set by the server): shorter limit, heartbeat only on real use.
+  const trackedRef = useRef(false);
+  const idleTimeoutRef = useRef(CLIENT_INACTIVITY_TIMEOUT_MS);
 
   const showExpired = useCallback(() => {
     if (expiredShownRef.current) return;
@@ -50,8 +55,12 @@ export function SessionManager() {
     if (expiredShownRef.current) return;
 
     let result: Awaited<ReturnType<typeof refreshSession>>;
+    // Working = this tab is visible and the user did something recently.
+    const interacted =
+      document.visibilityState === "visible" &&
+      Date.now() - lastActivityRef.current <= ACTIVITY_INTERACTION_WINDOW_MS;
     try {
-      result = await refreshSession();
+      result = await refreshSession({ interacted });
     } catch (error) {
       // Offline or mid-deployment. The session itself is fine, so try again next tick.
       console.error("[session-refresh]", error);
@@ -62,7 +71,10 @@ export function SessionManager() {
       return;
     }
     if ("success" in result && result.success) {
-      lastRefreshRef.current = Date.now();
+      trackedRef.current = Boolean(result.tracked);
+      if (result.tracked && result.idleTimeoutMs) idleTimeoutRef.current = result.idleTimeoutMs;
+      // A tracked heartbeat only counts when the agent was working.
+      if (!result.tracked || interacted) lastRefreshRef.current = Date.now();
     }
   }, [showExpired]);
 
@@ -91,7 +103,8 @@ export function SessionManager() {
 
     const onActivity = () => {
       recordActivity();
-      if (Date.now() - lastRefreshRef.current >= SESSION_REFRESH_THROTTLE_MS) {
+      const throttle = trackedRef.current ? ACTIVITY_HEARTBEAT_MS : SESSION_REFRESH_THROTTLE_MS;
+      if (Date.now() - lastRefreshRef.current >= throttle) {
         void tryRefresh();
       }
     };
@@ -110,7 +123,7 @@ export function SessionManager() {
 
   useEffect(() => {
     const interval = window.setInterval(() => {
-      if (Date.now() - lastActivityRef.current >= CLIENT_INACTIVITY_TIMEOUT_MS) {
+      if (Date.now() - lastActivityRef.current >= idleTimeoutRef.current) {
         showExpired();
         return;
       }

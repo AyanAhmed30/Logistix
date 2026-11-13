@@ -36,6 +36,10 @@ export type SessionPayload = {
     permissions?: string[];
     /** Unix timestamp (ms) of the user's last recorded activity. */
     lastActivity?: number;
+    /** Sales agent activity session (sales_agent_sessions.id); only tracked logins have it. */
+    sid?: string;
+    /** Per-session inactivity limit (ms); overrides the default when set. */
+    idleTimeoutMs?: number;
     /** Legacy informational field — real expiry is JWT `exp`. */
     expires?: Date;
 };
@@ -56,7 +60,11 @@ export function isSessionInactive(payload: SessionPayload): boolean {
         // Legacy tokens without lastActivity rely on JWT exp only.
         return false;
     }
-    return Date.now() - lastActivity > INACTIVITY_TIMEOUT_MS;
+    const limit =
+        typeof payload.idleTimeoutMs === 'number' && payload.idleTimeoutMs > 0
+            ? payload.idleTimeoutMs
+            : INACTIVITY_TIMEOUT_MS;
+    return Date.now() - lastActivity > limit;
 }
 
 export async function encrypt(payload: SessionPayload): Promise<string> {

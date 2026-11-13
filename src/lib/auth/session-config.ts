@@ -22,3 +22,19 @@ export const SESSION_REFRESH_THROTTLE_MS = 5 * 60 * 1000;
 export const SESSION_HEALTH_CHECK_MS = 60 * 1000;
 
 export const SESSION_EXPIRED_STORAGE_KEY = "logistix-session-expired";
+
+/**
+ * Sales agents: the session ends after 25 minutes without real activity. The
+ * limit is stored in the session token and checked by the server on every
+ * request, so it cannot be bypassed by keeping a tab open.
+ */
+export const SALES_AGENT_IDLE_TIMEOUT_MS = 25 * 60 * 1000;
+
+/** Tracked sessions send a heartbeat at most this often while the agent is working. */
+export const ACTIVITY_HEARTBEAT_MS = 60 * 1000;
+
+/** A heartbeat counts as "working" only if the agent interacted this recently. */
+export const ACTIVITY_INTERACTION_WINDOW_MS = 90 * 1000;
+
+/** A gap between heartbeats longer than this is an inactive period, not active time. */
+export const ACTIVITY_IDLE_GAP_MS = 3 * 60 * 1000;

@@ -7,6 +7,7 @@ import { LogOut } from "lucide-react";
 import Image from "next/image";
 import { AdminUserManager } from "@/components/admin/AdminUserManager";
 import { OrganizationSwitcher } from "@/components/admin/OrganizationSwitcher";
+import { WorkDayControls } from "@/components/sales-activity/WorkDayControls";
 import { AdminOrganizationProvider, useAdminOrganization } from "@/contexts/AdminOrganizationContext";
 import type { AdminOrganizationState } from "@/app/actions/organization-context";
 import { getAdminNotifications } from "@/app/actions/orders";
@@ -26,6 +27,7 @@ import {
   defaultSalesRouteForAccess,
   defaultAccountingRouteForAccess,
   defaultHrRouteForAccess,
+  isSalesAgentAccess,
 } from "@/lib/dashboard-access";
 import { useRouter } from "next/navigation";
 import { AppNotificationBell } from "@/components/notifications/AppNotificationBell";
@@ -273,6 +275,7 @@ function AdminDashboardContent({
           </div>
 
           <div className="flex items-center gap-4 md:gap-6">
+            {isSalesAgentAccess(access) ? <WorkDayControls tone="light" /> : null}
             <OrganizationSwitcher />
             <AppNotificationBell
               tone="light"

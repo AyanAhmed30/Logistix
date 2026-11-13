@@ -46,6 +46,8 @@ import { AdminCalculatorPanel } from "@/components/admin/AdminCalculatorPanel";
 import { ContactsPanel } from "@/components/admin/ContactsPanel";
 import { LeadDistributionPanel } from "@/components/admin/lead-distribution/LeadDistributionPanel";
 import { DistributionTrackingPanel } from "@/components/admin/lead-distribution/DistributionTrackingPanel";
+import { ActivityLogsPanel } from "@/components/sales-activity/ActivityLogsPanel";
+import { DailyReportsPanel } from "@/components/sales-activity/DailyReportsPanel";
 import { OrganizationPanel } from "@/components/admin/OrganizationPanel";
 import { UsersManagementPanel } from "@/components/admin/UsersManagementPanel";
 import { ApplicationUsersPanel } from "@/components/admin/ApplicationUsersPanel";
@@ -403,6 +405,10 @@ export function AdminUserManager({
           <LeadDistributionPanel />
         ) : activeTab === "lead-distribution-tracking" && access.isSuperAdmin ? (
           <DistributionTrackingPanel />
+        ) : activeTab === "activity-logs" && access.isSuperAdmin ? (
+          <ActivityLogsPanel />
+        ) : activeTab === "daily-reports" && access.isSuperAdmin ? (
+          <DailyReportsPanel />
         ) : activeTab === "contacts" || activeModule === "contacts" ? (
           <ContactsPanel initialPayload={contactPayload ?? undefined} />
         ) : activeTab === "operations" ? (

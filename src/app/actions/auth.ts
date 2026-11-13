@@ -1,9 +1,10 @@
 'use server';
 
-import { cookies } from 'next/headers';
+import { cookies, headers } from 'next/headers';
 import { redirect } from 'next/navigation';
 import { createAdminClient } from '@/utils/supabase/server';
-import { encrypt, getSessionCookieOptions } from '@/lib/auth/session';
+import { decrypt, encrypt, getSessionCookieOptions, type SessionPayload } from '@/lib/auth/session';
+import { endTrackedSession, startTrackedSession } from '@/lib/auth/activity-tracking';
 import { verifyPassword } from '@/lib/auth/password';
 import { parsePermissionKeys } from '@/lib/module-permissions';
 import { SUPER_ADMIN_USERNAME } from '@/lib/auth/super-admin';
@@ -46,7 +47,7 @@ async function establishSession(params: {
   permissions?: string[];
 }) {
   const cookieOptions = getSessionCookieOptions();
-  const session = await encrypt({
+  const payload: SessionPayload = {
     username: params.username,
     role: params.role,
     appUserId: params.appUserId,
@@ -57,7 +58,10 @@ async function establishSession(params: {
     organizationIds: params.organizationIds,
     permissions: params.permissions,
     lastActivity: Date.now(),
-  });
+  };
+  // Sales agents: a new activity session with the 25-minute inactivity limit.
+  const tracked = await startTrackedSession(payload, (await headers()).get('user-agent'));
+  const session = await encrypt(tracked ? { ...payload, ...tracked } : payload);
   (await cookies()).set('session', session, cookieOptions);
   const redirectTo = params.appUserId
     ? '/admin/dashboard'
@@ -370,6 +374,15 @@ export async function login(formData: FormData) {
 }
 
 export async function logout() {
+  const token = (await cookies()).get('session')?.value;
+  if (token) {
+    try {
+      const payload = await decrypt(token);
+      if (payload.sid) await endTrackedSession(payload.sid, 'logout');
+    } catch {
+      // Expired or invalid token: nothing to record.
+    }
+  }
   (await cookies()).set('session', '', { expires: new Date(0) });
   redirect('/login');
 }

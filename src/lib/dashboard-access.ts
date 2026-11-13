@@ -112,7 +112,15 @@ export function canAccessAdminTab(
   if (access.isSuperAdmin) return true;
 
   // Lead Distribution is Super Admin only.
-  if (module === 'lead-distribution' || tab === 'lead-distribution' || tab === 'lead-distribution-tracking') return false;
+  if (
+    module === 'lead-distribution' ||
+    tab === 'lead-distribution' ||
+    tab === 'lead-distribution-tracking' ||
+    tab === 'activity-logs' ||
+    tab === 'daily-reports'
+  ) {
+    return false;
+  }
 
   if (module === 'analytics') return true;
   if (module === 'settings') return true;

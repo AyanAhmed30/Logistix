@@ -25,10 +25,21 @@ export const OPERATIONS_NOTIFICATION_EVENTS = [
 /** Events an Admin / rate-approval user should see. */
 export const ADMIN_NOTIFICATION_EVENTS = [
   'sent_for_admin_approval',
+  'agent_day_started',
+  'agent_day_ended',
+  'agent_issue_reported',
+  'agent_support_requested',
 ] as const;
+
+/** Sales agent working-day events (Start Day / End Day); not tied to a lead. */
+const AGENT_DAY_EVENTS = new Set(['agent_day_started', 'agent_day_ended', 'agent_issue_reported', 'agent_support_requested']);
 
 export const LIFECYCLE_EVENT_TYPES = [
   'leads_assigned',
+  'agent_day_started',
+  'agent_day_ended',
+  'agent_issue_reported',
+  'agent_support_requested',
   'inquiry_received',
   'inquiry_sent',
   'sent_for_admin_approval',
@@ -128,6 +139,22 @@ export const NOTIFICATION_EVENT_CATALOG: Record<string, EventCatalogEntry> = {
   lead_transferred: {
     title: 'Lead Transferred to You',
     fallbackMessage: 'A lead was transferred to you.',
+  },
+  agent_day_started: {
+    title: 'Working Day Started',
+    fallbackMessage: 'A sales agent started the working day.',
+  },
+  agent_day_ended: {
+    title: 'End-of-Day Report Submitted',
+    fallbackMessage: 'A sales agent submitted the end-of-day report.',
+  },
+  agent_issue_reported: {
+    title: 'Sales Agent Reported an Issue',
+    fallbackMessage: 'A sales agent reported a problem.',
+  },
+  agent_support_requested: {
+    title: 'Sales Agent Needs Support',
+    fallbackMessage: 'A sales agent asked Admin for support.',
   },
   leads_assigned: {
     title: 'New Leads Assigned',
@@ -377,6 +404,7 @@ export function resolveNotificationHref(input: {
 
   // Lead Distribution: the leads are in the New column of the agent's pipeline.
   if (eventType === 'leads_assigned') return '/crm/pipeline';
+  if (AGENT_DAY_EVENTS.has(eventType)) return '/admin/dashboard';
 
   if (eventType === 'inquiry_flag_raised' && inquiryId) {
     if (canOpenCrmPipeline && opportunityId) {

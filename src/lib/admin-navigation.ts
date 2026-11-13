@@ -22,6 +22,8 @@ import {
   Smartphone,
   Share2,
   ListChecks,
+  Activity,
+  ClipboardPen,
 } from "lucide-react";
 
 export type AdminTab =
@@ -43,6 +45,8 @@ export type AdminTab =
   | "contacts"
   | "lead-distribution"
   | "lead-distribution-tracking"
+  | "activity-logs"
+  | "daily-reports"
   | "organization"
   | "application-users";
 
@@ -98,7 +102,7 @@ export const ADMIN_MODULES: AdminModuleDefinition[] = [
   {
     id: "lead-distribution",
     label: "Lead Distribution",
-    description: "Upload leads from Excel and assign them to sales agents",
+    description: "Assign leads to sales agents, track them, and review agents' activity and daily reports",
     icon: Share2,
     accentClass: "text-[#b4530a]",
     borderClass: "border-[#b4530a]/20 hover:border-[#b4530a]/40",
@@ -185,6 +189,20 @@ export const ADMIN_SIDEBAR_ITEMS: AdminSidebarItem[] = [
     label: "Distribution Tracking",
     title: "Distribution Tracking",
     icon: ListChecks,
+    module: "lead-distribution",
+  },
+  {
+    tab: "activity-logs",
+    label: "Activity Logs",
+    title: "Activity Logs",
+    icon: Activity,
+    module: "lead-distribution",
+  },
+  {
+    tab: "daily-reports",
+    label: "Daily Reports",
+    title: "Daily Reports",
+    icon: ClipboardPen,
     module: "lead-distribution",
   },
   { tab: "sales", label: "Sales", title: "Sales", icon: ShoppingCart, module: "sales" },
